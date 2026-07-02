@@ -100,3 +100,8 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
+          # Tolerate a re-run after a partial upload: skip any file already on
+          # PyPI instead of failing with "400 File already exists". This lets a
+          # failed release be re-run on the same version without a re-bump, as
+          # long as no *complete* version was already published.
+          skip-existing: true
