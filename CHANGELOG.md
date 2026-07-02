@@ -7,7 +7,7 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
-## [0.1.5] — 2026-07-02
+## [0.1.6] — 2026-07-02
 
 Resolves the six high-severity findings from the third (full-system) review
 (`docs/crumb-kit-system-review-2026-07-01.md`, R1–R6), and — in a second pass —
