@@ -11,7 +11,7 @@ installed distribution's authoritative version comes from package metadata
 
 # Plain literal first so setuptools can read it statically and so importing the
 # package never requires importing the (heavier) CLI module.
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 from breadcrumbs.cli import SCHEMA_VERSION, get_version, main
 

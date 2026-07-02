@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crumb-kit"
-version = "0.1.5"
+version = "0.1.6"
 description = "Breadcrumbs — leave a trail your future self and your agents can follow back: a portable, repo-local, human-readable ledger of durable project state for human–agent software work."
 readme = "README.md"
 license = { file = "LICENSE" }
