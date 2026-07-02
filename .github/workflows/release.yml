@@ -1,27 +1,26 @@
 name: release
 
 # Publishes the Breadcrumbs package (PyPI name: crumb-kit) via Trusted Publishing (OIDC) — no API tokens
-# are stored anywhere in this repo. The two triggers publish to different indexes
-# (review #3 R6 — the manual trigger is the RELEASING.md dry-run and must never
-# hit real PyPI):
+# are stored anywhere in this repo.
 #
-#   * workflow_dispatch  -> manual build, validate, and publish to **TestPyPI**.
+#   * workflow_dispatch  -> build + validate only (a dry-run that never publishes).
 #   * release published  -> build, validate, and publish to **real PyPI**.
 #
 # One-time setup, done once before the first run:
 #   1. Create the project's "pending publisher" at
 #        https://pypi.org/manage/account/publishing/          (environment: pypi)
-#      and its twin at
-#        https://test.pypi.org/manage/account/publishing/     (environment: testpypi)
 #      with: owner = jumbodaddystack, repo = breadcrumbs, workflow = release.yml.
 #   2. That's it — no secrets. OIDC mints a short-lived token per run.
 #
 # The build/check job mirrors the `package` job in ci.yml so a release can never
 # ship an artifact CI would have rejected (bundled templates, installed-binary
 # smoke test, twine metadata check).
+#
+# NOTE: a PyPI version is permanent — re-running a release for a version that is
+# already on PyPI fails with "400 File already exists". Bump `version` first.
 
 on:
-  workflow_dispatch:        # manual -> TestPyPI (dry-run)
+  workflow_dispatch:        # manual -> build + validate only (no publish)
   release:
     types: [published]      # GitHub release -> real PyPI
 
@@ -81,28 +80,6 @@ jobs:
         with:
           name: dist
           path: dist/
-
-  publish-testpypi:
-    # Dry-run publish (RELEASING.md "Dry-run on TestPyPI first"): manual
-    # dispatch only, never triggered by a GitHub release.
-    if: github.event_name == 'workflow_dispatch'
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/p/crumb-kit
-    permissions:
-      id-token: write        # required for Trusted Publishing (OIDC)
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-          packages-dir: dist/
 
   publish-pypi:
     # Real publish: only on a published GitHub release.

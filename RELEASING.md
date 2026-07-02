@@ -14,49 +14,42 @@ secrets; **manual token upload** is the fallback if you want to publish by hand.
 No API tokens are stored anywhere. GitHub mints a short-lived OIDC token per run.
 The workflow lives at [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
-### One-time setup (per index)
+### One-time setup
 
-1. Go to **https://pypi.org/manage/account/publishing/** (and, for the dry-run,
-   the twin at **https://test.pypi.org/manage/account/publishing/**).
+1. Go to **https://pypi.org/manage/account/publishing/**.
 2. Add a **pending publisher** with:
    - **PyPI project name:** `crumb-kit`
    - **Owner:** `jumbodaddystack`
    - **Repository:** `breadcrumbs`
    - **Workflow name:** `release.yml`
-   - **Environment:** `pypi` (on PyPI) / `testpypi` (on TestPyPI)
-3. (Optional but recommended) In the GitHub repo, create matching
-   **Environments** named `pypi` and `testpypi` under
-   *Settings → Environments*, and add required reviewers if you want a manual
-   approval gate before each publish.
+   - **Environment:** `pypi`
+3. (Optional but recommended) In the GitHub repo, create a matching
+   **Environment** named `pypi` under *Settings → Environments*, and add
+   required reviewers if you want a manual approval gate before each publish.
 
 No secrets to add. That's the whole setup.
 
-### Dry-run on TestPyPI first
+### Dry-run the build first
 
-Trigger the workflow manually (*Actions → release → Run workflow*). It builds,
-runs the same checks CI does, and publishes to **TestPyPI**. Verify the install:
-
-```bash
-pipx install --index-url https://test.pypi.org/simple/ \
-             --pip-args="--extra-index-url https://pypi.org/simple/" crumb-kit
-crumb --version
-```
-
-(The extra index lets pip resolve any real deps; crumb-kit itself has none.)
+Trigger the workflow manually (*Actions → release → Run workflow*). On a
+`workflow_dispatch` it builds and runs the same checks CI does, but **does not
+publish** — the `publish-pypi` job only runs when a GitHub Release is published.
+Use it to confirm the artifact is clean before you cut a release.
 
 ### Publish to real PyPI
 
 1. Bump `version` in `pyproject.toml` — and keep `breadcrumbs/__init__.py`
    (`__version__`) and `breadcrumbs/cli.py` (`_FALLBACK_VERSION`) in sync. Add a
-   `CHANGELOG.md` entry. (Current version: `0.1.4`.)
-2. Tag and create a **GitHub Release** (e.g. `v0.1.4`). Publishing the release
-   triggers the `publish-pypi` job automatically. (Alternatively, *Actions →
-   release → Run workflow* via `workflow_dispatch` also publishes to real PyPI.)
+   `CHANGELOG.md` entry. (Current version: `0.1.5`.) **This bump is mandatory:**
+   a PyPI version is permanent, so re-releasing a version already on PyPI fails
+   with `400 File already exists`.
+2. Tag and create a **GitHub Release** (e.g. `v0.1.5`). Publishing the release
+   triggers the `publish-pypi` job automatically.
 
 ```bash
-git tag v0.1.4
-git push origin v0.1.4
-# then publish the release in the GitHub UI (or `gh release create v0.1.4`)
+git tag v0.1.5
+git push origin v0.1.5
+# then publish the release in the GitHub UI (or `gh release create v0.1.5`)
 ```
 
 After it runs, confirm:
