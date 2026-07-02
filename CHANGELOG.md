@@ -7,6 +7,27 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-07-02
+
+Release-process hardening. No runtime behavior change; this is the first version
+published through the rebuilt release workflow. (Versions 0.1.5 and 0.1.6 were
+tagged but never reached PyPI — the release workflow failed to publish them — so
+0.1.7 is the next real PyPI release after 0.1.4.)
+
+### Changed
+- **Single source of truth for the package version.** `__version__` in
+  `breadcrumbs/__init__.py` is now the only place the version is defined.
+  `pyproject.toml` reads it via dynamic metadata
+  (`[tool.setuptools.dynamic] version = {attr = "breadcrumbs.__version__"}`) and
+  `breadcrumbs/cli.py` reads it as its source-checkout fallback, so there is
+  nothing to hand-sync and a build can never ship a mislabeled binary.
+- **The release workflow now cuts the tag and GitHub Release itself**, on the
+  exact commit it builds, after PyPI accepts the upload. Releasing is a
+  `workflow_dispatch` with an explicit `dry-run`/`publish` mode; there is no more
+  hand-tagging (the recurring cause of failed releases) and no manual Release
+  creation. A pre-flight PyPI check fails fast with a plain "already published —
+  bump the version" message instead of a cryptic `400 File already exists`.
+
 ## [0.1.6] — 2026-07-02
 
 Resolves the six high-severity findings from the third (full-system) review
