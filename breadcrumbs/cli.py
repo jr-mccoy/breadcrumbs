@@ -52,7 +52,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "project-memory"
 # Dev/source-checkout fallback version. The installed distribution's version is
 # authoritative (read from package metadata in get_version); keep this in sync
 # with `version` in pyproject.toml for source-tree runs where no metadata exists.
-_FALLBACK_VERSION = "0.1.4"
+_FALLBACK_VERSION = "0.1.5"
 
 # Non-git fallback sentinels (build plan §22 Q5, resolved this phase).
 # Used everywhere git-derived fields cannot be populated.
