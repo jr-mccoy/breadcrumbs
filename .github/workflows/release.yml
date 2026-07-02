@@ -1,34 +1,61 @@
 name: release
 
-# Publishes the Breadcrumbs package (PyPI name: crumb-kit) via Trusted Publishing (OIDC) — no API tokens
-# are stored anywhere in this repo.
+# Publishes the Breadcrumbs package (PyPI name: crumb-kit) via Trusted Publishing
+# (OIDC) — no API tokens are stored anywhere in this repo.
 #
-#   * workflow_dispatch  -> build + validate only (a dry-run that never publishes).
-#   * release published  -> build, validate, and publish to **real PyPI**.
+# HOW TO RELEASE (idiot-proof, one action):
+#   1. Bump `__version__` in breadcrumbs/__init__.py (the single source of truth)
+#      and add a CHANGELOG entry. Merge to main. That is the ONLY manual edit.
+#   2. Actions → release → Run workflow, from the `main` branch:
+#         mode = dry-run  -> build + validate only (publishes nothing)
+#         mode = publish  -> build, validate, upload to PyPI, THEN create the
+#                            git tag + GitHub Release on the exact commit built.
 #
-# One-time setup, done once before the first run:
-#   1. Create the project's "pending publisher" at
-#        https://pypi.org/manage/account/publishing/          (environment: pypi)
-#      with: owner = jumbodaddystack, repo = breadcrumbs, workflow = release.yml.
-#   2. That's it — no secrets. OIDC mints a short-lived token per run.
+# Why this shape (learned the hard way):
+#   * The workflow creates the tag itself, on the commit it just built, so the
+#     tag can never point at a pre-bump commit. Hand-tagging was the #1 cause of
+#     failed releases (a `vX` tag on a commit whose version was still X-1).
+#   * The version lives in ONE place (breadcrumbs/__init__.py). pyproject reads it
+#     dynamically; the CLI reads it as its source-checkout fallback. Nothing to
+#     hand-sync, so a release can never ship a mislabeled binary.
+#   * A PyPI version is PERMANENT. This workflow checks PyPI up front and fails
+#     with a plain message ("already published — bump the version") instead of a
+#     cryptic "400 File already exists" after the fact. PyPI is uploaded BEFORE
+#     the tag is cut, so a failed publish leaves no tag/release to clean up — just
+#     fix and re-run.
 #
-# The build/check job mirrors the `package` job in ci.yml so a release can never
-# ship an artifact CI would have rejected (bundled templates, installed-binary
-# smoke test, twine metadata check).
-#
-# NOTE: a PyPI version is permanent — re-running a release for a version that is
-# already on PyPI fails with "400 File already exists". Bump `version` first.
+# One-time PyPI setup (already done; here for reference):
+#   pypi.org "pending publisher": owner=jumbodaddystack, repo=breadcrumbs,
+#   workflow=release.yml, environment=pypi. No secrets — OIDC mints a token per run.
 
 on:
-  workflow_dispatch:        # manual -> build + validate only (no publish)
-  release:
-    types: [published]      # GitHub release -> real PyPI
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run = build + validate only. publish = upload to PyPI, tag, and create the GitHub Release."
+        type: choice
+        options:
+          - dry-run
+          - publish
+        default: dry-run
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # need tags for the "tag doesn't exist yet" check
+
+      # A real publish must come from main. Fail loudly (before building) rather
+      # than mint a release off a feature branch.
+      - name: Publish must run from main
+        if: github.event.inputs.mode == 'publish' && github.ref_name != 'main'
+        run: |
+          echo "::error::Releases must be cut from 'main' (got '${{ github.ref_name }}'). Merge to main, then re-run with 'main' selected in the branch dropdown."
+          exit 1
 
       - uses: actions/setup-python@v5
         with:
@@ -39,21 +66,41 @@ jobs:
           python -m pip install --upgrade pip build twine
           python -m build
 
-      # Fail fast (in the build job) when a release tag points at a commit from
-      # before the version bump. Without this, a mistagged release builds the
-      # OLD version and dies confusingly at the PyPI upload with
-      # "400 File already exists" for a version you didn't mean to publish.
-      - name: Release tag matches built version
-        if: github.event_name == 'release'
+      # The wheel filename is the authoritative built version. Because the version
+      # is dynamic (read from breadcrumbs/__init__.py), this equals __version__ by
+      # construction — there is no separate tag to mismatch.
+      - name: Resolve built version
+        id: ver
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
           WHEEL="$(ls dist/crumb_kit-*-py3-none-any.whl)"
-          BUILT="$(basename "$WHEEL" | sed -E 's/^crumb_kit-([^-]+)-py3-none-any\.whl$/\1/')"
-          if [ "$TAG" != "$BUILT" ]; then
-            echo "::error::Release tag 'v$TAG' does not match built package version '$BUILT'. The tag likely points at a commit before the version bump — re-tag on the bumped commit (Target: main) and re-publish the release."
+          VERSION="$(basename "$WHEEL" | sed -E 's/^crumb_kit-([^-]+)-py3-none-any\.whl$/\1/')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Built crumb-kit $VERSION"
+
+      # Pre-flight: a PyPI version is permanent. Catch a forgotten version bump
+      # here, with a clear message, instead of at the upload with a cryptic 400.
+      - name: Version is not already on PyPI
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/crumb-kit/$VERSION/json" || echo 000)"
+          if [ "$CODE" = "200" ]; then
+            echo "::error::crumb-kit $VERSION is already on PyPI (a PyPI version is permanent). Bump __version__ in breadcrumbs/__init__.py + add a CHANGELOG entry, merge to main, then re-run."
             exit 1
           fi
-          echo "Release tag v$TAG matches built version $BUILT."
+          if [ "$CODE" != "404" ]; then
+            echo "::warning::Unexpected HTTP $CODE from PyPI while checking for $VERSION; continuing (publish uses skip-existing)."
+          fi
+          echo "crumb-kit $VERSION is not on PyPI yet — good to publish."
+
+      # Pre-flight: don't collide with an existing tag (e.g. version not bumped).
+      - name: Tag v$VERSION does not already exist
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists. Bump __version__ to a new version before releasing."
+            exit 1
+          fi
+          echo "Tag v$VERSION is free."
 
       - name: Validate metadata (twine check)
         run: python -m twine check dist/*
@@ -98,26 +145,42 @@ jobs:
           path: dist/
 
   publish-pypi:
-    # Real publish: only on a published GitHub release.
-    if: github.event_name == 'release'
+    # Real publish only when the operator explicitly chose `publish`.
+    if: github.event.inputs.mode == 'publish'
     needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/crumb-kit
     permissions:
-      id-token: write        # required for Trusted Publishing (OIDC)
+      id-token: write        # Trusted Publishing (OIDC)
+      contents: write        # create the tag + GitHub Release
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
-      - name: Publish to PyPI
+
+      # PyPI first: it is the permanent, irreversible side. If it fails, no tag
+      # or release is created, so a re-run is clean.
+      - name: Publish to PyPI (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           packages-dir: dist/
-          # Tolerate a re-run after a partial upload: skip any file already on
-          # PyPI instead of failing with "400 File already exists". This lets a
-          # failed release be re-run on the same version without a re-bump, as
-          # long as no *complete* version was already published.
+          # Tolerate a re-run after a partial upload instead of failing with
+          # "400 File already exists".
           skip-existing: true
+
+      # Only after PyPI accepted it do we record the release. The tag is created
+      # on the exact commit that was built and published — it cannot mismatch.
+      - name: Tag the published commit + create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "v$VERSION" \
+            --generate-notes
+          echo "Tagged v$VERSION at $GITHUB_SHA and published the GitHub Release."

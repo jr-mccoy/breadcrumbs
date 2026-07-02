@@ -50,9 +50,12 @@ MEMORY_DIRNAME = ".project-memory"
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "project-memory"
 
 # Dev/source-checkout fallback version. The installed distribution's version is
-# authoritative (read from package metadata in get_version); keep this in sync
-# with `version` in pyproject.toml for source-tree runs where no metadata exists.
-_FALLBACK_VERSION = "0.1.6"
+# authoritative (read from package metadata in get_version); this fallback is for
+# source-tree runs where no metadata exists. It reads from the single source of
+# truth — breadcrumbs/__init__.py `__version__` — so there is nothing to hand-sync.
+# Imported lazily inside get_version() to avoid an import cycle: breadcrumbs/__init__
+# imports this module, so `from breadcrumbs import __version__` at module load time
+# could observe a partially-initialized package.
 
 # Non-git fallback sentinels (build plan §22 Q5, resolved this phase).
 # Used everywhere git-derived fields cannot be populated.
@@ -5464,16 +5467,20 @@ def get_version() -> str:
     """Resolve the distribution version.
 
     Installed (pipx/pip): authoritative version from package metadata.
-    Source checkout (no metadata): the in-tree _FALLBACK_VERSION.
+    Source checkout (no metadata): the in-tree __version__ (single source).
     """
+    def _fallback() -> str:
+        from breadcrumbs import __version__
+        return __version__
+
     try:
         from importlib.metadata import PackageNotFoundError, version
         try:
             return version("crumb-kit")
         except PackageNotFoundError:
-            return _FALLBACK_VERSION
+            return _fallback()
     except Exception:  # pragma: no cover - importlib.metadata always present on 3.8+
-        return _FALLBACK_VERSION
+        return _fallback()
 
 
 # Global flags live on a shared parent parser inherited by every subparser, so
