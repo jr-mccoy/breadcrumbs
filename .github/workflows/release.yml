@@ -39,6 +39,22 @@ jobs:
           python -m pip install --upgrade pip build twine
           python -m build
 
+      # Fail fast (in the build job) when a release tag points at a commit from
+      # before the version bump. Without this, a mistagged release builds the
+      # OLD version and dies confusingly at the PyPI upload with
+      # "400 File already exists" for a version you didn't mean to publish.
+      - name: Release tag matches built version
+        if: github.event_name == 'release'
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          WHEEL="$(ls dist/crumb_kit-*-py3-none-any.whl)"
+          BUILT="$(basename "$WHEEL" | sed -E 's/^crumb_kit-([^-]+)-py3-none-any\.whl$/\1/')"
+          if [ "$TAG" != "$BUILT" ]; then
+            echo "::error::Release tag 'v$TAG' does not match built package version '$BUILT'. The tag likely points at a commit before the version bump — re-tag on the bumped commit (Target: main) and re-publish the release."
+            exit 1
+          fi
+          echo "Release tag v$TAG matches built version $BUILT."
+
       - name: Validate metadata (twine check)
         run: python -m twine check dist/*
 
