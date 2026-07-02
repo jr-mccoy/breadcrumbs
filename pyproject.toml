@@ -4,7 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "crumb-kit"
-version = "0.1.6"
+# Single source of truth: breadcrumbs/__init__.py `__version__`. Read statically
+# at build time (see [tool.setuptools.dynamic] below) so there is only ONE line
+# to bump per release and no version literals to keep in sync.
+dynamic = ["version"]
 description = "Breadcrumbs — leave a trail your future self and your agents can follow back: a portable, repo-local, human-readable ledger of durable project state for human–agent software work."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -45,6 +48,11 @@ breadcrumbs-mcp = "breadcrumbs.mcp_server:main"
 [project.urls]
 Homepage = "https://github.com/jumbodaddystack/breadcrumbs"
 Documentation = "https://github.com/jumbodaddystack/breadcrumbs/tree/main/docs"
+
+[tool.setuptools.dynamic]
+# Read the version literal from breadcrumbs/__init__.py without importing the
+# package (setuptools parses the AST). Keeps a single source of truth.
+version = { attr = "breadcrumbs.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["breadcrumbs*"]

@@ -29,27 +29,40 @@ The workflow lives at [`.github/workflows/release.yml`](.github/workflows/releas
 
 No secrets to add. That's the whole setup.
 
-### Dry-run the build first
+### The whole release, in two steps
 
-Trigger the workflow manually (*Actions → release → Run workflow*). On a
-`workflow_dispatch` it builds and runs the same checks CI does, but **does not
-publish** — the `publish-pypi` job only runs when a GitHub Release is published.
-Use it to confirm the artifact is clean before you cut a release.
+The workflow does the fiddly, order-sensitive parts (tagging the right commit,
+checking PyPI, cutting the GitHub Release). You do exactly two things:
 
-### Publish to real PyPI
+**Step 1 — bump the version (one line) and merge to `main`.**
 
-1. Bump `version` in `pyproject.toml` — and keep `breadcrumbs/__init__.py`
-   (`__version__`) and `breadcrumbs/cli.py` (`_FALLBACK_VERSION`) in sync. Add a
-   `CHANGELOG.md` entry. (Current version: `0.1.5`.) **This bump is mandatory:**
-   a PyPI version is permanent, so re-releasing a version already on PyPI fails
-   with `400 File already exists`.
-2. Tag and create a **GitHub Release** (e.g. `v0.1.5`). Publishing the release
-   triggers the `publish-pypi` job automatically.
+The version lives in **exactly one place**: `__version__` in
+[`breadcrumbs/__init__.py`](breadcrumbs/__init__.py). `pyproject.toml` reads it
+dynamically at build time, and `breadcrumbs/cli.py` reads it as its
+source-checkout fallback — so there is **nothing to hand-sync**. Bump that one
+line, add a `CHANGELOG.md` entry, and merge to `main`.
+
+> A PyPI version is **permanent**. If you forget to bump, the workflow stops up
+> front with *"already on PyPI — bump the version"* rather than a cryptic
+> `400 File already exists`.
+
+**Step 2 — run the release workflow from `main`.**
+
+*Actions → release → Run workflow*, with the `main` branch selected:
+
+- **`mode: dry-run`** (default) — builds and runs every check CI does, but
+  publishes nothing. Use it to confirm the artifact is clean.
+- **`mode: publish`** — builds, validates, uploads to PyPI, **and then creates
+  the git tag + GitHub Release itself**, on the exact commit it just built.
+
+You never create a tag or a GitHub Release by hand. That is deliberate: cutting
+the tag by hand (on a pre-bump commit) was the single most common cause of failed
+releases. The workflow tags the commit it builds, so the tag can never mismatch.
+
+Or trigger it from the CLI:
 
 ```bash
-git tag v0.1.5
-git push origin v0.1.5
-# then publish the release in the GitHub UI (or `gh release create v0.1.5`)
+gh workflow run release.yml --ref main -f mode=publish
 ```
 
 After it runs, confirm:
@@ -58,6 +71,16 @@ After it runs, confirm:
 pipx install crumb-kit
 crumb --version
 ```
+
+### If a release fails
+
+- **"already on PyPI — bump the version"**: you forgot Step 1. Bump
+  `__version__`, merge, re-run.
+- **PyPI upload failed partway**: nothing to clean up — no tag or release was
+  created (PyPI is uploaded *before* the tag is cut). Fix the cause and re-run;
+  `skip-existing` tolerates any file that did make it up.
+- **"Publish must run from main"**: you ran it from a feature branch. Merge to
+  `main` and select `main` in the branch dropdown.
 
 ---
 
@@ -92,10 +115,15 @@ python -m twine upload --repository testpypi dist/*
 
 ## Versioning reminder
 
-`pyproject.toml` `version` is the **package** version (semver). It is independent
-of the on-disk **record `schema_version`** (manifest `schema_version: 1`).
-`crumb --version` prints both. Bump the package MAJOR only alongside a
-breaking record-schema change.
+`__version__` in `breadcrumbs/__init__.py` is the **single source of truth** for
+the **package** version (semver). `pyproject.toml` reads it dynamically
+(`[tool.setuptools.dynamic] version = {attr = "breadcrumbs.__version__"}`) and
+`breadcrumbs/cli.py` reads it as its source-checkout fallback — bump the one line,
+nothing else to touch.
+
+The package version is independent of the on-disk **record `schema_version`**
+(manifest `schema_version: 1`). `crumb --version` prints both. Bump the package
+MAJOR only alongside a breaking record-schema change.
 
 A PyPI version is **permanent** — once `0.1.0` is uploaded it cannot be replaced,
-only yanked. Always dry-run on TestPyPI before the first real publish.
+only yanked.
