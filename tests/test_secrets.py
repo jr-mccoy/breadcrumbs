@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
+from breadcrumbs import cli as _cli  # noqa: E402  (patch target for module-level lookups)
 
 FIXTURES = REPO_ROOT / "fixtures"
 
@@ -236,6 +237,92 @@ class SkipRuleTests(unittest.TestCase):
             (mem / "index").mkdir(exist_ok=True)
             (mem / "index" / "dump.md").write_text("password=correcthorsebattery123\n", encoding="utf-8")
             self.assertEqual(crumb.scan_secrets(mem), [])
+
+
+class UndecodableFileTests(unittest.TestCase):
+    """review #5 H4 + M5 + audit #6 N3 — one bad byte used to fail open.
+
+    Before the fix, a single `\\xff` in committed memory silently exempted the
+    whole file from the secret scan, aborted `audit` with a path-less error, and
+    left `validate` reporting OK.
+    """
+
+    def _store_with_bad_byte(self, tmp: str) -> Path:
+        mem = fresh_store(tmp)
+        p = mem / "known-traps.md"
+        p.write_bytes(p.read_bytes() + b"\n## trap_bad: \xff bad byte\n")
+        return mem
+
+    def test_scan_secrets_blocks_and_names_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._store_with_bad_byte(tmp)
+            code, out = run(["scan-secrets", "--project", tmp])
+            self.assertEqual(code, 1, out)
+            self.assertIn("unscannable-file", out)
+            self.assertIn("known-traps.md", out)
+
+    def test_audit_blocks_and_names_the_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._store_with_bad_byte(tmp)
+            code, out = run(["audit", "--project", tmp])
+            self.assertEqual(code, 1, out)
+            self.assertIn("known-traps.md", out)
+            self.assertNotIn("codec can't decode", out)
+
+    def test_validate_reports_the_unreadable_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._store_with_bad_byte(tmp)
+            fails = [f for f in crumb.run_validate(mem) if f["status"] == "fail"]
+            self.assertTrue(
+                any(f["path"] == "known-traps.md" and "UTF-8" in f["message"] for f in fails),
+                f"expected an unreadable-file finding; got {fails}",
+            )
+
+    def test_readable_lines_are_still_scanned(self):
+        """The bad byte must not exempt the rest of the file from the scan."""
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = fresh_store(tmp)
+            p = mem / "known-traps.md"
+            p.write_bytes(
+                p.read_bytes()
+                + b"\n## trap_bad: \xff bad byte\n- aws key: AKIAIOSFODNN7EXAMPLE\n"
+            )
+            self.assertIn("unscannable-file", patterns_hit(mem))
+            self.assertTrue(
+                patterns_hit(mem) - {"unscannable-file"},
+                "a secret next to the bad byte must still be found",
+            )
+
+    def test_resume_and_reindex_survive_an_undecodable_handoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = fresh_store(tmp)
+            p = mem / "handoff.md"
+            p.write_bytes(p.read_bytes().replace(b"# Project Handoff", b"# Project H\xffndoff"))
+            ok, problem = crumb.try_reindex_projections(mem, Path(tmp))
+            self.assertTrue(ok, problem)
+            packet = crumb.build_resume_packet(mem, Path(tmp))
+            self.assertTrue(
+                any("handoff.md" in w for w in packet["warnings"]),
+                f"the packet should warn about the unreadable handoff; got {packet['warnings']}",
+            )
+
+    def test_reindex_failure_names_the_cause(self):
+        """`crumb reindex` printed 'Reindex failed' with no cause (review #5 M5)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = fresh_store(tmp)
+            real = _cli.build_resume_packet
+
+            def boom(*a, **kw):
+                raise RuntimeError("packet exploded")
+
+            _cli.build_resume_packet = boom
+            try:
+                code, out = run(["reindex", "--project", tmp])
+            finally:
+                _cli.build_resume_packet = real
+            self.assertEqual(code, 1, out)
+            self.assertIn("packet exploded", out)
+            self.assertTrue(mem.is_dir())
 
 
 class CleanStoreTests(unittest.TestCase):

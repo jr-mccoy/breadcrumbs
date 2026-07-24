@@ -222,6 +222,45 @@ class CaptureHandoffTests(unittest.TestCase):
             self.assertIn("new.txt", dirty)
             self.assertNotIn("old.txt -> new.txt", dirty)
 
+    def test_MF03_leading_space_porcelain_line_survives_intact(self):
+        """A worktree-only modification is ` M path` — the leading space is a
+        status column, and `_git_out`'s whole-output strip() used to eat it on the
+        *first* line, after which line[3:] chopped three characters off the path
+        (review #5 H3: one unstaged edit to tracked.py -> ['racked.py']).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init")
+            self._git(root, "config", "user.email", "t@t")
+            self._git(root, "config", "user.name", "t")
+            (root / "tracked.py").write_text("a\n")
+            (root / "second.py").write_text("a\n")
+            self._git(root, "add", "-A")
+            self._git(root, "commit", "-m", "init")
+            (root / "tracked.py").write_text("a\nb\n")
+            (root / "second.py").write_text("a\nb\n")
+            # the porcelain line the bug depended on, as git emits it
+            self.assertTrue(
+                crumb._git_out(root, "status", "--porcelain").startswith(" M "))
+            self.assertEqual(sorted(crumb.git_dirty_files(root)),
+                             ["second.py", "tracked.py"])
+
+    def test_MF03_single_line_git_output_has_no_trailing_newline(self):
+        """Relaxing the strip() must not leave `\\n` on the single-line callers."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._git(root, "init")
+            self._git(root, "config", "user.email", "t@t")
+            self._git(root, "config", "user.name", "t")
+            (root / "f.txt").write_text("a\n")
+            self._git(root, "add", "-A")
+            self._git(root, "commit", "-m", "init")
+            branch = crumb.git_branch(root)
+            commit = crumb.git_commit(root)
+            self.assertEqual(branch, branch.strip())
+            self.assertEqual(commit, commit.strip())
+            self.assertTrue(commit and commit != crumb.NO_GIT_COMMIT)
+
     def test_M4_handoff_preserves_user_added_section(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = Path(tmp)

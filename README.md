@@ -376,9 +376,14 @@ piece is independent:
   - `SessionStart → crumb hook session` loads the resume packet as context.
   - `PreToolUse → crumb hook guard` runs a cost-aware guard before risky Bash/Edit
     calls (a cheap local risk pre-filter keeps the common path free of record
-    I/O); it surfaces matched memory as context but **never denies from memory
-    alone** — `PROCEED`→allow, `READ_FIRST`/`PAUSE`→allow+context, `ASK_HUMAN`→ask.
-  - `Stop → crumb hook capture` snapshots a session record when the turn ends.
+    I/O); it surfaces matched memory but **never decides for you** — it neither
+    allows nor denies. `PROCEED`→silent, `READ_FIRST`→the matched records as
+    context with the normal permission flow untouched, `PAUSE`/`ASK_HUMAN`→ask,
+    with the reason.
+  - `Stop → crumb hook capture` snapshots a session record when the turn ends —
+    once per unit of work, not once per turn: a firing is skipped when the HEAD
+    commit and dirty-file set are unchanged since the newest session record, and
+    its stand-in Next Action never overwrites one you set.
 
 `crumb doctor` reports whether each piece is in place (and whether the resume
 packet is stale), exiting non-zero when a store exists but nothing is wired up.

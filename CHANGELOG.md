@@ -7,6 +7,58 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
+### Fixed
+- **`git_dirty_files` no longer corrupts the first filename in the most common
+  dirty state (MF-03).** `git status --porcelain` emits a worktree-only
+  modification as `" M path"` — a leading space in the status columns — and
+  `_git_out`'s whole-output `strip()` ate it on the *first* line, after which
+  `line[3:]` chopped three characters off the path: one unstaged edit to
+  `tracked.py` produced `['racked.py']`. The mangled path reached every record's
+  `dirty_files` frontmatter and fed guard/search file matching. `_git_out` now
+  strips only the trailing newline.
+- **One undecodable byte no longer defeats the trust primitives (MF-04).**
+  A single invalid UTF-8 byte in committed memory used to make `crumb audit` die
+  with a path-less error and emit zero findings, silently exempt the whole file
+  from `crumb scan-secrets` (which then reported OK), leave `crumb validate`
+  reporting OK, stop projections refreshing while `crumb reindex` printed
+  "Reindex failed" with no cause, and abort `crumb resume`. Every memory reader
+  now goes through one lenient decode: the readable remainder is still processed,
+  and the offending path is named. `scan-secrets` and `audit` **block** with a new
+  `unscannable-file` finding instead of failing open, `validate` reports the
+  unreadable core file, `resume` carries it as a packet warning, `doctor` reports
+  an unreadable adapter, and `reindex` prints the actual cause.
+- **A verification can now influence a guard verdict (MF-05).** A verification
+  record carries its outcome (`open`/`regressed`/…) in the item `status` so
+  `search --status` filters on what agents care about, but guard's liveness test
+  only accepted `"active"` — so *every* verification landed in history and was
+  excluded from the verdict. A `regressed` verification on the exact file being
+  touched scored 17 (the PAUSE band is 9) and still produced `PROCEED` with
+  `matches: []`. Liveness now also accepts a verification whose record is active
+  and whose outcome is unsettled (`open`, `regressed`, `inconclusive`, mirroring
+  `active_verifications`); a specific match on one floors `READ_FIRST`. Settled
+  outcomes (`fixed`, `not_applicable`) stay history, as before.
+- **The `PreToolUse` guard hook no longer auto-approves the calls it warns about
+  (MF-01).** For any non-`PROCEED` verdict other than `ASK_HUMAN` the hook emitted
+  `permissionDecision: "allow"`, which in the Claude Code hook contract *approves
+  the tool call outright* — skipping the permission prompt the user would
+  otherwise have seen — and shows its reason only to the user, never to the model.
+  So on exactly the actions memory had something to say about, the hook removed a
+  safety gate and swallowed the warning. The mapping is now: `PROCEED` → silent,
+  `READ_FIRST` → the matched records as `additionalContext` with the normal
+  permission flow left untouched, `PAUSE`/`ASK_HUMAN` → `"ask"` with the reason.
+  The hook emits neither `allow` nor `deny`: memory informs, it never decides.
+- **The `Stop` capture hook no longer floods `sessions/` or clobbers your Next
+  Action (MF-02).** Claude Code's `Stop` fires every time the agent finishes
+  responding — every turn, not once per session — and the hook ran a full
+  `capture session --fast` each time, producing a run of near-empty session
+  records and overwriting `handoff.md`'s Next Action with the stand-in text
+  `(session ended; see git log)`, destroying the one field a session record
+  requires and `resume` leads with. Three guards now apply: a firing is skipped
+  when the HEAD commit and the dirty-file set (the store's own churn excluded) are
+  unchanged since the newest session record; the stand-in Next Action is treated
+  as placeholder text, so it can never overwrite a real Next Action or Current
+  Focus; and the payload's `stop_hook_active` flag is honored.
+
 ## [0.1.7] — 2026-07-02
 
 Release-process hardening. No runtime behavior change; this is the first version

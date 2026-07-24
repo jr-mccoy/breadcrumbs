@@ -5,9 +5,9 @@ deduplicated, and ordered as a work queue. Delete an item when it ships; add a
 `CHANGELOG.md` entry in the same commit.
 
 **State as of 2026-07-24** (`main` @ `4790c4a`, `crumb-kit` 0.1.7, record
-`schema_version` 1): **42 open items** — 7 High, 12 Medium, 23 Low — plus 4
-explicitly deferred. `CHANGELOG.md` `[Unreleased]` is empty; nothing below has
-shipped.
+`schema_version` 1): **37 open items** — 3 High, 11 Medium, 23 Low — plus 4
+explicitly deferred. Batches 1 and 2 (MF-01 … MF-05) have shipped and are
+recorded in `CHANGELOG.md` `[Unreleased]`; nothing else below has.
 
 ## Sources
 
@@ -17,8 +17,8 @@ shipped.
 | Agentic review #2 (2026-06-27) | `docs/crumb-kit-agentic-review-2026-06-27.md` | Resolved except F9/F10/F11-partial → **D1–D3** |
 | System review #3 (2026-07-01) | doc deleted in `a4da5c0` | R1–R26 resolved in 0.1.6 |
 | System review #4 | folded into 0.1.6 | Resolved |
-| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | **All H/M open**, most Lows open |
-| System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | **All open** (N1–N6) |
+| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | H1–H4 + M1/M5 shipped (MF-01 … MF-05); H5 and the rest of M **open**, most Lows open |
+| System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | N3 shipped (in MF-04); N1/N2/N4/N5/N6 **open** |
 
 **Verification legend** — how each item's current status was established:
 
@@ -30,135 +30,37 @@ shipped.
 
 ---
 
-## Batch 1 — Hook layer (highest user harm per line of fix)
+## Batch 1 — Hook layer — **SHIPPED** (`[Unreleased]`)
 
-Both bugs are in the 0.1.2 automaticity layer. They only affect users who ran
-`crumb init --with-hooks`, but for those users the wired-up product is currently
-*worse* than the un-wired one: MF-01 removes a safety prompt the harness would
-otherwise show, and MF-02 destroys the handoff field the whole tool is built
-around. Fix these before anything else.
+Both 0.1.2 automaticity-layer bugs are fixed; see `CHANGELOG.md`.
 
-### MF-01 · High · guard hook `"allow"` bypasses the permission prompt and hides the warning
-*(review #5 H1 · `code`)*
-
-`breadcrumbs/cli.py:5416` — `decision = "ask" if verdict == "ASK_HUMAN" else "allow"`.
-In the Claude Code hook contract `permissionDecision: "allow"` **auto-approves
-the tool call**, skipping the prompt the user would otherwise get, and its
-`permissionDecisionReason` is shown only to the user, never to the model. So on
-`PAUSE`/`READ_FIRST` — a recorded failed attempt on exactly this area — the hook
-*removes* a safety gate and the guard warning never reaches the agent. The exact
-inverse of "memory informs, never decides."
-
-**Fix.** `READ_FIRST` → emit `{}` (leave the normal permission flow alone), or
-surface the matched records via `additionalContext`. `PAUSE` and `ASK_HUMAN` →
-`"ask"` with the reason.
-
-**Done when.** `tests/test_hooks.py:103` — which currently *blesses* `"allow"` —
-asserts the new mapping for all four verdicts.
-
-### MF-02 · High · Stop-hook auto-capture fires every turn, floods `sessions/`, clobbers Next Action
-*(review #5 H2 · `code`)*
-
-`breadcrumbs/cli.py:5428-5444` — Claude Code's `Stop` fires every time the agent
-finishes responding, not once per session. `_hook_capture` unconditionally runs
-a full `capture session --fast` with `next_action="(session ended; see git
-log)"`. Three firings produce `…-session.md`, `-2.md`, `-3.md` (two of them
-empty), and one firing after a real `crumb capture session --next "…"` rewrites
-`handoff.md`'s Next Action to the placeholder — destroying the field §16.10
-requires and `resume` leads with. Each firing also rewrites `current.md` and
-reindexes.
-
-**Fix.** Three guards: (a) skip the write when HEAD and the dirty-file set are
-unchanged since the newest session record; (b) never overwrite a non-placeholder
-Next Action/Focus with the placeholder; (c) honor the payload's
-`stop_hook_active` flag.
-
-**Done when.** A test drives three consecutive `Stop` payloads against one store
-and asserts exactly one session record and an untouched Next Action.
+- **MF-01** (review #5 H1) — the `PreToolUse` guard hook no longer emits
+  `permissionDecision: "allow"` on a warning verdict. `PROCEED` → silent,
+  `READ_FIRST` → `additionalContext` with no decision, `PAUSE`/`ASK_HUMAN` →
+  `"ask"`. `tests/test_hooks.py` asserts the mapping for all four verdicts.
+- **MF-02** (review #5 H2) — the `Stop` capture hook dedupes on
+  HEAD + dirty-file set, treats its stand-in Next Action as placeholder text so
+  it cannot clobber a real one, and honors `stop_hook_active`.
 
 ---
 
-## Batch 2 — Trust primitives (fail-open, corrupt data, blind spots)
+## Batch 2 — Trust primitives — **SHIPPED** (`[Unreleased]`)
 
-### MF-03 · High · `git_dirty_files` corrupts the first filename in the most common dirty state
-*(review #5 H3 · `repro`)*
+All three fail-open / corrupt-data defects are fixed; see `CHANGELOG.md`.
 
-`breadcrumbs/cli.py:815` (`_git_out` returns `r.stdout.strip()`) + `:888`
-(`line[3:]`). `git status --porcelain` emits a worktree-only modification as
-`" M path"` — leading space. The whole-output `strip()` eats that space on the
-**first** line, so `line[3:]` then chops three characters off the path.
-
-```
-one unstaged edit to tracked.py  →  git_dirty_files() == ['racked.py']
-```
-
-The mangled path lands in every record's `dirty_files` frontmatter via
-`derive_fields`, and feeds guard/search file matching. Existing tests only cover
-staged/renamed/untracked entries (no leading space), which is why the suite is
-green.
-
-**Fix.** `r.stdout.rstrip("\n")` in `_git_out` (safe for every other caller), or
-parse `git status --porcelain -z`.
-
-**Done when.** A regression test asserts a leading-space porcelain line survives
-intact.
-
-### MF-04 · High · Undecodable files: the secret scan fails open, `audit` aborts, errors name no path
-*(review #5 H4 + M5 + audit #6 N3 — merged, one change · `repro`)*
-
-One invalid UTF-8 byte anywhere in committed memory currently produces this:
-
-```
-$ crumb audit          → error: 'utf-8' codec can't decode byte 0xff …   (exit 1, no filename)
-$ crumb validate       → validate: OK — 10 checks passed, 0 problems.
-$ crumb scan-secrets   → scan-secrets: OK — no secret-like strings in committed memory.
-```
-
-Three distinct defects, one family:
-
-1. **Fail-open scan.** `scan_secrets` (`cli.py:4453-4457`) does `except (OSError,
-   UnicodeDecodeError): continue` — one bad byte silently exempts a whole file
-   from scanning. `audit`'s "secrets are blocking" posture is void for it.
-2. **`audit` aborts entirely.** Four unguarded reads —
-   `scan_instruction_like` (`:4498`), `run_audit`'s handoff read (`:4661`),
-   `_audit_bloat` (`:4560`), and `doctor_report`'s adapter read (`:5195`) — so
-   the *gate command* dies and emits zero findings. `run_validate` already
-   handles exactly this correctly for `handoff.md` (`:1160-1165`) and
-   `generated/*.md` (`:1188-1193`); `audit` never got the same treatment.
-3. **No path in the message, and `reindex` goes quiet.** `build_resume_packet`
-   (`:3151`) reads `handoff.md` unguarded, and `reindex_projections` swallows
-   the exception (`:2067`) — so projections silently stop refreshing and
-   `crumb reindex` prints "Reindex failed" with no cause.
-
-> **Correction to review #5 M5:** it describes this as a "raw traceback". It is
-> not — `UnicodeDecodeError` subclasses `ValueError` and `main()` (`:5933`)
-> catches it. The defect is the *path-less error* and the silent reindex stop.
-> A fix written to "stop the traceback" would be a no-op.
-
-**Fix.** One pass over all seven readers: decode defensively (`utf-8-sig` +
-`errors="replace"` or a caught read), **name the offending path in every
-message**, emit a blocking `unscannable-file` finding from `scan_secrets`
-instead of `continue`, and surface the exception text from `cmd_reindex`.
-
-**Done when.** A store with one `\xff` byte in `known-traps.md` makes `audit`
-and `scan-secrets` *block* with the filename in the message, and `validate`
-reports an unreadable-file finding.
-
-### MF-05 · Medium · Verification records can never influence a guard verdict
-*(review #5 M1 · `code`)*
-
-`cli.py:3723-3727` replaces a verification's item status with its *outcome*
-(`open`/`regressed`/…) so search filters work, but `guard()`'s liveness test
-(`:4086-4089`) is `status == "active" or (kind == "question" and status ==
-"open")`. No verification outcome ever equals `"active"`, so every verification
-lands in `history` and is excluded from `_decide_verdict`. A `--status regressed`
-verification with a matching evidence file scores **17.0** (PAUSE band is 9) yet
-the verdict is `PROCEED` with `matches: []`.
-
-**Fix.** Treat verification items whose outcome is actionable (`open`,
-`regressed`, `inconclusive` — mirroring `active_verifications`) as live; or key
-liveness off the record's lifecycle `status` and keep the outcome for
-filtering/display only.
+- **MF-03** (review #5 H3) — `_git_out` strips only the trailing newline, so a
+  ` M path` porcelain line keeps its status columns and `git_dirty_files` no
+  longer returns `['racked.py']` for one unstaged edit to `tracked.py`.
+- **MF-04** (review #5 H4 + M5 + audit #6 N3) — one lenient decode
+  (`read_text_lenient`) behind every memory reader. `scan-secrets` and `audit`
+  now *block* on an unreadable file with the path in the message instead of
+  failing open / aborting, `validate` reports it, `resume` warns, `doctor`
+  surfaces an unreadable adapter, and `reindex` names the cause it used to
+  swallow.
+- **MF-05** (review #5 M1) — guard's liveness test accepts a verification whose
+  record is active and whose outcome is unsettled, so a `regressed` finding on
+  the files being touched reaches the verdict (and floors `READ_FIRST`) instead
+  of being filed as history.
 
 ---
 
@@ -502,11 +404,11 @@ Original review ID → master ID. Use this when reading an old review doc.
 
 | Origin | Master |
 |---|---|
-| #5 H1, H2 | MF-01, MF-02 |
-| #5 H3 | MF-03 |
-| #5 H4 + #5 M5 + #6 N3 | **MF-04** (merged) |
+| #5 H1, H2 | MF-01, MF-02 (shipped) |
+| #5 H3 | MF-03 (shipped) |
+| #5 H4 + #5 M5 + #6 N3 | **MF-04** (merged, shipped) |
 | #5 H5 | MF-11 |
-| #5 M1 | MF-05 |
+| #5 M1 | MF-05 (shipped) |
 | #5 M2 + #5 Low (`cmd_resume` non-atomic write) | **MF-09** (merged) |
 | #5 M3 | MF-15 |
 | #5 M4 | MF-08 |

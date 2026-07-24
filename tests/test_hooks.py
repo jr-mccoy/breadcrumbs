@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
+from breadcrumbs import cli as _cli  # noqa: E402  (patch target: `_hook_guard` resolves `guard` here)
 
 
 def git(root: Path, *args: str) -> None:
@@ -99,10 +100,11 @@ class HookGuardTests(unittest.TestCase):
             })
             hso = out["hookSpecificOutput"]
             self.assertEqual(hso["hookEventName"], "PreToolUse")
-            # memory informs; it never denies on its own
-            self.assertIn(hso["permissionDecision"], ("allow", "ask"))
-            self.assertNotEqual(hso["permissionDecision"], "deny")
-            self.assertIn("guard", hso["permissionDecisionReason"].lower())
+            # memory informs; it never allows or denies on its own, so whichever
+            # band this lands in, the reason reaches someone.
+            self.assertNotIn(hso.get("permissionDecision"), ("allow", "deny"))
+            reason = hso.get("permissionDecisionReason") or hso.get("additionalContext") or ""
+            self.assertIn("guard", reason.lower())
 
     def test_high_impact_deletion_asks_human(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -121,7 +123,51 @@ class HookGuardTests(unittest.TestCase):
             })
             # deletion is a high-impact class; with a memory hit this escalates to ask
             if "hookSpecificOutput" in out:
-                self.assertIn(out["hookSpecificOutput"]["permissionDecision"], ("allow", "ask"))
+                self.assertNotIn(
+                    out["hookSpecificOutput"].get("permissionDecision"), ("allow", "deny")
+                )
+
+    def test_verdict_to_permission_decision_mapping(self):
+        """All four verdicts map per review #5 H1: never `allow`, never `deny`.
+
+        `permissionDecision: "allow"` auto-approves the call and hides the reason
+        from the model — the inverse of "memory informs, never decides". PROCEED
+        stays silent, READ_FIRST informs via additionalContext with no decision,
+        PAUSE/ASK_HUMAN ask.
+        """
+        expected = {
+            "PROCEED": (None, None),
+            "READ_FIRST": (None, "additionalContext"),
+            "PAUSE": ("ask", "permissionDecisionReason"),
+            "ASK_HUMAN": ("ask", "permissionDecisionReason"),
+        }
+        self.assertEqual(set(expected), set(_cli._VERDICTS))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            payload = {
+                "cwd": str(root), "tool_name": "Bash",
+                "tool_input": {"command": "git push --force origin main"},
+            }
+            real_guard = _cli.guard
+            for verdict, (decision, reason_key) in expected.items():
+                with self.subTest(verdict=verdict):
+                    def fake_guard(*a, _v=verdict, **kw):
+                        result = real_guard(*a, **kw)
+                        result["verdict"] = _v
+                        return result
+                    _cli.guard = fake_guard
+                    try:
+                        out = run_hook("guard", payload)
+                    finally:
+                        _cli.guard = real_guard
+                    if decision is None and reason_key is None:
+                        self.assertEqual(out, {})
+                        continue
+                    hso = out["hookSpecificOutput"]
+                    self.assertEqual(hso["hookEventName"], "PreToolUse")
+                    self.assertEqual(hso.get("permissionDecision"), decision)
+                    self.assertIn(verdict, hso[reason_key])
 
 
 class HookCaptureTests(unittest.TestCase):
@@ -134,6 +180,55 @@ class HookCaptureTests(unittest.TestCase):
             self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
             # the written record must validate clean (diff-stat summarized, no bloat)
             self.assertEqual([f for f in crumb.run_validate(mem) if f["status"] == "fail"], [])
+
+    def test_repeat_firings_write_one_record_and_keep_next_action(self):
+        """`Stop` fires every turn (review #5 H2), not once per session.
+
+        Three consecutive firings against one store must leave exactly one
+        session record, and must not overwrite a Next Action a human set.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            crumb.main(["capture", "session", "--project", str(root), "--fast",
+                        "--next", "wire the parser into the CLI"])
+            before = sorted(p.name for p in (mem / "sessions").glob("*.md"))
+
+            for _ in range(3):
+                self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+
+            self.assertEqual(sorted(p.name for p in (mem / "sessions").glob("*.md")), before)
+            handoff = crumb.split_md_sections((mem / "handoff.md").read_text())
+            self.assertEqual(handoff["Next Action"].strip(), "wire the parser into the CLI")
+
+    def test_new_work_since_the_last_record_is_captured(self):
+        """The dedupe guard must not swallow a firing after real work."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
+            # a second firing with nothing changed adds nothing …
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
+            # … but a new commit is new work.
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "more work")
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 2)
+            # as is an uncommitted edit outside the store.
+            (root / "h.txt").write_text("c\n")
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 3)
+
+    def test_stop_hook_active_is_honored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            out = run_hook("capture", {"cwd": str(root), "stop_hook_active": True})
+            self.assertEqual(out, {})
+            self.assertEqual(list((mem / "sessions").glob("*.md")), [])
 
     def test_no_store_is_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
