@@ -129,6 +129,59 @@ class VerifySearchTests(unittest.TestCase):
             self.assertTrue(matches[0]["id"].startswith("ver_"))
 
 
+class VerifyGuardTests(unittest.TestCase):
+    """review #5 M1 — a verification could never influence a guard verdict.
+
+    `_item_from_record` stores a verification's *outcome* in `status`, and guard's
+    liveness test only accepted `"active"`, so every verification landed in
+    history: a `regressed` finding on the exact file being touched scored 17 and
+    still produced `PROCEED` with `matches: []`.
+    """
+
+    def _guard(self, outcome: str, **meta):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        mem = init_store(tmp.name)
+        root = Path(tmp.name)
+        res = crumb.verify(mem, root, "reconciliation ledger rounding", status=outcome,
+                           evidence=[{"type": "file", "ref": "src/payments/ledger.py"}])
+        self.assertTrue(res["ok"], res)
+        if meta:
+            p = Path(res["path"])
+            text = p.read_text(encoding="utf-8")
+            for k, v in meta.items():
+                text = text.replace(f"{k}: active", f"{k}: {v}", 1)
+            p.write_text(text, encoding="utf-8")
+        return crumb.guard(mem, root, "rewrite the reconciliation ledger rounding",
+                           files=["src/payments/ledger.py"])
+
+    def test_regressed_verification_drives_the_verdict(self):
+        result = self._guard("regressed")
+        self.assertNotEqual(result["verdict"], "PROCEED")
+        self.assertEqual([m["kind"] for m in result["matches"]], ["verification"])
+
+    def test_open_and_inconclusive_are_live_too(self):
+        for outcome in ("open", "inconclusive"):
+            with self.subTest(outcome=outcome):
+                result = self._guard(outcome)
+                self.assertNotEqual(result["verdict"], "PROCEED")
+
+    def test_settled_outcomes_stay_history(self):
+        """`fixed` / `not_applicable` are answers, not warnings — mention only."""
+        for outcome in ("fixed", "not_applicable"):
+            with self.subTest(outcome=outcome):
+                result = self._guard(outcome)
+                self.assertEqual(result["verdict"], "PROCEED")
+                self.assertEqual(result["matches"], [])
+                self.assertEqual([m["kind"] for m in result["history"]], ["verification"])
+
+    def test_superseded_verification_is_not_live(self):
+        """Liveness needs both halves: an actionable outcome AND a live record."""
+        result = self._guard("regressed", status="superseded")
+        self.assertEqual(result["verdict"], "PROCEED")
+        self.assertEqual([m["kind"] for m in result["history"]], ["verification"])
+
+
 class VerifyResumeTests(unittest.TestCase):
     def test_packet_surfaces_verifications_actionable_first(self):
         with tempfile.TemporaryDirectory() as tmp:

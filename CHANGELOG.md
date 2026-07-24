@@ -8,6 +8,35 @@ uses semantic versioning. The package version is independent of the on-disk reco
 ## [Unreleased]
 
 ### Fixed
+- **`git_dirty_files` no longer corrupts the first filename in the most common
+  dirty state (MF-03).** `git status --porcelain` emits a worktree-only
+  modification as `" M path"` — a leading space in the status columns — and
+  `_git_out`'s whole-output `strip()` ate it on the *first* line, after which
+  `line[3:]` chopped three characters off the path: one unstaged edit to
+  `tracked.py` produced `['racked.py']`. The mangled path reached every record's
+  `dirty_files` frontmatter and fed guard/search file matching. `_git_out` now
+  strips only the trailing newline.
+- **One undecodable byte no longer defeats the trust primitives (MF-04).**
+  A single invalid UTF-8 byte in committed memory used to make `crumb audit` die
+  with a path-less error and emit zero findings, silently exempt the whole file
+  from `crumb scan-secrets` (which then reported OK), leave `crumb validate`
+  reporting OK, stop projections refreshing while `crumb reindex` printed
+  "Reindex failed" with no cause, and abort `crumb resume`. Every memory reader
+  now goes through one lenient decode: the readable remainder is still processed,
+  and the offending path is named. `scan-secrets` and `audit` **block** with a new
+  `unscannable-file` finding instead of failing open, `validate` reports the
+  unreadable core file, `resume` carries it as a packet warning, `doctor` reports
+  an unreadable adapter, and `reindex` prints the actual cause.
+- **A verification can now influence a guard verdict (MF-05).** A verification
+  record carries its outcome (`open`/`regressed`/…) in the item `status` so
+  `search --status` filters on what agents care about, but guard's liveness test
+  only accepted `"active"` — so *every* verification landed in history and was
+  excluded from the verdict. A `regressed` verification on the exact file being
+  touched scored 17 (the PAUSE band is 9) and still produced `PROCEED` with
+  `matches: []`. Liveness now also accepts a verification whose record is active
+  and whose outcome is unsettled (`open`, `regressed`, `inconclusive`, mirroring
+  `active_verifications`); a specific match on one floors `READ_FIRST`. Settled
+  outcomes (`fixed`, `not_applicable`) stay history, as before.
 - **The `PreToolUse` guard hook no longer auto-approves the calls it warns about
   (MF-01).** For any non-`PROCEED` verdict other than `ASK_HUMAN` the hook emitted
   `permissionDecision: "allow"`, which in the Claude Code hook contract *approves

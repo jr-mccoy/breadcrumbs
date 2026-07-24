@@ -110,6 +110,10 @@ VALID_VERIFICATION_OUTCOME = (
     "not_applicable",
     "inconclusive",
 )
+# Outcomes that still need attention. `active_verifications` sorts these first,
+# and guard treats a verification carrying one as live (review #5 M1) — the rest
+# (fixed, not_applicable) are settled and only ever mentioned as history.
+ACTIONABLE_VERIFICATION_OUTCOMES = ("open", "regressed", "inconclusive")
 # Verification method vocabulary (how the subject was checked).
 VALID_VERIFICATION_METHOD = ("static", "runtime", "test")
 
@@ -151,6 +155,34 @@ def write_text_atomic(path: Path, text: str) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def read_text_lenient(path: Path) -> tuple[str, str | None]:
+    """Read a memory file without ever raising: returns (text, problem).
+
+    `problem` is None on a clean read; otherwise it is a human-readable reason —
+    an OS error (text is then ""), or invalid UTF-8, in which case the text is
+    still returned with the bad bytes replaced so the caller can do its job on
+    what is readable. Callers decide whether that reason is a blocking finding, a
+    warning, or noise; what none of them may do is die on it or silently skip it
+    (review #5 H4/M5, audit #6 N3 — one bad byte used to abort `audit` entirely
+    and exempt a whole file from the secret scan).
+
+    Callers are responsible for naming the offending path: `problem` is
+    path-free so it can go in a finding that carries `path` separately.
+    """
+    p = Path(path)
+    try:
+        raw = p.read_bytes()
+    except OSError as exc:
+        return "", f"unreadable file: {exc}"
+    try:
+        return raw.decode("utf-8-sig"), None
+    except UnicodeDecodeError as exc:
+        return raw.decode("utf-8-sig", errors="replace"), (
+            f"invalid UTF-8 at byte {exc.start} ({exc.reason}) — read with replacement "
+            "characters, so anything derived from it is unreliable"
+        )
 
 
 def now_iso() -> str:
@@ -812,7 +844,12 @@ def _git_out(root: Path, *args: str) -> str | None:
         return None
     if r.returncode != 0:
         return None
-    return r.stdout.strip()
+    # Trailing newline only. A whole-output strip() also ate the leading space of
+    # the *first* line, which for `status --porcelain` is a status column — a
+    # worktree-only modification is " M path", so the caller's line[3:] then
+    # chopped three characters off the path (review #5 H3). Every other caller
+    # reads single-line output or regex-matches, so both forms suit them.
+    return r.stdout.rstrip("\n")
 
 
 def git_branch(root: Path) -> str:
@@ -941,7 +978,7 @@ def load_manifest(memory_dir: Path) -> dict | None:
     if not path.is_file():
         return None
     out: dict[str, str] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in read_text_lenient(path)[0].splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or ":" not in stripped:
             continue
@@ -994,12 +1031,18 @@ def run_validate(memory_dir: Path) -> list[dict]:
         else:
             findings.append(_finding("manifest", "pass", "manifest.yml", f"schema_version {sv}"))
 
-    # 16.2 — required core files exist.
+    # 16.2 — required core files exist, and are readable. An undecodable core
+    # file used to pass silently here while aborting `audit` and `resume`
+    # elsewhere (review #5 H4) — validate is the trust primitive, so it says so.
     for name in CORE_FILES:
-        if (memory_dir / name).is_file():
-            findings.append(_finding("core-files", "pass", name, "present"))
-        else:
+        if not (memory_dir / name).is_file():
             findings.append(_finding("core-files", "fail", name, "required core file missing"))
+            continue
+        problem = read_text_lenient(memory_dir / name)[1]
+        if problem:
+            findings.append(_finding("core-files", "fail", name, problem))
+        else:
+            findings.append(_finding("core-files", "pass", name, "present"))
 
     # Load durable records once for the record-level checks (16.3–10).
     records = load_records(memory_dir)
@@ -2035,19 +2078,14 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     return {"tokens": sorted(tokens), "paths": sorted(paths)}
 
 
-def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> bool:
-    """Rebuild the generated/ projections from the canonical records (review F2).
+def try_reindex_projections(
+    memory_dir: Path, project_root: Path | None = None
+) -> tuple[bool, str | None]:
+    """`reindex_projections` plus the reason it failed, for callers that report it.
 
-    Called after every canonical mutation (remember/note/verify/mark-status/
-    capture session, and their MCP equivalents) so the static projections never
-    silently desync from
-    the records — the drift the review caught on the MCP write path. The live
-    resume packet always recomputes; this keeps the *file* a consumer might trust
-    (the committed snapshot, a human reading generated/) in step with it.
-
-    Best-effort by default: a refresh failure must never fail the write that
-    triggered it. `project_root` defaults to the store's parent (memory lives at
-    <root>/.project-memory). Returns True iff a projection was written.
+    The bool-only form swallowed the exception, so `crumb reindex` could only say
+    "Reindex failed" with no cause while projections silently stopped refreshing
+    (review #5 H4 / M5).
     """
     memory_dir = Path(memory_dir)
     project_root = Path(project_root) if project_root is not None else memory_dir.parent
@@ -2063,9 +2101,27 @@ def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> b
             gen / GUARD_PREFILTER_FILENAME,
             json.dumps(_build_guard_prefilter(memory_dir), indent=0, sort_keys=True) + "\n",
         )
-        return True
-    except Exception:  # pragma: no cover - defensive; never block a write on a projection
-        return False
+        return True, None
+    except Exception as exc:  # pragma: no cover - defensive; never block a write
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> bool:
+    """Rebuild the generated/ projections from the canonical records (review F2).
+
+    Called after every canonical mutation (remember/note/verify/mark-status/
+    capture session, and their MCP equivalents) so the static projections never
+    silently desync from
+    the records — the drift the review caught on the MCP write path. The live
+    resume packet always recomputes; this keeps the *file* a consumer might trust
+    (the committed snapshot, a human reading generated/) in step with it.
+
+    Best-effort by default: a refresh failure must never fail the write that
+    triggered it. `project_root` defaults to the store's parent (memory lives at
+    <root>/.project-memory). Returns True iff a projection was written; use
+    `try_reindex_projections` when the caller can report *why* it failed.
+    """
+    return try_reindex_projections(memory_dir, project_root)[0]
 
 
 # Back-compat alias: the note() writer and tests referenced the original name.
@@ -2914,7 +2970,9 @@ def _md_blocks(path: Path, head_predicate) -> list[dict]:
     """
     if not path.is_file():
         return []
-    text = _strip_html_comments(path.read_text(encoding="utf-8"))
+    # Lenient: a bad byte in known-traps.md must not take down guard/resume/audit
+    # with it (review #5 H4). validate 16.2 reports the file itself.
+    text = _strip_html_comments(read_text_lenient(path)[0])
     blocks: list[dict] = []
     for head, body in split_md_sections(text).items():
         if head_predicate(head):
@@ -3161,14 +3219,20 @@ def build_resume_packet(
     memory_dir = Path(memory_dir)
     manifest = load_manifest(memory_dir) or {}
 
-    current_sections = split_md_sections(
-        (memory_dir / "current.md").read_text(encoding="utf-8")
-    ) if (memory_dir / "current.md").is_file() else {}
-    handoff_text = (
-        (memory_dir / "handoff.md").read_text(encoding="utf-8")
-        if (memory_dir / "handoff.md").is_file()
-        else ""
-    )
+    # Lenient reads (review #5 H4): one bad byte in handoff.md used to abort the
+    # packet build, which took `resume`, `audit` and every reindex down with it —
+    # projections silently stopped refreshing. The problem is surfaced as a packet
+    # warning instead, naming the file.
+    unreadable: list[str] = []
+    current_text, problem = read_text_lenient(memory_dir / "current.md") \
+        if (memory_dir / "current.md").is_file() else ("", None)
+    if problem:
+        unreadable.append(f"current.md: {problem}")
+    current_sections = split_md_sections(current_text)
+    handoff_text, problem = read_text_lenient(memory_dir / "handoff.md") \
+        if (memory_dir / "handoff.md").is_file() else ("", None)
+    if problem:
+        unreadable.append(f"handoff.md: {problem}")
     handoff_sections = split_md_sections(handoff_text)
     handoff_meta = parse_handoff_meta(handoff_text)
 
@@ -3239,7 +3303,10 @@ def build_resume_packet(
             }
             for r in verifications
         ],
-        "warnings": compute_staleness(root, handoff_meta, decisions, attempts, questions, stale_days),
+        "warnings": (
+            [f"⚠ {u}" for u in unreadable]
+            + compute_staleness(root, handoff_meta, decisions, attempts, questions, stale_days)
+        ),
         "omitted": {},
         "omitted_reason": {},
     }
@@ -3279,7 +3346,7 @@ def active_verifications(memory_dir: Path) -> list[Record]:
     not_applicable/fixed (resolved), each group newest-first via active_records.
     """
     order = {o: i for i, o in enumerate(
-        ("open", "regressed", "inconclusive", "not_applicable", "fixed")
+        ACTIONABLE_VERIFICATION_OUTCOMES + ("not_applicable", "fixed")
     )}
     recs = active_records(memory_dir, "verification")
     return sorted(recs, key=lambda r: order.get(r.meta.get("outcome") or "open", 99))
@@ -3524,14 +3591,18 @@ def cmd_reindex(args: argparse.Namespace) -> int:
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
 
-    ok = reindex_projections(memory_dir, root)
+    ok, problem = try_reindex_projections(memory_dir, root)
     summary = {"reindexed": ok, "path": str(memory_dir / "generated" / "resume-packet.md")}
+    if problem:
+        summary["error"] = problem
     if args.json:
         print(json.dumps(summary, indent=2))
     elif ok:
         print(f"Reindexed projections: {summary['path']}")
     else:
-        print("Reindex failed (projections left unchanged).")
+        # Naming the cause: "Reindex failed" alone left the user with a store
+        # whose projections had silently stopped refreshing (review #5 H4/M5).
+        print(f"Reindex failed (projections left unchanged): {problem}")
     return 0 if ok else 1
 
 
@@ -3735,16 +3806,21 @@ def _item_from_record(rec: Record) -> dict:
     )
     # For verifications the interesting "status" is the *outcome* (open/fixed/…),
     # not the lifecycle status — so `search type:verification status:open` filters
-    # on what the agent actually cares about (review F1).
+    # on what the agent actually cares about (review F1). The lifecycle value is
+    # kept alongside it: guard's liveness test needs both, and folding them into
+    # one field is what silently excluded every verification from the verdict
+    # (review #5 M1).
+    lifecycle = str(rec.meta.get("status") or "active")
     status = (
         (rec.meta.get("outcome") or "open")
         if rec.rtype == "verification"
-        else (rec.meta.get("status") or "active")
+        else lifecycle
     )
     return {
         "id": rec.meta.get("id", rec.stem),
         "kind": rec.rtype,
         "status": status,
+        "lifecycle": lifecycle,
         "title": rec.meta.get("title", "") or rec.stem,
         "tags": tags,
         "files": files,
@@ -3890,6 +3966,7 @@ def _score_item(
         "id": item["id"],
         "kind": item["kind"],
         "status": item["status"],
+        "lifecycle": item.get("lifecycle", item["status"]),
         "title": item["title"],
         "score": score,
         "signals": signals,
@@ -3958,6 +4035,7 @@ def search(
             if filters and not q_specific and not q_files:
                 m = {
                     "id": it["id"], "kind": it["kind"], "status": it["status"],
+                    "lifecycle": it.get("lifecycle", it["status"]),
                     "title": it["title"], "score": float(noise_floor), "signals": ["filter"],
                     "matched_files": [], "matched_tags": [], "keyword_overlap": [],
                     "branch_mismatch": False, "reason": "matched filter",
@@ -4005,6 +4083,8 @@ def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
             floors.append("READ_FIRST")     # an active decision constrains this area
         elif m["kind"] == "trap" and (specific or "keyword" in sig):
             floors.append("READ_FIRST")
+        elif m["kind"] == "verification" and specific:
+            floors.append("READ_FIRST")     # an unsettled finding on these files/component
         elif "open-blocker" in sig:
             floors.append("READ_FIRST")
 
@@ -4099,8 +4179,19 @@ def guard(
         # A record is live when active; an open question is live too — it must be
         # able to drive the verdict (open-blocker floor). Resolved questions and
         # superseded/rejected/stale records fall through to history (mention-only).
-        live = m["status"] == "active" or (
-            m["kind"] == "question" and m["status"] == "open"
+        # A verification carries its *outcome* in `status` (never "active"), which
+        # used to drop every one of them into history — a recorded "regressed" on
+        # the exact files being touched could not raise the verdict (review #5 M1).
+        # It is live when the record itself is active and the outcome still needs
+        # attention, mirroring `active_verifications`.
+        live = (
+            m["status"] == "active"
+            or (m["kind"] == "question" and m["status"] == "open")
+            or (
+                m["kind"] == "verification"
+                and m.get("lifecycle", "active") == "active"
+                and m["status"] in ACTIONABLE_VERIFICATION_OUTCOMES
+            )
         )
         (active if live else history).append(m)
 
@@ -4109,8 +4200,10 @@ def guard(
 
     # Staleness is computed (reuse Phase 4) so a stale/wrong-branch handoff surfaces
     # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
+    # Lenient read: guard runs on the PreToolUse path and must not die on a bad
+    # byte (review #5 H4).
     handoff_text = (
-        (memory_dir / "handoff.md").read_text(encoding="utf-8")
+        read_text_lenient(memory_dir / "handoff.md")[0]
         if (memory_dir / "handoff.md").is_file()
         else ""
     )
@@ -4462,16 +4555,23 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
     Each hit is {pattern, path, line} — the pattern NAME and location, never the
     matched value. Skips private/index/generated. This must run before any
     "commit memory" recommendation (§2.6, §15).
+
+    A file that cannot be read cleanly yields a blocking `unscannable-file` hit
+    rather than being skipped: silently exempting it made the whole "secrets are
+    blocking" posture void for that file (review #5 H4). Undecodable bytes are
+    replaced and the readable remainder is still scanned, so a real secret next
+    to a bad byte is still found.
     """
     findings: list[dict] = []
     seen: set[tuple[str, str, int]] = set()
     for p in _iter_committed_memory_files(memory_dir):
         rel = str(p.relative_to(memory_dir))
-        try:
-            lines = p.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
-            continue
-        for i, line in enumerate(lines, 1):
+        text, problem = read_text_lenient(p)
+        if problem:
+            findings.append(
+                {"pattern": "unscannable-file", "path": rel, "line": 0, "detail": problem}
+            )
+        for i, line in enumerate(text.splitlines(), 1):
             for name, pat in SECRET_PATTERNS:
                 if pat.search(line):
                     key = (name, rel, i)
@@ -4511,7 +4611,9 @@ def scan_instruction_like(memory_dir: Path) -> list[dict]:
             continue
         seen.add(p)
         rel = str(p.relative_to(memory_dir))
-        text = _strip_html_comments(p.read_text(encoding="utf-8"))
+        # Lenient (review #5 H4): scan_secrets already reports the unreadable
+        # file; this pass just must not abort audit on it.
+        text = _strip_html_comments(read_text_lenient(p)[0])
         for i, line in enumerate(text.splitlines(), 1):
             for pat in INSTRUCTION_LIKE_PATTERNS:
                 m = pat.search(line)
@@ -4573,7 +4675,9 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
     # Packet over budget.
     pkt = memory_dir / "generated" / "resume-packet.md"
     if pkt.is_file():
-        toks = approx_tokens(pkt.read_text(encoding="utf-8"))
+        # Lenient throughout (review #5 H4): audit is the gate command, so an
+        # undecodable file must cost it one heuristic, not every finding it had.
+        toks = approx_tokens(read_text_lenient(pkt)[0])
         if toks > TOKEN_BUDGET_MAX:
             findings.append(
                 {
@@ -4592,7 +4696,7 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
         ap = Path(root) / name
         if not ap.is_file():
             continue
-        text = ap.read_text(encoding="utf-8", errors="replace")
+        text = read_text_lenient(ap)[0]
         dup = next((src for src, body in canon if len(body) >= 200 and body[:200] in text), None)
         if dup:
             findings.append(
@@ -4659,6 +4763,20 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
 
     # B. Secret scan — the only blocking check (§15, §17.6, Fixture 6).
     for s in scan_secrets(memory_dir):
+        if s["pattern"] == "unscannable-file":
+            # Blocking, like a secret: the scan could not certify this file, and
+            # "we didn't look" must never read as "nothing there" (review #5 H4).
+            findings.append(
+                _audit_finding(
+                    "secret",
+                    AUDIT_FAIL,
+                    s["path"],
+                    f"{s.get('detail') or 'could not be read'} — the secret scan cannot "
+                    "certify this file; fix it before committing memory",
+                    pattern=s["pattern"],
+                )
+            )
+            continue
         findings.append(
             _audit_finding(
                 "secret",
@@ -4674,8 +4792,11 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
     # A. Staleness / health (reuse Phase 4 compute_staleness): handoff age +
     # commit-distance, branch mismatch (incl. detached HEAD), aged-unresolved
     # questions/decisions, expired + low-confidence records.
+    # Lenient read (review #5 H4): audit is the gate command, so an undecodable
+    # handoff must not abort it. scan_secrets above already emits the blocking
+    # `unscannable-file` finding that names the file, so this read stays quiet.
     handoff_text = (
-        (memory_dir / "handoff.md").read_text(encoding="utf-8")
+        read_text_lenient(memory_dir / "handoff.md")[0]
         if (memory_dir / "handoff.md").is_file()
         else ""
     )
@@ -4820,12 +4941,16 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         return 1 if hits else 0
 
     if hits:
-        print(
-            f"scan-secrets: {len(hits)} possible secret(s) found — "
-            "DO NOT commit memory until resolved\n"
+        unscannable = [h for h in hits if h["pattern"] == "unscannable-file"]
+        secrets = [h for h in hits if h["pattern"] != "unscannable-file"]
+        parts = ([f"{len(secrets)} possible secret(s)"] if secrets else []) + (
+            [f"{len(unscannable)} unscannable file(s)"] if unscannable else []
         )
+        print(f"scan-secrets: {' and '.join(parts)} found — DO NOT commit memory until resolved\n")
         for h in hits:
-            print(f"  ✗ [{h['pattern']}] {h['path']}:{h['line']}")
+            where = f"{h['path']}:{h['line']}" if h["line"] else h["path"]
+            detail = f" — {h['detail']}" if h.get("detail") else ""
+            print(f"  ✗ [{h['pattern']}] {where}{detail}")
         return 1
 
     print("scan-secrets: OK — no secret-like strings in committed memory.")
@@ -5208,16 +5333,24 @@ def doctor_report(root: Path) -> dict:
 
     # Adapter blocks
     present = present_adapters(root)
-    blocked = [n for n in present if ADAPTER_BEGIN in (root / n).read_text(encoding="utf-8")]
-    bloated = [
-        n for n in blocked if len((root / n).read_text(encoding="utf-8")) > ADAPTER_BLOAT_CHARS
-    ]
+    # One lenient read each (review #5 H4): doctor used to read every adapter
+    # twice and die on the first undecodable one, taking the whole report with it.
+    adapter_text: dict[str, str] = {}
+    unreadable: list[str] = []
+    for n in present:
+        adapter_text[n], problem = read_text_lenient(root / n)
+        if problem:
+            unreadable.append(f"{n} ({problem})")
+    blocked = [n for n in present if ADAPTER_BEGIN in adapter_text[n]]
+    bloated = [n for n in blocked if len(adapter_text[n]) > ADAPTER_BLOAT_CHARS]
     add(
         "adapter",
-        bool(blocked) and not bloated,
+        bool(blocked) and not bloated and not unreadable,
         (f"signpost in {', '.join(blocked)}" if blocked else
          (f"adapter files present ({', '.join(present)}) but no signpost block" if present
-          else "no agent-guidance files detected")) + (f"; BLOATED: {', '.join(bloated)}" if bloated else ""),
+          else "no agent-guidance files detected"))
+        + (f"; BLOATED: {', '.join(bloated)}" if bloated else "")
+        + (f"; UNREADABLE: {', '.join(unreadable)}" if unreadable else ""),
     )
 
     # MCP registration + extra
