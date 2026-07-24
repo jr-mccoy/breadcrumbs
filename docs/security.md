@@ -33,7 +33,9 @@ part of the memory design, not an add-on.
   `.claude/settings.json` hooks are strictly opt-in (`init --with-mcp` /
   `--with-hooks`), fenced/merged without clobbering other entries, and fully
   reversible (`init --remove-integrations`). The `PreToolUse` guard hook surfaces
-  matched memory as context but **never denies** an action from memory alone.
+  matched memory as context but **never decides** an action from memory alone: it
+  emits no `allow` (which would auto-approve the call and skip the prompt you
+  would otherwise get) and no `deny` — only `ask`, or context.
 - **Generated projections include a source timestamp/hash/commit header** so
   staleness is visible.
 - **Indexes include the source file hash and are invalidated on mismatch.**

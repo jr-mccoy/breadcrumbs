@@ -5,9 +5,9 @@ deduplicated, and ordered as a work queue. Delete an item when it ships; add a
 `CHANGELOG.md` entry in the same commit.
 
 **State as of 2026-07-24** (`main` @ `4790c4a`, `crumb-kit` 0.1.7, record
-`schema_version` 1): **42 open items** — 7 High, 12 Medium, 23 Low — plus 4
-explicitly deferred. `CHANGELOG.md` `[Unreleased]` is empty; nothing below has
-shipped.
+`schema_version` 1): **40 open items** — 5 High, 12 Medium, 23 Low — plus 4
+explicitly deferred. Batch 1 (MF-01, MF-02) has shipped and is recorded in
+`CHANGELOG.md` `[Unreleased]`; nothing else below has.
 
 ## Sources
 
@@ -17,7 +17,7 @@ shipped.
 | Agentic review #2 (2026-06-27) | `docs/crumb-kit-agentic-review-2026-06-27.md` | Resolved except F9/F10/F11-partial → **D1–D3** |
 | System review #3 (2026-07-01) | doc deleted in `a4da5c0` | R1–R26 resolved in 0.1.6 |
 | System review #4 | folded into 0.1.6 | Resolved |
-| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | **All H/M open**, most Lows open |
+| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | H1/H2 shipped (MF-01/MF-02); rest of H/M **open**, most Lows open |
 | System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | **All open** (N1–N6) |
 
 **Verification legend** — how each item's current status was established:
@@ -30,51 +30,17 @@ shipped.
 
 ---
 
-## Batch 1 — Hook layer (highest user harm per line of fix)
+## Batch 1 — Hook layer — **SHIPPED** (`[Unreleased]`)
 
-Both bugs are in the 0.1.2 automaticity layer. They only affect users who ran
-`crumb init --with-hooks`, but for those users the wired-up product is currently
-*worse* than the un-wired one: MF-01 removes a safety prompt the harness would
-otherwise show, and MF-02 destroys the handoff field the whole tool is built
-around. Fix these before anything else.
+Both 0.1.2 automaticity-layer bugs are fixed; see `CHANGELOG.md`.
 
-### MF-01 · High · guard hook `"allow"` bypasses the permission prompt and hides the warning
-*(review #5 H1 · `code`)*
-
-`breadcrumbs/cli.py:5416` — `decision = "ask" if verdict == "ASK_HUMAN" else "allow"`.
-In the Claude Code hook contract `permissionDecision: "allow"` **auto-approves
-the tool call**, skipping the prompt the user would otherwise get, and its
-`permissionDecisionReason` is shown only to the user, never to the model. So on
-`PAUSE`/`READ_FIRST` — a recorded failed attempt on exactly this area — the hook
-*removes* a safety gate and the guard warning never reaches the agent. The exact
-inverse of "memory informs, never decides."
-
-**Fix.** `READ_FIRST` → emit `{}` (leave the normal permission flow alone), or
-surface the matched records via `additionalContext`. `PAUSE` and `ASK_HUMAN` →
-`"ask"` with the reason.
-
-**Done when.** `tests/test_hooks.py:103` — which currently *blesses* `"allow"` —
-asserts the new mapping for all four verdicts.
-
-### MF-02 · High · Stop-hook auto-capture fires every turn, floods `sessions/`, clobbers Next Action
-*(review #5 H2 · `code`)*
-
-`breadcrumbs/cli.py:5428-5444` — Claude Code's `Stop` fires every time the agent
-finishes responding, not once per session. `_hook_capture` unconditionally runs
-a full `capture session --fast` with `next_action="(session ended; see git
-log)"`. Three firings produce `…-session.md`, `-2.md`, `-3.md` (two of them
-empty), and one firing after a real `crumb capture session --next "…"` rewrites
-`handoff.md`'s Next Action to the placeholder — destroying the field §16.10
-requires and `resume` leads with. Each firing also rewrites `current.md` and
-reindexes.
-
-**Fix.** Three guards: (a) skip the write when HEAD and the dirty-file set are
-unchanged since the newest session record; (b) never overwrite a non-placeholder
-Next Action/Focus with the placeholder; (c) honor the payload's
-`stop_hook_active` flag.
-
-**Done when.** A test drives three consecutive `Stop` payloads against one store
-and asserts exactly one session record and an untouched Next Action.
+- **MF-01** (review #5 H1) — the `PreToolUse` guard hook no longer emits
+  `permissionDecision: "allow"` on a warning verdict. `PROCEED` → silent,
+  `READ_FIRST` → `additionalContext` with no decision, `PAUSE`/`ASK_HUMAN` →
+  `"ask"`. `tests/test_hooks.py` asserts the mapping for all four verdicts.
+- **MF-02** (review #5 H2) — the `Stop` capture hook dedupes on
+  HEAD + dirty-file set, treats its stand-in Next Action as placeholder text so
+  it cannot clobber a real one, and honors `stop_hook_active`.
 
 ---
 
@@ -502,7 +468,7 @@ Original review ID → master ID. Use this when reading an old review doc.
 
 | Origin | Master |
 |---|---|
-| #5 H1, H2 | MF-01, MF-02 |
+| #5 H1, H2 | MF-01, MF-02 (shipped) |
 | #5 H3 | MF-03 |
 | #5 H4 + #5 M5 + #6 N3 | **MF-04** (merged) |
 | #5 H5 | MF-11 |

@@ -2373,12 +2373,18 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
 
 # ---- capture session ------------------------------------------------------- #
 
-def _last_session_commit(memory_dir: Path) -> str | None:
+def _newest_session_record(memory_dir: Path) -> Record | None:
+    """The most recently created session record, or None if there are none."""
     recs = load_records(memory_dir, types=("session",))
     if not recs:
         return None
     recs = sorted(recs, key=lambda r: (_dt_sort_key(r.meta.get("created_at")), r.stem))
-    commit = recs[-1].meta.get("commit")
+    return recs[-1]
+
+
+def _last_session_commit(memory_dir: Path) -> str | None:
+    rec = _newest_session_record(memory_dir)
+    commit = rec.meta.get("commit") if rec is not None else None
     if commit in (None, "", NO_GIT_COMMIT):
         return None
     return commit
@@ -2626,16 +2632,26 @@ def split_md_sections(text: str) -> dict[str, str]:
     return sections
 
 
+# The Next Action the Stop-hook capture records when no human supplied one. The
+# session record states it honestly, but it is a placeholder, not a handoff —
+# `_is_placeholder` knows it so a machine capture can never overwrite a real
+# Next Action / Current Focus in handoff.md or current.md (review #5 H2).
+HOOK_SESSION_NEXT_ACTION = "(session ended; see git log)"
+
+
 def _is_placeholder(text: str) -> bool:
     """True for empty content, the `<...>` template stubs, or `_(...)_` notes.
 
     A `<...>` autolink URL (contains `://`) is real content, not a stub. The
     `_(...)_` italic form is what the capture prefill emits when there is nothing
     to report (e.g. `_(no new commits)_`) — treating it as a placeholder keeps it
-    from clobbering a previously meaningful section.
+    from clobbering a previously meaningful section. The Stop-hook's stand-in
+    Next Action is placeholder text for the same reason.
     """
     t = text.strip()
     if not t:
+        return True
+    if t == HOOK_SESSION_NEXT_ACTION:
         return True
     if t.startswith("<") and t.endswith(">") and "://" not in t:
         return True
@@ -5413,26 +5429,90 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     if verdict == "PROCEED":
         print(json.dumps({}))
         return 0
-    decision = "ask" if verdict == "ASK_HUMAN" else "allow"
+    reason = _hook_guard_reason(result)
+    if verdict == "READ_FIRST":
+        # `permissionDecision: "allow"` is not neutral — it *auto-approves* the
+        # call, skipping the prompt the user would otherwise get, and its reason
+        # is shown only to the user, never to the model. Emitting it on an
+        # advisory verdict removed a safety gate and swallowed the warning: the
+        # exact inverse of "memory informs, never decides" (review #5 H1). So
+        # READ_FIRST takes no permission decision at all — the normal flow is
+        # left untouched and the matched records reach the agent as context.
+        out = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": reason,
+            }
+        }
+        print(json.dumps(out))
+        return 0
+    # PAUSE / ASK_HUMAN — hand the call to the human with the reason attached.
     out = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": decision,  # memory informs; it never denies on its own
-            "permissionDecisionReason": _hook_guard_reason(result),
+            "permissionDecision": "ask",  # memory informs; it never allows or denies on its own
+            "permissionDecisionReason": reason,
         }
     }
     print(json.dumps(out))
     return 0
 
 
+def _work_dirty_files(files: list) -> tuple[str, ...]:
+    """The dirty-file set with the memory store's own churn removed.
+
+    Every capture rewrites the store (a new session record, handoff.md,
+    current.md, the projections), so counting those paths as "work happened"
+    would re-arm the Stop-hook dedupe on every firing.
+    """
+    return tuple(sorted(
+        f for f in files
+        if isinstance(f, str) and f.strip() and MEMORY_DIRNAME not in f.split("/")
+    ))
+
+
+def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
+    """True when nothing has moved since the newest session record (review #5 H2).
+
+    Claude Code's `Stop` fires every time the agent finishes responding — every
+    turn, not once per session — so an unconditional capture floods `sessions/`
+    with near-empty records. A firing earns a record only when the work moved:
+    a different HEAD commit, or a different set of dirty working-tree files.
+    """
+    rec = _newest_session_record(memory_dir)
+    if rec is None or rec.error:
+        return False
+    recorded = rec.meta.get("dirty_files")
+    if not isinstance(recorded, list):
+        return False
+    if (rec.meta.get("commit") or "") != git_commit(root):
+        return False
+    return _work_dirty_files(recorded) == _work_dirty_files(git_dirty_files(root))
+
+
 def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     if not memory_dir.is_dir():
         print(json.dumps({}))
         return 0
+    # A Stop firing that is itself the continuation of a Stop hook has already
+    # been captured once; re-capturing it is duplicate work at best, a loop at
+    # worst. Same for a turn that changed nothing since the last record.
+    if payload.get("stop_hook_active"):
+        print(json.dumps({}))
+        return 0
+    try:
+        redundant = _hook_capture_is_redundant(memory_dir, root)
+    except Exception:  # pragma: no cover - a dedupe failure must not block Stop
+        redundant = False
+    if redundant:
+        print(json.dumps({}))
+        return 0
     # Reuse the same --fast snapshot path the CLI uses (diff-stat already summarized).
+    # The Next Action is placeholder text (`_is_placeholder` knows it), so this
+    # machine capture cannot clobber a Next Action / Focus a human set.
     ns = argparse.Namespace(
         project=str(root), json=True, plain=False, verbose=False, fast=True,
-        next_action="(session ended; see git log)", title="session", set=None,
+        next_action=HOOK_SESSION_NEXT_ACTION, title="session", set=None,
         focus=None, agent="agent", capture_what="session",
     )
     try:
