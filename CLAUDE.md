@@ -48,10 +48,11 @@ failed release). Two steps:
    ```bash
    gh workflow run release.yml --ref main -f mode=publish
    ```
-   - `mode: dry-run` (default) — build + validate only, publishes nothing. Run
-     this first to confirm the artifact is clean.
-   - `mode: publish` — build, validate, upload to PyPI, then tag + create the
-     GitHub Release.
+   - `mode: dry-run` (default) — run the test suite, build, and validate;
+     publishes nothing. Run this first to confirm the artifact is clean.
+   - `mode: publish` — everything dry-run does, plus require the `ci` workflow to
+     have succeeded on that commit, upload to PyPI, then tag + create the GitHub
+     Release.
 
 **Rules that keep releases green:**
 
@@ -59,10 +60,17 @@ failed release). Two steps:
   both. Hand-tagging the wrong commit was the #1 cause of failed releases.
 - **A PyPI version is permanent.** You can't re-publish or overwrite a version.
   Every release needs a fresh `__version__`. The workflow checks PyPI up front
-  and stops with "already on PyPI — bump the version" if you forgot.
-- **If a publish fails,** nothing needs cleanup — PyPI is uploaded *before* the
-  tag is cut, so a failed run leaves no tag or release behind. Fix the cause and
-  re-run; `skip-existing` tolerates any file that already made it up.
+  and stops with "already released — bump the version" if you forgot (i.e. when
+  the version is on PyPI *and* tagged).
+- **If a publish fails, re-run it.** PyPI is uploaded *before* the tag is cut, so
+  a failure during the upload leaves no tag or Release behind. A failure *after*
+  the upload leaves the version on PyPI with no tag; the pre-flight treats that
+  as a recovery and lets the re-run finish the job (the upload no-ops on
+  `skip-existing`, then the tag + Release are created). Recover before merging
+  anything else — the tag lands on the commit the re-run builds. Never hand-tag.
+- **Dead tags exist.** `v0.1.5`/`v0.1.6` were tagged by hand and never published;
+  `0.1.2` is on PyPI with no tag. See `RELEASING.md` → *Tag / PyPI history*. The
+  workflow refuses to re-use a tag or to tag a version regression.
 - **Publish only from `main`.** The workflow refuses `mode: publish` on other
   branches.
 

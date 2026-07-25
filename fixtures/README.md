@@ -16,6 +16,7 @@ These are populated in later phases as the commands they exercise are built:
 | 8 — Generated packet stale | `audit` flags resume packet older than its source records | **6 (built)** |
 | 9 — Cloud fallback | plain files + generated packet support manual resume, no CLI | **6 (built)** |
 | 10 — Many sessions | resume packet stays bounded with 100 session records | **6 (built)** |
+| 11 — Multi-machine | a `distillate` store with no `sessions/` stays clean from two checkout paths | **6 (built)** |
 
 Phase 1 created this directory and tracker. Phase 4 committed **Fixture 1**
 (`fixture-01-fresh-resume/`), a hand-authored sample `.project-memory/` store that
@@ -48,11 +49,22 @@ the deterministic/heuristic split:
   current/handoff/active-decisions, and never inlines a session transcript. `audit`
   emits a sessions-growth note.
 
-All ten run in CI on every push: `validate` over all ten, `audit` over all ten (only
-Fixture 6 blocks), plus the guard / drift / instruction-like spot checks.
+**11 — Multi-machine** (`fixture-11-multi-machine/`) was added with the Batch 3
+fixes (MF-06 … MF-10). It is the store the suite had no example of: `session_tracking:
+distillate`, so `sessions/` is gitignored and **absent**, with a committed
+`generated/resume-packet.md` and `guard-prefilter.json`, an `AGENTS.md` signpost, and
+records that only reference project-relative paths. It exists to be checked out at two
+different paths at once: `tests/test_multi_machine.py` copies it to two temp paths and
+requires `validate`, `audit` and `doctor` to come up clean at both, the committed
+packet to be accepted unchanged at either path, and a reindex on either machine to
+reproduce the same bytes. Before Batch 3 every one of those failed.
+
+All eleven run in CI on every push: `validate` over all eleven, `audit` over all
+eleven (only Fixture 6 blocks), plus the guard / drift / instruction-like spot
+checks.
 
 > The fixture store is committed as canonical source. A `generated/resume-packet.md`
 > produced by running `resume` against it is a rebuildable projection and is
-> gitignored (CI regenerates it transiently) — **except** Fixtures 8 and 9, which
-> commit a hand-authored packet on purpose (a stale one to exercise drift detection,
-> an accurate one as the cloud-fallback artifact).
+> gitignored (CI regenerates it transiently) — **except** Fixtures 8, 9 and 11, which
+> commit a packet on purpose (a stale one to exercise drift detection, an accurate one
+> as the cloud-fallback artifact, and the one two machines must agree on).

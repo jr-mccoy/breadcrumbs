@@ -19,10 +19,19 @@ name: release
 #     dynamically; the CLI reads it as its source-checkout fallback. Nothing to
 #     hand-sync, so a release can never ship a mislabeled binary.
 #   * A PyPI version is PERMANENT. This workflow checks PyPI up front and fails
-#     with a plain message ("already published — bump the version") instead of a
-#     cryptic "400 File already exists" after the fact. PyPI is uploaded BEFORE
-#     the tag is cut, so a failed publish leaves no tag/release to clean up — just
-#     fix and re-run.
+#     with a plain message ("already released — bump the version") instead of a
+#     cryptic "400 File already exists" after the fact.
+#   * PyPI is uploaded BEFORE the tag is cut, so a failed publish leaves no tag or
+#     Release to clean up. If it failed *after* the upload, the version is on PyPI
+#     with no tag — and re-running is the fix, not a dead end: the pre-flight
+#     blocks on "already on PyPI" only when tag v$VERSION also exists. Published
+#     but untagged is treated as a recovery: the upload no-ops (skip-existing) and
+#     the tag + Release step finishes the job. Recover before merging anything
+#     else, since the tag is cut on the commit this run builds.
+#     (0.1.2 is the historical casualty of this: published, never tagged.)
+#   * The full test suite runs in the build job, in BOTH modes, and `publish`
+#     additionally requires the `ci` workflow to have succeeded on this commit —
+#     a green smoke test is not evidence that the suite passes.
 #
 # One-time PyPI setup (already done; here for reference):
 #   pypi.org "pending publisher": owner=jumbodaddystack, repo=breadcrumbs,
@@ -42,12 +51,15 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read           # read the `ci` workflow's conclusion for this commit
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0        # need tags for the "tag doesn't exist yet" check
+          fetch-depth: 0        # need tags for the pre-flight's tag check
 
       # A real publish must come from main. Fail loudly (before building) rather
       # than mint a release off a feature branch.
@@ -60,6 +72,39 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      # The suite the smoke test is not a substitute for (review #5 M11 / MF-12).
+      # Stdlib-only, so it needs no install step and costs ~15 seconds; it runs in
+      # dry-run too, which is what makes "dry-run first" worth doing.
+      - name: Test suite (stdlib unittest)
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+      # A publish must not ship a commit whose CI failed. The suite above covers
+      # the unit tests on 3.11; `ci` additionally runs the fixture/guard/MCP checks
+      # and the full Python matrix, and it is the only place those exist.
+      - name: CI succeeded on this commit
+        if: github.event.inputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUNS="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=1" \
+                  --jq '.workflow_runs[0] | "\(.status) \(.conclusion) \(.html_url)"' 2>/dev/null || true)"
+          if [ -z "$RUNS" ] || [ "$RUNS" = "null null null" ]; then
+            echo "::warning::No 'ci' workflow run found for $GITHUB_SHA; continuing without that gate."
+            exit 0
+          fi
+          STATUS="$(echo "$RUNS" | cut -d' ' -f1)"
+          CONCLUSION="$(echo "$RUNS" | cut -d' ' -f2)"
+          URL="$(echo "$RUNS" | cut -d' ' -f3)"
+          if [ "$STATUS" != "completed" ]; then
+            echo "::error::CI is still $STATUS on $GITHUB_SHA ($URL). Wait for it to finish, then re-run."
+            exit 1
+          fi
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI concluded '$CONCLUSION' on $GITHUB_SHA ($URL). Fix it and merge before publishing."
+            exit 1
+          fi
+          echo "CI succeeded on $GITHUB_SHA ($URL)."
 
       - name: Build wheel + sdist
         run: |
@@ -77,30 +122,41 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Built crumb-kit $VERSION"
 
-      # Pre-flight: a PyPI version is permanent. Catch a forgotten version bump
-      # here, with a clear message, instead of at the upload with a cryptic 400.
-      - name: Version is not already on PyPI
+      # Pre-flight: PyPI state + tag state, decided together.
+      #
+      # Neither fact alone settles it. "Already on PyPI" with no tag is the
+      # partial-publish state, and the ONLY way out of it is to let this run
+      # continue and cut the tag — hard-failing there made the state permanent
+      # (review #5 H5 / MF-11). The rules live in .github/scripts/release_preflight.py
+      # so they are unit-tested (tests/test_release_process.py) rather than
+      # discovered during a release.
+      - name: Release pre-flight (PyPI + tag state)
         run: |
           VERSION="${{ steps.ver.outputs.version }}"
-          CODE="$(curl -sS -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/crumb-kit/$VERSION/json" || echo 000)"
-          if [ "$CODE" = "200" ]; then
-            echo "::error::crumb-kit $VERSION is already on PyPI (a PyPI version is permanent). Bump __version__ in breadcrumbs/__init__.py + add a CHANGELOG entry, merge to main, then re-run."
-            exit 1
-          fi
-          if [ "$CODE" != "404" ]; then
-            echo "::warning::Unexpected HTTP $CODE from PyPI while checking for $VERSION; continuing (publish uses skip-existing)."
-          fi
-          echo "crumb-kit $VERSION is not on PyPI yet — good to publish."
 
-      # Pre-flight: don't collide with an existing tag (e.g. version not bumped).
-      - name: Tag v$VERSION does not already exist
-        run: |
-          VERSION="${{ steps.ver.outputs.version }}"
+          CODE="$(curl -sS -o /dev/null -w '%{http_code}' "https://pypi.org/pypi/crumb-kit/$VERSION/json" || echo 000)"
+          case "$CODE" in
+            200) ON_PYPI=yes ;;
+            404) ON_PYPI=no ;;
+            *)   ON_PYPI=unknown ;;
+          esac
+
+          LATEST="$(curl -sS "https://pypi.org/pypi/crumb-kit/json" 2>/dev/null \
+                    | python -c 'import json,sys; print(json.load(sys.stdin)["info"]["version"])' 2>/dev/null || true)"
+
           if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
-            echo "::error::Tag v$VERSION already exists. Bump __version__ to a new version before releasing."
-            exit 1
+            TAG_EXISTS=true
+          else
+            TAG_EXISTS=false
           fi
-          echo "Tag v$VERSION is free."
+
+          echo "built=$VERSION  on_pypi=$ON_PYPI  latest_on_pypi=${LATEST:-?}  tag_exists=$TAG_EXISTS"
+          python .github/scripts/release_preflight.py \
+            --version "$VERSION" \
+            --on-pypi "$ON_PYPI" \
+            --latest-on-pypi "$LATEST" \
+            --tag-exists "$TAG_EXISTS" \
+            --mode "${{ github.event.inputs.mode }}"
 
       - name: Validate metadata (twine check)
         run: python -m twine check dist/*
@@ -162,8 +218,11 @@ jobs:
           name: dist
           path: dist/
 
-      # PyPI first: it is the permanent, irreversible side. If it fails, no tag
-      # or release is created, so a re-run is clean.
+      # PyPI first: it is the permanent, irreversible side. If it fails, no tag or
+      # Release is created, so a re-run is clean. If it *succeeded* and the tag
+      # step below failed, a re-run is also the fix: the pre-flight recognises
+      # published-but-untagged as a recovery, this upload no-ops on skip-existing,
+      # and the tag step completes the release (MF-11).
       - name: Publish to PyPI (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

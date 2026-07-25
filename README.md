@@ -292,9 +292,17 @@ to store-global noise); it is likewise print-only.
 
 Mutations (`remember`, `note`, `verify`, `capture session`, `mark-status`, and
 their MCP equivalents) **reindex on write**, so `generated/resume-packet.md`
-never silently desyncs from the records. `crumb reindex` rebuilds it explicitly (e.g. after a hand-edit), and
-`crumb validate` now **fails** on a stale projection with a `Run \`crumb reindex\``
-hint — the trust primitive no longer certifies drift.
+never silently desyncs from the records. `crumb resume` and `crumb reindex` go
+through that same reindex — both projections (`resume-packet.md` and the hook's
+`guard-prefilter.json`), both written atomically — and
+`crumb validate` **fails** on a stale projection with a `Run \`crumb reindex\``
+hint, so the trust primitive no longer certifies drift.
+
+The committed packet is **machine-independent by construction**: the project path
+is recorded as `.` rather than an absolute host path, and the `inputs_hash` covers
+only what the store's own policy shares — under `session_tracking: distillate` it
+skips the gitignored `sessions/`, so a teammate's clone reproduces the author's
+stamp exactly instead of both sides reporting each other's projection stale.
 
 ### `crumb search`
 

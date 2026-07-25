@@ -26,9 +26,11 @@ htmlcov/
 # (it is a rebuildable projection; CI regenerates it transiently).
 fixtures/**/.project-memory/generated/resume-packet.md
 
-# ...EXCEPT fixtures 8 and 9, which commit a hand-authored packet on purpose:
+# ...EXCEPT fixtures 8, 9 and 11, which commit a packet on purpose:
 #   - fixture 8 ships a deliberately-stale packet (wrong inputs_hash) so `audit`
 #     drift detection has something to catch;
-#   - fixture 9 ships an accurate packet as the CLI-less cloud-fallback artifact.
+#   - fixture 9 ships an accurate packet as the CLI-less cloud-fallback artifact;
+#   - fixture 11 ships the packet two machines must agree on byte-for-byte.
 !fixtures/fixture-08-packet-stale/.project-memory/generated/resume-packet.md
 !fixtures/fixture-09-cloud-fallback/.project-memory/generated/resume-packet.md
+!fixtures/fixture-11-multi-machine/.project-memory/generated/resume-packet.md

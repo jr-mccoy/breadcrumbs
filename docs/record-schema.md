@@ -32,6 +32,7 @@ status/privacy vocabularies, and the body templates.
   generated/
     README.md
     resume-packet.md
+    guard-prefilter.json
     stale-report.md
     memory-index.md
 
@@ -79,12 +80,13 @@ status/privacy vocabularies, and the body templates.
 Recorded in `manifest.yml` so every later command stays consistent:
 
 1. **`commit_generated_projections`** (default `true`). When `true`, the generated
-   Markdown projections (`generated/resume-packet.md`, `stale-report.md`,
-   `memory-index.md`) are committed — this serves the "cloud agent with no CLI"
-   user story (a read-only agent gets a pre-built catch-up file). Each projection
-   carries a source commit/hash header so staleness is visible. Flip to `false`
-   (`init --no-commit-generated`) to keep a clean history; `init` then adds
-   `.project-memory/generated/*.md` to `.gitignore` while keeping the README.
+   projections (`generated/resume-packet.md`, `guard-prefilter.json`,
+   `stale-report.md`, `memory-index.md`) are committed — this serves the "cloud
+   agent with no CLI" user story (a read-only agent gets a pre-built catch-up
+   file). Each Markdown projection carries a source commit/hash header so
+   staleness is visible. Flip to `false` (`init --no-commit-generated`) to keep a
+   clean history; `init` then adds `.project-memory/generated/*.md` **and
+   `generated/*.json`** to `.gitignore` while keeping the README.
    **SQLite and vector indexes (`index/**`) are always ignored regardless.**
 
 2. **`session_tracking`** (`full` | `distillate`):
@@ -97,6 +99,15 @@ Recorded in `manifest.yml` so every later command stays consistent:
    defaulting to `full` non-interactively) and writes the matching `.gitignore`
    rules. Solo multi-device work favors `full`; large team repos often favor
    `distillate`.
+
+   The policy also decides what the projection freshness stamp covers: a record
+   directory the store keeps *local* is not a shared input, so under `distillate`
+   the `inputs_hash` skips `sessions/` (as it skips any record directory the
+   committed `.gitignore` excludes). Otherwise the committed packet would carry a
+   hash no clone could reproduce, and `validate` would report a permanent,
+   unfixable "stale projection" that ping-pongs between machines. The policy value
+   itself is folded into the hash, so flipping it invalidates the stamp once,
+   deliberately.
 
 `init` writes the managed `.gitignore` block; `audit`/`validate` read the manifest
 rather than guessing.
