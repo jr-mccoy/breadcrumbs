@@ -129,8 +129,13 @@ Behavior:
 - **Source header:** every packet carries `source_commit` / `inputs_hash` /
   `generated_at` (carrying the `GENERATED PROJECTION` marker so `validate` accepts
   it and `audit` can later detect drift).
-- Writes `generated/resume-packet.md` (the committed cloud-fallback artifact under
-  the default policy). `--fast` is **print-only** and never overwrites it.
+- **Project path is project-relative** (`.`) in both the rendered packet and
+  `--json`: the packet is a committed, shared artifact, so it never carries the
+  author's absolute host path.
+- Refreshes the store-global projections through the same reindex every mutation
+  uses — `generated/resume-packet.md` (the committed cloud-fallback artifact under
+  the default policy) **and** `generated/guard-prefilter.json`, both written
+  atomically. `--fast` and `--task` are **print-only** and never overwrite them.
 - Exit codes: `0` on success, `2` when no `.project-memory/` store is present.
 
 ---

@@ -249,8 +249,13 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     lines.append(f"{MEMORY_DIRNAME}/generated/*.local.md")
     lines.append(f"{MEMORY_DIRNAME}/generated/*.tmp")
     if not commit_generated:
-        # flip generated projections to local-only, but keep the explainer README
+        # flip generated projections to local-only, but keep the explainer README.
+        # *.json covers guard-prefilter.json, which is a projection like any other
+        # (rebuilt on every write) and used to escape this policy entirely — the
+        # user asked for local-only projections and got a tracked, churning one
+        # (review #5 M9).
         lines.append(f"{MEMORY_DIRNAME}/generated/*.md")
+        lines.append(f"{MEMORY_DIRNAME}/generated/*.json")
         lines.append(f"!{MEMORY_DIRNAME}/generated/README.md")
     if session_tracking == "distillate":
         # sessions stay local; only promoted decisions/attempts are committed
@@ -3183,21 +3188,108 @@ def compute_staleness(
 
 # ---- packet assembly ------------------------------------------------------- #
 
-def _inputs_hash(memory_dir: Path) -> str:
+def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
+    """Of `dirs`, the ones a *committed* `.gitignore` excludes.
+
+    Only patterns that live in a tracked-able `.gitignore` inside the worktree
+    count. A machine-local exclude (`.git/info/exclude`, `core.excludesFile`)
+    must not participate: `_inputs_hash` has to agree byte-for-byte across every
+    clone, and folding one developer's personal excludes into it would recreate
+    the very ping-pong this exists to stop (audit #6 N1).
+
+    `git check-ignore -v` prints `<source>:<line>:<pattern>\\t<path>`; run from
+    the project root, the source of a worktree `.gitignore` is a relative path,
+    while both machine-local sources are absolute. That is the whole filter.
+    """
+    if not dirs or not is_git_repo(project_root):
+        return set()
+    rels = []
+    for d in dirs:
+        try:
+            rels.append(d.resolve().relative_to(Path(project_root).resolve()).as_posix())
+        except ValueError:  # pragma: no cover - store outside the project root
+            return set()
+    try:
+        r = subprocess.run(
+            ["git", "check-ignore", "-v", "--no-index", "--stdin"],
+            cwd=str(project_root),
+            input="\n".join(rels) + "\n",
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return set()
+    if r.returncode not in (0, 1):  # 1 = nothing ignored; anything else is an error
+        return set()
+    out: set[str] = set()
+    for line in r.stdout.splitlines():
+        m = re.match(r"^(?P<source>.*):(?P<line>\d+):(?P<pattern>.*)\t(?P<path>.+)$", line)
+        if not m:
+            continue
+        source, pattern = m.group("source"), m.group("pattern")
+        # A negation (`!fixtures/**/…`) is reported as the deciding pattern too,
+        # and it means the opposite of ignored.
+        if pattern.startswith("!"):
+            continue
+        if not source or Path(source).is_absolute() or ".git/" in source.replace("\\", "/"):
+            continue
+        out.add(Path(m.group("path").strip()).name)
+    return out
+
+
+def _hashed_input_dirs(memory_dir: Path, project_root: Path, manifest: dict) -> list[str]:
+    """The record directories `_inputs_hash` may read, per the store's own policy.
+
+    A directory the store's policy keeps *local* is not a shared input: hashing it
+    stamps the committed packet with a value no clone can reproduce, and the
+    "stale projection — run `crumb reindex`" advice then ping-pongs between
+    machines forever (audit #6 N1). `session_tracking: distillate` gitignores
+    `sessions/`, and any record directory the committed `.gitignore` excludes is
+    local for the same reason.
+    """
+    skipped = set()
+    if (manifest.get("session_tracking") or "full") == "distillate":
+        skipped.add("sessions")
+    candidates = [Path(memory_dir) / d for d in DIR_TYPES if d not in skipped]
+    skipped |= _tracked_gitignored_dirs(project_root, candidates)
+    return sorted(d for d in DIR_TYPES if d not in skipped)
+
+
+def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     """Short content hash of the canonical inputs (so audit/Phase 6 can spot drift)."""
+    memory_dir = Path(memory_dir)
+    project_root = Path(project_root) if project_root is not None else memory_dir.parent
+    manifest = load_manifest(memory_dir) or {}
     h = hashlib.sha256()
+    # The policies that decide *what is shared* are part of the hash, so flipping
+    # `session_tracking` invalidates every stamp exactly once instead of silently
+    # changing the input set under a stamp that still looks current.
+    dirs = _hashed_input_dirs(memory_dir, project_root, manifest)
+    h.update(("policy:session_tracking=" + (manifest.get("session_tracking") or "full")).encode())
+    h.update(b"\0")
+    h.update(("policy:hashed_dirs=" + ",".join(dirs)).encode())
+    h.update(b"\0")
     # manifest.yml is a packet input (project name, policies), so it is part of
     # the hash — otherwise the freshness check certifies a packet built from a
     # since-edited manifest (review #3 R7).
-    paths = [Path(memory_dir) / f for f in CORE_FILES]
-    paths.append(Path(memory_dir) / "manifest.yml")
-    for d in DIR_TYPES:
-        dd = Path(memory_dir) / d
+    paths = [memory_dir / f for f in CORE_FILES]
+    paths.append(memory_dir / "manifest.yml")
+    for d in dirs:
+        dd = memory_dir / d
         if dd.is_dir():
             paths.extend(sorted(dd.glob("*.md")))
     for p in sorted(set(paths)):
         if p.is_file():
+            # Path *and* separators, not bare contents (review #5 M4): record ids
+            # are filename-derived, so a rename changes every id in the packet
+            # while leaving a contents-only hash untouched — the freshness gate
+            # then certifies a projection full of ids that no longer exist.
+            rel = p.relative_to(memory_dir).as_posix()
+            h.update(rel.encode())
+            h.update(b"\0")
             h.update(p.read_bytes())
+            h.update(b"\0")
     return h.hexdigest()[:12]
 
 
@@ -3246,7 +3338,13 @@ def build_resume_packet(
     dirty = git_dirty_files(root)
     project = {
         "name": manifest.get("project") or derive_project_name(root),
-        "path": str(root),
+        # Project-relative, never the absolute host path (audit #6 N2). The packet
+        # is a committed, shared artifact: an absolute path publishes the author's
+        # local directory layout into the repo (the disclosure `mcp_core` already
+        # forbids for error messages, issue #7), makes a byte-identical clone at
+        # another path read as stale, and churns on every reindex when two
+        # developers work at different paths.
+        "path": ".",
         "branch": git_branch(root),
         "commit": git_commit(root),
         "dirty": len(dirty),
@@ -3266,7 +3364,7 @@ def build_resume_packet(
     packet: dict = {
         "source": {
             "commit": git_commit(root),
-            "inputs_hash": _inputs_hash(memory_dir),
+            "inputs_hash": _inputs_hash(memory_dir, root),
             "generated_at": now_iso(),
         },
         "fast": bool(fast),
@@ -3566,10 +3664,20 @@ def cmd_resume(args: argparse.Namespace) -> int:
     # print-only quick view and must not overwrite that artifact with a reduced one.
     # A task-scoped packet is a focused, ephemeral view, so it likewise does not
     # overwrite the canonical store-global snapshot.
+    #
+    # The store-global write goes through the same reindex every mutation uses
+    # (review #5 M2): writing only resume-packet.md left guard-prefilter.json
+    # unrebuilt — so `crumb hook guard` stayed blind to a newly recorded trap —
+    # while the fresh `inputs_hash` stamp made `audit` report zero packet drift,
+    # hiding the staleness until the next mutation. It is also the only atomic
+    # write path (R24); the direct `write_text` here was the last torn-file risk.
     if not args.fast and not task:
-        gen = memory_dir / "generated"
-        gen.mkdir(parents=True, exist_ok=True)
-        (gen / "resume-packet.md").write_text(md, encoding="utf-8")
+        ok, problem = try_reindex_projections(memory_dir, root)
+        if not ok:
+            print(
+                f"warning: generated projections not refreshed: {problem}",
+                file=sys.stderr,
+            )
 
     if args.json:
         print(json.dumps(packet, indent=2))
@@ -5414,10 +5522,22 @@ def _packet_is_stale(memory_dir: Path, root: Path) -> bool:
         return False
 
 
+# The rendered project line: `**<name>** — \`<path>\``. Machine-dependent for any
+# packet written before the path went project-relative (audit #6 N2).
+_PACKET_PROJECT_LINE_RE = re.compile(r"^\*\*.*\*\* — `.*`\s*$")
+
+
 def _strip_packet_volatile(md: str) -> str:
-    """Drop the generated_at line so a pure-timestamp delta is not read as staleness."""
+    """Drop the lines that differ between machines rather than between contents.
+
+    `generated_at:` so a pure-timestamp delta is not read as staleness, and the
+    project line so a packet still carrying an absolute host path (written by an
+    older version) does not read as stale on every other checkout.
+    """
     return "\n".join(
-        ln for ln in md.splitlines() if "generated_at:" not in ln
+        ln
+        for ln in md.splitlines()
+        if "generated_at:" not in ln and not _PACKET_PROJECT_LINE_RE.match(ln)
     )
 
 

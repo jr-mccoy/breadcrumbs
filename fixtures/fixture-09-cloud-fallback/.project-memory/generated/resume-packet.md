@@ -1,5 +1,5 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `continuity resume`. -->
-<!-- source_commit: (cloud) | inputs_hash: 29f071192e0d | generated_at: 2026-06-19T17:05:00-05:00 -->
+<!-- source_commit: (cloud) | inputs_hash: 87a230c7e4f0 | generated_at: 2026-06-19T17:05:00-05:00 -->
 
 # Resume Packet
 

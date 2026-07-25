@@ -5,7 +5,7 @@ name: ci
 # Phase 5 wires Fixtures 2–5 (guard true positive / false-positive control /
 # stale handoff / superseded).
 # Phase 6 (MVP-trust / 19b): adds `audit` + Fixtures 6–10 and runs `validate`
-# AND `audit` across all ten fixtures (§19b.11). Only the secret fixture (6)
+# AND `audit` across all eleven fixtures (§19b.11). Only the secret fixture (6)
 # is expected to make `audit` block; every fixture must `validate` clean.
 
 on:
@@ -54,13 +54,13 @@ jobs:
           print("Fixture 1: all six questions answered; packet within budget.")
           PY
 
-      - name: validate Fixtures 2-10 (every fixture is structurally well-formed)
+      - name: validate Fixtures 2-11 (every fixture is structurally well-formed)
         run: |
           # fixture-08 ships a DELIBERATELY stale generated projection; since the
           # 0.1.4 projection-freshness check (review F3) it must FAIL validate on
           # exactly that finding (the test suite pins this too — this loop broke
           # on main the day F3 landed and nobody taught it about fixture-08).
-          for f in fixtures/fixture-0[2-9]-* fixtures/fixture-10-*; do
+          for f in fixtures/fixture-0[2-9]-* fixtures/fixture-1[01]-*; do
             name="$(basename "$f")"
             if [ "$name" = "fixture-08-packet-stale" ]; then
               if python crumb.py validate --project "$f" > /tmp/v8.out; then
@@ -91,11 +91,11 @@ jobs:
           print("Fixtures 2/3: guard true-positive fires, false-positive control stays quiet.")
           PY
 
-      - name: audit Fixtures 1-10 (only the secret fixture blocks)
+      - name: audit Fixtures 1-11 (only the secret fixture blocks)
         run: |
           # Every fixture except 6 must audit cleanly (exit 0). Fixture 6 ships a
           # committed secret, so `audit`/`scan-secrets` MUST block (non-zero).
-          for f in fixtures/fixture-0[1-9]-* fixtures/fixture-10-*; do
+          for f in fixtures/fixture-0[1-9]-* fixtures/fixture-1[01]-*; do
             name="$(basename "$f")"
             if [ "$name" = "fixture-06-secret-leak" ]; then
               if python crumb.py audit --project "$f" > /dev/null; then

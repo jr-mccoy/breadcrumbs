@@ -38,6 +38,7 @@ ALL_FIXTURES = [
     "fixture-08-packet-stale",
     "fixture-09-cloud-fallback",
     "fixture-10-many-sessions",
+    "fixture-11-multi-machine",
 ]
 
 

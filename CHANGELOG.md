@@ -58,6 +58,66 @@ uses semantic versioning. The package version is independent of the on-disk reco
   unchanged since the newest session record; the stand-in Next Action is treated
   as placeholder text, so it can never overwrite a real Next Action or Current
   Focus; and the payload's `stop_hook_active` flag is honored.
+- **`session_tracking: distillate` no longer makes `validate` fail on every clone,
+  permanently (MF-06).** The projection freshness stamp (`inputs_hash`) hashed
+  every record directory including `sessions/` — which that policy *gitignores* —
+  while generated projections are committed by default. The committed packet was
+  therefore stamped with a value no clone could reproduce, so every teammate's
+  `validate` reported `stale projection … Run crumb reindex`, and following that
+  advice restamped it with *their* session-less hash and broke the author instead:
+  it ping-ponged on every push, forever, from the one check the project asks you to
+  believe. The hash now covers only what the store's own policy shares — it skips
+  `sessions/` under `distillate`, and skips any record directory the **committed**
+  `.gitignore` excludes (machine-local excludes such as `.git/info/exclude` are
+  deliberately not consulted, since folding one developer's personal excludes into
+  a shared stamp would recreate the same bug). The policy value itself is part of
+  the hash, so flipping it invalidates stamps once, deliberately.
+- **The committed resume packet no longer embeds the author's absolute host path
+  (MF-07).** `generated/resume-packet.md` is tracked by default and served over
+  MCP, and it rendered `**project** — \`/Users/<name>/…\``: every commit published
+  the author's local directory layout, a byte-identical clone at a different path
+  read as *stale* (`crumb doctor`: ✓ fresh in one checkout, ✗ stale in the copy),
+  and two developers rewrote that line against each other on every reindex. The
+  packet now records the project path as `.` in both the rendered file and
+  `--json`. Packets written by older versions are handled too: the staleness
+  comparison ignores the project line.
+- **The freshness gate can now see a rename (MF-08).** `inputs_hash` hashed file
+  *contents* only, concatenated without separators, while record identity is
+  filename-derived — so renaming `2026-01-01-foo.md` to `2026-02-02-bar.md`
+  changed that record's id everywhere in the packet without moving the hash, and
+  `validate`/`audit` certified a projection full of ids that no longer exist.
+  Moving text between two records was invisible for the same reason. Each file's
+  store-relative path and explicit separators are now folded into the hash.
+  **This invalidates every existing `inputs_hash` stamp once:** the first
+  `validate` or `audit` after upgrading reports a one-time
+  `stale projection`/`packet-drift` finding on `generated/*.md`. Run
+  `crumb reindex` once and it clears; no record data is affected.
+- **`crumb resume` refreshes every projection, atomically (MF-09).** It wrote
+  `generated/resume-packet.md` directly with a plain (non-atomic) `write_text`
+  instead of going through the reindex every mutation uses, so
+  `generated/guard-prefilter.json` was left unrebuilt — `crumb hook guard` stayed
+  blind to a newly recorded trap — while the freshly stamped `inputs_hash` made
+  `audit` report zero packet drift, hiding the staleness until the next mutation.
+  The store-global write now calls `reindex_projections`, which writes both files
+  atomically. `--fast` and `--task` remain print-only.
+- **`guard-prefilter.json` now obeys `commit_generated_projections: false`
+  (MF-10).** The local-only branch of the managed `.gitignore` block ignored only
+  `generated/*.md`, so the JSON index — rebuilt on every write — stayed tracked and
+  churning in a repo whose owner had asked for local-only projections. The branch
+  now also ignores `generated/*.json`. The file was undocumented everywhere; it is
+  now in the bundled `generated/README.md` table, `docs/record-schema.md` and
+  `docs/cli-spec.md`. Existing stores pick the rule up by re-running `crumb init`
+  (a tracked `guard-prefilter.json` needs one `git rm --cached`).
+
+### Added
+- **Fixture 11 — multi-machine** (`fixtures/fixture-11-multi-machine/`): the
+  multi-developer store the suite had no example of, which is why all five bugs
+  above stayed green. `session_tracking: distillate` with no `sessions/` directory,
+  a committed packet and guard pre-filter, and an `AGENTS.md` signpost.
+  `tests/test_multi_machine.py` checks it out at two different paths and requires
+  `validate`, `audit` and `doctor` to come up clean at both, the committed packet
+  to be accepted unchanged at either path, and a reindex on either machine to
+  reproduce the same bytes.
 
 ## [0.1.7] — 2026-07-02
 

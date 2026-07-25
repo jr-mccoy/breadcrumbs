@@ -1,11 +1,13 @@
 """End-to-end fixture suite (Phase 6, plan §17 / §19b.11).
 
-Runs all ten evaluation fixtures through `validate` and `audit`, and pins the two
+Runs all eleven evaluation fixtures through `validate` and `audit`, and pins the
 fixtures that assert a whole-system property rather than a single check:
   - Fixture 9 (cloud fallback): plain files + a committed packet answer the six
     reorientation questions with NO CLI execution;
   - Fixture 10 (many sessions): the resume packet stays bounded and prioritises
-    current/handoff/active decisions over old session observations.
+    current/handoff/active decisions over old session observations;
+  - Fixture 11 (multi-machine): a distillate store with no `sessions/` stays clean
+    from two different checkout paths — pinned in `tests/test_multi_machine.py`.
 
 Run with:  python -m unittest discover -s tests
        or:  python tests/test_fixtures.py
@@ -38,6 +40,7 @@ ALL_FIXTURES = [
     "fixture-08-packet-stale",
     "fixture-09-cloud-fallback",
     "fixture-10-many-sessions",
+    "fixture-11-multi-machine",
 ]
 
 # fixture-06 is the one fixture whose audit is expected to BLOCK (a committed secret).

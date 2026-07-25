@@ -38,6 +38,11 @@ part of the memory design, not an add-on.
   would otherwise get) and no `deny` — only `ask`, or context.
 - **Generated projections include a source timestamp/hash/commit header** so
   staleness is visible.
+- **No host paths in shared artifacts.** `generated/resume-packet.md` is committed
+  under the default policy and served over MCP, so it records the project path as
+  `.` — publishing the author's absolute directory layout (`/Users/<name>/…`,
+  `/home/<user>/clients/<client>/…`) into a shared repo is the same disclosure the
+  MCP layer already forbids for error messages.
 - **Indexes include the source file hash and are invalidated on mismatch.**
 - **Branch mismatch warning** in `resume` and `guard`: a record whose `branch`
   differs from the current git `HEAD` branch is surfaced as possibly-stale rather

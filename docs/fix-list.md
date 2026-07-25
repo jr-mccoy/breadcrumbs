@@ -4,10 +4,10 @@
 deduplicated, and ordered as a work queue. Delete an item when it ships; add a
 `CHANGELOG.md` entry in the same commit.
 
-**State as of 2026-07-24** (`main` @ `4790c4a`, `crumb-kit` 0.1.7, record
-`schema_version` 1): **37 open items** — 3 High, 11 Medium, 23 Low — plus 4
-explicitly deferred. Batches 1 and 2 (MF-01 … MF-05) have shipped and are
-recorded in `CHANGELOG.md` `[Unreleased]`; nothing else below has.
+**State as of 2026-07-25** (`main` @ `398ddb3`, `crumb-kit` 0.1.7, record
+`schema_version` 1): **32 open items** — 1 High, 8 Medium, 23 Low — plus 4
+explicitly deferred. Batches 1–3 (MF-01 … MF-10) have shipped and are recorded in
+`CHANGELOG.md` `[Unreleased]`; nothing else below has.
 
 ## Sources
 
@@ -17,8 +17,8 @@ recorded in `CHANGELOG.md` `[Unreleased]`; nothing else below has.
 | Agentic review #2 (2026-06-27) | `docs/crumb-kit-agentic-review-2026-06-27.md` | Resolved except F9/F10/F11-partial → **D1–D3** |
 | System review #3 (2026-07-01) | doc deleted in `a4da5c0` | R1–R26 resolved in 0.1.6 |
 | System review #4 | folded into 0.1.6 | Resolved |
-| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | H1–H4 + M1/M5 shipped (MF-01 … MF-05); H5 and the rest of M **open**, most Lows open |
-| System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | N3 shipped (in MF-04); N1/N2/N4/N5/N6 **open** |
+| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | H1–H4 + M1/M2/M4/M5/M9 shipped (MF-01 … MF-10); H5 and the rest of M **open**, most Lows open |
+| System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | N1/N2/N3 shipped (in MF-06/MF-07/MF-04); N4/N5/N6 **open** |
 
 **Verification legend** — how each item's current status was established:
 
@@ -64,107 +64,42 @@ All three fail-open / corrupt-data defects are fixed; see `CHANGELOG.md`.
 
 ---
 
-## Batch 3 — Multi-machine correctness (the projection/freshness cluster)
+## Batch 3 — Multi-machine correctness — **SHIPPED** (`[Unreleased]`)
 
-Everything here is invisible on one machine and wrong the moment a second one
-exists. There is no fixture for a multi-developer store, which is why the suite
-is green. **Add one as part of this batch:** `distillate` policy, no
-`sessions/`, checked out at two different paths, must come up clean on
-`validate`, `audit` and `doctor`.
+All five projection/freshness defects are fixed, and the missing fixture exists;
+see `CHANGELOG.md`. Everything here was invisible on one machine and wrong the
+moment a second one existed, which is exactly why the suite stayed green.
 
-### MF-06 · High · `distillate` policy makes `validate` fail on every clone, permanently
-*(audit #6 N1 · `repro`)*
-
-`cli.py:3112-3127` (`_inputs_hash`) hashes every `*.md` under each of
-`DIR_TYPES` — including `sessions/`. But `session_tracking: distillate` (the
-policy `crumb init` recommends for a "lean team repo") gitignores
-`.project-memory/sessions/`, while `commit_generated_projections` defaults to
-**true**. So the committed packet is stamped with a hash no clone can reproduce.
-
-```
-$ crumb validate                       # author's machine
-validate: OK — 12 checks passed, 0 problems.
-$ mv .project-memory/sessions /tmp/    # simulate a fresh clone
-$ crumb validate
-  ✗ [freshness] generated/resume-packet.md: stale projection … Run `crumb reindex`.
-```
-
-Following the printed advice does not help: a teammate's `reindex` restamps with
-*their* session-less hash, and now the author fails. It ping-pongs on every push
-forever. `validate` is the project's stated trust primitive; here it cries drift
-that does not exist, training users to ignore the one check meant to be believed.
-
-**Fix.** Hash only what the store's own policy says is shared: skip `sessions/`
-when the manifest says `distillate` (and any record directory the active
-`.gitignore` excludes). Fold the policy value itself into the hash so a policy
-flip invalidates correctly.
-
-### MF-07 · High · The committed resume packet embeds the absolute host path
-*(audit #6 N2 · `repro`)*
-
-`cli.py:3169` (`"path": str(root)`), rendered at `:3379` into
-`generated/resume-packet.md` — a file tracked by default. Three consequences:
-
-1. **Disclosure into a shared repo** — every commit publishes the author's local
-   directory layout (`/Users/<real-name>/…`, `/home/<user>/clients/<client>/…`).
-   This is the exact leak `mcp_core.py:41-46` forbids for the error message
-   (issue #7), and it flows straight out through `memory://resume-packet`.
-2. **False staleness on any clone** — `_packet_is_stale` (`:5257-5272`) compares
-   rendered text and strips only `generated_at:`, so a byte-identical copy at a
-   different path reads as stale:
-   ```
-   crumb doctor --project t1        →  ✓ [resume_packet] fresh
-   crumb doctor --project t1_clone  →  ✗ [resume_packet] stale vs HEAD
-   ```
-3. **Churn** — two developers at different paths rewrite that line against each
-   other on every reindex.
-
-The fixtures hand-write `` `.` `` as the path, i.e. they already encode the
-correct behavior the code does not implement.
-
-**Fix.** Store the path project-relative (`"."`), or drop it from the rendered
-packet and keep the absolute path only in the `--json`/in-memory view that never
-lands in git. Add `project.path` to `_strip_packet_volatile` as belt-and-braces.
-
-### MF-08 · Medium · `_inputs_hash` is rename-blind, so the freshness gate certifies a stale projection
-*(review #5 M4 · `code`)*
-
-`cli.py:3112-3127` hashes sorted paths' *contents* only, undelimited. Record
-identity is filename-derived, so renaming `2026-01-01-foo.md` →
-`2026-02-02-bar.md` changes the record's id everywhere in the packet while the
-hash is unchanged. `detect_packet_drift` / validate §16.12b stay green on a
-projection full of ids that no longer exist.
-
-**Fix.** Fold each file's store-relative path plus separators into the hash:
-`h.update(rel.encode()); h.update(b"\0"); h.update(p.read_bytes()); h.update(b"\0")`.
-Note: invalidates existing stamps once (a one-time "stale projection" finding —
-say so in the CHANGELOG).
-
-### MF-09 · Medium · `crumb resume` writes the packet without refreshing the prefilter, non-atomically
-*(review #5 M2 + the `cmd_resume` atomic-write Low — merged · `code`)*
-
-`cli.py:3486-3489` — `cmd_resume` writes `generated/resume-packet.md` directly
-with plain `write_text` (every other projection write is atomic, the R24
-rationale) instead of calling `reindex_projections`. So the trap-token index the
-PreToolUse hook depends on is not rebuilt, **and** the freshly stamped
-`inputs_hash` makes `audit` report zero packet-drift findings — the staleness
-becomes invisible until the next mutation, and `crumb hook guard` stays blind to
-the newly recorded trap.
-
-**Fix.** Have `cmd_resume` call `reindex_projections(memory_dir, root)` for the
-store-global write path (it already writes both files atomically); keep the
-direct render only for the print-only `--fast`/`--task` views.
-
-### MF-10 · Medium · `guard-prefilter.json` escapes the `commit_generated_projections: false` policy and is undocumented
-*(review #5 M9 · `code`)*
-
-`cli.py:208-227` — the non-commit branch of `gitignore_block` only ignores
-`generated/*.md`, so the JSON projection (rebuilt on every write) stays tracked
-even when the user chose local-only projections. The file is also absent from the
-`generated/README.md` template table and from all of `docs/`.
-
-**Fix.** Add `generated/*.json` to the ignore branch (or always, like `index/`),
-and document the file in the template README.
+- **MF-06** (audit #6 N1) — `_inputs_hash` hashes only what the store's own policy
+  shares: `sessions/` is skipped under `session_tracking: distillate`, as is any
+  record directory the **committed** `.gitignore` excludes (machine-local excludes
+  like `.git/info/exclude` are deliberately not consulted — folding a personal
+  exclude into a shared stamp would recreate the bug). The policy value is part of
+  the hash, so a flip invalidates once. A clone with no `sessions/` and the
+  author's checkout now agree, ending the permanent `validate` ping-pong.
+- **MF-07** (audit #6 N2) — the packet records the project path as `.` in both the
+  rendered file and `--json`, so nothing publishes the author's absolute host path
+  into a shared repo, a byte-identical checkout at another path is no longer read
+  as stale, and two developers stop rewriting that line at each other.
+  `_strip_packet_volatile` also drops the project line, covering packets written by
+  older versions.
+- **MF-08** (review #5 M4) — each file's store-relative path plus separators are
+  folded into the hash, so a rename (which changes every derived record id) and a
+  move of text between records both invalidate the stamp. Invalidates existing
+  stamps once — called out in `CHANGELOG.md` as required.
+- **MF-09** (review #5 M2 + the `cmd_resume` atomic-write Low) — `cmd_resume`'s
+  store-global write goes through `try_reindex_projections`, so
+  `guard-prefilter.json` is rebuilt with the packet (guard no longer stays blind to
+  a newly recorded trap) and both files are written atomically. `--fast`/`--task`
+  stay print-only.
+- **MF-10** (review #5 M9) — the local-only branch of the managed `.gitignore`
+  block also ignores `generated/*.json`, and the pre-filter is documented in the
+  bundled `generated/README.md`, `docs/record-schema.md` and `docs/cli-spec.md`.
+- **Fixture 11** (`fixtures/fixture-11-multi-machine/`) — the multi-developer store
+  the batch called for: `distillate`, no `sessions/`, committed packet + pre-filter,
+  `AGENTS.md` signpost. `tests/test_multi_machine.py` checks it out at two paths and
+  requires `validate`, `audit` and `doctor` clean at both, the committed packet
+  accepted unchanged at either, and identical bytes from a reindex on either.
 
 ---
 
@@ -392,9 +327,9 @@ Mechanical and low-risk. Worth doing in one sweep.
 | ID | Item | Source | Why deferred | What would change the call |
 |---|---|---|---|---|
 | **D1** | Optional streamable-HTTP MCP transport (Codex cloud supports no stdio MCP; Claude web needs a setup-script bootstrap) | Agentic review #2 F9 | Depends on the optional MCP SDK and a real cloud harness to validate; out of scope for a stdlib-only change set | A user actually blocked on Codex cloud, or the HTTP transport becoming testable offline |
-| **D2** | Confusing dual staleness numbers: `stale_days` (a threshold) vs "handoff N days old" (an age) | Agentic review #2 F10 | Cosmetic | A field rename lands anyway during the Batch 3 work |
+| **D2** | Confusing dual staleness numbers: `stale_days` (a threshold) vs "handoff N days old" (an age) | Agentic review #2 F10 | Cosmetic | Batch 3 shipped without renaming either field; the next change that touches one anyway |
 | **D3** | FastMCP self-reports its own version (`1.28.1`), not the package version | Agentic review #2 F11 (partial) | The FastMCP version API is SDK-version-fragile and untestable in the stdlib-only suite; risking server startup wasn't worth it | The SDK exposing a stable way to set it |
-| **D4** | Split `cli.py` (5,942 lines, 183 top-level defs) into modules | Review #5 §5, audit #6 §5 | Large, and best done *as* the vehicle for other fixes rather than as a big-bang refactor | Do it while fixing MF-09/MF-15 — both are duplication bugs a split with shared utilities would have prevented. Audit #6 adds a third: **three** separate notions of "is this projection current" (`_inputs_hash`, `_packet_is_stale`, `detect_packet_drift`), each with a different blind spot |
+| **D4** | Split `cli.py` (~6,000 lines, 180+ top-level defs) into modules | Review #5 §5, audit #6 §5 | Large, and best done *as* the vehicle for other fixes rather than as a big-bang refactor | MF-09 shipped as a two-line redirect rather than the split, so the vehicle is now MF-15. The three separate notions of "is this projection current" (`_inputs_hash`, `_packet_is_stale`, `detect_packet_drift`) all still exist — Batch 3 fixed a blind spot in each rather than unifying them, which is the strongest remaining argument for the split |
 
 ---
 
@@ -409,12 +344,12 @@ Original review ID → master ID. Use this when reading an old review doc.
 | #5 H4 + #5 M5 + #6 N3 | **MF-04** (merged, shipped) |
 | #5 H5 | MF-11 |
 | #5 M1 | MF-05 (shipped) |
-| #5 M2 + #5 Low (`cmd_resume` non-atomic write) | **MF-09** (merged) |
+| #5 M2 + #5 Low (`cmd_resume` non-atomic write) | **MF-09** (merged, shipped) |
 | #5 M3 | MF-15 |
-| #5 M4 | MF-08 |
+| #5 M4 | MF-08 (shipped) |
 | #5 M6 + #5 M7 + #6 N4 | **MF-14** (merged) |
 | #5 M8 | MF-16 |
-| #5 M9 | MF-10 |
+| #5 M9 | MF-10 (shipped) |
 | #5 M10 | MF-26 |
 | #5 M11, M12, M13 | MF-12, MF-13, MF-27 |
 | #5 Lows (parser/validate) | MF-22, MF-23 |
@@ -422,6 +357,7 @@ Original review ID → master ID. Use this when reading an old review doc.
 | #5 Lows (MCP) | MF-24, MF-25, MF-28, MF-29 |
 | #5 Lows (docs/templates/hygiene) | MF-30 … MF-37 |
 | #5 Lows (CI) | MF-38 … MF-42 |
-| #6 N1, N2, N5, N6 | MF-06, MF-07, MF-17, MF-18 |
+| #6 N1, N2 | MF-06, MF-07 (shipped) |
+| #6 N5, N6 | MF-17, MF-18 |
 | Agentic #2 F9, F10, F11 | D1, D2, D3 |
 | #5 §5 + #6 §5 (structural) | D4 |
