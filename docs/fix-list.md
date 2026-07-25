@@ -5,9 +5,10 @@ deduplicated, and ordered as a work queue. Delete an item when it ships; add a
 `CHANGELOG.md` entry in the same commit.
 
 **State as of 2026-07-25** (`main` @ `398ddb3`, `crumb-kit` 0.1.7, record
-`schema_version` 1): **32 open items** — 1 High, 8 Medium, 23 Low — plus 4
-explicitly deferred. Batches 1–3 (MF-01 … MF-10) have shipped and are recorded in
-`CHANGELOG.md` `[Unreleased]`; nothing else below has.
+`schema_version` 1): **29 open items** — 0 High, 6 Medium, 23 Low — plus 4
+explicitly deferred. Batches 1–4 (MF-01 … MF-13) have shipped and are recorded in
+`CHANGELOG.md` `[Unreleased]`; nothing else below has. **No High-severity item is
+open.**
 
 ## Sources
 
@@ -17,7 +18,7 @@ explicitly deferred. Batches 1–3 (MF-01 … MF-10) have shipped and are record
 | Agentic review #2 (2026-06-27) | `docs/crumb-kit-agentic-review-2026-06-27.md` | Resolved except F9/F10/F11-partial → **D1–D3** |
 | System review #3 (2026-07-01) | doc deleted in `a4da5c0` | R1–R26 resolved in 0.1.6 |
 | System review #4 | folded into 0.1.6 | Resolved |
-| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | H1–H4 + M1/M2/M4/M5/M9 shipped (MF-01 … MF-10); H5 and the rest of M **open**, most Lows open |
+| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | All five H shipped (H1–H5), plus M1/M2/M4/M5/M9/M11/M12 (MF-01 … MF-13); M3/M6/M7/M8/M10/M13 **open**, most Lows open |
 | System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | N1/N2/N3 shipped (in MF-06/MF-07/MF-04); N4/N5/N6 **open** |
 
 **Verification legend** — how each item's current status was established:
@@ -103,57 +104,35 @@ moment a second one existed, which is exactly why the suite stayed green.
 
 ---
 
-## Batch 4 — Release process
+## Batch 4 — Release process — **SHIPPED** (`[Unreleased]`)
 
-### MF-11 · High · A partial publish is unrecoverable by re-run, and the docs describe the wrong recovery
-*(review #5 H5 · `code`)*
+All three release-process items are fixed; see `CHANGELOG.md`. The workflow now
+has tests — it had none, which is how a pre-flight that made a partial publish
+permanent, and a publish path that never ran the suite, both shipped.
 
-`.github/workflows/release.yml:82-93` and `:177-186`. The publish job uploads to
-PyPI **first**, then runs `gh release create`. If that last step fails
-(transient API/network/token error), the version is permanently on PyPI with no
-tag and no Release — and a re-run now hard-fails the build job's pre-flight
-("already on PyPI — bump the version"), so the run never reaches the
-`skip-existing` upload or the tag step. Both the workflow comment (`:23-25`, "a
-failed publish leaves no tag/release to clean up — just fix and re-run") and
-`RELEASING.md:78-81` are false for exactly this failure mode. The only escapes
-are hand-tagging (forbidden by `CLAUDE.md` and `RELEASING.md`) or burning a
-version, leaving the published one untagged forever.
-
-**Fix.** Make the pre-flight fail only when the version is on PyPI **and** tag
-`v$VERSION` exists. When on PyPI but untagged in publish mode, warn and continue
-so `skip-existing` no-ops the upload and the tag step completes the release.
-Correct both doc passages.
-
-### MF-12 · Medium · `mode: publish` never runs the test suite and doesn't gate on CI
-*(review #5 M11 · `repro` — no `unittest`/`pytest` string exists anywhere in `release.yml`)*
-
-The build job runs `twine check`, the template-identity check, and a two-command
-installed-binary smoke test (`crumb init` + `crumb validate`) — but never the
-317-test suite, and publish mode has no check that the `ci` workflow succeeded on
-`$GITHUB_SHA`. A commit that breaks the suite but survives the smoke test can be
-published permanently. `RELEASING.md:53-54` claims dry-run "builds and runs every
-check CI does" — it does not.
-
-**Fix.** Add `python -m unittest discover -s tests` to the build job (cheap,
-stdlib-only), or gate publish on the commit's CI conclusion. Correct the
-RELEASING.md sentence either way.
-
-### MF-13 · Medium · Stale remote tags contradict the "tags == published releases" invariant
-*(review #5 M12 · `repro` — GitHub tag list + PyPI JSON API, 2026-07-24)*
-
-```
-tags:  v0.1.0 v0.1.1 v0.1.3 v0.1.4 v0.1.5 v0.1.6 v0.1.7
-PyPI:  0.1.0  0.1.1  0.1.2  0.1.3  0.1.4         0.1.7
-```
-
-`v0.1.5`/`v0.1.6` exist on GitHub but never reached PyPI; `v0.1.2` is missing
-though 0.1.2 *is* published. `pipx install git+…@v0.1.6` yields a version PyPI
-never shipped — precisely the confusing artifact the rebuilt process exists to
-prevent.
-
-**Fix.** Delete the two dead tags and any attached Releases, or document them as
-dead in `CHANGELOG.md`/`RELEASING.md`. Leave the `v0.1.2` gap documented rather
-than hand-tagged.
+- **MF-11** (review #5 H5) — the pre-flight blocks on "already on PyPI" only when
+  tag `v$VERSION` also exists. Published-but-untagged is a *recovery*: the run
+  continues, the upload no-ops on `skip-existing`, and the tag + Release step
+  completes the release. The recovery is refused when the version is not the
+  newest on PyPI (so it can't re-tag an old version), and an existing tag for an
+  unpublished version (a dead tag) still stops the run. The logic moved to
+  `.github/scripts/release_preflight.py`, unit-tested in
+  `tests/test_release_process.py`. The workflow comment, `RELEASING.md` and
+  `CLAUDE.md` all describe the real recovery now.
+- **MF-12** (review #5 M11) — the build job runs `python -m unittest discover -s
+  tests` in **both** modes, and `publish` additionally requires the `ci` workflow
+  to have concluded `success` on the exact commit (covering the fixture/guard/MCP
+  checks and the Python matrix the release build doesn't repeat).
+  `RELEASING.md`'s "runs every check CI does" is corrected to what dry-run
+  actually runs.
+- **MF-13** (review #5 M12) — `RELEASING.md` gained a *Tag / PyPI history* table
+  recording the three entries that break the tags-equal-releases invariant:
+  `v0.1.5` (tag only), `v0.1.6` (tag + Release, never published), and `0.1.2`
+  (on PyPI, never tagged — left untagged deliberately rather than hand-tagged).
+  Re-verified against the GitHub tag/release lists and the PyPI JSON API on
+  2026-07-25; the audit's data was right except that `v0.1.5` has **no** attached
+  Release. Deleting the two dead tags remains the maintainer's call — the
+  workflow refuses to re-use them either way.
 
 ---
 
@@ -314,8 +293,8 @@ Mechanical and low-risk. Worth doing in one sweep.
 | **MF-35** | Low | RELEASING.md Path B says to scope a PyPI token to the `breadcrumbs` project; the project is `crumb-kit` | `RELEASING.md:91-92` | Fix the name; add a one-line warning that Path B bypasses every guardrail Path A adds | `repro` |
 | **MF-36** | Low | Two spec/behavior mismatches: record-schema says session Files Touched uses `git diff --stat` (actual since 0.1.2: `--shortstat`); cli-spec says `guard` writes an optional session note (`cmd_guard` performs no writes) | `docs/record-schema.md:308`; `docs/cli-spec.md:41` | Correct both | `repro` |
 | **MF-37** | Low | Contributor tooling undeclared: `CLAUDE.md` says `python -m pytest -q`, but pytest is declared nowhere (no dev extra, no requirements file) and CI runs `unittest discover`; no `[tool.pytest.ini_options]`, so a stray root `.pytest_cache` appears | `CLAUDE.md`, `pyproject.toml` | Add `[project.optional-dependencies] dev = ["pytest", "build", "twine"]` + `testpaths = ["tests"]`, **or** make `unittest discover` the documented canonical runner | `repro` (pytest not importable in a clean env) |
-| **MF-38** | Low | Neither workflow sets a top-level `permissions:` block, so both run with the repo-default token scope (`release.yml` sets it only on the publish job, for OIDC) | `.github/workflows/*.yml` | Add top-level `permissions: contents: read` | `repro` |
-| **MF-39** | Low | Actions pinned to mutable refs — notably `pypa/gh-action-pypi-publish@release/v1`, a moving branch on the OIDC-publishing path | `release.yml:168` and both workflows | Pin to commit SHAs, at minimum in `release.yml` | `repro` |
+| **MF-38** | Low | Neither workflow sets a **top-level** `permissions:` block, so anything without a job-level one runs with the repo-default token scope. `release.yml` now scopes both of its jobs (publish for OIDC, build for the MF-12 CI gate); `ci.yml` has none at all | `.github/workflows/*.yml` | Add top-level `permissions: contents: read` to both | `repro` (re-checked 2026-07-25, after Batch 4) |
+| **MF-39** | Low | Actions pinned to mutable refs — notably `pypa/gh-action-pypi-publish@release/v1`, a moving branch on the OIDC-publishing path | `release.yml:227` (was `:168` before Batch 4) and both workflows | Pin to commit SHAs, at minimum in `release.yml` | `repro` |
 | **MF-40** | Low | No `concurrency` group anywhere: `ci.yml` triggers on both `push` and `pull_request` (doubled runs), and two simultaneous publish dispatches can race past both pre-flights | both workflows | Add `concurrency` groups | `repro` |
 | **MF-41** | Low | The `mcp` CI job asserts 10 tools + 6 prompts but not the 8 resources the README/mcp-spec advertise | `ci.yml` (mcp job) | Assert the resource count too | `repro` |
 | **MF-42** | Low | Test matrix is 3.9/3.11/3.12 — 3.10 is exercised only in the `mcp` job, and 3.13/3.14 are current and untested despite unbounded `requires-python` | `ci.yml` (test matrix) | Add 3.10, 3.13, 3.14 | `repro` |
@@ -342,7 +321,7 @@ Original review ID → master ID. Use this when reading an old review doc.
 | #5 H1, H2 | MF-01, MF-02 (shipped) |
 | #5 H3 | MF-03 (shipped) |
 | #5 H4 + #5 M5 + #6 N3 | **MF-04** (merged, shipped) |
-| #5 H5 | MF-11 |
+| #5 H5 | MF-11 (shipped) |
 | #5 M1 | MF-05 (shipped) |
 | #5 M2 + #5 Low (`cmd_resume` non-atomic write) | **MF-09** (merged, shipped) |
 | #5 M3 | MF-15 |
@@ -351,7 +330,8 @@ Original review ID → master ID. Use this when reading an old review doc.
 | #5 M8 | MF-16 |
 | #5 M9 | MF-10 (shipped) |
 | #5 M10 | MF-26 |
-| #5 M11, M12, M13 | MF-12, MF-13, MF-27 |
+| #5 M11, M12 | MF-12, MF-13 (shipped) |
+| #5 M13 | MF-27 |
 | #5 Lows (parser/validate) | MF-22, MF-23 |
 | #5 Lows (CLI UX) | MF-19, MF-20, MF-21 |
 | #5 Lows (MCP) | MF-24, MF-25, MF-28, MF-29 |

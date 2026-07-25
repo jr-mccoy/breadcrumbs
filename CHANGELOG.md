@@ -109,6 +109,34 @@ uses semantic versioning. The package version is independent of the on-disk reco
   `docs/cli-spec.md`. Existing stores pick the rule up by re-running `crumb init`
   (a tracked `guard-prefilter.json` needs one `git rm --cached`).
 
+- **A partial publish is recoverable by re-run, and the docs say so (MF-11).**
+  The publish job uploads to PyPI first and creates the tag + GitHub Release
+  afterwards, so a failure in that last step leaves the version permanently
+  published with no tag and no Release — and the build job's pre-flight then
+  hard-failed every re-run with "already on PyPI", so the run never reached the
+  `skip-existing` upload or the tag step. The only escapes were hand-tagging
+  (forbidden) or burning a version, leaving the published one untagged forever;
+  `0.1.2` is exactly that state. The pre-flight now blocks on "already on PyPI"
+  only when tag `v$VERSION` **also** exists (a finished release). Published but
+  untagged is treated as a recovery: the run continues, the upload no-ops, and
+  the tag + Release step completes it. The recovery is refused when the version
+  is not the newest on PyPI, so it cannot be used to tag today's commit with an
+  old version. An existing tag for a version that is *not* on PyPI (a dead tag)
+  still stops the run. The rules moved into
+  `.github/scripts/release_preflight.py` with unit tests, instead of being
+  discovered during a release. The false recovery advice in `RELEASING.md`, the
+  workflow header comment and `CLAUDE.md` is corrected.
+- **`mode: publish` now runs the test suite and gates on CI (MF-12).** The
+  release workflow ran `twine check`, a bundled-template identity check and a
+  two-command installed-binary smoke test, but never the test suite, and had no
+  check that `ci` had succeeded on the commit being published — a commit that
+  broke the suite could be published permanently. The build job now runs
+  `python -m unittest discover -s tests` in **both** modes (stdlib-only, no
+  install step), and `publish` additionally requires the `ci` workflow to have
+  concluded `success` on the exact commit, so the fixture/guard/MCP checks and
+  the Python matrix are covered too. `RELEASING.md`'s claim that dry-run "runs
+  every check CI does" is corrected to what it actually runs.
+
 ### Added
 - **Fixture 11 — multi-machine** (`fixtures/fixture-11-multi-machine/`): the
   multi-developer store the suite had no example of, which is why all five bugs
@@ -118,6 +146,18 @@ uses semantic versioning. The package version is independent of the on-disk reco
   `validate`, `audit` and `doctor` to come up clean at both, the committed packet
   to be accepted unchanged at either path, and a reindex on either machine to
   reproduce the same bytes.
+
+### Changed
+- **The tag / PyPI history is documented instead of implied (MF-13).** The
+  intended invariant is one git tag per published PyPI version, and three
+  entries break it: `v0.1.5` (tag only, never published), `v0.1.6` (tag **and**
+  GitHub Release, never published), and `0.1.2` (**on PyPI, never tagged** — the
+  exact shape MF-11 made permanent). `pipx install git+…@v0.1.6` therefore yields a
+  version PyPI never shipped. `RELEASING.md` now carries a *Tag / PyPI history*
+  table recording all three and why `0.1.2` is deliberately left untagged rather
+  than hand-tagged; `CLAUDE.md` points at it. The dead tags are left in place —
+  deleting them is the maintainer's call — and the release workflow refuses to
+  re-use either one.
 
 ## [0.1.7] — 2026-07-02
 
