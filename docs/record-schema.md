@@ -33,8 +33,6 @@ status/privacy vocabularies, and the body templates.
     README.md
     resume-packet.md
     guard-prefilter.json
-    stale-report.md
-    memory-index.md
 
   private/
     README.md
@@ -80,8 +78,7 @@ status/privacy vocabularies, and the body templates.
 Recorded in `manifest.yml` so every later command stays consistent:
 
 1. **`commit_generated_projections`** (default `true`). When `true`, the generated
-   projections (`generated/resume-packet.md`, `guard-prefilter.json`,
-   `stale-report.md`, `memory-index.md`) are committed — this serves the "cloud
+   projections (`generated/resume-packet.md`, `guard-prefilter.json`) are committed — this serves the "cloud
    agent with no CLI" user story (a read-only agent gets a pre-built catch-up
    file). Each Markdown projection carries a source commit/hash header so
    staleness is visible. Flip to `false` (`init --no-commit-generated`) to keep a
@@ -322,7 +319,9 @@ verification --status open` (here `--status` filters on the outcome).
 ```
 
 The "Work Completed", "Files Touched", and "Commands / Verification" sections are
-pre-filled from git (`log`, `status`, `diff --stat` since the last session record)
+pre-filled from git (`log`, `status`, `diff --shortstat` since the last session
+record — a summary line, not a per-file listing, so a large session cannot bloat
+the record)
 and edited by the human. A `--fast` capture writes a minimal session record (git
 snapshot + "Next Action" only) and defers the narrative sections.
 

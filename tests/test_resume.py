@@ -128,7 +128,7 @@ class ResumeJsonTests(unittest.TestCase):
 class SourceHeaderTests(unittest.TestCase):
     def test_packet_carries_source_header(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = make_repo(tmp)
+            make_repo(tmp)
             crumb.main(["init", "--project", tmp, "--session-tracking", "full"])
             run(["capture", "session", "--project", tmp, "--fast", "--next", "x"])
             _, out = run(["resume", "--project", tmp])

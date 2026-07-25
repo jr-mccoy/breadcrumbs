@@ -132,11 +132,19 @@ release workflow refuses to re-use either tag in the meantime.
 
 ## Path B — Manual upload with an API token (fallback)
 
+> **Path B bypasses every guardrail Path A adds.** No pre-flight (so nothing stops
+> you re-using a version or regressing one), no test run, no CI gate, and no tag or
+> GitHub Release — the upload is permanent and you are left to tag by hand, which
+> is exactly how `0.1.2` ended up on PyPI with no tag. Use it only when Actions is
+> unavailable, and read *Tag / PyPI history* above first.
+
 If you'd rather not use Actions:
 
 1. Create a token at **https://pypi.org/manage/account/token/** (scope it to the
-   `breadcrumbs` project after the first upload; before that, an account-wide
-   token is required for the initial publish).
+   **`crumb-kit`** project — that is the PyPI project name; `breadcrumbs` is the
+   import package and the GitHub repo. Before the first upload a project-scoped
+   token cannot exist yet, so an account-wide token is required for the initial
+   publish; replace it with a project-scoped one afterwards).
 2. Build and upload from a source checkout:
 
 ```bash

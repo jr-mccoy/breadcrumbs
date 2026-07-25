@@ -83,7 +83,7 @@ class NoteTrapTests(unittest.TestCase):
 
     def test_slug_derived_when_omitted(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mem = init_store(tmp)
+            init_store(tmp)
             code, out = run(["note", "trap", "Flaky migration on rotate", "--project", tmp, "--json"])
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out)["ref"], "trap_flaky-migration-on-rotate")

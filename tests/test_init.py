@@ -38,8 +38,6 @@ EXPECTED_TREE = [
     "evidence/refs.yml",
     "generated/README.md",
     "generated/resume-packet.md",
-    "generated/stale-report.md",
-    "generated/memory-index.md",
     "private/README.md",
     "index/README.md",
 ]

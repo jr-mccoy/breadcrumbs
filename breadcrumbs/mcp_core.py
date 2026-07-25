@@ -173,7 +173,13 @@ def resource_attempt(rid: str, root: str | Path | None = None) -> str:
     return _record_text(mem, rid, kind="attempt")
 
 
-# Registry consumed by the server to bind static resources uniformly.
+# The declared resource surface. `mcp_server.build_server` binds each URI
+# explicitly rather than looping over these dicts — one visible endpoint per
+# resource, and a stable function per binding — so these are a *manifest*, not a
+# dispatch table: the thing the README and `docs/mcp-spec.md` count when they say
+# "8 resources". `tests/test_mcp.py` asserts the bound URIs equal these keys, so
+# the two cannot drift. (They previously carried a comment claiming the server
+# consumed them, which nothing did — review #5 Low.)
 STATIC_RESOURCES = {
     "memory://current": resource_current,
     "memory://handoff": resource_handoff,

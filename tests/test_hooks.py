@@ -110,7 +110,7 @@ class HookGuardTests(unittest.TestCase):
     def test_high_impact_deletion_asks_human(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
-            mem = init_store(root)
+            init_store(root)
             # a decision touching the schema makes a deletion of it high-impact
             crumb.main([
                 "remember", "decision", "--project", str(root),
@@ -145,7 +145,7 @@ class HookGuardTests(unittest.TestCase):
         self.assertEqual(set(expected), set(_cli._VERDICTS))
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
-            mem = init_store(root)
+            init_store(root)
             payload = {
                 "cwd": str(root), "tool_name": "Bash",
                 "tool_input": {"command": "git push --force origin main"},

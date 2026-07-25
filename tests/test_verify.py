@@ -254,7 +254,7 @@ class ReindexOnWriteTests(unittest.TestCase):
 
     def test_mcp_verify_and_reindex_tools(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mem = init_store(tmp)
+            init_store(tmp)
             res = mcp_core.tool_verify("subj", "open",
                                        evidence=[{"type": "file", "ref": "a.py:1"}], root=tmp)
             self.assertTrue(res["ok"])

@@ -44,6 +44,7 @@ A read-only cloud agent with no CLI can resume from these files directly:
 | `decisions/` | One record per durable decision (`YYYY-MM-DD-slug.md`). |
 | `attempts/` | One record per tried path + outcome + do-not-retry. |
 | `sessions/` | One record per work session. |
+| `verifications/` | One record per `crumb verify` — "I checked X; here is its state". |
 | `ideas/` | Potential future directions. |
 | `evidence/refs.yml` | Pointers to commits/tests/docs/issues/PRs. |
 | `generated/` | Rebuildable projections — **not source of truth**. |

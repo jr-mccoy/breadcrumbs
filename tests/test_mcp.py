@@ -412,25 +412,113 @@ class GracefulDegradationTests(unittest.TestCase):
         self.assertNotIn(str(empty.parent), msg)
 
     def test_missing_memory_dir_tools_return_structured_error(self):
-        """Every tool reports a missing store as {ok: False, error} (issue #7)."""
+        """*Every* tool reports a missing store as {ok: False, error} (issue #7).
+
+        All ten, checked by name against the documented surface: the tuple used to
+        cover eight, and the two it omitted (`tool_verify`, `tool_reindex`) are
+        exactly the ones whose envelope nothing else exercised (review #5 Low).
+        """
         empty = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
-        calls = (
-            lambda: mcp_core.tool_search("q", root=empty),
-            lambda: mcp_core.tool_guard_before_action("do x", root=empty),
-            lambda: mcp_core.tool_build_resume_packet(root=empty),
-            lambda: mcp_core.tool_validate(root=empty),
-            lambda: mcp_core.tool_scan_secrets(root=empty),
-            lambda: mcp_core.tool_record("decision", {"title": "x"}, root=empty),
-            lambda: mcp_core.tool_note("question", "x", root=empty),
-            lambda: mcp_core.tool_mark_status("dec_x", "stale", "why", root=empty),
+        calls = {
+            "tool_search": lambda: mcp_core.tool_search("q", root=empty),
+            "tool_guard_before_action":
+                lambda: mcp_core.tool_guard_before_action("do x", root=empty),
+            "tool_build_resume_packet": lambda: mcp_core.tool_build_resume_packet(root=empty),
+            "tool_validate": lambda: mcp_core.tool_validate(root=empty),
+            "tool_scan_secrets": lambda: mcp_core.tool_scan_secrets(root=empty),
+            "tool_record": lambda: mcp_core.tool_record("decision", {"title": "x"}, root=empty),
+            "tool_note": lambda: mcp_core.tool_note("question", "x", root=empty),
+            "tool_mark_status": lambda: mcp_core.tool_mark_status("dec_x", "stale", "why",
+                                                                 root=empty),
+            "tool_verify": lambda: mcp_core.tool_verify("subj", "open", root=empty),
+            "tool_reindex": lambda: mcp_core.tool_reindex(root=empty),
+        }
+        # No tool may be added without an entry here.
+        exported = {n for n in dir(mcp_core) if n.startswith("tool_")}
+        self.assertEqual(exported, set(calls), "a tool is missing from this test")
+        for name, call in calls.items():
+            with self.subTest(tool=name):
+                res = call()
+                self.assertIsInstance(res, dict)
+                self.assertFalse(res.get("ok", None), res)
+                self.assertIn("error", res)
+                self.assertNotIn(str(empty), res["error"])  # no host path leaked
+
+    def test_record_resource_rejects_an_unknown_id(self):
+        """`memory://decisions/{id}` / `attempts/{id}` reject an id they don't hold.
+
+        Lookup is by record id against the loaded records, never by path — so a
+        traversal-shaped id is just another miss, not a file read.
+        """
+        for fn, rid in (
+            (mcp_core.resource_decision, "dec_20200101_nope"),
+            (mcp_core.resource_attempt, "att_20200101_nope"),
+            (mcp_core.resource_attempt, "../../../etc/passwd"),
+        ):
+            with self.subTest(fn=fn.__name__, rid=rid):
+                with self.assertRaises(KeyError) as ctx:
+                    fn(rid, root=root_of("fixture-01-fresh-resume"))
+                self.assertIn(rid, str(ctx.exception))
+                self.assertNotIn(str(FIXTURES), str(ctx.exception))
+
+
+# --------------------------------------------------------------------------- #
+# The resource manifest and the server's explicit bindings cannot drift
+# --------------------------------------------------------------------------- #
+class ResourceRegistryTests(unittest.TestCase):
+    """`STATIC_RESOURCES`/`TEMPLATE_RESOURCES` were dead code with a comment
+    claiming the server consumed them; nothing referenced them (review #5 Low).
+
+    `build_server` binds each URI explicitly on purpose — one visible endpoint per
+    resource — so the registries are kept as the *declared* surface (the "8
+    resources" the README and mcp-spec advertise) and pinned to the bindings here.
+    Read from the AST rather than from a built server so the check runs without the
+    optional SDK installed; the CI `mcp` job asserts the live count too.
+    """
+
+    def _bound_uris(self) -> set[str]:
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(mcp_server.build_server)))
+        uris = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for dec in node.decorator_list:
+                if (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
+                        and dec.func.attr == "resource" and dec.args):
+                    arg = dec.args[0]
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        uris.add(arg.value)
+        return uris
+
+    def test_bound_uris_equal_the_registry_keys(self):
+        declared = set(mcp_core.STATIC_RESOURCES) | set(mcp_core.TEMPLATE_RESOURCES)
+        self.assertEqual(self._bound_uris(), declared)
+
+    def test_the_advertised_count_is_eight(self):
+        self.assertEqual(
+            len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 8
         )
-        for call in calls:
-            res = call()
-            self.assertIsInstance(res, dict)
-            self.assertFalse(res.get("ok", None), res)
-            self.assertIn("error", res)
-            self.assertNotIn(str(empty), res["error"])  # no host path leaked
+
+    def test_every_registry_target_is_callable(self):
+        for uri, fn in {**mcp_core.STATIC_RESOURCES, **mcp_core.TEMPLATE_RESOURCES}.items():
+            with self.subTest(uri=uri):
+                self.assertTrue(callable(fn))
+
+    def test_live_server_binds_the_same_resources(self):
+        if not mcp_server.sdk_available():
+            self.skipTest("MCP SDK not installed; the CI `mcp` job covers the live count")
+        import asyncio
+
+        server = mcp_server.build_server()
+        static = {str(r.uri) for r in asyncio.run(server.list_resources())}
+        templates = {t.uriTemplate for t in asyncio.run(server.list_resource_templates())}
+        self.assertEqual(static, set(mcp_core.STATIC_RESOURCES))
+        self.assertEqual(templates, set(mcp_core.TEMPLATE_RESOURCES))
 
 
 # --------------------------------------------------------------------------- #

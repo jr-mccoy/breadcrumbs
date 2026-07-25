@@ -6,10 +6,11 @@
 **Surface exercised:** 8 MCP tools, 6 flat resources (+ templated `decisions/{id}`, `attempts/{id}`), 6 prompts, plus the `crumb` CLI.
 **Environment:** Local Linux (Lubuntu, Python 3.14.4, PEP-668) consumed through **Claude Code** over a real stdio MCP connection; plus a static analysis of cloud portability to **Claude Code on the web** and **Codex cloud**.
 
-> This document is the second-pass agentic review, transferred into the repo
-> alongside the first (`crumb-kit-agentic-review-2026-06-26.md.txt`). See the
-> **Resolution status** section appended at the end for how each finding was
-> addressed.
+> This document is the second-pass agentic review. The first-pass review it was
+> transferred alongside (`crumb-kit-agentic-review-2026-06-26.md.txt`) has since
+> been removed: its findings all shipped in 0.1.2/0.1.3, and this repo deletes a
+> review doc once its findings are resolved. See the **Resolution status**
+> section appended at the end for how each finding here was addressed.
 
 ---
 

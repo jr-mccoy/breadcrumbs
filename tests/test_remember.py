@@ -19,7 +19,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
-from breadcrumbs import cli as _cli  # noqa: E402  (patch target for _interactive)
 
 
 def init_store(tmp: str) -> Path:

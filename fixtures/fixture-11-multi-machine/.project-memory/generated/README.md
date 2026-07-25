@@ -9,8 +9,6 @@ win and the projection should be regenerated.
 |---|---|---|
 | `resume-packet.md` | `crumb resume` / `crumb reindex` | Bounded boot summary (3k–5k tokens) for pasting into any agent. |
 | `guard-prefilter.json` | `crumb resume` / `crumb reindex` | Token + path index over known traps and do-not-retry attempts, so the `PreToolUse` hook can spot a trap-shaped command with one small read instead of walking every record. |
-| `stale-report.md` | `crumb audit` | Computed staleness / risk findings. |
-| `memory-index.md` | `crumb audit` / index build | Human-readable index of records. |
 
 Every projection here is rebuilt on every canonical write (and by `crumb reindex`),
 so none of them is ever hand-maintained.

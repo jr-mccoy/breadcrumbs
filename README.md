@@ -53,7 +53,7 @@ is [`pipx`](https://pipx.pypa.io/), which puts the CLI on your PATH in its own
 isolated environment:
 
 ```bash
-pipx install crumb-kit          # from a published artifact (future)
+pipx install crumb-kit          # from PyPI
 pipx install .                       # from a source checkout (this repo dir)
 ```
 

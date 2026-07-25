@@ -10,15 +10,29 @@ as the PyPI package **`crumb-kit`**; the import package and CLI are `breadcrumbs
   the version; `templates/project-memory/` is bundled package data.
 - `crumb.py` — source-checkout shim (`python crumb.py …`, `import crumb`); tests
   import through it.
-- `tests/` — pytest suite. `.github/workflows/` — `ci.yml` and `release.yml`.
+- `tests/` — the test suite (stdlib `unittest`). `.github/workflows/` — `ci.yml`
+  and `release.yml`.
 - `RELEASING.md` — the full release doc. This file is the short version.
 
 ## Everyday commands
 
 ```bash
-python -m pytest -q          # run the suite
-python -m build              # build wheel + sdist into dist/
-python crumb.py --version    # run the CLI from a source checkout
+python -m unittest discover -s tests   # run the suite — canonical, no install needed
+python crumb.py --version              # run the CLI from a source checkout
+```
+
+`unittest discover` is the canonical runner: it is what CI runs, and the package
+has **no runtime dependencies**, so a clean checkout can run the whole suite with
+nothing installed. Keep it that way — a test that needs a third-party import
+belongs behind a skip, like the MCP SDK tests.
+
+The rest of the bench is optional and declared in the `dev` extra
+(`pip install -e ".[dev]"`):
+
+```bash
+ruff check . && ruff format --check .   # what the `lint` CI job runs
+python -m pytest -q                     # supported alternative runner
+python -m build                         # build wheel + sdist into dist/
 ```
 
 ## The version lives in ONE place

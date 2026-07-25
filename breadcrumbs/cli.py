@@ -2638,8 +2638,8 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     else:
         print(f"Captured session: {meta['id']}")
         print(f"  file:    {path}")
-        print(f"  handoff: updated")
-        print(f"  current: updated")
+        print("  handoff: updated")
+        print("  current: updated")
         if tracking == "distillate":
             print("  note: session_tracking=distillate — sessions/ stays local (gitignored);")
             print("        promote durable items with `crumb remember` to commit them.")
