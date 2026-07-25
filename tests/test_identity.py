@@ -56,8 +56,13 @@ class MF23CanonicalityTests(unittest.TestCase):
     """
 
     def test_MF23_impossible_dates_are_not_canonical(self):
-        for stem in ("9999-99-99-slug", "2026-13-01-slug", "2026-02-30-slug",
-                     "2026-00-10-slug", "2026-01-32-slug"):
+        for stem in (
+            "9999-99-99-slug",
+            "2026-13-01-slug",
+            "2026-02-30-slug",
+            "2026-00-10-slug",
+            "2026-01-32-slug",
+        ):
             with self.subTest(stem=stem):
                 self.assertIsNone(crumb.derive_identity(stem, "decision"))
 
@@ -66,15 +71,24 @@ class MF23CanonicalityTests(unittest.TestCase):
         self.assertIsNone(crumb.derive_identity("2026-02-29-not-leap", "decision"))
 
     def test_MF23_slug_is_restricted_to_the_slugify_charset(self):
-        for stem in ("2026-01-02-My Slug!", "2026-01-02-Weird_Slug",
-                     "2026-01-02-has.dot", "2026-01-02--leading", "2026-01-02-trailing-"):
+        for stem in (
+            "2026-01-02-My Slug!",
+            "2026-01-02-Weird_Slug",
+            "2026-01-02-has.dot",
+            "2026-01-02--leading",
+            "2026-01-02-trailing-",
+        ):
             with self.subTest(stem=stem):
                 self.assertIsNone(crumb.derive_identity(stem, "decision"))
 
     def test_MF23_writer_produced_names_stay_canonical(self):
         """Whatever `slugify` + `_unique_record_path` can emit must still parse."""
-        for title in ("A Decision: with punctuation!", "  spaces  everywhere  ",
-                      "MiXeD CaSe 123", "—— nothing usable ——"):
+        for title in (
+            "A Decision: with punctuation!",
+            "  spaces  everywhere  ",
+            "MiXeD CaSe 123",
+            "—— nothing usable ——",
+        ):
             slug = crumb.slugify(title)
             with self.subTest(title=title):
                 self.assertIsNotNone(crumb.derive_identity(f"2026-01-02-{slug}", "decision"))

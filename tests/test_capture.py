@@ -60,7 +60,9 @@ class CapturePrefillTests(unittest.TestCase):
             root = make_repo(tmp)
             mem = init_store(root)
             commit(root, "g.txt", "add g.txt feature")
-            code, _ = run(["capture", "session", "--project", tmp, "--next", "wire resume", "--title", "work"])
+            code, _ = run(
+                ["capture", "session", "--project", tmp, "--next", "wire resume", "--title", "work"]
+            )
             self.assertEqual(code, 0)
             path = next((mem / "sessions").glob("*.md"))
             _, body = crumb.parse_frontmatter(path.read_text())
@@ -92,7 +94,18 @@ class CapturePrefillTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             mem = init_store(root)
-            run(["capture", "session", "--project", tmp, "--next", "do the thing", "--focus", "phase 3"])
+            run(
+                [
+                    "capture",
+                    "session",
+                    "--project",
+                    tmp,
+                    "--next",
+                    "do the thing",
+                    "--focus",
+                    "phase 3",
+                ]
+            )
             handoff = (mem / "handoff.md").read_text()
             self.assertIn("## Next Action", handoff)
             self.assertIn("do the thing", handoff)
@@ -126,7 +139,9 @@ class CaptureFastTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             mem = init_store(root)
-            code, _ = run(["capture", "session", "--project", tmp, "--fast", "--next", "tired, resume here"])
+            code, _ = run(
+                ["capture", "session", "--project", tmp, "--fast", "--next", "tired, resume here"]
+            )
             self.assertEqual(code, 0)
             path = next((mem / "sessions").glob("*.md"))
             _, body = crumb.parse_frontmatter(path.read_text())
@@ -146,7 +161,9 @@ class CaptureFastTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             init_store(root)
-            code, out = run(["capture", "session", "--project", tmp, "--fast", "--next", "x", "--json"])
+            code, out = run(
+                ["capture", "session", "--project", tmp, "--fast", "--next", "x", "--json"]
+            )
             self.assertEqual(code, 0)
             payload = json.loads(out)
             self.assertTrue(payload["fast"])

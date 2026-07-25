@@ -68,8 +68,10 @@ class PreflightRecoveryTests(unittest.TestCase):
 
     def test_MF11_recovery_also_allowed_in_dry_run(self):
         d = decide(
-            on_pypi=preflight.ON_PYPI_YES, latest_on_pypi="0.1.8",
-            tag_exists=False, mode="dry-run",
+            on_pypi=preflight.ON_PYPI_YES,
+            latest_on_pypi="0.1.8",
+            tag_exists=False,
+            mode="dry-run",
         )
         self.assertTrue(d.ok, d.reason())
         self.assertTrue(
@@ -107,19 +109,37 @@ class PreflightRecoveryTests(unittest.TestCase):
     def test_MF11_unreachable_pypi_warns_but_proceeds(self):
         d = decide(on_pypi=preflight.ON_PYPI_UNKNOWN)
         self.assertTrue(d.ok, d.reason())
-        self.assertTrue(
-            any(level == preflight.WARNING for level, _ in d.messages), d.messages
-        )
+        self.assertTrue(any(level == preflight.WARNING for level, _ in d.messages), d.messages)
 
     def test_MF11_cli_exit_codes_match_the_decision(self):
-        ok = preflight.main([
-            "--version", "0.1.8", "--on-pypi", "yes", "--latest-on-pypi", "0.1.8",
-            "--tag-exists", "false", "--mode", "publish",
-        ])
-        blocked = preflight.main([
-            "--version", "0.1.8", "--on-pypi", "yes", "--latest-on-pypi", "0.1.8",
-            "--tag-exists", "true", "--mode", "publish",
-        ])
+        ok = preflight.main(
+            [
+                "--version",
+                "0.1.8",
+                "--on-pypi",
+                "yes",
+                "--latest-on-pypi",
+                "0.1.8",
+                "--tag-exists",
+                "false",
+                "--mode",
+                "publish",
+            ]
+        )
+        blocked = preflight.main(
+            [
+                "--version",
+                "0.1.8",
+                "--on-pypi",
+                "yes",
+                "--latest-on-pypi",
+                "0.1.8",
+                "--tag-exists",
+                "true",
+                "--mode",
+                "publish",
+            ]
+        )
         self.assertEqual((ok, blocked), (0, 1))
 
 
@@ -260,7 +280,7 @@ class WorkflowHygieneTests(unittest.TestCase):
         for i, ln in enumerate(lines):
             if ln == f"{key}:":
                 out = []
-                for nxt in lines[i + 1:]:
+                for nxt in lines[i + 1 :]:
                     if nxt and not nxt.startswith((" ", "\t")):
                         break
                     out.append(nxt)
@@ -299,7 +319,8 @@ class WorkflowHygieneTests(unittest.TestCase):
                 seen += 1
                 with self.subTest(workflow=name, action=repo):
                     self.assertRegex(
-                        ref, r"^[0-9a-f]{40}$",
+                        ref,
+                        r"^[0-9a-f]{40}$",
                         f"{repo} is pinned to {ref!r}, a mutable ref",
                     )
         self.assertGreater(seen, 0, "no `uses:` steps found — did the parse break?")

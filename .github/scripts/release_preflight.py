@@ -74,76 +74,106 @@ def decide(
     published = on_pypi == ON_PYPI_YES
 
     if published and tag_exists:
-        return Decision(False, [(
-            ERROR,
-            f"crumb-kit {version} is already released: it is on PyPI and tag "
-            f"v{version} exists. A PyPI version is permanent — bump __version__ in "
-            "breadcrumbs/__init__.py, add a CHANGELOG entry, merge to main, then re-run.",
-        )])
+        return Decision(
+            False,
+            [
+                (
+                    ERROR,
+                    f"crumb-kit {version} is already released: it is on PyPI and tag "
+                    f"v{version} exists. A PyPI version is permanent — bump __version__ in "
+                    "breadcrumbs/__init__.py, add a CHANGELOG entry, merge to main, then re-run.",
+                )
+            ],
+        )
 
     if published and not tag_exists:
         # The partial-publish state: PyPI accepted the upload, the tag step did not
         # run or failed. Completing it is the whole point (MF-11) — but only for the
         # version that was just published, never as a way to re-tag an old one.
         if not latest_on_pypi:
-            return Decision(False, [(
-                ERROR,
-                f"crumb-kit {version} is on PyPI but has no tag, and the newest "
-                "published version could not be determined (PyPI unreachable?). "
-                "Refusing to guess. Re-run when PyPI is reachable.",
-            )])
+            return Decision(
+                False,
+                [
+                    (
+                        ERROR,
+                        f"crumb-kit {version} is on PyPI but has no tag, and the newest "
+                        "published version could not be determined (PyPI unreachable?). "
+                        "Refusing to guess. Re-run when PyPI is reachable.",
+                    )
+                ],
+            )
         if version != latest_on_pypi:
-            return Decision(False, [(
-                ERROR,
-                f"version regression: {version} is on PyPI but the newest published "
-                f"version is {latest_on_pypi}. This is not a partial-publish recovery, "
-                f"and tagging the current commit as v{version} would mislabel it. Bump "
-                f"__version__ past {latest_on_pypi} and re-run.",
-            )])
-        messages = [(
-            WARNING,
-            f"recovering an untagged publish: crumb-kit {version} is already on PyPI "
-            f"but tag v{version} does not exist — a previous run published and then "
-            "failed before tagging. Continuing: the upload is a no-op (skip-existing) "
-            "and the tag + GitHub Release step completes the release.",
-        )]
-        if mode == "publish":
-            messages.append((
+            return Decision(
+                False,
+                [
+                    (
+                        ERROR,
+                        f"version regression: {version} is on PyPI but the newest published "
+                        f"version is {latest_on_pypi}. This is not a partial-publish recovery, "
+                        f"and tagging the current commit as v{version} would mislabel it. Bump "
+                        f"__version__ past {latest_on_pypi} and re-run.",
+                    )
+                ],
+            )
+        messages = [
+            (
                 WARNING,
-                "check that main has not advanced since that failed run — the tag is "
-                "cut on the commit this run builds, so a newer main would tag a commit "
-                f"whose build was never uploaded as v{version}.",
-            ))
+                f"recovering an untagged publish: crumb-kit {version} is already on PyPI "
+                f"but tag v{version} does not exist — a previous run published and then "
+                "failed before tagging. Continuing: the upload is a no-op (skip-existing) "
+                "and the tag + GitHub Release step completes the release.",
+            )
+        ]
+        if mode == "publish":
+            messages.append(
+                (
+                    WARNING,
+                    "check that main has not advanced since that failed run — the tag is "
+                    "cut on the commit this run builds, so a newer main would tag a commit "
+                    f"whose build was never uploaded as v{version}.",
+                )
+            )
         else:
-            messages.append((
-                NOTICE,
-                "dry-run publishes nothing; re-run with mode=publish to complete the "
-                "release (upload no-ops, tag + Release are created).",
-            ))
+            messages.append(
+                (
+                    NOTICE,
+                    "dry-run publishes nothing; re-run with mode=publish to complete the "
+                    "release (upload no-ops, tag + Release are created).",
+                )
+            )
         return Decision(True, messages)
 
     if tag_exists:
         # Not on PyPI (or unknown) but tagged: a dead tag, like v0.1.5 / v0.1.6.
         # Re-using it would put a second, different commit behind an existing tag.
-        return Decision(False, [(
-            ERROR,
-            f"tag v{version} already exists but crumb-kit {version} is not on PyPI — a "
-            "dead tag (see RELEASING.md, \"Tag / PyPI history\"). Never re-use a tag: "
-            "bump __version__ to a new version, or delete the dead tag and its Release "
-            "first if you deliberately want to re-cut it.",
-        )])
+        return Decision(
+            False,
+            [
+                (
+                    ERROR,
+                    f"tag v{version} already exists but crumb-kit {version} is not on PyPI — a "
+                    'dead tag (see RELEASING.md, "Tag / PyPI history"). Never re-use a tag: '
+                    "bump __version__ to a new version, or delete the dead tag and its Release "
+                    "first if you deliberately want to re-cut it.",
+                )
+            ],
+        )
 
     messages = []
     if on_pypi == ON_PYPI_UNKNOWN:
-        messages.append((
-            WARNING,
-            "could not determine whether crumb-kit "
-            f"{version} is on PyPI; continuing (the upload uses skip-existing).",
-        ))
-    messages.append((
-        NOTICE,
-        f"crumb-kit {version} is not on PyPI and tag v{version} is free — good to publish.",
-    ))
+        messages.append(
+            (
+                WARNING,
+                "could not determine whether crumb-kit "
+                f"{version} is on PyPI; continuing (the upload uses skip-existing).",
+            )
+        )
+    messages.append(
+        (
+            NOTICE,
+            f"crumb-kit {version} is not on PyPI and tag v{version} is free — good to publish.",
+        )
+    )
     return Decision(True, messages)
 
 

@@ -32,6 +32,7 @@ MEMORY_DIRNAME = cli.MEMORY_DIRNAME
 # Root / memory-dir resolution
 # --------------------------------------------------------------------------- #
 
+
 def resolve(root: str | Path | None = None) -> tuple[Path, Path]:
     """Return (project_root, memory_dir). `root` defaults to cwd (same as CLI)."""
     project_root = cli.resolve_root(str(root) if root is not None else None)
@@ -102,6 +103,7 @@ def _read_singleton(memory_dir: Path, name: str) -> str:
 # --------------------------------------------------------------------------- #
 # Resources (plan §13) — read-only views over the canonical records
 # --------------------------------------------------------------------------- #
+
 
 def resource_current(root: str | Path | None = None) -> str:
     """`memory://current` — verbatim current.md (same bytes the CLI/file show)."""
@@ -198,6 +200,7 @@ TEMPLATE_RESOURCES = {
 # Tools (plan §13) — thin wrappers over the exact CLI core functions
 # --------------------------------------------------------------------------- #
 
+
 def tool_search(
     query: str,
     filters: dict | None = None,
@@ -210,8 +213,13 @@ def tool_search(
         return missing
     matches, _by_id = cli.search(mem, project_root, query, files=files, filters=filters or {})
     # `ok: True` on success so every tool shares one envelope (review #3 R25).
-    return {"ok": True, "query": query, "filters": filters or {},
-            "count": len(matches), "matches": matches}
+    return {
+        "ok": True,
+        "query": query,
+        "filters": filters or {},
+        "count": len(matches),
+        "matches": matches,
+    }
 
 
 def tool_guard_before_action(
@@ -263,8 +271,7 @@ def tool_scan_secrets(root: str | Path | None = None) -> dict:
     findings = cli.scan_secrets(mem)
     # `ok` mirrors memory_validate's semantics (safe ⇔ true); `clean` is kept for
     # compatibility with existing consumers (review #3 R25).
-    return {"ok": not findings, "clean": not findings,
-            "count": len(findings), "findings": findings}
+    return {"ok": not findings, "clean": not findings, "count": len(findings), "findings": findings}
 
 
 def tool_record(
@@ -420,8 +427,13 @@ def tool_note(
         return {"ok": False, "error": f"kind must be one of {', '.join(cli.NOTE_KINDS)}"}
     return _relativize(
         cli.note(
-            mem, project_root, kind, text or "",
-            fields=fields or {}, tags=tags or [], agent="agent",
+            mem,
+            project_root,
+            kind,
+            text or "",
+            fields=fields or {},
+            tags=tags or [],
+            agent="agent",
         ),
         mem,
     )
@@ -444,8 +456,7 @@ def tool_mark_status(
     if (missing := _memory_missing(mem)) is not None:
         return missing
     return _relativize(
-        cli.set_record_status(mem, id, status, reason, agent=agent,
-                              superseded_by=superseded_by),
+        cli.set_record_status(mem, id, status, reason, agent=agent, superseded_by=superseded_by),
         mem,
     )
 
@@ -456,6 +467,7 @@ def tool_mark_status(
 # Each returns guidance text that orients an agent toward the matching resource/
 # tool. Prompts carry no authority over current user instruction (plan §15) — they
 # describe the flow; they do not command the model.
+
 
 def _prompt(body: str) -> str:
     return body.strip() + "\n"

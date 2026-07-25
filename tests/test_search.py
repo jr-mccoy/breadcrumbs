@@ -125,8 +125,7 @@ class HumanOutputTests(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 # MF-18 — candidate ids must be unique (audit #6 N6)
 # --------------------------------------------------------------------------- #
-Q_COLUMNAR = ("Should we migrate the reporting pipeline to the new columnar "
-              "store this quarter")
+Q_COLUMNAR = "Should we migrate the reporting pipeline to the new columnar store this quarter"
 Q_ROW = "Should we migrate the reporting pipeline to the new row store next quarter"
 
 
@@ -168,9 +167,7 @@ class QuestionIdCollisionTests(unittest.TestCase):
     def test_MF18_short_question_ids_are_unchanged(self):
         """Only truncated slugs get a digest; existing short ids must not churn."""
         short = "Should the worker own its own schema migrations"
-        self.assertEqual(
-            crumb.question_item_id(short), "q:" + crumb.slugify(short)
-        )
+        self.assertEqual(crumb.question_item_id(short), "q:" + crumb.slugify(short))
         self.assertLessEqual(len(crumb.slugify(short)), crumb.QUESTION_SLUG_CHARS)
 
     def test_MF18_ids_are_deterministic(self):

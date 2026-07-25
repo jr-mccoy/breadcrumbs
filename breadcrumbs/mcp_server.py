@@ -90,6 +90,7 @@ class RecordPayload(_RecordPayloadOptional):
 
     title: str
 
+
 try:  # The SDK is optional; importing this module must never hard-fail.
     from mcp.server.fastmcp import FastMCP
 
@@ -273,8 +274,14 @@ def build_server():  # -> FastMCP
         searchable via `type:verification` (with `status:` filtering on the outcome).
         """
         return mcp_core.tool_verify(
-            subject, status, method=method, note=note, evidence=evidence,
-            tags=tags, confidence=confidence, root=_root(),
+            subject,
+            status,
+            method=method,
+            note=note,
+            evidence=evidence,
+            tags=tags,
+            confidence=confidence,
+            root=_root(),
         )
 
     @mcp.tool()

@@ -83,22 +83,29 @@ class HookGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             init_store(root)
-            out = run_hook("guard", {
-                "cwd": str(root), "tool_name": "Bash",
-                "tool_input": {"command": "ls -la"},
-            })
+            out = run_hook(
+                "guard",
+                {
+                    "cwd": str(root),
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "ls -la"},
+                },
+            )
             self.assertEqual(out, {})
 
     def test_risky_action_escalates_with_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             init_store(root)
-            crumb.main(["note", "trap", "force-push to main loses history",
-                        "--project", str(root)])
-            out = run_hook("guard", {
-                "cwd": str(root), "tool_name": "Bash",
-                "tool_input": {"command": "git push --force origin main"},
-            })
+            crumb.main(["note", "trap", "force-push to main loses history", "--project", str(root)])
+            out = run_hook(
+                "guard",
+                {
+                    "cwd": str(root),
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "git push --force origin main"},
+                },
+            )
             hso = out["hookSpecificOutput"]
             self.assertEqual(hso["hookEventName"], "PreToolUse")
             # memory informs; it never allows or denies on its own, so whichever
@@ -112,16 +119,31 @@ class HookGuardTests(unittest.TestCase):
             root = make_repo(tmp)
             init_store(root)
             # a decision touching the schema makes a deletion of it high-impact
-            crumb.main([
-                "remember", "decision", "--project", str(root),
-                "--title", "users table schema is canonical",
-                "--set", "Decision", "keep users schema", "--confidence", "low",
-                "--tags", "schema,database",
-            ])
-            out = run_hook("guard", {
-                "cwd": str(root), "tool_name": "Bash",
-                "tool_input": {"command": "drop table users schema"},
-            })
+            crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "users table schema is canonical",
+                    "--set",
+                    "Decision",
+                    "keep users schema",
+                    "--confidence",
+                    "low",
+                    "--tags",
+                    "schema,database",
+                ]
+            )
+            out = run_hook(
+                "guard",
+                {
+                    "cwd": str(root),
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "drop table users schema"},
+                },
+            )
             # deletion is a high-impact class; with a memory hit this escalates to ask
             if "hookSpecificOutput" in out:
                 self.assertNotIn(
@@ -147,16 +169,19 @@ class HookGuardTests(unittest.TestCase):
             root = make_repo(tmp)
             init_store(root)
             payload = {
-                "cwd": str(root), "tool_name": "Bash",
+                "cwd": str(root),
+                "tool_name": "Bash",
                 "tool_input": {"command": "git push --force origin main"},
             }
             real_guard = _cli.guard
             for verdict, (decision, reason_key) in expected.items():
                 with self.subTest(verdict=verdict):
+
                     def fake_guard(*a, _v=verdict, **kw):
                         result = real_guard(*a, **kw)
                         result["verdict"] = _v
                         return result
+
                     _cli.guard = fake_guard
                     try:
                         out = run_hook("guard", payload)
@@ -191,8 +216,17 @@ class HookCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             mem = init_store(root)
-            crumb.main(["capture", "session", "--project", str(root), "--fast",
-                        "--next", "wire the parser into the CLI"])
+            crumb.main(
+                [
+                    "capture",
+                    "session",
+                    "--project",
+                    str(root),
+                    "--fast",
+                    "--next",
+                    "wire the parser into the CLI",
+                ]
+            )
             before = sorted(p.name for p in (mem / "sessions").glob("*.md"))
 
             for _ in range(3):
@@ -249,8 +283,10 @@ class MF20HookUsageTests(unittest.TestCase):
             raise AssertionError("stdin was read before the event was validated")
 
         err = io.StringIO()
-        with mock.patch.object(_cli, "_read_hook_stdin", side_effect=explode), \
-                contextlib.redirect_stderr(err):
+        with (
+            mock.patch.object(_cli, "_read_hook_stdin", side_effect=explode),
+            contextlib.redirect_stderr(err),
+        ):
             code = crumb.main(["hook"])
         self.assertEqual(code, 2)
         self.assertIn("session|guard|capture", err.getvalue())
@@ -259,7 +295,9 @@ class MF20HookUsageTests(unittest.TestCase):
         """End to end: a real process with a tty-less pipe that never sends EOF."""
         proc = subprocess.Popen(
             [sys.executable, str(REPO_ROOT / "crumb.py"), "hook"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
         )
         try:

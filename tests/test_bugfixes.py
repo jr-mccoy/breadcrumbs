@@ -89,10 +89,18 @@ class WritePathRoundTripTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
-            rc = crumb.main([
-                "remember", "decision", "--project", str(root),
-                "--title", "Line1\nfoo: bar", "--confidence", "low",
-            ])
+            rc = crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "Line1\nfoo: bar",
+                    "--confidence",
+                    "low",
+                ]
+            )
             self.assertNotEqual(rc, 0)
             decisions = list((root / crumb.MEMORY_DIRNAME / "decisions").glob("*.md"))
             self.assertEqual(decisions, [])  # nothing corrupted/written
@@ -133,8 +141,9 @@ class SecretScanAndPrivacyTests(unittest.TestCase):
                 encoding="utf-8",
             )
             findings = crumb.run_validate(mem)
-            privacy_fails = [f for f in findings
-                             if f["check"] == "privacy" and f["status"] == "fail"]
+            privacy_fails = [
+                f for f in findings if f["check"] == "privacy" and f["status"] == "fail"
+            ]
             self.assertTrue(privacy_fails, "typo'd privacy value should fail validate")
 
 
@@ -153,9 +162,16 @@ class GuardSearchTests(unittest.TestCase):
 
     def _file_item(self, files):
         return {
-            "id": "x", "kind": "decision", "status": "active", "title": "t",
-            "tags": set(), "specific": set(), "branch": None, "record": None,
-            "do_not_retry": False, "files": crumb._norm_files(files),
+            "id": "x",
+            "kind": "decision",
+            "status": "active",
+            "title": "t",
+            "tags": set(),
+            "specific": set(),
+            "branch": None,
+            "record": None,
+            "do_not_retry": False,
+            "files": crumb._norm_files(files),
         }
 
     def test_M10_distinct_files_same_basename_count_separately(self):
@@ -187,13 +203,16 @@ class GuardSearchTests(unittest.TestCase):
                 encoding="utf-8",
             )
             result = crumb.guard(
-                mem, root,
+                mem,
+                root,
                 "rewrite the payments reconciliation ledger",
                 files=["src/payments/ledger.py"],
             )
             ids = [m["id"] for m in result["matches"]]
-            self.assertTrue(any(i.startswith("q:") for i in ids),
-                            f"open question should reach verdict matches; got {ids}")
+            self.assertTrue(
+                any(i.startswith("q:") for i in ids),
+                f"open question should reach verdict matches; got {ids}",
+            )
             self.assertNotEqual(result["verdict"], "PROCEED")
 
 
@@ -205,8 +224,13 @@ import subprocess  # noqa: E402
 
 class CaptureHandoffTests(unittest.TestCase):
     def _git(self, root, *args):
-        subprocess.run(["git", *args], cwd=root, check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(
+            ["git", *args],
+            cwd=root,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
     def test_M3_renamed_file_records_destination_path(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -240,10 +264,8 @@ class CaptureHandoffTests(unittest.TestCase):
             (root / "tracked.py").write_text("a\nb\n")
             (root / "second.py").write_text("a\nb\n")
             # the porcelain line the bug depended on, as git emits it
-            self.assertTrue(
-                crumb._git_out(root, "status", "--porcelain").startswith(" M "))
-            self.assertEqual(sorted(crumb.git_dirty_files(root)),
-                             ["second.py", "tracked.py"])
+            self.assertTrue(crumb._git_out(root, "status", "--porcelain").startswith(" M "))
+            self.assertEqual(sorted(crumb.git_dirty_files(root)), ["second.py", "tracked.py"])
 
     def test_MF03_single_line_git_output_has_no_trailing_newline(self):
         """Relaxing the strip() must not leave `\\n` on the single-line callers."""
@@ -300,12 +322,24 @@ class ResumePacketTests(unittest.TestCase):
     def _packet(self, **over):
         p = {
             "source": {"commit": "abc", "inputs_hash": "h", "generated_at": "t"},
-            "project": {"name": "p", "path": "/p", "branch": "main",
-                        "commit": "abc", "dirty_state": "clean"},
-            "current_focus": "", "next_action": "", "fast": False,
-            "active_decisions": [], "failed_attempts": [], "known_traps": [],
-            "open_questions": [], "likely_files": [], "verification": [],
-            "warnings": [], "omitted": {},
+            "project": {
+                "name": "p",
+                "path": "/p",
+                "branch": "main",
+                "commit": "abc",
+                "dirty_state": "clean",
+            },
+            "current_focus": "",
+            "next_action": "",
+            "fast": False,
+            "active_decisions": [],
+            "failed_attempts": [],
+            "known_traps": [],
+            "open_questions": [],
+            "likely_files": [],
+            "verification": [],
+            "warnings": [],
+            "omitted": {},
         }
         p.update(over)
         return p
@@ -342,8 +376,9 @@ class InitMainRobustnessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with mock.patch.object(_cli, "TEMPLATE_DIR", Path("/no/such/templates")):
-                rc = crumb.main(["init", "--project", str(root),
-                                 "--session-tracking", "full"])  # must not raise
+                rc = crumb.main(
+                    ["init", "--project", str(root), "--session-tracking", "full"]
+                )  # must not raise
             self.assertNotEqual(rc, 0)
 
     def test_H3_force_preserves_store_when_rebuild_fails(self):
@@ -355,8 +390,9 @@ class InitMainRobustnessTests(unittest.TestCase):
             precious.write_text("important\n", encoding="utf-8")
             # Template unavailable: a --force rebuild must NOT destroy the store.
             with mock.patch.object(_cli, "TEMPLATE_DIR", Path("/no/such/templates")):
-                rc = crumb.main(["init", "--project", str(root), "--force",
-                                 "--session-tracking", "full"])
+                rc = crumb.main(
+                    ["init", "--project", str(root), "--force", "--session-tracking", "full"]
+                )
             self.assertNotEqual(rc, 0)
             self.assertTrue(precious.exists(), "existing store must survive a failed rebuild")
             self.assertEqual(precious.read_text(), "important\n")
@@ -403,9 +439,7 @@ class CleanupBatchTests(unittest.TestCase):
 
     def test_8_2_audit_render_has_no_trailing_newline(self):
         self.assertFalse(crumb.render_audit_human([]).endswith("\n"))
-        findings = [
-            {"severity": crumb.AUDIT_FAIL, "check": "secret", "path": "x", "message": "m"}
-        ]
+        findings = [{"severity": crumb.AUDIT_FAIL, "check": "secret", "path": "x", "message": "m"}]
         self.assertFalse(crumb.render_audit_human(findings).endswith("\n"))
 
     def test_8_3_render_frontmatter_keeps_non_canonical_keys(self):
@@ -428,7 +462,7 @@ class CleanupBatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = Path(tmp)
             (mem / "manifest.yml").write_text(
-                'schema_version: "1"\nproject: \'demo\'\nplain: bare\n', encoding="utf-8"
+                "schema_version: \"1\"\nproject: 'demo'\nplain: bare\n", encoding="utf-8"
             )
             man = crumb.load_manifest(mem)
             self.assertEqual(man["schema_version"], "1")
@@ -438,9 +472,7 @@ class CleanupBatchTests(unittest.TestCase):
     def test_8_7_future_handoff_age_is_not_negative_days(self):
         future = (datetime.now().astimezone() + timedelta(days=5)).isoformat()
         with tempfile.TemporaryDirectory() as tmp:
-            warnings = crumb.compute_staleness(
-                Path(tmp), {"updated_at": future}, [], [], [], 14
-            )
+            warnings = crumb.compute_staleness(Path(tmp), {"updated_at": future}, [], [], [], 14)
         joined = " ".join(warnings)
         self.assertNotIn("day(s) old", joined)
         self.assertIn("future", joined)
@@ -474,9 +506,18 @@ class Review3HighSeverityTests(unittest.TestCase):
         self._run(["init", "--project", tmp, "--session-tracking", "full"])
         self._run(
             [
-                "remember", "decision", "--project", tmp,
-                "--title", "keep sqlite", "--set", "Decision", "d",
-                "--evidence", "commit", "abc1234",
+                "remember",
+                "decision",
+                "--project",
+                tmp,
+                "--title",
+                "keep sqlite",
+                "--set",
+                "Decision",
+                "d",
+                "--evidence",
+                "commit",
+                "abc1234",
             ]
         )
         return Path(tmp) / crumb.MEMORY_DIRNAME
@@ -507,9 +548,7 @@ class Review3HighSeverityTests(unittest.TestCase):
             code, out = self._run(["init", "--project", tmp, "--with-adapter"])
             self.assertEqual(code, 0)
             self.assertIn("left untouched", out)
-            self.assertEqual(
-                sorted(p.name for p in (mem / "decisions").iterdir()), records_before
-            )
+            self.assertEqual(sorted(p.name for p in (mem / "decisions").iterdir()), records_before)
             self.assertIn(
                 "breadcrumbs managed block",
                 (Path(tmp) / "CLAUDE.md").read_text(encoding="utf-8"),
@@ -528,8 +567,12 @@ class Review3HighSeverityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = self._seeded_store(tmp)
             path, meta = crumb.write_record(
-                mem, Path(tmp), "decision", '"don\'t panic" strategy',
-                {"Decision": "d"}, evidence=[{"type": "commit", "ref": "abc1234"}],
+                mem,
+                Path(tmp),
+                "decision",
+                '"don\'t panic" strategy',
+                {"Decision": "d"},
+                evidence=[{"type": "commit", "ref": "abc1234"}],
             )
             # Hand-edited shapes the parser accepts: scalar evidence items and a
             # list-of-maps under a generic key.
@@ -549,9 +592,7 @@ class Review3HighSeverityTests(unittest.TestCase):
             rec = crumb.find_record_by_id(mem, meta["id"])
             self.assertEqual(rec.meta["title"], '"don\'t panic" strategy')
             self.assertEqual(rec.meta["evidence"], ["commit abc1234"])
-            self.assertEqual(
-                rec.meta["links"], [{"type": "url", "ref": "https://example.com"}]
-            )
+            self.assertEqual(rec.meta["links"], [{"type": "url", "ref": "https://example.com"}])
 
     def test_R3_unrepresentable_frontmatter_fails_closed(self):
         with self.assertRaises(ValueError):
@@ -620,9 +661,18 @@ class Review3MediumLowTests(unittest.TestCase):
         self._run(["init", "--project", tmp, "--session-tracking", "full"])
         self._run(
             [
-                "remember", "decision", "--project", tmp,
-                "--title", "keep sqlite", "--set", "Decision", "d",
-                "--evidence", "commit", "abc1234",
+                "remember",
+                "decision",
+                "--project",
+                tmp,
+                "--title",
+                "keep sqlite",
+                "--set",
+                "Decision",
+                "d",
+                "--evidence",
+                "commit",
+                "abc1234",
             ]
         )
         return Path(tmp) / crumb.MEMORY_DIRNAME
@@ -648,8 +698,12 @@ class Review3MediumLowTests(unittest.TestCase):
             # 30 low-confidence decisions -> 30 "low-confidence" warnings.
             for i in range(30):
                 crumb.write_record(
-                    mem, Path(tmp), "decision", f"lowconf {i}",
-                    {"Decision": "d"}, confidence="low",
+                    mem,
+                    Path(tmp),
+                    "decision",
+                    f"lowconf {i}",
+                    {"Decision": "d"},
+                    confidence="low",
                 )
             packet = crumb.build_resume_packet(mem, Path(tmp))
             cap = crumb.SECTION_CAPS["warnings"]
@@ -667,9 +721,15 @@ class Review3MediumLowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = self._seeded_store(tmp)
             code, _ = self._run(
-                ["note", "trap", "--project", tmp,
-                 "pytest -n auto corrupts the daemon cache",
-                 "--safe", "run pytest without xdist"]
+                [
+                    "note",
+                    "trap",
+                    "--project",
+                    tmp,
+                    "pytest -n auto corrupts the daemon cache",
+                    "--safe",
+                    "run pytest without xdist",
+                ]
             )
             self.assertEqual(code, 0)
             index_path = mem / "generated" / crumb.GUARD_PREFILTER_FILENAME
@@ -695,9 +755,7 @@ class Review3MediumLowTests(unittest.TestCase):
     def test_R11_mcp_record_rejects_evidence_less_high_confidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             self._seeded_store(tmp)
-            res = mcp_core.tool_record(
-                "decision", {"title": "X", "confidence": "high"}, root=tmp
-            )
+            res = mcp_core.tool_record("decision", {"title": "X", "confidence": "high"}, root=tmp)
             self.assertFalse(res["ok"])
             self.assertIn("evidence or low confidence", res["error"])
             # Unstated confidence still defaults to low (non-interactive path).
@@ -720,9 +778,7 @@ class Review3MediumLowTests(unittest.TestCase):
                 code, _ = self._run(["mcp", "serve", "--project", tmp])
                 self.assertEqual(code, 0)
                 self.assertTrue(captured.get("called"))
-                self.assertEqual(
-                    os.environ.get("BREADCRUMBS_PROJECT"), str(Path(tmp).resolve())
-                )
+                self.assertEqual(os.environ.get("BREADCRUMBS_PROJECT"), str(Path(tmp).resolve()))
             finally:
                 mcp_server.main = orig_main
                 if orig_env is None:
@@ -741,7 +797,8 @@ class Review3MediumLowTests(unittest.TestCase):
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
                     code = crumb._hook_guard(
-                        mem, Path(tmp),
+                        mem,
+                        Path(tmp),
                         {"tool_name": "Bash", "tool_input": tool_input},
                     )
                 self.assertEqual(code, 0)
@@ -789,8 +846,11 @@ class Review3MediumLowTests(unittest.TestCase):
 
             def git(*args, cwd=src):
                 subprocess.run(
-                    ["git", *args], cwd=str(cwd), check=True,
-                    capture_output=True, text=True,
+                    ["git", *args],
+                    cwd=str(cwd),
+                    check=True,
+                    capture_output=True,
+                    text=True,
                 )
 
             git("init", "-q")
@@ -802,9 +862,10 @@ class Review3MediumLowTests(unittest.TestCase):
                 git("commit", "-q", "-m", f"c{i}")
             clone = Path(tmp) / "clone"
             subprocess.run(
-                ["git", "clone", "-q", "--depth", "1",
-                 f"file://{src}", str(clone)],
-                check=True, capture_output=True, text=True,
+                ["git", "clone", "-q", "--depth", "1", f"file://{src}", str(clone)],
+                check=True,
+                capture_output=True,
+                text=True,
             )
             prefill = crumb._git_prefill(clone, None)
             # Empty-tree fallback would claim all 3 files; the shallow boundary
@@ -816,8 +877,17 @@ class Review3MediumLowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = self._seeded_store(tmp)
             self._run(
-                ["verify", "the auth fix", "--project", tmp,
-                 "--status", "fixed", "--evidence", "commit", "abc1234"]
+                [
+                    "verify",
+                    "the auth fix",
+                    "--project",
+                    tmp,
+                    "--status",
+                    "fixed",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                ]
             )
             vpath = next((mem / "verifications").glob("*.md"))
             vpath.write_text(
@@ -828,8 +898,12 @@ class Review3MediumLowTests(unittest.TestCase):
             )
             findings = crumb.run_validate(mem)  # must not raise
             self.assertTrue(
-                any(f["check"] == "verification" and f["status"] == "fail"
-                    and "string" in f["message"] for f in findings)
+                any(
+                    f["check"] == "verification"
+                    and f["status"] == "fail"
+                    and "string" in f["message"]
+                    for f in findings
+                )
             )
 
     def test_R16_non_utf8_handoff_is_a_finding(self):
@@ -838,8 +912,12 @@ class Review3MediumLowTests(unittest.TestCase):
             (mem / "handoff.md").write_bytes(b"\xff\xfe broken \x80")
             findings = crumb.run_validate(mem)  # must not raise
             self.assertTrue(
-                any(f["check"] == "handoff" and f["status"] == "fail"
-                    and "unreadable" in f["message"] for f in findings)
+                any(
+                    f["check"] == "handoff"
+                    and f["status"] == "fail"
+                    and "unreadable" in f["message"]
+                    for f in findings
+                )
             )
 
     # ---- R17: done-markers use word boundaries ----------------------------- #
@@ -856,13 +934,15 @@ class Review3MediumLowTests(unittest.TestCase):
             )
             sess.write_text(base.format(body="abandoned the refactor"), encoding="utf-8")
             findings = [
-                f for f in crumb.run_validate(mem)
+                f
+                for f in crumb.run_validate(mem)
                 if f["check"] == "session" and f["status"] == "fail"
             ]
             self.assertTrue(findings, "'abandoned' must not satisfy the done-marker")
             sess.write_text(base.format(body="work is done"), encoding="utf-8")
             findings = [
-                f for f in crumb.run_validate(mem)
+                f
+                for f in crumb.run_validate(mem)
                 if f["check"] == "session" and f["status"] == "fail"
             ]
             self.assertEqual(findings, [])
@@ -879,18 +959,15 @@ class Review3MediumLowTests(unittest.TestCase):
     def test_R20_seconds_old_handoff_is_info_not_warn(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = self._seeded_store(tmp)
-            code, _ = self._run(
-                ["capture", "session", "--project", tmp, "--fast", "--next", "go"]
-            )
+            code, _ = self._run(["capture", "session", "--project", tmp, "--fast", "--next", "go"])
             self.assertEqual(code, 0)
             staleness = [
-                f for f in crumb.run_audit(mem, Path(tmp))
+                f
+                for f in crumb.run_audit(mem, Path(tmp))
                 if f["check"] == "staleness" and f["message"].startswith("handoff is")
             ]
             self.assertTrue(staleness)
-            self.assertTrue(
-                all(f["severity"] == crumb.AUDIT_INFO for f in staleness), staleness
-            )
+            self.assertTrue(all(f["severity"] == crumb.AUDIT_INFO for f in staleness), staleness)
 
     # ---- R21: git C-quoted paths are decoded ------------------------------- #
     def test_R21_git_quoted_paths_are_unquoted(self):
@@ -903,7 +980,9 @@ class Review3MediumLowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = self._seeded_store(tmp)
             res = crumb.note(
-                mem, Path(tmp), "question",
+                mem,
+                Path(tmp),
+                "question",
                 "does this\n## Forged Heading\nsurvive? -->",
             )
             self.assertTrue(res["ok"], res)
@@ -928,8 +1007,7 @@ class Review3MediumLowTests(unittest.TestCase):
             mem = self._seeded_store(tmp)
             qpath = mem / "open-questions.md"
             qpath.write_text(
-                qpath.read_text(encoding="utf-8")
-                + "\n## Q: flaky suite?\n- Opened: 2026-06-01\n"
+                qpath.read_text(encoding="utf-8") + "\n## Q: flaky suite?\n- Opened: 2026-06-01\n"
                 "- Status: open\n_No fix for the flaky suite yet._\n",
                 encoding="utf-8",
             )
@@ -943,11 +1021,13 @@ class Review3MediumLowTests(unittest.TestCase):
     # ---- R23: recency is chronological, not lexicographic ------------------ #
     def test_R23_mixed_utc_offsets_sort_chronologically(self):
         older = crumb.Record(
-            Path("a.md"), "decision",
+            Path("a.md"),
+            "decision",
             meta={"updated_at": "2026-07-01T01:00:00+02:00"},  # 23:00Z Jun 30
         )
         newer = crumb.Record(
-            Path("b.md"), "decision",
+            Path("b.md"),
+            "decision",
             meta={"updated_at": "2026-07-01T00:30:00+00:00"},  # 00:30Z Jul 1
         )
         ranked = crumb._by_recency([older, newer])
@@ -973,7 +1053,9 @@ class Review3MediumLowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(
                 ["git", "init", "-q", "-b", "main", tmp],
-                check=True, capture_output=True, text=True,
+                check=True,
+                capture_output=True,
+                text=True,
             )
             (Path(tmp) / "wip.txt").write_text("x\n", encoding="utf-8")
             self.assertEqual(crumb.git_branch(Path(tmp)), "main")
@@ -983,9 +1065,7 @@ class Review3MediumLowTests(unittest.TestCase):
             mem = self._seeded_store(tmp)
             rec = crumb.load_records(mem, types=("decision",))[0]
             rid = rec.meta["id"]
-            res = crumb.set_record_status(
-                mem, rid, "stale", "evil --> ## Fake Heading", agent="t"
-            )
+            res = crumb.set_record_status(mem, rid, "stale", "evil --> ## Fake Heading", agent="t")
             self.assertTrue(res["ok"], res)
             text = crumb.find_record_by_id(mem, rid).path.read_text(encoding="utf-8")
             body = crumb.parse_frontmatter(text)[1]
@@ -998,9 +1078,7 @@ class Review3MediumLowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             self._seeded_store(tmp)
             self.assertTrue(mcp_core.tool_search("sqlite", root=tmp)["ok"])
-            self.assertTrue(
-                mcp_core.tool_guard_before_action("edit docs", root=tmp)["ok"]
-            )
+            self.assertTrue(mcp_core.tool_guard_before_action("edit docs", root=tmp)["ok"])
             self.assertTrue(mcp_core.tool_build_resume_packet(root=tmp)["ok"])
             scan = mcp_core.tool_scan_secrets(root=tmp)
             self.assertTrue(scan["ok"])
@@ -1012,14 +1090,22 @@ class Review3MediumLowTests(unittest.TestCase):
             rid = crumb.load_records(mem, types=("decision",))[0].meta["id"]
             # superseded without a pointer is validate-rejected...
             code, _ = self._run(
-                ["mark-status", rid, "superseded", "--project", tmp,
-                 "--reason", "replaced"]
+                ["mark-status", rid, "superseded", "--project", tmp, "--reason", "replaced"]
             )
             self.assertEqual(code, 1)
             # ...and accepted with --superseded-by.
             code, out = self._run(
-                ["mark-status", rid, "superseded", "--project", tmp,
-                 "--reason", "replaced", "--superseded-by", "dec_20260701_new"]
+                [
+                    "mark-status",
+                    rid,
+                    "superseded",
+                    "--project",
+                    tmp,
+                    "--reason",
+                    "replaced",
+                    "--superseded-by",
+                    "dec_20260701_new",
+                ]
             )
             self.assertEqual(code, 0, out)
             rec = crumb.find_record_by_id(mem, rid)

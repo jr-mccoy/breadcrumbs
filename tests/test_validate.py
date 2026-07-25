@@ -48,7 +48,9 @@ class ValidatePassTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = fresh_store(tmp)
             findings = crumb.run_validate(mem)
-            self.assertEqual(checks_failing(findings), set(), [f for f in findings if f["status"] == "fail"])
+            self.assertEqual(
+                checks_failing(findings), set(), [f for f in findings if f["status"] == "fail"]
+            )
 
     def test_good_records_validate_clean(self):
         with tempfile.TemporaryDirectory() as tmp:

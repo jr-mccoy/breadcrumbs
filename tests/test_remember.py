@@ -40,12 +40,23 @@ class RememberDecisionTests(unittest.TestCase):
             mem = init_store(tmp)
             code, _ = run(
                 [
-                    "remember", "decision", "--project", tmp,
-                    "--title", "Use repo-local Markdown as source of truth",
-                    "--set", "Context", "needed durable memory",
-                    "--set", "Decision", "use markdown with frontmatter",
-                    "--evidence", "commit", "abc1234",
-                    "--tags", "memory,architecture",
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "Use repo-local Markdown as source of truth",
+                    "--set",
+                    "Context",
+                    "needed durable memory",
+                    "--set",
+                    "Decision",
+                    "use markdown with frontmatter",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                    "--tags",
+                    "memory,architecture",
                 ]
             )
             self.assertEqual(code, 0)
@@ -60,8 +71,15 @@ class RememberDecisionTests(unittest.TestCase):
             mem = init_store(tmp)
             run(
                 [
-                    "remember", "decision", "--project", tmp,
-                    "--title", "Adopt a monorepo", "--evidence", "pr", "#42",
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "Adopt a monorepo",
+                    "--evidence",
+                    "pr",
+                    "#42",
                 ]
             )
             path = next((mem / "decisions").glob("*.md"))
@@ -77,7 +95,18 @@ class RememberDecisionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             for _ in range(2):
-                run(["remember", "decision", "--project", tmp, "--title", "Same Title", "--confidence", "low"])
+                run(
+                    [
+                        "remember",
+                        "decision",
+                        "--project",
+                        tmp,
+                        "--title",
+                        "Same Title",
+                        "--confidence",
+                        "low",
+                    ]
+                )
             names = {p.name for p in (mem / "decisions").glob("*.md")}
             self.assertEqual(len(names), 2)
             self.assertTrue(any(n.endswith("same-title.md") for n in names))
@@ -87,7 +116,17 @@ class RememberDecisionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             init_store(tmp)
             code, out = run(
-                ["remember", "decision", "--project", tmp, "--title", "X", "--confidence", "low", "--json"]
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "X",
+                    "--confidence",
+                    "low",
+                    "--json",
+                ]
             )
             self.assertEqual(code, 0)
             payload = json.loads(out)
@@ -101,11 +140,20 @@ class RememberAttemptTests(unittest.TestCase):
             mem = init_store(tmp)
             code, _ = run(
                 [
-                    "remember", "attempt", "--project", tmp,
-                    "--title", "Tried a sqlite store",
-                    "--set", "Problem", "needed a store",
-                    "--set", "Result", "too heavy",
-                    "--confidence", "low",
+                    "remember",
+                    "attempt",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "Tried a sqlite store",
+                    "--set",
+                    "Problem",
+                    "needed a store",
+                    "--set",
+                    "Result",
+                    "too heavy",
+                    "--confidence",
+                    "low",
                 ]
             )
             self.assertEqual(code, 0)
@@ -117,14 +165,25 @@ class RememberAttemptTests(unittest.TestCase):
             mem = init_store(tmp)
             code, _ = run(
                 [
-                    "remember", "attempt", "--project", tmp,
-                    "--title", "gradle daemon stop breaks build",
-                    "--problem", "build hung",
-                    "--tried", "./gradlew --stop",
-                    "--result", "R.jar lock error",
-                    "--why", "daemon held a lock",
-                    "--do-not-retry", "unless lockfile cleared",
-                    "--evidence", "commit", "abc1234",
+                    "remember",
+                    "attempt",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "gradle daemon stop breaks build",
+                    "--problem",
+                    "build hung",
+                    "--tried",
+                    "./gradlew --stop",
+                    "--result",
+                    "R.jar lock error",
+                    "--why",
+                    "daemon held a lock",
+                    "--do-not-retry",
+                    "unless lockfile cleared",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
                 ]
             )
             self.assertEqual(code, 0)
@@ -142,11 +201,19 @@ class RememberAttemptTests(unittest.TestCase):
             mem = init_store(tmp)
             run(
                 [
-                    "remember", "attempt", "--project", tmp,
-                    "--title", "override check",
-                    "--set", "Problem", "from set",
-                    "--problem", "from flag",
-                    "--confidence", "low",
+                    "remember",
+                    "attempt",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "override check",
+                    "--set",
+                    "Problem",
+                    "from set",
+                    "--problem",
+                    "from flag",
+                    "--confidence",
+                    "low",
                 ]
             )
             path = next((mem / "attempts").glob("*.md"))
@@ -168,7 +235,16 @@ class EvidenceEnforcementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             code, _ = run(
-                ["remember", "decision", "--project", tmp, "--title", "Low conf ok", "--confidence", "low"]
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "Low conf ok",
+                    "--confidence",
+                    "low",
+                ]
             )
             self.assertEqual(code, 0)
             self.assertEqual(len(list((mem / "decisions").glob("*.md"))), 1)
@@ -177,8 +253,17 @@ class EvidenceEnforcementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             code, _ = run(
-                ["remember", "attempt", "--project", tmp, "--title", "Has evidence",
-                 "--evidence", "command", "npm test"]
+                [
+                    "remember",
+                    "attempt",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "Has evidence",
+                    "--evidence",
+                    "command",
+                    "npm test",
+                ]
             )
             self.assertEqual(code, 0)
             path = next((mem / "attempts").glob("*.md"))
@@ -191,14 +276,27 @@ class RememberMisuseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             init_store(tmp)
             code, _ = run(
-                ["remember", "decision", "--project", tmp, "--title", "X", "--confidence", "low",
-                 "--set", "Nonsense", "value"]
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "X",
+                    "--confidence",
+                    "low",
+                    "--set",
+                    "Nonsense",
+                    "value",
+                ]
             )
             self.assertEqual(code, 2)
 
     def test_no_store_errors(self):
         with tempfile.TemporaryDirectory() as tmp:
-            code, _ = run(["remember", "decision", "--project", tmp, "--title", "X", "--confidence", "low"])
+            code, _ = run(
+                ["remember", "decision", "--project", tmp, "--title", "X", "--confidence", "low"]
+            )
             self.assertEqual(code, 2)
 
     def test_bare_remember_errors(self):
@@ -222,9 +320,11 @@ class MF19InteractiveSectionPromptTests(unittest.TestCase):
             asked.append(prompt)
             return answers.pop(0) if answers else ""
 
-        with mock.patch("breadcrumbs.cli._interactive", return_value=True), \
-                mock.patch("builtins.input", side_effect=fake_input), \
-                contextlib.redirect_stdout(io.StringIO()):
+        with (
+            mock.patch("breadcrumbs.cli._interactive", return_value=True),
+            mock.patch("builtins.input", side_effect=fake_input),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
             code = crumb.main(argv)
         return code, asked
 
@@ -232,8 +332,17 @@ class MF19InteractiveSectionPromptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             code, asked = self._run_interactive(
-                ["remember", "decision", "--project", tmp, "--confidence", "low",
-                 "--set", "Context", "already supplied"],
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--confidence",
+                    "low",
+                    "--set",
+                    "Context",
+                    "already supplied",
+                ],
                 answers=["A title"],  # only the title needs asking
             )
             self.assertEqual(code, 0)
@@ -241,9 +350,7 @@ class MF19InteractiveSectionPromptTests(unittest.TestCase):
                 [p for p in asked if p.startswith("Context:")],
                 f"Context was already given via --set but was still prompted: {asked}",
             )
-            rec = crumb.Record.from_file(
-                next((mem / "decisions").glob("*.md")), "decision"
-            )
+            rec = crumb.Record.from_file(next((mem / "decisions").glob("*.md")), "decision")
             self.assertEqual(rec.sections["Context"], "already supplied")
 
     def test_MF19_sections_not_given_are_still_prompted_for(self):
@@ -255,9 +362,7 @@ class MF19InteractiveSectionPromptTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertTrue([p for p in asked if p.startswith("Context:")], asked)
-            rec = crumb.Record.from_file(
-                next((mem / "decisions").glob("*.md")), "decision"
-            )
+            rec = crumb.Record.from_file(next((mem / "decisions").glob("*.md")), "decision")
             self.assertEqual(rec.sections["Context"], "ctx")
 
 

@@ -113,13 +113,22 @@ class ResumeJsonTests(unittest.TestCase):
             self.assertEqual(code, 0)
             payload = json.loads(out)
             for key in (
-                "source", "project", "current_focus", "next_action",
-                "active_decisions", "failed_attempts", "known_traps",
-                "open_questions", "warnings", "approx_tokens",
+                "source",
+                "project",
+                "current_focus",
+                "next_action",
+                "active_decisions",
+                "failed_attempts",
+                "known_traps",
+                "open_questions",
+                "warnings",
+                "approx_tokens",
             ):
                 self.assertIn(key, payload)
             self.assertEqual(len(payload["active_decisions"]), 1)
-            self.assertEqual(payload["active_decisions"][0]["id"], "dec_20260510_markdown-source-of-truth")
+            self.assertEqual(
+                payload["active_decisions"][0]["id"], "dec_20260510_markdown-source-of-truth"
+            )
             self.assertIn("inputs_hash", payload["source"])
             self.assertIn("generated_at", payload["source"])
             self.assertTrue(payload["warnings"], "fixture should compute staleness warnings")
@@ -172,7 +181,9 @@ class TokenBoundTests(unittest.TestCase):
             # Synthesize many decisions directly (faster than 40 CLI round-trips).
             for i in range(40):
                 crumb.write_record(
-                    mem, root, "decision",
+                    mem,
+                    root,
+                    "decision",
                     f"decision number {i} about subsystem {i}",
                     {"Rationale": "because " + ("context " * 20)},
                     evidence=[{"type": "commit", "ref": "abc1234"}],
@@ -182,7 +193,9 @@ class TokenBoundTests(unittest.TestCase):
             payload = json.loads(out)
             self.assertLessEqual(payload["approx_tokens"], crumb.TOKEN_BUDGET_MAX)
             # Per-section cap + budget trim must have kicked in.
-            self.assertLessEqual(len(payload["active_decisions"]), crumb.SECTION_CAPS["active_decisions"])
+            self.assertLessEqual(
+                len(payload["active_decisions"]), crumb.SECTION_CAPS["active_decisions"]
+            )
             self.assertGreater(payload["omitted"].get("active_decisions", 0), 0)
 
 
@@ -237,12 +250,22 @@ class CloudFallbackTests(unittest.TestCase):
             mem = root / crumb.MEMORY_DIRNAME
             # Default policy commits generated projections.
             crumb.main(["init", "--project", tmp, "--session-tracking", "full"])
-            run([
-                "remember", "decision", "--project", tmp,
-                "--title", "Keep memory in plain files",
-                "--set", "Rationale", "a read-only cloud agent can read them",
-                "--evidence", "commit", "abc1234",
-            ])
+            run(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "Keep memory in plain files",
+                    "--set",
+                    "Rationale",
+                    "a read-only cloud agent can read them",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                ]
+            )
             run(["capture", "session", "--project", tmp, "--fast", "--next", "ship the fallback"])
             run(["resume", "--project", tmp])
 

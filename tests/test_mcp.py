@@ -172,9 +172,7 @@ class WriteGateTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         # A real, initialized project (init writes the template tree + manifest).
-        code = crumb.main(
-            ["init", "--project", str(self.tmp), "--session-tracking", "full"]
-        )
+        code = crumb.main(["init", "--project", str(self.tmp), "--session-tracking", "full"])
         self.assertEqual(code, 0)
 
     def test_record_writes_valid_decision(self):
@@ -182,8 +180,10 @@ class WriteGateTests(unittest.TestCase):
             "decision",
             {
                 "title": "Use markdown as the source of truth",
-                "sections": {"Decision": "Records are plain markdown.",
-                             "Rationale": "Human-readable + diffable."},
+                "sections": {
+                    "Decision": "Records are plain markdown.",
+                    "Rationale": "Human-readable + diffable.",
+                },
                 "evidence": [{"type": "commit", "ref": "abc1234"}],
             },
             root=self.tmp,
@@ -209,8 +209,11 @@ class WriteGateTests(unittest.TestCase):
     def test_mark_status_is_validate_gated(self):
         rec = mcp_core.tool_record(
             "decision",
-            {"title": "Pick a queue", "sections": {"Decision": "Use a queue."},
-             "evidence": [{"type": "commit", "ref": "deadbee"}]},
+            {
+                "title": "Pick a queue",
+                "sections": {"Decision": "Use a queue."},
+                "evidence": [{"type": "commit", "ref": "deadbee"}],
+            },
             root=self.tmp,
         )
         rid = rec["id"]
@@ -236,8 +239,11 @@ class WriteGateTests(unittest.TestCase):
         """
         for payload in (
             {"title": "bad\ntitle", "confidence": "low"},
-            {"title": "bad evidence", "confidence": "low",
-             "evidence": [{"type": "commit", "ref": "abc\n1234"}]},
+            {
+                "title": "bad evidence",
+                "confidence": "low",
+                "evidence": [{"type": "commit", "ref": "abc\n1234"}],
+            },
             {"title": "bad tag", "confidence": "low", "tags": ["multi\nline"]},
         ):
             with self.subTest(payload=payload):
@@ -254,12 +260,12 @@ class WriteGateTests(unittest.TestCase):
         The code comment used to claim exact parity, which was false (review #5
         Low). Only the *explicit* medium/high-without-evidence case is an error.
         """
-        res = mcp_core.tool_record("decision", {"title": "no confidence stated"},
-                                   root=self.tmp)
+        res = mcp_core.tool_record("decision", {"title": "no confidence stated"}, root=self.tmp)
         self.assertTrue(res["ok"], res)
         self.assertEqual(res["confidence"], "low")
-        bad = mcp_core.tool_record("decision", {"title": "stated high", "confidence": "high"},
-                                   root=self.tmp)
+        bad = mcp_core.tool_record(
+            "decision", {"title": "stated high", "confidence": "high"}, root=self.tmp
+        )
         self.assertFalse(bad["ok"])
         self.assertIn("evidence", bad["error"])
 
@@ -295,8 +301,11 @@ class ToolPathTests(unittest.TestCase):
     def test_MF17_record_path_is_store_relative(self):
         res = mcp_core.tool_record(
             "decision",
-            {"title": "Pick a store", "sections": {"Decision": "Use markdown."},
-             "evidence": [{"type": "commit", "ref": "abc1234"}]},
+            {
+                "title": "Pick a store",
+                "sections": {"Decision": "Use markdown."},
+                "evidence": [{"type": "commit", "ref": "abc1234"}],
+            },
             root=self.tmp,
         )
         self.assertTrue(res["ok"], res)
@@ -318,8 +327,9 @@ class ToolPathTests(unittest.TestCase):
         self._assert_store_relative(res, f"ideas/{Path(res['path']).name}")
 
     def test_MF17_verify_path_is_store_relative(self):
-        res = mcp_core.tool_verify("the cache eviction path", "open", method="static",
-                                   confidence="low", root=self.tmp)
+        res = mcp_core.tool_verify(
+            "the cache eviction path", "open", method="static", confidence="low", root=self.tmp
+        )
         self.assertTrue(res["ok"], res)
         self._assert_store_relative(res, f"verifications/{Path(res['path']).name}")
 
@@ -330,12 +340,14 @@ class ToolPathTests(unittest.TestCase):
     def test_MF17_mark_status_path_is_store_relative(self):
         rec = mcp_core.tool_record(
             "decision",
-            {"title": "Adopt a queue", "sections": {"Decision": "Use a queue."},
-             "evidence": [{"type": "commit", "ref": "deadbee"}]},
+            {
+                "title": "Adopt a queue",
+                "sections": {"Decision": "Use a queue."},
+                "evidence": [{"type": "commit", "ref": "deadbee"}],
+            },
             root=self.tmp,
         )
-        res = mcp_core.tool_mark_status(rec["id"], "stale", "superseded by reality",
-                                        root=self.tmp)
+        res = mcp_core.tool_mark_status(rec["id"], "stale", "superseded by reality", root=self.tmp)
         self.assertTrue(res["ok"], res)
         self._assert_store_relative(res, f"decisions/{Path(res['path']).name}")
 
@@ -343,10 +355,12 @@ class ToolPathTests(unittest.TestCase):
         """A sweep, so the next tool added does not quietly reintroduce the leak."""
         results = [
             mcp_core.tool_record(
-                "attempt", {"title": "Tried a ram cache", "confidence": "low"}, root=self.tmp),
+                "attempt", {"title": "Tried a ram cache", "confidence": "low"}, root=self.tmp
+            ),
             mcp_core.tool_note("question", "Is the queue durable?", root=self.tmp),
-            mcp_core.tool_verify("queue durability", "open", method="static",
-                                 confidence="low", root=self.tmp),
+            mcp_core.tool_verify(
+                "queue durability", "open", method="static", confidence="low", root=self.tmp
+            ),
             mcp_core.tool_reindex(root=self.tmp),
             mcp_core.tool_search("queue", root=self.tmp),
             mcp_core.tool_validate(root=self.tmp),
@@ -360,8 +374,9 @@ class ToolPathTests(unittest.TestCase):
 
     def test_MF17_cli_still_prints_absolute_paths_for_humans(self):
         """The relativization belongs to the MCP layer, not to `cli`."""
-        res = crumb.note(self.mem, self.tmp, "question", "Human-facing path?",
-                         fields={}, tags=[], agent="test")
+        res = crumb.note(
+            self.mem, self.tmp, "question", "Human-facing path?", fields={}, tags=[], agent="test"
+        )
         self.assertTrue(Path(res["path"]).is_absolute(), res["path"])
 
 
@@ -371,8 +386,12 @@ class ToolPathTests(unittest.TestCase):
 class PromptTests(unittest.TestCase):
     def test_all_six_prompts_present_and_nonempty(self):
         expected = {
-            "resume_project", "capture_session", "remember_decision",
-            "remember_attempt", "guard_before_action", "audit_project_memory",
+            "resume_project",
+            "capture_session",
+            "remember_decision",
+            "remember_attempt",
+            "guard_before_action",
+            "audit_project_memory",
         }
         self.assertEqual(set(mcp_core.PROMPTS), expected)
         for name, fn in mcp_core.PROMPTS.items():
@@ -422,15 +441,17 @@ class GracefulDegradationTests(unittest.TestCase):
         self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
         calls = {
             "tool_search": lambda: mcp_core.tool_search("q", root=empty),
-            "tool_guard_before_action":
-                lambda: mcp_core.tool_guard_before_action("do x", root=empty),
+            "tool_guard_before_action": lambda: mcp_core.tool_guard_before_action(
+                "do x", root=empty
+            ),
             "tool_build_resume_packet": lambda: mcp_core.tool_build_resume_packet(root=empty),
             "tool_validate": lambda: mcp_core.tool_validate(root=empty),
             "tool_scan_secrets": lambda: mcp_core.tool_scan_secrets(root=empty),
             "tool_record": lambda: mcp_core.tool_record("decision", {"title": "x"}, root=empty),
             "tool_note": lambda: mcp_core.tool_note("question", "x", root=empty),
-            "tool_mark_status": lambda: mcp_core.tool_mark_status("dec_x", "stale", "why",
-                                                                 root=empty),
+            "tool_mark_status": lambda: mcp_core.tool_mark_status(
+                "dec_x", "stale", "why", root=empty
+            ),
             "tool_verify": lambda: mcp_core.tool_verify("subj", "open", root=empty),
             "tool_reindex": lambda: mcp_core.tool_reindex(root=empty),
         }
@@ -488,8 +509,12 @@ class ResourceRegistryTests(unittest.TestCase):
             if not isinstance(node, ast.FunctionDef):
                 continue
             for dec in node.decorator_list:
-                if (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
-                        and dec.func.attr == "resource" and dec.args):
+                if (
+                    isinstance(dec, ast.Call)
+                    and isinstance(dec.func, ast.Attribute)
+                    and dec.func.attr == "resource"
+                    and dec.args
+                ):
                     arg = dec.args[0]
                     if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                         uris.add(arg.value)
@@ -500,9 +525,7 @@ class ResourceRegistryTests(unittest.TestCase):
         self.assertEqual(self._bound_uris(), declared)
 
     def test_the_advertised_count_is_eight(self):
-        self.assertEqual(
-            len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 8
-        )
+        self.assertEqual(len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 8)
 
     def test_every_registry_target_is_callable(self):
         for uri, fn in {**mcp_core.STATIC_RESOURCES, **mcp_core.TEMPLATE_RESOURCES}.items():
@@ -536,8 +559,7 @@ class InputSchemaTests(unittest.TestCase):
         self.assertEqual(set(mcp_server.RecordPayload.__required_keys__), {"title"})
         self.assertEqual(
             set(mcp_server.RecordPayload.__optional_keys__),
-            {"sections", "evidence", "tags", "confidence", "privacy", "scope",
-             "status", "agent"},
+            {"sections", "evidence", "tags", "confidence", "privacy", "scope", "status", "agent"},
         )
 
     def test_evidence_item_keys(self):

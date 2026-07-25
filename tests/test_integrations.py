@@ -92,9 +92,18 @@ class HookMergeTests(unittest.TestCase):
             root = Path(tmp)
             (root / ".claude").mkdir()
             (root / ".claude" / "settings.json").write_text(
-                json.dumps({"hooks": {"PreToolUse": [
-                    {"matcher": "Bash", "hooks": [{"type": "command", "command": "mine"}]}
-                ]}}),
+                json.dumps(
+                    {
+                        "hooks": {
+                            "PreToolUse": [
+                                {
+                                    "matcher": "Bash",
+                                    "hooks": [{"type": "command", "command": "mine"}],
+                                }
+                            ]
+                        }
+                    }
+                ),
                 encoding="utf-8",
             )
             crumb.install_claude_hooks(root, list(crumb.HOOK_EVENTS))
@@ -118,9 +127,18 @@ class HookMergeTests(unittest.TestCase):
             root = Path(tmp)
             (root / ".claude").mkdir()
             (root / ".claude" / "settings.json").write_text(
-                json.dumps({"hooks": {"PreToolUse": [
-                    {"matcher": "Bash", "hooks": [{"type": "command", "command": "mine"}]}
-                ]}}),
+                json.dumps(
+                    {
+                        "hooks": {
+                            "PreToolUse": [
+                                {
+                                    "matcher": "Bash",
+                                    "hooks": [{"type": "command", "command": "mine"}],
+                                }
+                            ]
+                        }
+                    }
+                ),
                 encoding="utf-8",
             )
             crumb.install_claude_hooks(root, list(crumb.HOOK_EVENTS))
@@ -146,10 +164,18 @@ class InitFlagTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "CLAUDE.md").write_text("# x\n", encoding="utf-8")
-            code, _ = run([
-                "init", "--project", tmp, "--session-tracking", "full",
-                "--with-adapter", "--with-mcp", "--no-hooks",
-            ])
+            code, _ = run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter",
+                    "--with-mcp",
+                    "--no-hooks",
+                ]
+            )
             self.assertEqual(code, 0)
             self.assertIn("breadcrumbs managed", (root / "CLAUDE.md").read_text())
             self.assertTrue((root / ".mcp.json").exists())
@@ -167,10 +193,17 @@ class InitFlagTests(unittest.TestCase):
             root = Path(tmp)
             (root / "CLAUDE.md").write_text("# x\n", encoding="utf-8")
             run(["init", "--project", tmp, "--session-tracking", "full"])
-            code, out = run([
-                "init", "--project", tmp, "--print-integrations",
-                "--with-adapter", "--with-mcp", "--json",
-            ])
+            code, out = run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--print-integrations",
+                    "--with-adapter",
+                    "--with-mcp",
+                    "--json",
+                ]
+            )
             self.assertEqual(code, 0)
             payload = json.loads(out)
             self.assertEqual(payload["would_apply"]["adapters"], ["CLAUDE.md"])
@@ -182,10 +215,18 @@ class InitFlagTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "CLAUDE.md").write_text("# keep me\n", encoding="utf-8")
-            run([
-                "init", "--project", tmp, "--session-tracking", "full",
-                "--with-adapter", "--with-mcp", "--with-hooks",
-            ])
+            run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter",
+                    "--with-mcp",
+                    "--with-hooks",
+                ]
+            )
             run(["init", "--project", tmp, "--remove-integrations"])
             self.assertEqual((root / "CLAUDE.md").read_text(), "# keep me\n")
             mcp = json.loads((root / ".mcp.json").read_text())
@@ -202,10 +243,16 @@ class IntegrationFlagValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
-                code, _ = run([
-                    "init", "--project", tmp, "--session-tracking", "full",
-                    "--with-hooks=bogus",
-                ])
+                code, _ = run(
+                    [
+                        "init",
+                        "--project",
+                        tmp,
+                        "--session-tracking",
+                        "full",
+                        "--with-hooks=bogus",
+                    ]
+                )
             self.assertEqual(code, 2)
             message = err.getvalue()
             self.assertIn("--with-hooks", message)
@@ -218,10 +265,16 @@ class IntegrationFlagValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             with contextlib.redirect_stderr(io.StringIO()):
-                code, _ = run([
-                    "init", "--project", tmp, "--session-tracking", "full",
-                    "--with-hooks=bogus",
-                ])
+                code, _ = run(
+                    [
+                        "init",
+                        "--project",
+                        tmp,
+                        "--session-tracking",
+                        "full",
+                        "--with-hooks=bogus",
+                    ]
+                )
             self.assertEqual(code, 2)
             # The old order scaffolded the store and wrote .gitignore first, then
             # died — leaving a store `init` would refuse to touch again and no hooks.
@@ -236,10 +289,16 @@ class IntegrationFlagValidationTests(unittest.TestCase):
             (root / "README.md").write_text("# hello\n", encoding="utf-8")
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
-                code, _ = run([
-                    "init", "--project", tmp, "--session-tracking", "full",
-                    "--with-adapter=README.md",
-                ])
+                code, _ = run(
+                    [
+                        "init",
+                        "--project",
+                        tmp,
+                        "--session-tracking",
+                        "full",
+                        "--with-adapter=README.md",
+                    ]
+                )
             self.assertEqual(code, 2)
             self.assertIn("--with-adapter", err.getvalue())
             self.assertIn("README.md", err.getvalue())
@@ -251,10 +310,18 @@ class IntegrationFlagValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "AGENTS.md").write_text("# x\n", encoding="utf-8")
-            code, _ = run([
-                "init", "--project", tmp, "--session-tracking", "full",
-                "--with-adapter=AGENTS.md", "--with-hooks=session,capture", "--no-mcp",
-            ])
+            code, _ = run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter=AGENTS.md",
+                    "--with-hooks=session,capture",
+                    "--no-mcp",
+                ]
+            )
             self.assertEqual(code, 0)
             self.assertIn("breadcrumbs managed", (root / "AGENTS.md").read_text())
             hooks = json.loads((root / ".claude" / "settings.json").read_text())["hooks"]
@@ -313,8 +380,9 @@ class ConsentPromptTests(unittest.TestCase):
 
     def test_MF21_ctrl_c_at_the_policy_prompt_aborts_init(self):
         """It used to pick `full` silently and scaffold a store anyway."""
-        with mock.patch("sys.stdin") as stdin, mock.patch(
-            "builtins.input", side_effect=KeyboardInterrupt
+        with (
+            mock.patch("sys.stdin") as stdin,
+            mock.patch("builtins.input", side_effect=KeyboardInterrupt),
         ):
             stdin.isatty.return_value = True
             with self.assertRaises(KeyboardInterrupt):
@@ -324,9 +392,12 @@ class ConsentPromptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             err = io.StringIO()
-            with mock.patch("sys.stdin") as stdin, mock.patch(
-                "builtins.input", side_effect=KeyboardInterrupt
-            ), contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            with (
+                mock.patch("sys.stdin") as stdin,
+                mock.patch("builtins.input", side_effect=KeyboardInterrupt),
+                contextlib.redirect_stderr(err),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
                 stdin.isatty.return_value = True
                 code = crumb.main(["init", "--project", tmp])
             self.assertEqual(code, 130)  # shell convention for SIGINT

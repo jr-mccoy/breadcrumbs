@@ -157,8 +157,12 @@ class MF15FenceAwareSectionsTests(unittest.TestCase):
         self.assertEqual(list(rec.sections), ["Tried", "Result"])
 
     def test_MF15_agrees_with_the_other_splitter(self):
-        for body in (FENCED_BODY, "## A\n1\n\n## B\n2\n", "no headings at all\n",
-                     "## A\n~~~\n## B\n~~~\ntail\n"):
+        for body in (
+            FENCED_BODY,
+            "## A\n1\n\n## B\n2\n",
+            "no headings at all\n",
+            "## A\n~~~\n## B\n~~~\ntail\n",
+        ):
             with self.subTest(body=body[:20]):
                 self.assertEqual(self._rec(body).sections, crumb.split_md_sections(body))
 
@@ -193,13 +197,12 @@ class MF15FenceAwareSectionsTests(unittest.TestCase):
                 "```md\n## Next Action\nfinish the migration\n```\n\n"
                 "## Result\nstill investigating\n"
             )
-            dst.write_text(
-                crumb.render_frontmatter(meta) + "\n" + body, encoding="utf-8"
-            )
+            dst.write_text(crumb.render_frontmatter(meta) + "\n" + body, encoding="utf-8")
             rec = crumb.Record.from_file(dst, "session")
             self.assertNotIn("Next Action", rec.sections)
             fails = [
-                f for f in crumb.run_validate(mem)
+                f
+                for f in crumb.run_validate(mem)
                 if f["status"] == "fail" and "2026-06-25-fenced.md" in (f["path"] or "")
             ]
             self.assertTrue(
@@ -225,7 +228,7 @@ class MF22CommentOnlyValueTests(unittest.TestCase):
         self.assertEqual(meta["status"], "active")
 
     def test_MF22_a_quoted_hash_is_still_a_value(self):
-        meta, _ = crumb.parse_frontmatter('---\ntitle: "#hashtag"\nother: \'#x\'\n---\nb\n')
+        meta, _ = crumb.parse_frontmatter("---\ntitle: \"#hashtag\"\nother: '#x'\n---\nb\n")
         self.assertEqual(meta["title"], "#hashtag")
         self.assertEqual(meta["other"], "#x")
 
@@ -243,10 +246,13 @@ class MF22CommentOnlyValueTests(unittest.TestCase):
             meta, body = crumb.parse_frontmatter(dst.read_text(encoding="utf-8"))
             meta["status"] = "superseded"
             text = crumb.render_frontmatter(meta) + "\n" + body
-            text = text.replace("status: superseded", "status: superseded\nsuperseded_by: # none yet")
+            text = text.replace(
+                "status: superseded", "status: superseded\nsuperseded_by: # none yet"
+            )
             dst.write_text(text, encoding="utf-8")
             fails = [
-                f for f in crumb.run_validate(mem)
+                f
+                for f in crumb.run_validate(mem)
                 if f["status"] == "fail" and "comment-only" in (f["path"] or "")
             ]
             self.assertTrue(
@@ -277,9 +283,7 @@ class GlobalFlagPositionTests(unittest.TestCase):
         self.assertEqual(args.project, "/tmp/store")
 
     def test_project_honored_before_nested_subcommand(self):
-        args = self._parse(
-            ["--project", "/tmp/store", "remember", "decision", "--title", "x"]
-        )
+        args = self._parse(["--project", "/tmp/store", "remember", "decision", "--title", "x"])
         self.assertEqual(args.project, "/tmp/store")
 
     def test_json_honored_before_subcommand(self):
