@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -234,6 +235,46 @@ class HookCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = run_hook("capture", {"cwd": tmp})
             self.assertEqual(out, {})
+
+
+class MF20HookUsageTests(unittest.TestCase):
+    """`crumb hook` with no subcommand read stdin before validating the event.
+
+    From a terminal that blocks until EOF, so the usage error a user is waiting
+    for looks like a hang instead (review #5 Low).
+    """
+
+    def test_MF20_missing_subcommand_never_reads_stdin(self):
+        def explode():
+            raise AssertionError("stdin was read before the event was validated")
+
+        err = io.StringIO()
+        with mock.patch.object(_cli, "_read_hook_stdin", side_effect=explode), \
+                contextlib.redirect_stderr(err):
+            code = crumb.main(["hook"])
+        self.assertEqual(code, 2)
+        self.assertIn("session|guard|capture", err.getvalue())
+
+    def test_MF20_does_not_block_on_a_terminal(self):
+        """End to end: a real process with a tty-less pipe that never sends EOF."""
+        proc = subprocess.Popen(
+            [sys.executable, str(REPO_ROOT / "crumb.py"), "hook"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            _, stderr = proc.communicate(timeout=15)
+        except subprocess.TimeoutExpired:  # pragma: no cover - the bug being fixed
+            proc.kill()
+            self.fail("`crumb hook` blocked on stdin instead of reporting usage")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("session|guard|capture", stderr)
+
+    def test_MF20_valid_events_still_read_their_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            self.assertIsInstance(run_hook("session", {"cwd": str(root)}), dict)
 
 
 if __name__ == "__main__":

@@ -44,7 +44,7 @@ Default output is human-readable Markdown / plain text.
 | `mark-status <id> <status>` | one record | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. | **built** |
 | `doctor` | adapters, `.mcp.json`, hooks, packet | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. | **built** |
 | `mcp serve\|register\|doctor` | `.mcp.json` | running server / registration / health | Run the MCP server, merge its `.mcp.json` entry, or report MCP wiring (`[mcp]` extra + registration). | **built** |
-| `hook session\|guard\|capture` | hook stdin payload | hook JSON on stdout | Claude Code hook translators (`init --with-hooks` installs them). | **built** |
+| `hook session\|guard\|capture` | hook stdin payload | hook JSON on stdout | Claude Code hook translators (`init --with-hooks` installs them). The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. | **built** |
 
 ### Integration flags on `init`
 
@@ -59,6 +59,16 @@ init --remove-integrations                          # reverse everything
 On a TTY with none specified, `init` asks once per integration; non-interactive +
 unspecified writes nothing (plus a one-line nudge). Every edit is fenced and
 reversible.
+
+Both lists are validated **before any filesystem mutation** — `--with-hooks` against
+`session|guard|capture`, `--with-adapter` against the known guidance filenames —
+and a typo exits 2 naming the valid values, with nothing written. `init` never
+injects the signpost into a file outside that list, because `--remove-integrations`
+would not know to look there. (For stores already in that state, removal scans the
+project root for stray managed blocks and reverses them too.)
+
+Ctrl+C at any `init` prompt aborts with exit 130 and writes nothing further; EOF
+(piped input) still takes the prompt's default.
 
 ### Later commands (post-MVP)
 

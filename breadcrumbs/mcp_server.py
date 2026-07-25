@@ -105,7 +105,9 @@ except Exception as exc:  # pragma: no cover - exercised only without the SDK
 
 SERVER_NAME = "breadcrumbs"
 _INSTALL_HINT = (
-    "The MCP server needs the optional Python MCP SDK.\n"
+    "The MCP server needs the optional Python MCP SDK (which needs Python >= 3.10;\n"
+    "on 3.9 the command below succeeds and installs nothing, because the extra's\n"
+    "marker excludes it).\n"
     '  pip install "crumb-kit[mcp]"   (or:  pip install mcp)\n'
     "Everything still works without it via the `crumb` CLI and the plain\n"
     f"{mcp_core.MEMORY_DIRNAME}/ files — MCP is an optional interop layer."

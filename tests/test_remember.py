@@ -13,11 +13,13 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
+from breadcrumbs import cli as _cli  # noqa: E402  (patch target for _interactive)
 
 
 def init_store(tmp: str) -> Path:
@@ -205,6 +207,59 @@ class RememberMisuseTests(unittest.TestCase):
             init_store(tmp)
             code = crumb.main(["remember", "--project", tmp])
             self.assertEqual(code, 2)
+
+
+class MF19InteractiveSectionPromptTests(unittest.TestCase):
+    """`sections.setdefault(h, input(...))` evaluated the prompt eagerly.
+
+    A heading already supplied via `--set` was still asked for, and the answer
+    thrown away by `setdefault` — the worst of both (review #5 Low).
+    """
+
+    def _run_interactive(self, argv, answers):
+        asked: list[str] = []
+
+        def fake_input(prompt=""):
+            asked.append(prompt)
+            return answers.pop(0) if answers else ""
+
+        with mock.patch("breadcrumbs.cli._interactive", return_value=True), \
+                mock.patch("builtins.input", side_effect=fake_input), \
+                contextlib.redirect_stdout(io.StringIO()):
+            code = crumb.main(argv)
+        return code, asked
+
+    def test_MF19_a_section_given_via_set_is_not_prompted_for(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            code, asked = self._run_interactive(
+                ["remember", "decision", "--project", tmp, "--confidence", "low",
+                 "--set", "Context", "already supplied"],
+                answers=["A title"],  # only the title needs asking
+            )
+            self.assertEqual(code, 0)
+            self.assertFalse(
+                [p for p in asked if p.startswith("Context:")],
+                f"Context was already given via --set but was still prompted: {asked}",
+            )
+            rec = crumb.Record.from_file(
+                next((mem / "decisions").glob("*.md")), "decision"
+            )
+            self.assertEqual(rec.sections["Context"], "already supplied")
+
+    def test_MF19_sections_not_given_are_still_prompted_for(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            code, asked = self._run_interactive(
+                ["remember", "decision", "--project", tmp, "--confidence", "low"],
+                answers=["A title", "ctx", "dec", "alt", "conseq"],
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue([p for p in asked if p.startswith("Context:")], asked)
+            rec = crumb.Record.from_file(
+                next((mem / "decisions").glob("*.md")), "decision"
+            )
+            self.assertEqual(rec.sections["Context"], "ctx")
 
 
 if __name__ == "__main__":

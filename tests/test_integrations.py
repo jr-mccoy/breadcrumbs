@@ -7,6 +7,7 @@ Run with:  python -m pytest tests/
 
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -188,6 +190,148 @@ class InitFlagTests(unittest.TestCase):
             self.assertEqual((root / "CLAUDE.md").read_text(), "# keep me\n")
             mcp = json.loads((root / ".mcp.json").read_text())
             self.assertNotIn("breadcrumbs", mcp.get("mcpServers", {}))
+
+
+# --------------------------------------------------------------------------- #
+# MF-14 — integration flags are validated BEFORE any filesystem mutation
+# (review #5 M6 + M7 + audit #6 N4)
+# --------------------------------------------------------------------------- #
+class IntegrationFlagValidationTests(unittest.TestCase):
+    def test_MF14_bogus_hook_event_is_rejected_cleanly(self):
+        """`--with-hooks=bogus` used to escape as a raw KeyError from _HOOK_SPECS."""
+        with tempfile.TemporaryDirectory() as tmp:
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, _ = run([
+                    "init", "--project", tmp, "--session-tracking", "full",
+                    "--with-hooks=bogus",
+                ])
+            self.assertEqual(code, 2)
+            message = err.getvalue()
+            self.assertIn("--with-hooks", message)
+            self.assertIn("bogus", message)
+            for valid in crumb.HOOK_EVENTS:  # the message names what IS valid
+                self.assertIn(valid, message)
+
+    def test_MF14_bogus_hook_event_leaves_the_project_untouched(self):
+        """Ordering is the whole point: nothing may be written before validation."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with contextlib.redirect_stderr(io.StringIO()):
+                code, _ = run([
+                    "init", "--project", tmp, "--session-tracking", "full",
+                    "--with-hooks=bogus",
+                ])
+            self.assertEqual(code, 2)
+            # The old order scaffolded the store and wrote .gitignore first, then
+            # died — leaving a store `init` would refuse to touch again and no hooks.
+            self.assertFalse((root / crumb.MEMORY_DIRNAME).exists())
+            self.assertFalse((root / ".gitignore").exists())
+            self.assertEqual(sorted(p.name for p in root.iterdir()), [])
+
+    def test_MF14_unknown_adapter_name_is_rejected_before_injection(self):
+        """`--with-adapter=README.md` injected the block into an arbitrary file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# hello\n", encoding="utf-8")
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, _ = run([
+                    "init", "--project", tmp, "--session-tracking", "full",
+                    "--with-adapter=README.md",
+                ])
+            self.assertEqual(code, 2)
+            self.assertIn("--with-adapter", err.getvalue())
+            self.assertIn("README.md", err.getvalue())
+            self.assertEqual((root / "README.md").read_text(), "# hello\n")
+            self.assertFalse((root / crumb.MEMORY_DIRNAME).exists())
+
+    def test_MF14_valid_flags_still_apply(self):
+        """The guard must not reject the names it is there to protect."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_text("# x\n", encoding="utf-8")
+            code, _ = run([
+                "init", "--project", tmp, "--session-tracking", "full",
+                "--with-adapter=AGENTS.md", "--with-hooks=session,capture", "--no-mcp",
+            ])
+            self.assertEqual(code, 0)
+            self.assertIn("breadcrumbs managed", (root / "AGENTS.md").read_text())
+            hooks = json.loads((root / ".claude" / "settings.json").read_text())["hooks"]
+            self.assertIn("SessionStart", hooks)
+            self.assertIn("Stop", hooks)
+            self.assertNotIn("PreToolUse", hooks)  # `guard` was not requested
+
+    def test_MF14_resolve_integration_plan_refuses_unknown_values(self):
+        """The backstop for callers that don't go through cmd_init."""
+        with tempfile.TemporaryDirectory() as tmp:
+            args = argparse.Namespace(adapter=None, mcp=False, hooks="bogus")
+            with self.assertRaises(ValueError) as ctx:
+                crumb.resolve_integration_plan(Path(tmp), args)
+            self.assertIn("bogus", str(ctx.exception))
+
+    def test_MF14_removal_finds_a_block_injected_into_a_stray_file(self):
+        """Recovery for stores already in the bad state (the injection predates the fix)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "README.md").write_text("# keep me\n", encoding="utf-8")
+            run(["init", "--project", tmp, "--session-tracking", "full"])
+            crumb.write_adapter_block(root, "README.md")  # what the old flag did
+            self.assertEqual(crumb.discover_adapter_blocks(root), ["README.md"])
+            code, out = run(["init", "--project", tmp, "--remove-integrations"])
+            self.assertEqual(code, 0)
+            self.assertIn("README.md", out)
+            self.assertEqual((root / "README.md").read_text(), "# keep me\n")
+
+    def test_MF14_discovery_ignores_oversized_and_unrelated_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "notes.md").write_text("nothing managed here\n", encoding="utf-8")
+            (root / "blob.bin").write_bytes(b"\xff\xfe" * 32)
+            big = root / "huge.md"
+            big.write_text(
+                crumb.ADAPTER_BEGIN + "\n" + "x" * crumb.ADAPTER_SCAN_MAX_BYTES,
+                encoding="utf-8",
+            )
+            self.assertEqual(crumb.discover_adapter_blocks(root), [])
+
+
+# --------------------------------------------------------------------------- #
+# MF-21 — Ctrl+C at a consent prompt aborts; it is not consent (review #5 Low)
+# --------------------------------------------------------------------------- #
+class ConsentPromptTests(unittest.TestCase):
+    def test_MF21_ctrl_c_does_not_answer_yes(self):
+        with mock.patch("builtins.input", side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                crumb._prompt_yes("Register the MCP server in .mcp.json?", True)
+
+    def test_MF21_eof_still_takes_the_default(self):
+        """Piped/non-tty input must behave exactly as before."""
+        with mock.patch("builtins.input", side_effect=EOFError):
+            self.assertTrue(crumb._prompt_yes("q", True))
+            self.assertFalse(crumb._prompt_yes("q", False))
+
+    def test_MF21_ctrl_c_at_the_policy_prompt_aborts_init(self):
+        """It used to pick `full` silently and scaffold a store anyway."""
+        with mock.patch("sys.stdin") as stdin, mock.patch(
+            "builtins.input", side_effect=KeyboardInterrupt
+        ):
+            stdin.isatty.return_value = True
+            with self.assertRaises(KeyboardInterrupt):
+                crumb.prompt_session_tracking()
+
+    def test_MF21_main_reports_an_abort_instead_of_a_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            err = io.StringIO()
+            with mock.patch("sys.stdin") as stdin, mock.patch(
+                "builtins.input", side_effect=KeyboardInterrupt
+            ), contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                stdin.isatty.return_value = True
+                code = crumb.main(["init", "--project", tmp])
+            self.assertEqual(code, 130)  # shell convention for SIGINT
+            self.assertIn("aborted", err.getvalue())
+            self.assertFalse((root / crumb.MEMORY_DIRNAME).exists())
 
 
 if __name__ == "__main__":

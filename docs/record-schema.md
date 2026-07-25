@@ -180,7 +180,13 @@ Identity is **filename-canonical**. The file's path is the single source of trut
 
 - Filename pattern for directory records: `<YYYY-MM-DD>-<slug>.md`
   (e.g. `decisions/2026-06-25-repo-local-memory-source-of-truth.md`).
-- `slug` = the human segment of the filename (everything after the date).
+- The date must be a **real calendar date** — `2026-02-30` and `9999-99-99` are
+  date-shaped but name no day, and an id built from one sorts and reads as if it
+  did.
+- `slug` = the human segment of the filename (everything after the date),
+  restricted to `[a-z0-9]` runs joined by single hyphens — the charset the writer's
+  `slugify` emits. `id` is an exact-match key; spaces and punctuation inside one
+  (`dec_99999999_My Slug!`) are not something any lookup can be expected to handle.
 - `id` = `<type-prefix>_<YYYYMMDD>_<slug>`, with type-prefixes:
   `dec` (decision), `att` (attempt), `ver` (verification), `idea`, `ses`
   (session), `trap`, `q` (question).

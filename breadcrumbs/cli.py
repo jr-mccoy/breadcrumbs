@@ -32,7 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -125,7 +125,13 @@ CORE_FILES = ("current.md", "handoff.md", "open-questions.md", "known-traps.md")
 REQUIRED_RECORD_KEYS = ("title", "status", "created_at", "privacy")
 
 # Filename of a directory record: <YYYY-MM-DD>-<slug>.md
-RECORD_STEM_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})-(.+)$")
+#
+# The slug is restricted to the charset `slugify` emits — lowercase alphanumerics
+# in `-`-joined runs. It used to be `(.+)`, which accepted `9999-99-99-My Slug!.md`
+# and derived the id `dec_99999999_My Slug!`: spaces and punctuation inside an
+# exact-match key. Writers always emit clean names; validate exists for the
+# hand-created files where this matters (review #5 Low).
+RECORD_STEM_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)$")
 
 # Marker every generated projection carries (plan §3, §16.12).
 GENERATED_MARKER = "GENERATED PROJECTION"
@@ -363,8 +369,10 @@ def prompt_session_tracking(non_interactive_default: str = "full") -> str:
     )
     try:
         answer = input(prompt).strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         return non_interactive_default
+    # Ctrl+C propagates: aborting the policy question must abort `init`, not
+    # silently pick `full` and scaffold a store the user did not agree to.
     if answer in VALID_SESSION_TRACKING:
         return answer
     return non_interactive_default
@@ -380,6 +388,15 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     if not root.is_dir():
         _emit_error(args, f"project root is not a directory: {root}")
+        return 2
+
+    # Integration flags are validated here, before *any* filesystem mutation —
+    # before the scaffold swap, before .gitignore, before a single adapter edit
+    # (review #5 M6/M7, audit #6 N4). Validating inside apply_integrations would
+    # still leave a half-initialized project behind on a typo.
+    problem = validate_integration_flags(args)
+    if problem:
+        _emit_error(args, problem)
         return 2
 
     # Standalone integration operations: they act on an existing project and never
@@ -606,6 +623,12 @@ def _parse_scalar(val: str):
         if end != -1:
             return val[1:end]
     val = _strip_inline_comment(val)
+    if val.startswith("#"):
+        # A comment-only value (`superseded_by: # none yet`). `_strip_inline_comment`
+        # needs a space before the `#`, so this used to survive as the literal
+        # string "# none yet" — truthy garbage that passed validate §16.6's
+        # "superseded needs a superseded_by" check. YAML reads it as null; so do we.
+        return None
     if val in ("null", "~"):
         return None
     if val == "[]":
@@ -738,11 +761,18 @@ def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
     """From a record filename stem `<YYYY-MM-DD>-<slug>`, compute (id, slug).
 
     Returns None if the stem doesn't match the canonical pattern (caller flags it).
+    The date must be a real calendar date: `2026-02-30` and `9999-99-99` are shaped
+    like dates but name no day, and an id built from one sorts and reads as if it
+    did (review #5 Low).
     """
     m = RECORD_STEM_RE.match(stem)
     if not m:
         return None
     y, mo, d, slug = m.groups()
+    try:
+        date(int(y), int(mo), int(d))
+    except ValueError:
+        return None
     prefix = TYPE_PREFIX.get(rtype, rtype)
     rid = f"{prefix}_{y}{mo}{d}_{slug}"
     return rid, slug
@@ -751,9 +781,6 @@ def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
 # --------------------------------------------------------------------------- #
 # Record model + loader (plan §6, §20.5)
 # --------------------------------------------------------------------------- #
-
-_SECTION_RE = re.compile(r"^##\s+(.*)$")
-
 
 class Record:
     """A loaded `.md` record: path, type, frontmatter, body, parse error (if any)."""
@@ -794,22 +821,16 @@ class Record:
 
     @property
     def sections(self) -> dict[str, str]:
-        """Split the body into {heading: text} on `## ` headings (reused by resume/guard)."""
-        out: dict[str, str] = {}
-        current: str | None = None
-        buf: list[str] = []
-        for line in self.body.splitlines():
-            m = _SECTION_RE.match(line)
-            if m:
-                if current is not None:
-                    out[current] = "\n".join(buf).strip()
-                current = m.group(1).strip()
-                buf = []
-            elif current is not None:
-                buf.append(line)
-        if current is not None:
-            out[current] = "\n".join(buf).strip()
-        return out
+        """Split the body into {heading: text} on `## ` headings (reused by resume/guard).
+
+        Delegates to `split_md_sections` so there is exactly one splitter in the
+        codebase (review #5 M3). This used to be a second, fence-blind copy: a
+        record body whose fenced code block contained `## Next Action` — routine
+        for `--set 'Commands / Verification' …` — reported a section that does not
+        exist, so validate §16.10 false-passed a session with no real Next Action,
+        guard cited torn text, and content after the fake heading vanished.
+        """
+        return split_md_sections(self.body)
 
 
 def load_records(memory_dir: Path, types: tuple[str, ...] | None = None) -> list[Record]:
@@ -1076,7 +1097,8 @@ def run_validate(memory_dir: Path) -> list[dict]:
                     "identity",
                     "fail",
                     rel,
-                    "filename does not match <YYYY-MM-DD>-<slug>.md; id/slug underivable",
+                    "filename does not match <YYYY-MM-DD>-<slug>.md with a real calendar "
+                    "date and a lowercase [a-z0-9-] slug; id/slug underivable",
                 )
             )
         else:
@@ -1813,7 +1835,11 @@ def cmd_remember(args: argparse.Namespace) -> int:
         for heading in BODY_SECTIONS[rtype]:
             if heading == "Evidence":
                 continue  # handled below
-            sections.setdefault(heading, input(f"{heading}: ").strip())
+            # `setdefault(h, input(...))` evaluated the prompt eagerly, so a heading
+            # already supplied via --set was still asked for and the answer thrown
+            # away (review #5 Low).
+            if heading not in sections:
+                sections[heading] = input(f"{heading}: ").strip()
 
     if not title:
         _emit_error(args, "title must not be empty")
@@ -3956,10 +3982,30 @@ def _item_from_trap(trap: dict) -> dict:
     }
 
 
+QUESTION_SLUG_CHARS = 48
+
+
+def question_item_id(question: str) -> str:
+    """Search id for an open question: `q:<slug>`, disambiguated when truncated.
+
+    Truncating the slug at 48 characters made two distinct questions share one id
+    ("… to the new columnar store this quarter" / "… to the new row store next
+    quarter" both slugify past the cut with the same prefix), and `search`'s
+    by_id map kept only the last — which `guard`'s `_next_safest_action` resolves
+    through (audit #6 N6). A short digest of the *full* question restores
+    uniqueness; ids for questions short enough not to be cut are unchanged.
+    """
+    slug = slugify(question)
+    if len(slug) <= QUESTION_SLUG_CHARS:
+        return "q:" + slug
+    digest = hashlib.sha256(question.encode("utf-8")).hexdigest()[:6]
+    return f"q:{slug[:QUESTION_SLUG_CHARS].rstrip('-')}-{digest}"
+
+
 def _item_from_question(q: dict) -> dict:
     text = q["question"] + "\n" + q.get("body", "")
     return {
-        "id": "q:" + slugify(q["question"])[:48],
+        "id": question_item_id(q["question"]),
         "kind": "question",
         "status": (q.get("status") or "open"),
         "title": q["question"],
@@ -3981,6 +4027,27 @@ def _candidate_items(memory_dir: Path) -> list[dict]:
         items.append(_item_from_record(rec))
     items.extend(_item_from_trap(t) for t in load_traps(memory_dir))
     items.extend(_item_from_question(q) for q in load_open_questions(memory_dir))
+    return _disambiguate_item_ids(items)
+
+
+def _disambiguate_item_ids(items: list[dict]) -> list[dict]:
+    """Make every candidate id unique, appending `-2`, `-3`, … like `_unique_record_path`.
+
+    Records are filename-canonical and validate §16.4 already rejects duplicate ids,
+    but trap and question ids are derived from free text (a trap's id is the heading
+    prefix, a question's a slug), so two blocks can still land on one id. `search`
+    builds a by_id map that keeps only the last of a colliding pair, and guard
+    resolves its next-safest-action through that map — so a collision silently
+    substitutes one item's advice for another's (audit #6 N6).
+    """
+    seen: dict[str, int] = {}
+    for item in items:
+        base = item["id"]
+        if base not in seen:
+            seen[base] = 1
+            continue
+        seen[base] += 1
+        item["id"] = f"{base}-{seen[base]}"
     return items
 
 
@@ -5353,14 +5420,47 @@ def _resolve_tristate_list(value, all_items: list[str]) -> list[str] | None:
 
 
 def _prompt_yes(question: str, default: bool) -> bool:
+    """Ask a yes/no question. EOF takes the default; Ctrl+C aborts the command.
+
+    Mapping `KeyboardInterrupt` to the default meant Ctrl+C at "Register the MCP
+    server in .mcp.json?" (default yes) was recorded as consent and went on to edit
+    `.mcp.json` — the one input that unambiguously means "stop" (review #5 Low).
+    EOF still takes the default, so piped/non-tty input behaves as before.
+    """
     suffix = " [Y/n] " if default else " [y/N] "
     try:
         ans = input(question + suffix).strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         return default
     if not ans:
         return default
     return ans in ("y", "yes")
+
+
+def validate_integration_flags(args: argparse.Namespace) -> str | None:
+    """Error message if `--with-adapter`/`--with-hooks` name unknown values, else None.
+
+    Must run before any filesystem mutation (review #5 M6/M7, audit #6 N4).
+    Unvalidated, `--with-hooks=bogus` reached `_HOOK_SPECS[ev]` and escaped as a raw
+    `KeyError` — *after* `init` had swapped in the scaffold and written
+    `.gitignore`, leaving a store with no hooks that the command then refused to
+    touch again. `--with-adapter=README.md` was worse: it injected the managed block
+    into an arbitrary file, and `--remove-integrations` (which knows only
+    `ADAPTER_FILENAMES`) reported "No integrations to remove." and left it there.
+    """
+    for flag, value, valid in (
+        ("--with-hooks", getattr(args, "hooks", None), HOOK_EVENTS),
+        ("--with-adapter", getattr(args, "adapter", None), ADAPTER_FILENAMES),
+    ):
+        requested = _resolve_tristate_list(value, list(valid)) or []
+        unknown = [name for name in requested if name not in valid]
+        if unknown:
+            return (
+                f"{flag}: unknown {'values' if len(unknown) > 1 else 'value'} "
+                f"{', '.join(repr(u) for u in unknown)}. Valid: {', '.join(valid)} "
+                f"(or the bare flag for all of them)."
+            )
+    return None
 
 
 def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
@@ -5369,7 +5469,14 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
     Returns {"adapters": [...], "mcp": bool, "hooks": [...]}. On a TTY with an
     integration left unspecified, the user is asked once per integration (the
     first-run picker). Non-interactive + unspecified means "off".
+
+    Raises ValueError on an unknown flag value. `cmd_init` checks the same thing up
+    front (and exits 2), so this is the backstop for any other caller: no plan is
+    ever resolved from values `apply_integrations` cannot honor.
     """
+    problem = validate_integration_flags(args)
+    if problem:
+        raise ValueError(problem)
     detected = present_adapters(root)
     adapters = _resolve_tristate_list(getattr(args, "adapter", None), detected)
     hooks = _resolve_tristate_list(getattr(args, "hooks", None), list(HOOK_EVENTS))
@@ -5415,10 +5522,53 @@ def apply_integrations(root: Path, plan: dict) -> dict:
     return applied
 
 
+# Files bigger than this are not scanned for a stray signpost block: the block is
+# a few hundred bytes injected into a guidance file, and reading a repo's binaries
+# or bundles to find one is not worth it.
+ADAPTER_SCAN_MAX_BYTES = 1_000_000
+
+
+def discover_adapter_blocks(root: Path) -> list[str]:
+    """Every file carrying our managed signpost block, canonical or not.
+
+    Removal used to iterate `ADAPTER_FILENAMES` alone, so a block injected into any
+    other file — which `--with-adapter=<anything>` accepted before MF-14 validated
+    it — was unreachable via the documented undo. The scan stays bounded: the
+    canonical names plus the project root's own top-level files, skipping anything
+    too large to plausibly be a guidance file.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    candidates = [root / name for name in ADAPTER_FILENAMES]
+    try:
+        candidates += sorted(p for p in root.iterdir() if p.is_file())
+    except OSError:
+        pass
+    for path in candidates:
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:  # pragma: no cover - candidates are all under root
+            continue
+        if rel in seen or not path.is_file():
+            continue
+        seen.add(rel)
+        try:
+            if path.stat().st_size > ADAPTER_SCAN_MAX_BYTES:
+                continue
+        except OSError:
+            continue
+        # Lenient read (review #5 H4): an undecodable file in the project root must
+        # not take the whole removal down with it.
+        text, _ = read_text_lenient(path)
+        if ADAPTER_BEGIN in text:
+            names.append(rel)
+    return names
+
+
 def remove_integrations(root: Path) -> dict:
     """Reverse every integration breadcrumbs added; leave all other content intact."""
     removed: dict = {"adapters": [], "mcp": False, "hooks": False}
-    for name in ADAPTER_FILENAMES:
+    for name in discover_adapter_blocks(root):
         if remove_adapter_block(root, name):
             removed["adapters"].append(name)
     removed["mcp"] = unregister_mcp(root)
@@ -5779,6 +5929,12 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
 
 def cmd_hook(args: argparse.Namespace) -> int:
     event = getattr(args, "hook_event", None)
+    # Validate the event *before* reading stdin (review #5 Low): `crumb hook` with
+    # no subcommand used to block on a terminal until EOF and only then report the
+    # usage error, which reads as a hang.
+    if event not in HOOK_EVENTS:
+        _emit_error(args, "specify: `crumb hook session|guard|capture`")
+        return 2
     payload = _read_hook_stdin()
     root = _hook_root(payload)
     memory_dir = root / MEMORY_DIRNAME
@@ -5786,10 +5942,7 @@ def cmd_hook(args: argparse.Namespace) -> int:
         return _hook_session(memory_dir, root)
     if event == "guard":
         return _hook_guard(memory_dir, root, payload)
-    if event == "capture":
-        return _hook_capture(memory_dir, root, payload)
-    _emit_error(args, "specify: `crumb hook session|guard|capture`")
-    return 2
+    return _hook_capture(memory_dir, root, payload)
 
 
 # --------------------------------------------------------------------------- #
@@ -6263,6 +6416,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         return args.func(args)
+    except KeyboardInterrupt:
+        # Ctrl+C at a prompt aborts the command (review #5 Low). 130 is the shell
+        # convention for SIGINT; the message goes to stderr so `--json` output is
+        # never half a document followed by a traceback.
+        print("\naborted.", file=sys.stderr)
+        return 130
     except (OSError, ValueError) as exc:
         # Expected, user-facing failures (missing template/package, permissions,
         # unrepresentable values) surface as a clean error + nonzero exit rather

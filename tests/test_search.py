@@ -122,5 +122,66 @@ class HumanOutputTests(unittest.TestCase):
             self.assertEqual(code, 2)
 
 
+# --------------------------------------------------------------------------- #
+# MF-18 — candidate ids must be unique (audit #6 N6)
+# --------------------------------------------------------------------------- #
+Q_COLUMNAR = ("Should we migrate the reporting pipeline to the new columnar "
+              "store this quarter")
+Q_ROW = "Should we migrate the reporting pipeline to the new row store next quarter"
+
+
+class QuestionIdCollisionTests(unittest.TestCase):
+    """Question ids were `q:` + the first 48 characters of the slug.
+
+    Two distinct questions sharing that prefix collapsed to one id, and `search`'s
+    by_id map kept only the last — which `guard`'s `_next_safest_action` resolves
+    through, so one question's advice was silently served for another's.
+    """
+
+    def _store_with_questions(self, tmp: str, questions) -> Path:
+        root = Path(tmp)
+        crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        mem = root / crumb.MEMORY_DIRNAME
+        for q in questions:
+            crumb.note(mem, root, "question", q, fields={}, tags=[], agent="test")
+        return mem
+
+    def test_MF18_colliding_prefixes_get_distinct_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._store_with_questions(tmp, (Q_COLUMNAR, Q_ROW))
+            ids = [i["id"] for i in crumb._candidate_items(mem) if i["kind"] == "question"]
+            self.assertEqual(len(ids), 2)
+            self.assertEqual(len(set(ids)), 2, ids)
+
+    def test_MF18_search_by_id_map_keeps_both(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._store_with_questions(tmp, (Q_COLUMNAR, Q_ROW))
+            _, out = run(["search", "columnar store quarter", "--project", str(root), "--json"])
+            payload = json.loads(out)
+            ids = [m["id"] for m in payload["matches"]]
+            titles = {m["title"] for m in payload["matches"]}
+            self.assertEqual(len(ids), len(set(ids)), ids)
+            self.assertIn(Q_COLUMNAR, titles)
+            self.assertIn(Q_ROW, titles)
+
+    def test_MF18_short_question_ids_are_unchanged(self):
+        """Only truncated slugs get a digest; existing short ids must not churn."""
+        short = "Should the worker own its own schema migrations"
+        self.assertEqual(
+            crumb.question_item_id(short), "q:" + crumb.slugify(short)
+        )
+        self.assertLessEqual(len(crumb.slugify(short)), crumb.QUESTION_SLUG_CHARS)
+
+    def test_MF18_ids_are_deterministic(self):
+        self.assertEqual(crumb.question_item_id(Q_ROW), crumb.question_item_id(Q_ROW))
+
+    def test_MF18_residual_collisions_are_still_disambiguated(self):
+        """The backstop: identical ids from any source get -2, -3, … suffixes."""
+        items = [{"id": "trap_x"}, {"id": "trap_x"}, {"id": "trap_x"}, {"id": "trap_y"}]
+        out = [i["id"] for i in crumb._disambiguate_item_ids(items)]
+        self.assertEqual(out, ["trap_x", "trap_x-2", "trap_x-3", "trap_y"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

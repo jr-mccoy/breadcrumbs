@@ -377,7 +377,8 @@ piece is independent:
   well under the bloat threshold so `audit` stays green.
 - **MCP registration** (`--with-mcp`) — merges a `breadcrumbs` server into
   `.mcp.json` (preserving any other servers). Needs the optional `[mcp]` extra to
-  actually run: `pip install "crumb-kit[mcp]"`.
+  actually run: `pip install "crumb-kit[mcp]"` (the SDK needs Python ≥ 3.10; on
+  3.9 that command succeeds and installs nothing).
 - **Claude Code hooks** (`--with-hooks[=session,guard,capture]`) — merges three
   hooks into `.claude/settings.json` so memory is consulted **without the agent
   choosing to**:

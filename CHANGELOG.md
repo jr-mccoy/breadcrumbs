@@ -137,6 +137,73 @@ uses semantic versioning. The package version is independent of the on-disk reco
   the Python matrix are covered too. `RELEASING.md`'s claim that dry-run "runs
   every check CI does" is corrected to what it actually runs.
 
+- **`crumb init` validates integration flags before it writes anything (MF-14).**
+  `--with-hooks=bogus` used to reach `_HOOK_SPECS[ev]` and escape as a raw
+  `KeyError` traceback — *after* the scaffold had been swapped in and `.gitignore`
+  written, leaving a store with no hooks that `init` would then refuse to touch
+  again. `--with-adapter=README.md` was worse: it injected the managed signpost
+  block into an arbitrary file, and `--remove-integrations` (which knew only the
+  canonical guidance filenames) answered "No integrations to remove." and left it
+  there — irreversible via the documented path. Both lists are now checked against
+  `HOOK_EVENTS` / `ADAPTER_FILENAMES` before a single filesystem mutation, exiting
+  2 with a message naming the valid values. For stores already in the bad state,
+  `--remove-integrations` now discovers managed blocks in the project root's own
+  files, not just the canonical list, and reverses them.
+- **`Record.sections` is fence-aware — there is one section splitter now (MF-15).**
+  The review #3 fence fix landed in `split_md_ordered`/`split_md_sections` and
+  never reached `Record.sections`, a second hand-rolled copy. A body whose fenced
+  code block contained `## Next Action` — routine, since `--set 'Commands /
+  Verification' …` writes fences — reported a section that does not exist: validate
+  §16.10 false-passed a session with no real Next Action, `_decision_rationale` /
+  `_attempt_do_not_retry` / `_build_guard_prefilter` read torn sections so guard
+  could cite the wrong text, and content after the fake heading vanished from the
+  dict view. `Record.sections` now delegates to `split_md_sections`, which also
+  merges duplicate headings instead of last-wins.
+- **`memory_record` returns the documented error envelope (MF-16).** It called
+  `cli.write_record` bare while every other write path wrapped it, so a newline in
+  `title` (and any other value the writer refuses) escaped as a raw `ToolError`
+  instead of the `{ok:false, error}` `docs/mcp-spec.md` promises.
+- **MCP write tools no longer return absolute host paths (MF-17).** `mcp_core`
+  states the rule at the top of the module — never hand the MCP client an absolute
+  host path — and applied it to the missing-store error while every success payload
+  did exactly that. `memory_record`, `memory_note`, `memory_verify`,
+  `memory_mark_status` and `memory_reindex` now return store-relative paths
+  (`decisions/2026-07-24-x.md`), the same form validate/audit/doctor findings use;
+  the choice is stated in `docs/mcp-spec.md`. The CLI still prints absolute paths
+  for humans.
+- **Open-question ids no longer collide on a shared 48-character prefix (MF-18).**
+  Ids were `q:` + the first 48 characters of the slug, so two distinct questions
+  ("… to the new **columnar store this quarter**" / "… to the new **row store next
+  quarter**") produced one id, and `search`'s by_id map kept only the last — which
+  `guard`'s `_next_safest_action` resolves through, silently serving one question's
+  advice for another's. A truncated slug now carries a short digest of the full
+  question; ids short enough not to be cut are unchanged. `_candidate_items` also
+  disambiguates any residual duplicate (traps derive ids from free text too).
+- **Interactive `remember` no longer prompts for sections already given (MF-19).**
+  `sections.setdefault(heading, input(...))` evaluated the prompt eagerly, so a
+  heading supplied via `--set` was asked for anyway and the answer discarded.
+- **`crumb hook` with no subcommand reports usage instead of hanging (MF-20).**
+  It read stdin before validating the event, so from a terminal it blocked until
+  EOF and only then printed the usage error.
+- **Ctrl+C at an `init` prompt aborts instead of consenting (MF-21).** `_prompt_yes`
+  and `prompt_session_tracking` mapped `KeyboardInterrupt` to the prompt's default,
+  and the adapter/MCP prompts default to *yes* — so aborting at "Register the MCP
+  server in .mcp.json?" was recorded as consent and went on to edit `.mcp.json`.
+  Ctrl+C now aborts the command with exit 130 and a one-line message; `EOFError`
+  still takes the default, so piped input behaves exactly as before.
+- **A comment-only frontmatter value parses as null (MF-22).** `_strip_inline_comment`
+  requires a space before the `#`, so `superseded_by: # none yet` survived as the
+  literal string `"# none yet"` — truthy garbage that satisfied validate §16.6's
+  "a superseded record needs a `superseded_by`" check. YAML reads it as null; so
+  do we.
+- **Filename canonicality rejects impossible dates and stray slug characters
+  (MF-23).** `RECORD_STEM_RE` was `(\d{4})-(\d{2})-(\d{2})-(.+)`, which accepted
+  `9999-99-99-My Slug!.md` and derived the id `dec_99999999_My Slug!` — spaces and
+  punctuation inside an exact-match key. The date must now be a real calendar date
+  and the slug must match the charset `slugify` emits. Writers always produced
+  clean names; `validate` §16.4 exists for hand-created files, which is where this
+  mattered, and its finding now names the rule.
+
 ### Added
 - **Fixture 11 — multi-machine** (`fixtures/fixture-11-multi-machine/`): the
   multi-developer store the suite had no example of, which is why all five bugs
@@ -158,6 +225,20 @@ uses semantic versioning. The package version is independent of the on-disk reco
   than hand-tagged; `CLAUDE.md` points at it. The dead tags are left in place —
   deleting them is the maintainer's call — and the release workflow refuses to
   re-use either one.
+- **The CLI/MCP fork on an omitted `confidence` is a stated choice, not a lying
+  comment (MF-24).** Non-interactive `crumb remember` exits 2 when there is no
+  evidence and no `--confidence`; the identical `memory_record` payload records
+  `low`. The `mcp_core` comment claimed exact parity with the CLI, which was false.
+  Both behaviors are kept — the CLI's error names the flag a human forgot, while a
+  tool call has no such conversation and `low` is precisely what "the caller stated
+  no confidence" means — and the divergence is now documented in
+  `docs/mcp-spec.md` and described accurately in the code. An *explicit*
+  `medium`/`high` without evidence remains an error on both surfaces.
+- **The `[mcp]` extra hint names the Python floor (MF-25).** The extra is marked
+  `python_version >= '3.10'`, so `pip install "crumb-kit[mcp]"` succeeds and
+  installs **nothing** on 3.9 — and the hint told the user to run exactly that
+  command without mentioning it. The message now says the SDK needs Python ≥ 3.10
+  and what happens on 3.9.
 
 ## [0.1.7] — 2026-07-02
 
