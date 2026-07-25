@@ -68,8 +68,10 @@ class PreflightRecoveryTests(unittest.TestCase):
 
     def test_MF11_recovery_also_allowed_in_dry_run(self):
         d = decide(
-            on_pypi=preflight.ON_PYPI_YES, latest_on_pypi="0.1.8",
-            tag_exists=False, mode="dry-run",
+            on_pypi=preflight.ON_PYPI_YES,
+            latest_on_pypi="0.1.8",
+            tag_exists=False,
+            mode="dry-run",
         )
         self.assertTrue(d.ok, d.reason())
         self.assertTrue(
@@ -107,19 +109,37 @@ class PreflightRecoveryTests(unittest.TestCase):
     def test_MF11_unreachable_pypi_warns_but_proceeds(self):
         d = decide(on_pypi=preflight.ON_PYPI_UNKNOWN)
         self.assertTrue(d.ok, d.reason())
-        self.assertTrue(
-            any(level == preflight.WARNING for level, _ in d.messages), d.messages
-        )
+        self.assertTrue(any(level == preflight.WARNING for level, _ in d.messages), d.messages)
 
     def test_MF11_cli_exit_codes_match_the_decision(self):
-        ok = preflight.main([
-            "--version", "0.1.8", "--on-pypi", "yes", "--latest-on-pypi", "0.1.8",
-            "--tag-exists", "false", "--mode", "publish",
-        ])
-        blocked = preflight.main([
-            "--version", "0.1.8", "--on-pypi", "yes", "--latest-on-pypi", "0.1.8",
-            "--tag-exists", "true", "--mode", "publish",
-        ])
+        ok = preflight.main(
+            [
+                "--version",
+                "0.1.8",
+                "--on-pypi",
+                "yes",
+                "--latest-on-pypi",
+                "0.1.8",
+                "--tag-exists",
+                "false",
+                "--mode",
+                "publish",
+            ]
+        )
+        blocked = preflight.main(
+            [
+                "--version",
+                "0.1.8",
+                "--on-pypi",
+                "yes",
+                "--latest-on-pypi",
+                "0.1.8",
+                "--tag-exists",
+                "true",
+                "--mode",
+                "publish",
+            ]
+        )
         self.assertEqual((ok, blocked), (0, 1))
 
 
@@ -225,6 +245,113 @@ class TagHistoryDocumentedTests(unittest.TestCase):
             "nothing to clean up — no tag or release was\n  created" in self.releasing,
             "RELEASING.md still describes the old (wrong) partial-publish recovery",
         )
+
+    def test_MF35_path_b_names_the_pypi_project_and_its_missing_guardrails(self):
+        """Path B said to scope the token to `breadcrumbs`; the project is `crumb-kit`."""
+        path_b = self.releasing.split("## Path B")[1]
+        self.assertIn("crumb-kit", path_b)
+        self.assertNotIn("scope it to the\n   `breadcrumbs` project", path_b)
+        self.assertIn("bypasses every guardrail", path_b)
+
+
+# --------------------------------------------------------------------------- #
+# Workflow hygiene (MF-38 … MF-42) — both workflows, read as text
+# --------------------------------------------------------------------------- #
+CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+
+
+class WorkflowHygieneTests(unittest.TestCase):
+    """Every workflow-level guarantee the last review round found missing.
+
+    Read as text, like the rest of this file: the suite is stdlib-only, and these
+    are presence claims about YAML that a parser would not make clearer.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.files = {
+            "ci.yml": CI_YML.read_text(encoding="utf-8"),
+            "release.yml": RELEASE_YML.read_text(encoding="utf-8"),
+        }
+
+    def _top_level_block(self, text: str, key: str) -> str | None:
+        """The `key:` block at column 0, if present (a job-level one is indented)."""
+        lines = text.splitlines()
+        for i, ln in enumerate(lines):
+            if ln == f"{key}:":
+                out = []
+                for nxt in lines[i + 1 :]:
+                    if nxt and not nxt.startswith((" ", "\t")):
+                        break
+                    out.append(nxt)
+                return "\n".join(out)
+        return None
+
+    def test_MF38_both_workflows_set_top_level_permissions(self):
+        """Without one, a job with no `permissions:` gets the repo-default scope."""
+        for name, text in self.files.items():
+            with self.subTest(workflow=name):
+                block = self._top_level_block(text, "permissions")
+                self.assertIsNotNone(block, f"{name} has no top-level permissions block")
+                self.assertIn("contents: read", block)
+
+    def test_MF40_both_workflows_declare_a_concurrency_group(self):
+        """ci ran twice per PR (push + pull_request); two publishes could race."""
+        for name, text in self.files.items():
+            with self.subTest(workflow=name):
+                block = self._top_level_block(text, "concurrency")
+                self.assertIsNotNone(block, f"{name} has no concurrency group")
+                self.assertIn("group:", block)
+
+    def test_MF40_release_never_cancels_a_run_in_progress(self):
+        """Cancelling mid-publish is how a version lands on PyPI with no tag."""
+        block = self._top_level_block(self.files["release.yml"], "concurrency")
+        self.assertIn("cancel-in-progress: false", block)
+
+    def test_MF39_every_action_is_pinned_to_a_commit_sha(self):
+        """`@release/v1` is a moving *branch* on the OIDC-publishing path."""
+        import re
+
+        pattern = re.compile(r"uses:\s*([^\s@]+)@(\S+)")
+        seen = 0
+        for name, text in self.files.items():
+            for repo, ref in pattern.findall(text):
+                seen += 1
+                with self.subTest(workflow=name, action=repo):
+                    self.assertRegex(
+                        ref,
+                        r"^[0-9a-f]{40}$",
+                        f"{repo} is pinned to {ref!r}, a mutable ref",
+                    )
+        self.assertGreater(seen, 0, "no `uses:` steps found — did the parse break?")
+
+    def test_MF39_each_pin_records_the_human_readable_version(self):
+        """A bare SHA is unreviewable; the trailing comment says what it is."""
+        for name, text in self.files.items():
+            for ln in text.splitlines():
+                if "uses:" in ln and "@" in ln and "docker://" not in ln:
+                    with self.subTest(workflow=name, line=ln.strip()):
+                        self.assertIn("#", ln.split("@", 1)[1])
+
+    def test_MF42_test_matrix_covers_the_supported_range(self):
+        """3.10 was exercised only by the `mcp` job; 3.13/3.14 not at all."""
+        text = self.files["ci.yml"]
+        matrix = text.split("python-version:", 1)[1].splitlines()[0]
+        for version in ("3.9", "3.10", "3.11", "3.12", "3.13", "3.14"):
+            with self.subTest(version=version):
+                self.assertIn(f'"{version}"', matrix)
+
+    def test_MF41_mcp_job_asserts_the_advertised_resource_count(self):
+        """It pinned 10 tools and 6 prompts but never the 8 resources."""
+        text = self.files["ci.yml"]
+        self.assertIn("list_resources()", text)
+        self.assertIn("list_resource_templates()", text)
+        self.assertIn("== 8", text)
+
+    def test_MF27_ci_has_a_lint_job(self):
+        text = self.files["ci.yml"]
+        self.assertIn("ruff check", text)
+        self.assertIn("ruff format --check", text)
 
 
 if __name__ == "__main__":

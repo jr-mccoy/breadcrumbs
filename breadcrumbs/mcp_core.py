@@ -32,6 +32,7 @@ MEMORY_DIRNAME = cli.MEMORY_DIRNAME
 # Root / memory-dir resolution
 # --------------------------------------------------------------------------- #
 
+
 def resolve(root: str | Path | None = None) -> tuple[Path, Path]:
     """Return (project_root, memory_dir). `root` defaults to cwd (same as CLI)."""
     project_root = cli.resolve_root(str(root) if root is not None else None)
@@ -51,6 +52,32 @@ def _require_memory(memory_dir: Path) -> None:
     signals absence with an error rather than a `{ok: false}` body."""
     if not memory_dir.is_dir():
         raise FileNotFoundError(_NO_MEMORY_MSG)
+
+
+def _rel(path: str | Path, memory_dir: Path) -> str:
+    """Store-relative POSIX path for an MCP payload (issue #7, audit #6 N5).
+
+    The write tools used to return `str(path)` — the absolute host path of the
+    record — which is exactly what the missing-store message above goes out of its
+    way not to leak. Store-relative (`decisions/2026-07-24-x.md`) is the same form
+    validate/audit/doctor findings already use, and it is what an MCP client can
+    actually act on: it has no filesystem, only the store's own namespace. The CLI
+    keeps printing absolute paths for humans.
+    """
+    p = Path(path)
+    try:
+        return p.relative_to(memory_dir).as_posix()
+    except ValueError:
+        # Not under the store (should not happen): the bare name still tells the
+        # client which file, without naming a directory on this machine.
+        return p.name
+
+
+def _relativize(result: dict, memory_dir: Path) -> dict:
+    """Rewrite a CLI result's `path` to store-relative, leaving everything else alone."""
+    if isinstance(result, dict) and result.get("path") is not None:
+        return {**result, "path": _rel(result["path"], memory_dir)}
+    return result
 
 
 def _memory_missing(memory_dir: Path) -> dict | None:
@@ -76,6 +103,7 @@ def _read_singleton(memory_dir: Path, name: str) -> str:
 # --------------------------------------------------------------------------- #
 # Resources (plan §13) — read-only views over the canonical records
 # --------------------------------------------------------------------------- #
+
 
 def resource_current(root: str | Path | None = None) -> str:
     """`memory://current` — verbatim current.md (same bytes the CLI/file show)."""
@@ -147,7 +175,13 @@ def resource_attempt(rid: str, root: str | Path | None = None) -> str:
     return _record_text(mem, rid, kind="attempt")
 
 
-# Registry consumed by the server to bind static resources uniformly.
+# The declared resource surface. `mcp_server.build_server` binds each URI
+# explicitly rather than looping over these dicts — one visible endpoint per
+# resource, and a stable function per binding — so these are a *manifest*, not a
+# dispatch table: the thing the README and `docs/mcp-spec.md` count when they say
+# "8 resources". `tests/test_mcp.py` asserts the bound URIs equal these keys, so
+# the two cannot drift. (They previously carried a comment claiming the server
+# consumed them, which nothing did — review #5 Low.)
 STATIC_RESOURCES = {
     "memory://current": resource_current,
     "memory://handoff": resource_handoff,
@@ -166,6 +200,7 @@ TEMPLATE_RESOURCES = {
 # Tools (plan §13) — thin wrappers over the exact CLI core functions
 # --------------------------------------------------------------------------- #
 
+
 def tool_search(
     query: str,
     filters: dict | None = None,
@@ -178,8 +213,13 @@ def tool_search(
         return missing
     matches, _by_id = cli.search(mem, project_root, query, files=files, filters=filters or {})
     # `ok: True` on success so every tool shares one envelope (review #3 R25).
-    return {"ok": True, "query": query, "filters": filters or {},
-            "count": len(matches), "matches": matches}
+    return {
+        "ok": True,
+        "query": query,
+        "filters": filters or {},
+        "count": len(matches),
+        "matches": matches,
+    }
 
 
 def tool_guard_before_action(
@@ -231,8 +271,7 @@ def tool_scan_secrets(root: str | Path | None = None) -> dict:
     findings = cli.scan_secrets(mem)
     # `ok` mirrors memory_validate's semantics (safe ⇔ true); `clean` is kept for
     # compatibility with existing consumers (review #3 R25).
-    return {"ok": not findings, "clean": not findings,
-            "count": len(findings), "findings": findings}
+    return {"ok": not findings, "clean": not findings, "count": len(findings), "findings": findings}
 
 
 def tool_record(
@@ -262,11 +301,16 @@ def tool_record(
     tags = payload.get("tags") or []
     confidence = payload.get("confidence")
 
-    # Evidence-or-low-confidence rule (validate §16.9), enforced exactly as the
-    # non-interactive CLI does (review #3 R11): an *unstated* confidence defaults
-    # to low when there is no evidence, but an explicit medium/high without
-    # evidence is an error — silently downgrading it would fork behavior on the
-    # flagship write tool and misrepresent the caller's stated confidence.
+    # Evidence-or-low-confidence rule (validate §16.9). An explicit medium/high
+    # without evidence is an error, exactly as in the CLI (review #3 R11): silently
+    # downgrading it would misrepresent the caller's stated confidence.
+    #
+    # An *unstated* confidence deliberately differs from the CLI, which exits 2
+    # (review #5 Low — the comment here used to claim exact parity, which was
+    # false). The CLI's error tells a human which flag they forgot and lets them
+    # retry; a tool call has no such conversation, and "the caller stated no
+    # confidence" is precisely what `low` records. Documented in
+    # `docs/mcp-spec.md` so the divergence is a stated choice, not a surprise.
     if not evidence and confidence != "low":
         if confidence is None:
             confidence = "low"
@@ -277,20 +321,26 @@ def tool_record(
                 "add payload.evidence or set payload.confidence to 'low'",
             }
 
-    path, meta = cli.write_record(
-        mem,
-        project_root,
-        type,
-        title,
-        sections,
-        tags=tags,
-        evidence=evidence,
-        confidence=confidence,
-        privacy=payload.get("privacy"),
-        scope=payload.get("scope"),
-        status=payload.get("status"),
-        agent=payload.get("agent", "agent"),
-    )
+    try:
+        path, meta = cli.write_record(
+            mem,
+            project_root,
+            type,
+            title,
+            sections,
+            tags=tags,
+            evidence=evidence,
+            confidence=confidence,
+            privacy=payload.get("privacy"),
+            scope=payload.get("scope"),
+            status=payload.get("status"),
+            agent=payload.get("agent", "agent"),
+        )
+    except ValueError as exc:
+        # Same envelope every other writer uses (review #5 M8). Bare, any value the
+        # writer refuses — a newline in `title`, a tag, an evidence ref — escaped as
+        # a raw ToolError instead of the `{ok: false, error}` mcp-spec promises.
+        return {"ok": False, "error": str(exc)}
     fails = cli._validate_new_file(mem, path)
     if fails:
         path.unlink()
@@ -305,7 +355,7 @@ def tool_record(
         "ok": True,
         "id": meta["id"],
         "type": type,
-        "path": str(path),
+        "path": _rel(path, mem),
         "confidence": meta["confidence"],
     }
 
@@ -330,17 +380,20 @@ def tool_verify(
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    return cli.verify(
+    return _relativize(
+        cli.verify(
+            mem,
+            project_root,
+            subject,
+            status=status,
+            method=method,
+            note=note,
+            evidence=evidence,
+            tags=tags,
+            confidence=confidence,
+            agent="agent",
+        ),
         mem,
-        project_root,
-        subject,
-        status=status,
-        method=method,
-        note=note,
-        evidence=evidence,
-        tags=tags,
-        confidence=confidence,
-        agent="agent",
     )
 
 
@@ -350,7 +403,7 @@ def tool_reindex(root: str | Path | None = None) -> dict:
     if (missing := _memory_missing(mem)) is not None:
         return missing
     ok = cli.reindex_projections(mem, project_root)
-    return {"ok": ok, "path": str(mem / "generated" / "resume-packet.md")}
+    return {"ok": ok, "path": "generated/resume-packet.md"}
 
 
 def tool_note(
@@ -372,9 +425,17 @@ def tool_note(
         return missing
     if kind not in cli.NOTE_KINDS:
         return {"ok": False, "error": f"kind must be one of {', '.join(cli.NOTE_KINDS)}"}
-    return cli.note(
-        mem, project_root, kind, text or "",
-        fields=fields or {}, tags=tags or [], agent="agent",
+    return _relativize(
+        cli.note(
+            mem,
+            project_root,
+            kind,
+            text or "",
+            fields=fields or {},
+            tags=tags or [],
+            agent="agent",
+        ),
+        mem,
     )
 
 
@@ -394,8 +455,10 @@ def tool_mark_status(
     _, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    return cli.set_record_status(mem, id, status, reason, agent=agent,
-                                 superseded_by=superseded_by)
+    return _relativize(
+        cli.set_record_status(mem, id, status, reason, agent=agent, superseded_by=superseded_by),
+        mem,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -404,6 +467,7 @@ def tool_mark_status(
 # Each returns guidance text that orients an agent toward the matching resource/
 # tool. Prompts carry no authority over current user instruction (plan §15) — they
 # describe the flow; they do not command the model.
+
 
 def _prompt(body: str) -> str:
     return body.strip() + "\n"

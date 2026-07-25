@@ -136,6 +136,7 @@ class CloudFallbackTests(unittest.TestCase):
     def test_committed_packet_is_tracked_not_ignored(self):
         rel = "fixtures/fixture-09-cloud-fallback/.project-memory/generated/resume-packet.md"
         import subprocess
+
         r = subprocess.run(
             ["git", "check-ignore", rel], cwd=str(REPO_ROOT), capture_output=True, text=True
         )

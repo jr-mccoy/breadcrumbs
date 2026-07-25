@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 try:
     # pydantic (which FastMCP uses to derive tool schemas) hard-rejects
@@ -91,6 +90,7 @@ class RecordPayload(_RecordPayloadOptional):
 
     title: str
 
+
 try:  # The SDK is optional; importing this module must never hard-fail.
     from mcp.server.fastmcp import FastMCP
 
@@ -105,7 +105,9 @@ except Exception as exc:  # pragma: no cover - exercised only without the SDK
 
 SERVER_NAME = "breadcrumbs"
 _INSTALL_HINT = (
-    "The MCP server needs the optional Python MCP SDK.\n"
+    "The MCP server needs the optional Python MCP SDK (which needs Python >= 3.10;\n"
+    "on 3.9 the command below succeeds and installs nothing, because the extra's\n"
+    "marker excludes it).\n"
     '  pip install "crumb-kit[mcp]"   (or:  pip install mcp)\n'
     "Everything still works without it via the `crumb` CLI and the plain\n"
     f"{mcp_core.MEMORY_DIRNAME}/ files — MCP is an optional interop layer."
@@ -272,8 +274,14 @@ def build_server():  # -> FastMCP
         searchable via `type:verification` (with `status:` filtering on the outcome).
         """
         return mcp_core.tool_verify(
-            subject, status, method=method, note=note, evidence=evidence,
-            tags=tags, confidence=confidence, root=_root(),
+            subject,
+            status,
+            method=method,
+            note=note,
+            evidence=evidence,
+            tags=tags,
+            confidence=confidence,
+            root=_root(),
         )
 
     @mcp.tool()

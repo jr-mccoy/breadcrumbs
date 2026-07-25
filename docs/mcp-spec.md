@@ -90,7 +90,17 @@ current instruction, the code, the tests, or authoritative docs (plan §15).
 **Envelope.** Every tool success carries `ok`; a missing store is always
 `{ok:false, error}`. For `memory_validate` and `memory_scan_secrets`, `ok`
 additionally means "healthy/safe" (`false` when problems/findings exist);
-`clean` is kept on the scan result for compatibility.
+`clean` is kept on the scan result for compatibility. A rejected write is
+`{ok:false, error}` too — including one the writer refuses outright (a newline in
+`title`, say), not just one the validate gate reverts.
+
+**Paths are store-relative.** Every `path` a tool returns is relative to
+`.project-memory/` — `decisions/2026-07-24-x.md`, `open-questions.md`,
+`generated/resume-packet.md` — the same form validate/audit/doctor findings use.
+Never an absolute host path: the MCP client has no filesystem, only the store's
+namespace, and the project's absolute location is not the client's business
+(issue #7). The CLI still prints absolute paths, because a human's shell can use
+them.
 
 ### `memory_verify`
 
@@ -135,6 +145,13 @@ Mirrors the `remember` CLI surface:
 `type` must be `"decision"` or `"attempt"`. The write passes the **same**
 post-write validate gate as the CLI; an invalid record is reverted (no
 half-written file) and `{ok:false, error}` is returned.
+
+**Omitted `confidence` differs from the CLI, deliberately.** Without evidence,
+non-interactive `crumb remember` exits 2 and names the flag the human forgot; a
+tool call has no such conversation, so an omitted `confidence` is recorded as
+`low` — which is exactly what "the caller stated no confidence" means. An
+*explicit* `medium`/`high` without evidence is an error on both surfaces:
+silently downgrading a stated confidence would misrepresent the caller.
 
 ### `memory_mark_status`
 

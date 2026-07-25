@@ -52,10 +52,22 @@ class VerifyWriteTests(unittest.TestCase):
     def test_verify_writes_valid_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            code, out = run([
-                "verify", "perf-audit#F1", "--status", "fixed", "--method", "static",
-                "--evidence", "file", "app/Foo.kt:170", "--project", tmp, "--json",
-            ])
+            code, out = run(
+                [
+                    "verify",
+                    "perf-audit#F1",
+                    "--status",
+                    "fixed",
+                    "--method",
+                    "static",
+                    "--evidence",
+                    "file",
+                    "app/Foo.kt:170",
+                    "--project",
+                    tmp,
+                    "--json",
+                ]
+            )
             self.assertEqual(code, 0)
             payload = json.loads(out)
             self.assertTrue(payload["id"].startswith("ver_"))
@@ -106,8 +118,9 @@ class VerifyValidateTests(unittest.TestCase):
     def test_validate_flags_bad_outcome_in_frontmatter(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            crumb.verify(mem, Path(tmp), "subj", status="fixed",
-                         evidence=[{"type": "file", "ref": "a.py:1"}])
+            crumb.verify(
+                mem, Path(tmp), "subj", status="fixed", evidence=[{"type": "file", "ref": "a.py:1"}]
+            )
             rec = crumb.load_records(mem, types=("verification",))[0]
             text = rec.path.read_text(encoding="utf-8").replace("outcome: fixed", "outcome: maybe")
             rec.path.write_text(text, encoding="utf-8")
@@ -120,11 +133,15 @@ class VerifySearchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             root = Path(tmp)
-            crumb.verify(mem, root, "F1", status="fixed",
-                         evidence=[{"type": "file", "ref": "a.py:1"}])
-            crumb.verify(mem, root, "F2", status="open",
-                         evidence=[{"type": "file", "ref": "b.py:2"}])
-            matches, _ = crumb.search(mem, root, "", filters={"type": "verification", "status": "open"})
+            crumb.verify(
+                mem, root, "F1", status="fixed", evidence=[{"type": "file", "ref": "a.py:1"}]
+            )
+            crumb.verify(
+                mem, root, "F2", status="open", evidence=[{"type": "file", "ref": "b.py:2"}]
+            )
+            matches, _ = crumb.search(
+                mem, root, "", filters={"type": "verification", "status": "open"}
+            )
             self.assertEqual([m["status"] for m in matches], ["open"])
             self.assertTrue(matches[0]["id"].startswith("ver_"))
 
@@ -143,8 +160,13 @@ class VerifyGuardTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         mem = init_store(tmp.name)
         root = Path(tmp.name)
-        res = crumb.verify(mem, root, "reconciliation ledger rounding", status=outcome,
-                           evidence=[{"type": "file", "ref": "src/payments/ledger.py"}])
+        res = crumb.verify(
+            mem,
+            root,
+            "reconciliation ledger rounding",
+            status=outcome,
+            evidence=[{"type": "file", "ref": "src/payments/ledger.py"}],
+        )
         self.assertTrue(res["ok"], res)
         if meta:
             p = Path(res["path"])
@@ -152,8 +174,12 @@ class VerifyGuardTests(unittest.TestCase):
             for k, v in meta.items():
                 text = text.replace(f"{k}: active", f"{k}: {v}", 1)
             p.write_text(text, encoding="utf-8")
-        return crumb.guard(mem, root, "rewrite the reconciliation ledger rounding",
-                           files=["src/payments/ledger.py"])
+        return crumb.guard(
+            mem,
+            root,
+            "rewrite the reconciliation ledger rounding",
+            files=["src/payments/ledger.py"],
+        )
 
     def test_regressed_verification_drives_the_verdict(self):
         result = self._guard("regressed")
@@ -187,10 +213,20 @@ class VerifyResumeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             root = Path(tmp)
-            crumb.verify(mem, root, "already-done", status="fixed",
-                         evidence=[{"type": "file", "ref": "a.py:1"}])
-            crumb.verify(mem, root, "still-broken", status="open",
-                         evidence=[{"type": "file", "ref": "b.py:2"}])
+            crumb.verify(
+                mem,
+                root,
+                "already-done",
+                status="fixed",
+                evidence=[{"type": "file", "ref": "a.py:1"}],
+            )
+            crumb.verify(
+                mem,
+                root,
+                "still-broken",
+                status="open",
+                evidence=[{"type": "file", "ref": "b.py:2"}],
+            )
             packet = crumb.build_resume_packet(mem, root)
             outcomes = [v["outcome"] for v in packet["verifications"]]
             self.assertEqual(outcomes, ["open", "fixed"])  # open (actionable) first
@@ -209,23 +245,57 @@ class ReindexOnWriteTests(unittest.TestCase):
     def test_remember_refreshes_projection(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            run(["remember", "decision", "--title", "pin the build cache",
-                 "--evidence", "commit", "abc1234", "--project", tmp])
+            run(
+                [
+                    "remember",
+                    "decision",
+                    "--title",
+                    "pin the build cache",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                    "--project",
+                    tmp,
+                ]
+            )
             self.assertEqual(no_fails(mem), [])  # projection is fresh -> no F3 fail
 
     def test_verify_refreshes_projection(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            run(["verify", "subj", "--status", "fixed",
-                 "--evidence", "file", "a.py:1", "--project", tmp])
+            run(
+                [
+                    "verify",
+                    "subj",
+                    "--status",
+                    "fixed",
+                    "--evidence",
+                    "file",
+                    "a.py:1",
+                    "--project",
+                    tmp,
+                ]
+            )
             self.assertIn("subj", self._packet(mem))
             self.assertEqual(no_fails(mem), [])
 
     def test_mark_status_refreshes_projection(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            _, out = run(["remember", "decision", "--title", "temporary call",
-                          "--evidence", "commit", "abc1234", "--project", tmp, "--json"])
+            _, out = run(
+                [
+                    "remember",
+                    "decision",
+                    "--title",
+                    "temporary call",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                    "--project",
+                    tmp,
+                    "--json",
+                ]
+            )
             rid = json.loads(out)["id"]
             run(["resume", "--project", tmp])  # stamp a fresh packet
             res = crumb.set_record_status(mem, rid, "stale", "needs revalidation")
@@ -254,9 +324,10 @@ class ReindexOnWriteTests(unittest.TestCase):
 
     def test_mcp_verify_and_reindex_tools(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mem = init_store(tmp)
-            res = mcp_core.tool_verify("subj", "open",
-                                       evidence=[{"type": "file", "ref": "a.py:1"}], root=tmp)
+            init_store(tmp)
+            res = mcp_core.tool_verify(
+                "subj", "open", evidence=[{"type": "file", "ref": "a.py:1"}], root=tmp
+            )
             self.assertTrue(res["ok"])
             self.assertEqual(res["outcome"], "open")
             ri = mcp_core.tool_reindex(root=tmp)
@@ -270,8 +341,19 @@ class FreshnessTests(unittest.TestCase):
     def test_handedit_drift_fails_validate_then_reindex_heals(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            run(["remember", "decision", "--title", "seed",
-                 "--evidence", "commit", "abc1234", "--project", tmp])
+            run(
+                [
+                    "remember",
+                    "decision",
+                    "--title",
+                    "seed",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                    "--project",
+                    tmp,
+                ]
+            )
             run(["resume", "--project", tmp])  # stamp a fresh packet
             self.assertEqual(no_fails(mem), [])
             # Hand-edit a canonical record without reindexing.
@@ -299,10 +381,24 @@ class TaskScopedFilesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             root = Path(tmp)
-            run(["remember", "decision", "--title", "startup db validation moved",
-                 "--evidence", "file", "app/Startup.kt:170", "--tags", "startup",
-                 "--project", tmp])
-            packet = crumb.build_resume_packet(mem, root, task="startup db validation in app/Startup.kt")
+            run(
+                [
+                    "remember",
+                    "decision",
+                    "--title",
+                    "startup db validation moved",
+                    "--evidence",
+                    "file",
+                    "app/Startup.kt:170",
+                    "--tags",
+                    "startup",
+                    "--project",
+                    tmp,
+                ]
+            )
+            packet = crumb.build_resume_packet(
+                mem, root, task="startup db validation in app/Startup.kt"
+            )
             self.assertIn("app/Startup.kt:170", packet["likely_files"])
             self.assertNotIn("likely_files_note", packet)
 

@@ -44,10 +44,17 @@ class DoctorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "CLAUDE.md").write_text("# x\n", encoding="utf-8")
-            run([
-                "init", "--project", tmp, "--session-tracking", "full",
-                "--with-adapter", "--with-mcp",
-            ])
+            run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter",
+                    "--with-mcp",
+                ]
+            )
             code, out = run(["doctor", "--project", tmp, "--json"])
             self.assertEqual(code, 0)
             report = json.loads(out)
@@ -64,9 +71,16 @@ class DoctorTests(unittest.TestCase):
 
     def test_detects_installed_hooks(self):
         with tempfile.TemporaryDirectory() as tmp:
-            run([
-                "init", "--project", tmp, "--session-tracking", "full", "--with-hooks",
-            ])
+            run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-hooks",
+                ]
+            )
             _, out = run(["doctor", "--project", tmp, "--json"])
             self.assertTrue(checks_by_name(json.loads(out))["hooks"]["ok"])
 

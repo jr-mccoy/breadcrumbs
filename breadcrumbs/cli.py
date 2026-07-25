@@ -32,7 +32,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 # --------------------------------------------------------------------------- #
@@ -125,7 +125,13 @@ CORE_FILES = ("current.md", "handoff.md", "open-questions.md", "known-traps.md")
 REQUIRED_RECORD_KEYS = ("title", "status", "created_at", "privacy")
 
 # Filename of a directory record: <YYYY-MM-DD>-<slug>.md
-RECORD_STEM_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})-(.+)$")
+#
+# The slug is restricted to the charset `slugify` emits — lowercase alphanumerics
+# in `-`-joined runs. It used to be `(.+)`, which accepted `9999-99-99-My Slug!.md`
+# and derived the id `dec_99999999_My Slug!`: spaces and punctuation inside an
+# exact-match key. Writers always emit clean names; validate exists for the
+# hand-created files where this matters (review #5 Low).
+RECORD_STEM_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)$")
 
 # Marker every generated projection carries (plan §3, §16.12).
 GENERATED_MARKER = "GENERATED PROJECTION"
@@ -137,6 +143,7 @@ SESSION_DONE_MARKERS = ("converged", "session complete", "no next action", "done
 # --------------------------------------------------------------------------- #
 # Small helpers
 # --------------------------------------------------------------------------- #
+
 
 def write_text_atomic(path: Path, text: str) -> None:
     """Write text via tmp-file + rename in the destination directory.
@@ -220,6 +227,7 @@ def resolve_root(project_arg: str | None) -> Path:
 # Manifest + .gitignore writers
 # --------------------------------------------------------------------------- #
 
+
 def manifest_content(
     project: str, created_at: str, session_tracking: str, commit_generated: bool
 ) -> str:
@@ -264,9 +272,7 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
-def rewrite_managed_block(
-    path: Path, begin: str, end: str, block: str | None
-) -> None:
+def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -> None:
     """Insert, replace, or remove a fenced managed block in a text file.
 
     Idempotent. `block` (when given) must contain the `begin` and `end` marker
@@ -330,9 +336,7 @@ def merge_json_file(path: Path, mutate) -> None:
     else:
         data = {}
     if not isinstance(data, dict):
-        raise ValueError(
-            f"expected a JSON object at {path}, found {type(data).__name__}"
-        )
+        raise ValueError(f"expected a JSON object at {path}, found {type(data).__name__}")
     mutate(data)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
@@ -341,6 +345,7 @@ def merge_json_file(path: Path, mutate) -> None:
 # --------------------------------------------------------------------------- #
 # init
 # --------------------------------------------------------------------------- #
+
 
 def copy_template_tree(dest: Path) -> None:
     """Copy templates/project-memory/** into dest."""
@@ -363,8 +368,10 @@ def prompt_session_tracking(non_interactive_default: str = "full") -> str:
     )
     try:
         answer = input(prompt).strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         return non_interactive_default
+    # Ctrl+C propagates: aborting the policy question must abort `init`, not
+    # silently pick `full` and scaffold a store the user did not agree to.
     if answer in VALID_SESSION_TRACKING:
         return answer
     return non_interactive_default
@@ -380,6 +387,15 @@ def cmd_init(args: argparse.Namespace) -> int:
 
     if not root.is_dir():
         _emit_error(args, f"project root is not a directory: {root}")
+        return 2
+
+    # Integration flags are validated here, before *any* filesystem mutation —
+    # before the scaffold swap, before .gitignore, before a single adapter edit
+    # (review #5 M6/M7, audit #6 N4). Validating inside apply_integrations would
+    # still leave a half-initialized project behind on a typo.
+    problem = validate_integration_flags(args)
+    if problem:
+        _emit_error(args, problem)
         return 2
 
     # Standalone integration operations: they act on an existing project and never
@@ -606,6 +622,12 @@ def _parse_scalar(val: str):
         if end != -1:
             return val[1:end]
     val = _strip_inline_comment(val)
+    if val.startswith("#"):
+        # A comment-only value (`superseded_by: # none yet`). `_strip_inline_comment`
+        # needs a space before the `#`, so this used to survive as the literal
+        # string "# none yet" — truthy garbage that passed validate §16.6's
+        # "superseded needs a superseded_by" check. YAML reads it as null; so do we.
+        return None
     if val in ("null", "~"):
         return None
     if val == "[]":
@@ -634,9 +656,7 @@ def _parse_list(lines: list[str]) -> list:
             i += 1
             continue
         if _has_tab_indent(line):
-            raise FrontmatterError(
-                f"tabs are not allowed for indentation (use spaces): {line!r}"
-            )
+            raise FrontmatterError(f"tabs are not allowed for indentation (use spaces): {line!r}")
         stripped = line.strip()
         if not stripped.startswith("-"):
             raise FrontmatterError(f"expected list item, got: {line!r}")
@@ -678,9 +698,7 @@ def _parse_mapping(lines: list[str]) -> dict:
             i += 1
             continue
         if _has_tab_indent(raw):
-            raise FrontmatterError(
-                f"tabs are not allowed for indentation (use spaces): {raw!r}"
-            )
+            raise FrontmatterError(f"tabs are not allowed for indentation (use spaces): {raw!r}")
         if _indent(raw) != 0:
             raise FrontmatterError(f"unexpected indentation at top level: {raw!r}")
         stripped = raw.rstrip()
@@ -726,7 +744,7 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
     if close is None:
         raise FrontmatterError("unterminated frontmatter (missing closing '---')")
     meta = _parse_mapping(lines[1:close])
-    body = "\n".join(lines[close + 1:])
+    body = "\n".join(lines[close + 1 :])
     return meta, body
 
 
@@ -734,15 +752,23 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
 # Record identity (plan §7 "Record identity") — filename-canonical
 # --------------------------------------------------------------------------- #
 
+
 def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
     """From a record filename stem `<YYYY-MM-DD>-<slug>`, compute (id, slug).
 
     Returns None if the stem doesn't match the canonical pattern (caller flags it).
+    The date must be a real calendar date: `2026-02-30` and `9999-99-99` are shaped
+    like dates but name no day, and an id built from one sorts and reads as if it
+    did (review #5 Low).
     """
     m = RECORD_STEM_RE.match(stem)
     if not m:
         return None
     y, mo, d, slug = m.groups()
+    try:
+        date(int(y), int(mo), int(d))
+    except ValueError:
+        return None
     prefix = TYPE_PREFIX.get(rtype, rtype)
     rid = f"{prefix}_{y}{mo}{d}_{slug}"
     return rid, slug
@@ -751,8 +777,6 @@ def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
 # --------------------------------------------------------------------------- #
 # Record model + loader (plan §6, §20.5)
 # --------------------------------------------------------------------------- #
-
-_SECTION_RE = re.compile(r"^##\s+(.*)$")
 
 
 class Record:
@@ -794,22 +818,16 @@ class Record:
 
     @property
     def sections(self) -> dict[str, str]:
-        """Split the body into {heading: text} on `## ` headings (reused by resume/guard)."""
-        out: dict[str, str] = {}
-        current: str | None = None
-        buf: list[str] = []
-        for line in self.body.splitlines():
-            m = _SECTION_RE.match(line)
-            if m:
-                if current is not None:
-                    out[current] = "\n".join(buf).strip()
-                current = m.group(1).strip()
-                buf = []
-            elif current is not None:
-                buf.append(line)
-        if current is not None:
-            out[current] = "\n".join(buf).strip()
-        return out
+        """Split the body into {heading: text} on `## ` headings (reused by resume/guard).
+
+        Delegates to `split_md_sections` so there is exactly one splitter in the
+        codebase (review #5 M3). This used to be a second, fence-blind copy: a
+        record body whose fenced code block contained `## Next Action` — routine
+        for `--set 'Commands / Verification' …` — reported a section that does not
+        exist, so validate §16.10 false-passed a session with no real Next Action,
+        guard cited torn text, and content after the fake heading vanished.
+        """
+        return split_md_sections(self.body)
 
 
 def load_records(memory_dir: Path, types: tuple[str, ...] | None = None) -> list[Record]:
@@ -835,6 +853,7 @@ def load_records(memory_dir: Path, types: tuple[str, ...] | None = None) -> list
 # Field population helpers (plan §7 table) — derive + default halves
 # --------------------------------------------------------------------------- #
 # Phase 3's writers reuse these; Phase 3 adds the prompted half (title/body).
+
 
 def _git_out(root: Path, *args: str) -> str | None:
     try:
@@ -880,8 +899,15 @@ def git_commit(root: Path) -> str:
 # git C-style escapes used in quoted porcelain paths (paths with spaces/quotes/
 # non-ASCII are emitted as "caf\303\251.txt"; octal escapes are raw UTF-8 bytes).
 _GIT_PATH_ESCAPES = {
-    "n": 0x0A, "t": 0x09, "r": 0x0D, '"': 0x22, "\\": 0x5C,
-    "a": 0x07, "b": 0x08, "f": 0x0C, "v": 0x0B,
+    "n": 0x0A,
+    "t": 0x09,
+    "r": 0x0D,
+    '"': 0x22,
+    "\\": 0x5C,
+    "a": 0x07,
+    "b": 0x08,
+    "f": 0x0C,
+    "v": 0x0B,
 }
 
 
@@ -977,6 +1003,7 @@ def default_fields() -> dict:
 # Manifest loader (reads what Phase 1 wrote)
 # --------------------------------------------------------------------------- #
 
+
 def load_manifest(memory_dir: Path) -> dict | None:
     """Parse the flat `key: value` manifest written by `init`. None if absent."""
     path = Path(memory_dir) / "manifest.yml"
@@ -1003,6 +1030,7 @@ def load_manifest(memory_dir: Path) -> dict | None:
 # --------------------------------------------------------------------------- #
 # validate (plan §16.1–14) — fully deterministic; NO heuristic content scanning
 # --------------------------------------------------------------------------- #
+
 
 def _finding(check: str, status: str, path: str | None, message: str) -> dict:
     return {"check": check, "status": status, "path": path, "message": message}
@@ -1058,7 +1086,9 @@ def run_validate(memory_dir: Path) -> list[dict]:
 
         # 16.3 — valid frontmatter (parses + required keys present).
         if rec.error:
-            findings.append(_finding("frontmatter", "fail", rel, f"malformed frontmatter: {rec.error}"))
+            findings.append(
+                _finding("frontmatter", "fail", rel, f"malformed frontmatter: {rec.error}")
+            )
             continue
         missing = [k for k in REQUIRED_RECORD_KEYS if rec.meta.get(k) in (None, "")]
         if missing:
@@ -1076,7 +1106,8 @@ def run_validate(memory_dir: Path) -> list[dict]:
                     "identity",
                     "fail",
                     rel,
-                    "filename does not match <YYYY-MM-DD>-<slug>.md; id/slug underivable",
+                    "filename does not match <YYYY-MM-DD>-<slug>.md with a real calendar "
+                    "date and a lowercase [a-z0-9-] slug; id/slug underivable",
                 )
             )
         else:
@@ -1084,7 +1115,9 @@ def run_validate(memory_dir: Path) -> list[dict]:
             is_duplicate = rid in seen_ids
             if is_duplicate:
                 findings.append(
-                    _finding("identity", "fail", rel, f"duplicate id {rid!r} (also {seen_ids[rid]})")
+                    _finding(
+                        "identity", "fail", rel, f"duplicate id {rid!r} (also {seen_ids[rid]})"
+                    )
                 )
             else:
                 seen_ids[rid] = rel
@@ -1109,12 +1142,19 @@ def run_validate(memory_dir: Path) -> list[dict]:
         status = rec.meta.get("status")
         if status is not None and status not in VALID_STATUS:
             findings.append(
-                _finding("status", "fail", rel, f"invalid status {status!r} (allowed: {', '.join(VALID_STATUS)})")
+                _finding(
+                    "status",
+                    "fail",
+                    rel,
+                    f"invalid status {status!r} (allowed: {', '.join(VALID_STATUS)})",
+                )
             )
 
         # 16.6 — superseded requires superseded_by.
         if status == "superseded" and rec.meta.get("superseded_by") in (None, "", []):
-            findings.append(_finding("superseded", "fail", rel, "status superseded but superseded_by is empty"))
+            findings.append(
+                _finding("superseded", "fail", rel, "status superseded but superseded_by is empty")
+            )
 
         # 16.7 / 16.8 — privacy placement and prohibition.
         privacy = rec.meta.get("privacy")
@@ -1122,12 +1162,21 @@ def run_validate(memory_dir: Path) -> list[dict]:
             # A typo'd value (e.g. "secret-prohibitted") must not silently slip
             # past the exact-match leak gate below — flag the out-of-vocab value.
             findings.append(
-                _finding("privacy", "fail", rel,
-                         f"invalid privacy {privacy!r} (allowed: {', '.join(VALID_PRIVACY)})")
+                _finding(
+                    "privacy",
+                    "fail",
+                    rel,
+                    f"invalid privacy {privacy!r} (allowed: {', '.join(VALID_PRIVACY)})",
+                )
             )
         if privacy == "secret-prohibited":
             findings.append(
-                _finding("privacy", "fail", rel, "privacy: secret-prohibited must not be stored in memory")
+                _finding(
+                    "privacy",
+                    "fail",
+                    rel,
+                    "privacy: secret-prohibited must not be stored in memory",
+                )
             )
         elif privacy == "local-private":
             # durable directory records are committed paths; local-private must be under private/.
@@ -1161,10 +1210,14 @@ def run_validate(memory_dir: Path) -> list[dict]:
             # not a crash (review #3 R16).
             if not (isinstance(subj, str) and subj.strip()):
                 findings.append(
-                    _finding("verification", "fail", rel,
-                             "verification has no subject"
-                             if subj in (None, "")
-                             else f"verification subject must be a string, got {type(subj).__name__}")
+                    _finding(
+                        "verification",
+                        "fail",
+                        rel,
+                        "verification has no subject"
+                        if subj in (None, "")
+                        else f"verification subject must be a string, got {type(subj).__name__}",
+                    )
                 )
             outcome = rec.meta.get("outcome")
             if outcome not in VALID_VERIFICATION_OUTCOME:
@@ -1194,12 +1247,16 @@ def run_validate(memory_dir: Path) -> list[dict]:
             # Word-boundary match (review #3 R17): a raw substring test let
             # "done" match "abandoned", false-passing the convergence check.
             has_done = any(
-                re.search(rf"\b{re.escape(mark)}\b", body_l)
-                for mark in SESSION_DONE_MARKERS
+                re.search(rf"\b{re.escape(mark)}\b", body_l) for mark in SESSION_DONE_MARKERS
             )
             if not (has_next or has_done):
                 findings.append(
-                    _finding("session", "fail", rel, "session record lacks a '## Next Action' or convergence/done marker")
+                    _finding(
+                        "session",
+                        "fail",
+                        rel,
+                        "session record lacks a '## Next Action' or convergence/done marker",
+                    )
                 )
 
     # 16.11 — handoff has branch, commit, next action, stale conditions.
@@ -1222,9 +1279,13 @@ def run_validate(memory_dir: Path) -> list[dict]:
         }
         missing_h = [name for name, hit in required.items() if not hit]
         if missing_h:
-            findings.append(_finding("handoff", "fail", "handoff.md", f"missing: {', '.join(missing_h)}"))
+            findings.append(
+                _finding("handoff", "fail", "handoff.md", f"missing: {', '.join(missing_h)}")
+            )
         else:
-            findings.append(_finding("handoff", "pass", "handoff.md", "branch/commit/next action/stale present"))
+            findings.append(
+                _finding("handoff", "pass", "handoff.md", "branch/commit/next action/stale present")
+            )
 
     # 16.12 — generated files are not treated as canonical (carry the projection marker).
     gen_dir = memory_dir / "generated"
@@ -1240,10 +1301,17 @@ def run_validate(memory_dir: Path) -> list[dict]:
                 findings.append(_finding("generated", "fail", rel, f"unreadable file: {exc}"))
                 continue
             if GENERATED_MARKER in head:
-                findings.append(_finding("generated", "pass", rel, "carries generated-projection marker"))
+                findings.append(
+                    _finding("generated", "pass", rel, "carries generated-projection marker")
+                )
             else:
                 findings.append(
-                    _finding("generated", "fail", rel, f"generated file lacks the '{GENERATED_MARKER}' marker")
+                    _finding(
+                        "generated",
+                        "fail",
+                        rel,
+                        f"generated file lacks the '{GENERATED_MARKER}' marker",
+                    )
                 )
 
     # 16.12b — projection freshness (review F3): a generated projection stamped
@@ -1266,7 +1334,9 @@ def run_validate(memory_dir: Path) -> list[dict]:
     # loader walks only decisions/attempts/sessions/ideas, so project-root adapter
     # files (AGENTS.md/CLAUDE.md/etc.) are never treated as records. Recorded as pass.
     findings.append(
-        _finding("adapters", "pass", None, "adapter/signpost files are not loaded as canonical records")
+        _finding(
+            "adapters", "pass", None, "adapter/signpost files are not loaded as canonical records"
+        )
     )
 
     return findings
@@ -1436,6 +1506,7 @@ _EMPTY_SECTION = "_(not recorded)_"
 
 # ---- rendering ------------------------------------------------------------- #
 
+
 def _needs_quote(s: str, in_list: bool = False) -> bool:
     if s == "":
         return True
@@ -1545,6 +1616,7 @@ def render_body(rtype: str, sections: dict[str, str]) -> str:
 
 # ---- slug + identity ------------------------------------------------------- #
 
+
 def slugify(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     s = re.sub(r"-{2,}", "-", s)
@@ -1566,6 +1638,7 @@ def _unique_record_path(directory: Path, date: str, slug: str) -> tuple[Path, st
 
 
 # ---- the writer ------------------------------------------------------------ #
+
 
 def _canonical_heading(rtype: str, heading: str) -> str:
     for canon in BODY_SECTIONS[rtype]:
@@ -1648,12 +1721,11 @@ def write_record(
 def _validate_new_file(memory_dir: Path, path: Path) -> list[dict]:
     """Run the deterministic checks and return failures that touch `path`."""
     rel = str(Path(path).relative_to(memory_dir))
-    return [
-        f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel
-    ]
+    return [f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel]
 
 
 # ---- record lookup + status mutation (shared by MCP `memory_mark_status`) --- #
+
 
 def find_record_by_id(memory_dir: Path, rid: str) -> "Record | None":
     """Return the durable Record whose id == `rid`, or None.
@@ -1692,7 +1764,10 @@ def set_record_status(
     """
     memory_dir = Path(memory_dir)
     if status not in VALID_STATUS:
-        return {"ok": False, "error": f"invalid status {status!r}; valid: {', '.join(VALID_STATUS)}"}
+        return {
+            "ok": False,
+            "error": f"invalid status {status!r}; valid: {', '.join(VALID_STATUS)}",
+        }
 
     rec = find_record_by_id(memory_dir, rid)
     if rec is None:
@@ -1720,9 +1795,7 @@ def set_record_status(
     # record (and having validate certify the corruption).
     reparsed, _ = parse_frontmatter(rendered + "\n")
     if reparsed != meta:
-        drifted = sorted(
-            k for k in set(meta) | set(reparsed) if meta.get(k) != reparsed.get(k)
-        )
+        drifted = sorted(k for k in set(meta) | set(reparsed) if meta.get(k) != reparsed.get(k))
         return {
             "ok": False,
             "id": rid,
@@ -1749,6 +1822,7 @@ def set_record_status(
 
 
 # ---- input helpers --------------------------------------------------------- #
+
 
 def _interactive() -> bool:
     return sys.stdin.isatty()
@@ -1777,6 +1851,7 @@ def _collect_set_sections(rtype: str, set_pairs: list[list[str]] | None) -> dict
 
 
 # ---- remember decision / attempt ------------------------------------------ #
+
 
 def cmd_remember(args: argparse.Namespace) -> int:
     rtype = getattr(args, "record_type", None)
@@ -1813,7 +1888,11 @@ def cmd_remember(args: argparse.Namespace) -> int:
         for heading in BODY_SECTIONS[rtype]:
             if heading == "Evidence":
                 continue  # handled below
-            sections.setdefault(heading, input(f"{heading}: ").strip())
+            # `setdefault(h, input(...))` evaluated the prompt eagerly, so a heading
+            # already supplied via --set was still asked for and the answer thrown
+            # away (review #5 Low).
+            if heading not in sections:
+                sections[heading] = input(f"{heading}: ").strip()
 
     if not title:
         _emit_error(args, "title must not be empty")
@@ -1888,6 +1967,7 @@ def cmd_remember(args: argparse.Namespace) -> int:
 
 # ---- schema introspection (review §6.2/§8) --------------------------------- #
 
+
 def record_schema() -> dict:
     """The full record-contract as data, so an agent reads it once (review §6.2).
 
@@ -1896,8 +1976,7 @@ def record_schema() -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "record_types": {
-            rtype: {"body_sections": list(sections)}
-            for rtype, sections in BODY_SECTIONS.items()
+            rtype: {"body_sections": list(sections)} for rtype, sections in BODY_SECTIONS.items()
         },
         "required_frontmatter_keys": list(REQUIRED_RECORD_KEYS),
         "derived_frontmatter_keys": ["id", "slug"],
@@ -1922,13 +2001,15 @@ def _record_template(rtype: str) -> str:
     """A copy-pasteable command skeleton for a record type."""
     if rtype == "verification":
         # Verifications are written with `crumb verify`, not `crumb remember`.
-        return "\n".join([
-            "crumb verify 'WHAT WAS CHECKED (finding id / file / claim)' \\",
-            "  --status fixed   # fixed|open|regressed|not_applicable|inconclusive \\",
-            "  --method static  # static|runtime|test \\",
-            "  --evidence file path/to/file.py:LINE \\",
-            "  --note 'what the evidence shows'",
-        ])
+        return "\n".join(
+            [
+                "crumb verify 'WHAT WAS CHECKED (finding id / file / claim)' \\",
+                "  --status fixed   # fixed|open|regressed|not_applicable|inconclusive \\",
+                "  --method static  # static|runtime|test \\",
+                "  --evidence file path/to/file.py:LINE \\",
+                "  --note 'what the evidence shows'",
+            ]
+        )
     lines = [f"crumb remember {rtype} \\", "  --title 'SHORT IMPERATIVE TITLE' \\"]
     flag_for = {h: a for a, h in ATTEMPT_FLAG_SECTIONS}
     for heading in BODY_SECTIONS[rtype]:
@@ -1979,7 +2060,7 @@ def cmd_schema(args: argparse.Namespace) -> int:
     print("Derived from filename: " + ", ".join(schema["derived_frontmatter_keys"]))
     print("\nVocabularies:")
     for name, vals in schema["vocabularies"].items():
-        print(f"  {name+':':12} " + ", ".join(vals))
+        print(f"  {name + ':':12} " + ", ".join(vals))
     print("\nRule: " + schema["rules"]["evidence_or_low_confidence"])
     print("\nTip: `crumb schema --template <type>` prints a fill-in command skeleton.")
     return 0
@@ -1993,10 +2074,12 @@ NOTE_KINDS = ("question", "trap", "idea")
 # The exact placeholder lines the templates seed — anchored so a *user* line that
 # merely resembles them (e.g. "_No fix for the flaky suite yet._") is never
 # silently deleted on append (review #3 R22).
-_TEMPLATE_PLACEHOLDER_LINES = frozenset({
-    "_No open questions yet._",
-    "_No known traps yet._",
-})
+_TEMPLATE_PLACEHOLDER_LINES = frozenset(
+    {
+        "_No open questions yet._",
+        "_No known traps yet._",
+    }
+)
 
 
 def _append_md_block(path: Path, block: str) -> None:
@@ -2007,9 +2090,7 @@ def _append_md_block(path: Path, block: str) -> None:
     concern (notes are additive by nature).
     """
     text = path.read_text(encoding="utf-8") if path.exists() else ""
-    kept = [
-        ln for ln in text.splitlines() if ln.strip() not in _TEMPLATE_PLACEHOLDER_LINES
-    ]
+    kept = [ln for ln in text.splitlines() if ln.strip() not in _TEMPLATE_PLACEHOLDER_LINES]
     head = "\n".join(kept).rstrip()
     write_text_atomic(path, (head + "\n\n" if head else "") + block.rstrip() + "\n")
 
@@ -2036,8 +2117,9 @@ def _question_block(text: str, *, why=None, needs=None, status="open") -> str:
     return "\n".join(lines)
 
 
-def _trap_block(summary: str, *, slug=None, area=None, symptom=None, why=None,
-                safe=None, verify=None) -> str:
+def _trap_block(
+    summary: str, *, slug=None, area=None, symptom=None, why=None, safe=None, verify=None
+) -> str:
     slug = slug or slugify(summary)
     lines = [f"## trap_{slug}: {summary}"]
     if area:
@@ -2075,8 +2157,8 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
         paths |= _paths_from_text(text)
     for rec in active_attempts(memory_dir):
         if _attempt_has_do_not_retry(rec):
-            text = (rec.meta.get("title") or "") + "\n" + rec.sections.get(
-                "Do Not Retry Unless", ""
+            text = (
+                (rec.meta.get("title") or "") + "\n" + rec.sections.get("Do Not Retry Unless", "")
             )
             tokens |= _specific(text)
             paths |= _paths_from_text(text)
@@ -2160,8 +2242,7 @@ def note(
         # comment-marker-neutralized before they touch the file (review #3 R22).
         text = _sanitize_note_text(text)
         fields = {
-            k: (_sanitize_note_text(v) if isinstance(v, str) else v)
-            for k, v in fields.items()
+            k: (_sanitize_note_text(v) if isinstance(v, str) else v) for k, v in fields.items()
         }
 
     if kind == "question":
@@ -2171,8 +2252,9 @@ def note(
         before = path.read_text(encoding="utf-8") if path.exists() else ""
         _append_md_block(
             path,
-            _question_block(text, why=fields.get("why"), needs=fields.get("needs"),
-                            status=fields.get("status")),
+            _question_block(
+                text, why=fields.get("why"), needs=fields.get("needs"), status=fields.get("status")
+            ),
         )
         if not any(q["question"] == text for q in load_open_questions(memory_dir)):
             write_text_atomic(path, before)  # revert
@@ -2194,9 +2276,15 @@ def note(
         before = path.read_text(encoding="utf-8") if path.exists() else ""
         _append_md_block(
             path,
-            _trap_block(text, slug=slug, area=fields.get("area"),
-                        symptom=fields.get("symptom"), why=fields.get("why"),
-                        safe=fields.get("safe"), verify=fields.get("verify")),
+            _trap_block(
+                text,
+                slug=slug,
+                area=fields.get("area"),
+                symptom=fields.get("symptom"),
+                why=fields.get("why"),
+                safe=fields.get("safe"),
+                verify=fields.get("verify"),
+            ),
         )
         if not any(b["heading"].lower().startswith(marker) for b in load_traps(memory_dir)):
             write_text_atomic(path, before)  # revert
@@ -2245,8 +2333,12 @@ def cmd_note(args: argparse.Namespace) -> int:
         fields = {"why": args.why, "needs": args.needs, "status": args.status}
     elif kind == "trap":
         fields = {
-            "slug": args.slug, "area": args.area, "symptom": args.symptom,
-            "why": args.why, "safe": args.safe, "verify": args.verify,
+            "slug": args.slug,
+            "area": args.area,
+            "symptom": args.symptom,
+            "why": args.why,
+            "safe": args.safe,
+            "verify": args.verify,
         }
     else:  # idea
         try:
@@ -2256,8 +2348,15 @@ def cmd_note(args: argparse.Namespace) -> int:
             return 2
         tags = _split_tags(args.tags)
 
-    result = note(memory_dir, root, kind, args.text or "", fields=fields, tags=tags,
-                  agent=getattr(args, "agent", "human"))
+    result = note(
+        memory_dir,
+        root,
+        kind,
+        args.text or "",
+        fields=fields,
+        tags=tags,
+        agent=getattr(args, "agent", "human"),
+    )
     if not result.get("ok"):
         _emit_error(args, result.get("error", "note failed"))
         return 1
@@ -2271,6 +2370,7 @@ def cmd_note(args: argparse.Namespace) -> int:
 
 
 # ---- verify (review F1) ---------------------------------------------------- #
+
 
 def verify(
     memory_dir: Path,
@@ -2342,8 +2442,7 @@ def verify(
         path.unlink()  # revert
         return {
             "ok": False,
-            "error": "verification rejected by validate: "
-            + "; ".join(f["message"] for f in fails),
+            "error": "verification rejected by validate: " + "; ".join(f["message"] for f in fails),
         }
 
     reindex_projections(memory_dir, project_root)
@@ -2400,6 +2499,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 # ---- mark-status (review #3 R25) ------------------------------------------- #
 
+
 def cmd_mark_status(args: argparse.Namespace) -> int:
     """CLI surface over `set_record_status` (already exposed via MCP).
 
@@ -2433,6 +2533,7 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
 
 
 # ---- capture session ------------------------------------------------------- #
+
 
 def _newest_session_record(memory_dir: Path) -> Record | None:
     """The most recently created session record, or None if there are none."""
@@ -2559,7 +2660,12 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
             print("Captured from git:")
             print("  Work Completed:\n" + sections.get("Work Completed", ""))
             print("  Files Touched:\n" + sections.get("Files Touched", ""))
-            for heading in ("Starting Context", "Decisions Made", "Attempts / Failures", "Open Questions"):
+            for heading in (
+                "Starting Context",
+                "Decisions Made",
+                "Attempts / Failures",
+                "Open Questions",
+            ):
                 if heading not in overrides:
                     val = input(f"{heading} (enter to skip): ").strip()
                     if val:
@@ -2574,7 +2680,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     if not (sections.get("Next Action") or "").strip():
         _emit_error(
             args,
-            "a session needs a Next Action: pass --next \"...\" (required on --fast)",
+            'a session needs a Next Action: pass --next "..." (required on --fast)',
         )
         return 2
 
@@ -2584,7 +2690,9 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     fails = _validate_new_file(memory_dir, path)
     if fails:
         path.unlink()
-        _emit_error(args, "new session failed validation: " + "; ".join(f["message"] for f in fails))
+        _emit_error(
+            args, "new session failed validation: " + "; ".join(f["message"] for f in fails)
+        )
         return 1
 
     # Refresh handoff + current (plan §8, §10).
@@ -2612,8 +2720,8 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     else:
         print(f"Captured session: {meta['id']}")
         print(f"  file:    {path}")
-        print(f"  handoff: updated")
-        print(f"  current: updated")
+        print("  handoff: updated")
+        print("  current: updated")
         if tracking == "distillate":
             print("  note: session_tracking=distillate — sessions/ stays local (gitignored);")
             print("        promote durable items with `crumb remember` to commit them.")
@@ -2931,6 +3039,7 @@ def git_commit_distance(root: Path, commit: str | None) -> int | None:
 
 # ---- section accessors (reused by Phase 5 guard) --------------------------- #
 
+
 def _by_recency(records: list[Record]) -> list[Record]:
     """Newest first, by updated_at then created_at then stem (parsed, not lexicographic)."""
     return sorted(
@@ -3043,6 +3152,7 @@ def parse_handoff_meta(text: str) -> dict:
 
 # ---- one-line extractors --------------------------------------------------- #
 
+
 def _first_line(text: str) -> str:
     """First meaningful line of a body section (skips bullets, stubs, blanks)."""
     for raw in (text or "").splitlines():
@@ -3086,6 +3196,7 @@ def _section_lines(handoff_sections: dict, heading: str) -> list[str]:
 
 
 # ---- staleness ------------------------------------------------------------- #
+
 
 def compute_staleness(
     root: Path,
@@ -3175,9 +3286,7 @@ def compute_staleness(
         if exp:
             a = _age_days(exp)
             if a is not None and a > 0:
-                warnings.append(
-                    f"{r.meta.get('id', r.stem)} expired on {exp} ({a} days ago)."
-                )
+                warnings.append(f"{r.meta.get('id', r.stem)} expired on {exp} ({a} days ago).")
         if r.meta.get("confidence") == "low":
             warnings.append(
                 f"{r.meta.get('id', r.stem)} is low-confidence — verify before relying on it."
@@ -3187,6 +3296,7 @@ def compute_staleness(
 
 
 # ---- packet assembly ------------------------------------------------------- #
+
 
 def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
     """Of `dirs`, the ones a *committed* `.gitignore` excludes.
@@ -3316,13 +3426,19 @@ def build_resume_packet(
     # projections silently stopped refreshing. The problem is surfaced as a packet
     # warning instead, naming the file.
     unreadable: list[str] = []
-    current_text, problem = read_text_lenient(memory_dir / "current.md") \
-        if (memory_dir / "current.md").is_file() else ("", None)
+    current_text, problem = (
+        read_text_lenient(memory_dir / "current.md")
+        if (memory_dir / "current.md").is_file()
+        else ("", None)
+    )
     if problem:
         unreadable.append(f"current.md: {problem}")
     current_sections = split_md_sections(current_text)
-    handoff_text, problem = read_text_lenient(memory_dir / "handoff.md") \
-        if (memory_dir / "handoff.md").is_file() else ("", None)
+    handoff_text, problem = (
+        read_text_lenient(memory_dir / "handoff.md")
+        if (memory_dir / "handoff.md").is_file()
+        else ("", None)
+    )
     if problem:
         unreadable.append(f"handoff.md: {problem}")
     handoff_sections = split_md_sections(handoff_text)
@@ -3389,7 +3505,9 @@ def build_resume_packet(
             for r in attempts
         ],
         "known_traps": [t["heading"] for t in traps],
-        "open_questions": [q["question"] for q in questions if (q.get("status") or "open") == "open"],
+        "open_questions": [
+            q["question"] for q in questions if (q.get("status") or "open") == "open"
+        ],
         "likely_files": [],
         "verification": [],
         "verifications": [
@@ -3443,9 +3561,9 @@ def active_verifications(memory_dir: Path) -> list[Record]:
     open/regressed/inconclusive (still need attention) sort ahead of
     not_applicable/fixed (resolved), each group newest-first via active_records.
     """
-    order = {o: i for i, o in enumerate(
-        ACTIONABLE_VERIFICATION_OUTCOMES + ("not_applicable", "fixed")
-    )}
+    order = {
+        o: i for i, o in enumerate(ACTIONABLE_VERIFICATION_OUTCOMES + ("not_applicable", "fixed"))
+    }
     recs = active_records(memory_dir, "verification")
     return sorted(recs, key=lambda r: order.get(r.meta.get("outcome") or "open", 99))
 
@@ -3483,7 +3601,15 @@ def _dedup(items: list[str]) -> list[str]:
 
 
 # Sections dropped wholesale by --fast (reduced reorientation view, §12).
-_FAST_DROP = ("active_decisions", "failed_attempts", "known_traps", "open_questions", "likely_files", "verification", "verifications")
+_FAST_DROP = (
+    "active_decisions",
+    "failed_attempts",
+    "known_traps",
+    "open_questions",
+    "likely_files",
+    "verification",
+    "verifications",
+)
 
 
 def _bound_packet(packet: dict, *, fast: bool) -> None:
@@ -3526,6 +3652,7 @@ def _bound_packet(packet: dict, *, fast: bool) -> None:
 
 
 # ---- rendering ------------------------------------------------------------- #
+
 
 def _omitted_note(packet: dict, key: str) -> list[str]:
     n = packet.get("omitted", {}).get(key, 0)
@@ -3654,9 +3781,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
     task = getattr(args, "task", None)
-    packet = build_resume_packet(
-        memory_dir, root, stale_days=stale_days, fast=args.fast, task=task
-    )
+    packet = build_resume_packet(memory_dir, root, stale_days=stale_days, fast=args.fast, task=task)
     md = render_packet_markdown(packet)
     packet["approx_tokens"] = approx_tokens(md)
 
@@ -3743,26 +3868,26 @@ def cmd_reindex(args: argparse.Namespace) -> int:
 # feedback without rearchitecting. Chosen values + rationale recorded in
 # phases/PHASE_5_search_and_guard.md ("Decisions resolved this phase").
 
-GUARD_MAX_WARNINGS = 5            # §11.7 hard bound on ranked records shown
-GUARD_NOISE_FLOOR = 3            # min score for a match to count at all (anti-noise)
-GUARD_READ_FIRST_SCORE = 5      # score band: at/above -> at least READ_FIRST
-GUARD_PAUSE_SCORE = 9           # score band: at/above -> at least PAUSE
-GUARD_MIN_KEYWORD_OVERLAP = 2   # specific shared tokens for a pure-text match
+GUARD_MAX_WARNINGS = 5  # §11.7 hard bound on ranked records shown
+GUARD_NOISE_FLOOR = 3  # min score for a match to count at all (anti-noise)
+GUARD_READ_FIRST_SCORE = 5  # score band: at/above -> at least READ_FIRST
+GUARD_PAUSE_SCORE = 9  # score band: at/above -> at least PAUSE
+GUARD_MIN_KEYWORD_OVERLAP = 2  # specific shared tokens for a pure-text match
 
 # scoring weights (§11.4 signals)
-GUARD_W_FILE = 6                # per overlapping file path (strongest specific signal)
-GUARD_W_TAG = 4                 # per overlapping tag/component
-GUARD_W_KEYWORD = 1            # per specific shared keyword
+GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
+GUARD_W_TAG = 4  # per overlapping tag/component
+GUARD_W_KEYWORD = 1  # per specific shared keyword
 GUARD_W_STATUS_ACTIVE = 1
 GUARD_W_CONFIDENCE_HIGH = 1
 GUARD_W_REVIEWED = 1
-GUARD_W_DO_NOT_RETRY = 4       # attempt carries an explicit "Do Not Retry Unless"
-GUARD_W_OPEN_BLOCKER = 3       # overlaps an unresolved open question
+GUARD_W_DO_NOT_RETRY = 4  # attempt carries an explicit "Do Not Retry Unless"
+GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
 
 # recency / branch de-weighting (reuse Phase 4 staleness signals)
-GUARD_BRANCH_MISMATCH_FACTOR = 0.8   # record written on another branch -> possibly stale
-GUARD_STALE_AGE_FACTOR = 0.7         # record older than stale_days
-GUARD_STALE_DIST_FACTOR = 0.7        # record written >= N commits behind HEAD
+GUARD_BRANCH_MISMATCH_FACTOR = 0.8  # record written on another branch -> possibly stale
+GUARD_STALE_AGE_FACTOR = 0.7  # record older than stale_days
+GUARD_STALE_DIST_FACTOR = 0.7  # record written >= N commits behind HEAD
 GUARD_STALE_DIST_COMMITS = 10
 
 # Action classes that mean "a human should weigh in" when they collide with
@@ -3849,28 +3974,74 @@ ACTION_CLASS_KEYWORDS: dict[str, frozenset[str]] = {
     ),
     "security_permission": frozenset(
         {
-            "auth", "authentication", "authorization", "permission", "permissions",
-            "credential", "credentials", "secret", "secrets", "token", "tokens",
-            "oauth", "jwt", "rbac", "acl", "encrypt", "encryption", "scope", "scopes",
-            "login", "session",
+            "auth",
+            "authentication",
+            "authorization",
+            "permission",
+            "permissions",
+            "credential",
+            "credentials",
+            "secret",
+            "secrets",
+            "token",
+            "tokens",
+            "oauth",
+            "jwt",
+            "rbac",
+            "acl",
+            "encrypt",
+            "encryption",
+            "scope",
+            "scopes",
+            "login",
+            "session",
         }
     ),
     "external_side_effect": frozenset(
         {
-            "deploy", "deployment", "publish", "release", "send", "email", "webhook",
-            "production", "prod", "charge", "payment", "notify", "broadcast",
+            "deploy",
+            "deployment",
+            "publish",
+            "release",
+            "send",
+            "email",
+            "webhook",
+            "production",
+            "prod",
+            "charge",
+            "payment",
+            "notify",
+            "broadcast",
         }
     ),
     "dependency_tool": frozenset(
         {
-            "dependency", "dependencies", "upgrade", "bump", "package", "npm", "pip",
-            "library", "framework", "vendor", "sdk", "version",
+            "dependency",
+            "dependencies",
+            "upgrade",
+            "bump",
+            "package",
+            "npm",
+            "pip",
+            "library",
+            "framework",
+            "vendor",
+            "sdk",
+            "version",
         }
     ),
     "architecture": frozenset(
         {
-            "architecture", "architectural", "pattern", "restructure", "rearchitect",
-            "contract", "interface", "boundary", "layering", "decouple",
+            "architecture",
+            "architectural",
+            "pattern",
+            "restructure",
+            "rearchitect",
+            "contract",
+            "interface",
+            "boundary",
+            "layering",
+            "decouple",
         }
     ),
     "broad_refactor": frozenset(
@@ -3901,6 +4072,7 @@ def classify_action(action: str) -> tuple[str, list[str]]:
 
 # ---- searchable corpus ----------------------------------------------------- #
 
+
 def _attempt_has_do_not_retry(rec: Record) -> bool:
     sec = rec.sections.get("Do Not Retry Unless", "")
     return bool(_first_line(sec))
@@ -3909,9 +4081,7 @@ def _attempt_has_do_not_retry(rec: Record) -> bool:
 def _item_from_record(rec: Record) -> dict:
     files = _norm_files(set(_evidence_refs(rec, ("file", "path"))) | _paths_from_text(rec.body))
     tags = {str(t).lower() for t in (rec.meta.get("tags") or [])}
-    text = " ".join(
-        [str(rec.meta.get("title") or ""), rec.body, " ".join(tags)]
-    )
+    text = " ".join([str(rec.meta.get("title") or ""), rec.body, " ".join(tags)])
     # For verifications the interesting "status" is the *outcome* (open/fixed/…),
     # not the lifecycle status — so `search type:verification status:open` filters
     # on what the agent actually cares about (review F1). The lifecycle value is
@@ -3919,11 +4089,7 @@ def _item_from_record(rec: Record) -> dict:
     # one field is what silently excluded every verification from the verdict
     # (review #5 M1).
     lifecycle = str(rec.meta.get("status") or "active")
-    status = (
-        (rec.meta.get("outcome") or "open")
-        if rec.rtype == "verification"
-        else lifecycle
-    )
+    status = (rec.meta.get("outcome") or "open") if rec.rtype == "verification" else lifecycle
     return {
         "id": rec.meta.get("id", rec.stem),
         "kind": rec.rtype,
@@ -3956,10 +4122,30 @@ def _item_from_trap(trap: dict) -> dict:
     }
 
 
+QUESTION_SLUG_CHARS = 48
+
+
+def question_item_id(question: str) -> str:
+    """Search id for an open question: `q:<slug>`, disambiguated when truncated.
+
+    Truncating the slug at 48 characters made two distinct questions share one id
+    ("… to the new columnar store this quarter" / "… to the new row store next
+    quarter" both slugify past the cut with the same prefix), and `search`'s
+    by_id map kept only the last — which `guard`'s `_next_safest_action` resolves
+    through (audit #6 N6). A short digest of the *full* question restores
+    uniqueness; ids for questions short enough not to be cut are unchanged.
+    """
+    slug = slugify(question)
+    if len(slug) <= QUESTION_SLUG_CHARS:
+        return "q:" + slug
+    digest = hashlib.sha256(question.encode("utf-8")).hexdigest()[:6]
+    return f"q:{slug[:QUESTION_SLUG_CHARS].rstrip('-')}-{digest}"
+
+
 def _item_from_question(q: dict) -> dict:
     text = q["question"] + "\n" + q.get("body", "")
     return {
-        "id": "q:" + slugify(q["question"])[:48],
+        "id": question_item_id(q["question"]),
         "kind": "question",
         "status": (q.get("status") or "open"),
         "title": q["question"],
@@ -3981,10 +4167,32 @@ def _candidate_items(memory_dir: Path) -> list[dict]:
         items.append(_item_from_record(rec))
     items.extend(_item_from_trap(t) for t in load_traps(memory_dir))
     items.extend(_item_from_question(q) for q in load_open_questions(memory_dir))
+    return _disambiguate_item_ids(items)
+
+
+def _disambiguate_item_ids(items: list[dict]) -> list[dict]:
+    """Make every candidate id unique, appending `-2`, `-3`, … like `_unique_record_path`.
+
+    Records are filename-canonical and validate §16.4 already rejects duplicate ids,
+    but trap and question ids are derived from free text (a trap's id is the heading
+    prefix, a question's a slug), so two blocks can still land on one id. `search`
+    builds a by_id map that keeps only the last of a colliding pair, and guard
+    resolves its next-safest-action through that map — so a collision silently
+    substitutes one item's advice for another's (audit #6 N6).
+    """
+    seen: dict[str, int] = {}
+    for item in items:
+        base = item["id"]
+        if base not in seen:
+            seen[base] = 1
+            continue
+        seen[base] += 1
+        item["id"] = f"{base}-{seen[base]}"
     return items
 
 
 # ---- scoring (§11.4) ------------------------------------------------------- #
+
 
 def _score_item(
     item: dict,
@@ -4142,11 +4350,18 @@ def search(
             # Filter-only lookups (no scoring query) still surface the item.
             if filters and not q_specific and not q_files:
                 m = {
-                    "id": it["id"], "kind": it["kind"], "status": it["status"],
+                    "id": it["id"],
+                    "kind": it["kind"],
+                    "status": it["status"],
                     "lifecycle": it.get("lifecycle", it["status"]),
-                    "title": it["title"], "score": float(noise_floor), "signals": ["filter"],
-                    "matched_files": [], "matched_tags": [], "keyword_overlap": [],
-                    "branch_mismatch": False, "reason": "matched filter",
+                    "title": it["title"],
+                    "score": float(noise_floor),
+                    "signals": ["filter"],
+                    "matched_files": [],
+                    "matched_tags": [],
+                    "keyword_overlap": [],
+                    "branch_mismatch": False,
+                    "reason": "matched filter",
                 }
             else:
                 continue
@@ -4176,6 +4391,7 @@ def _passes_filters(item: dict, filters: dict) -> bool:
 
 # ---- guard verdict (§11.5–11.6) -------------------------------------------- #
 
+
 def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
     """Pick one verdict from the ranked matches + action class. Deterministic."""
     if not top:
@@ -4186,13 +4402,13 @@ def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
         sig = set(m["signals"])
         specific = bool({"file", "tag"} & sig)
         if "do-not-retry" in sig and specific:
-            floors.append("PAUSE")          # a failed attempt on these files/component
+            floors.append("PAUSE")  # a failed attempt on these files/component
         elif m["kind"] == "decision" and specific:
-            floors.append("READ_FIRST")     # an active decision constrains this area
+            floors.append("READ_FIRST")  # an active decision constrains this area
         elif m["kind"] == "trap" and (specific or "keyword" in sig):
             floors.append("READ_FIRST")
         elif m["kind"] == "verification" and specific:
-            floors.append("READ_FIRST")     # an unsettled finding on these files/component
+            floors.append("READ_FIRST")  # an unsettled finding on these files/component
         elif "open-blocker" in sig:
             floors.append("READ_FIRST")
 
@@ -4243,8 +4459,7 @@ def _next_safest_action(verdict: str, top: list[dict], by_id: dict, root: Path) 
         )
     if verdict == "READ_FIRST":
         return (
-            f"Read {ids} first — they constrain this area — then make a surgical change."
-            + verify
+            f"Read {ids} first — they constrain this area — then make a surgical change." + verify
         )
     if top:
         return (
@@ -4345,6 +4560,7 @@ def guard(
 
 # ---- rendering ------------------------------------------------------------- #
 
+
 def render_guard_human(result: dict) -> str:
     """Render the §11 example shape (human format)."""
     out = [result["verdict"], "", f"Proposed action: {result['action']}"]
@@ -4383,11 +4599,14 @@ def render_search_human(matches: list[dict], query: str) -> str:
         return f"search: no records matched {query!r}.\n"
     out = [f"search: {len(matches)} record(s) matched {query!r}", ""]
     for m in matches:
-        out.append(f"- {m['id']} — {m['kind']} [{m['status']}] (score {m['score']}): {m['reason']}.")
+        out.append(
+            f"- {m['id']} — {m['kind']} [{m['status']}] (score {m['score']}): {m['reason']}."
+        )
     return "\n".join(out) + "\n"
 
 
 # ---- command entry points -------------------------------------------------- #
+
 
 def cmd_search(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
@@ -4423,7 +4642,9 @@ def cmd_guard(args: argparse.Namespace) -> int:
 
     action = (args.action or "").strip()
     if not action:
-        _emit_error(args, 'guard needs a proposed action, e.g. guard "rewrite the auth middleware".')
+        _emit_error(
+            args, 'guard needs a proposed action, e.g. guard "rewrite the auth middleware".'
+        )
         return 2
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
@@ -4522,23 +4743,27 @@ _IL_QUALIFIERS = r"(?:(?:all|the|any|every|these|those|prior|previous|earlier|ex
 
 INSTRUCTION_LIKE_PATTERNS: tuple["re.Pattern[str]", ...] = (
     re.compile(
-        r"(?i)\bignore\s+" + _IL_QUALIFIERS +
-        r"(?:tests?|instructions?|previous|above|rules?|warnings?|memory|checks?|errors?|failures?)\b"
+        r"(?i)\bignore\s+"
+        + _IL_QUALIFIERS
+        + r"(?:tests?|instructions?|previous|above|rules?|warnings?|memory|checks?|errors?|failures?)\b"
     ),
     re.compile(
-        r"(?i)\bskip\s+" + _IL_QUALIFIERS +
-        r"(?:tests?|validation|verification|checks?|review|ci)\b"
+        r"(?i)\bskip\s+"
+        + _IL_QUALIFIERS
+        + r"(?:tests?|validation|verification|checks?|review|ci)\b"
     ),
     re.compile(
-        r"(?i)\bdisable\s+" + _IL_QUALIFIERS +
-        r"(?:tests?|checks?|validation|guard|safety|linter?|ci)\b"
+        r"(?i)\bdisable\s+"
+        + _IL_QUALIFIERS
+        + r"(?:tests?|checks?|validation|guard|safety|linter?|ci)\b"
     ),
     re.compile(r"(?i)\b(?:never|always)\s+run\b"),
     re.compile(r"(?i)\bdo\s+not\s+run\b"),
     re.compile(r"(?i)\b(?:always|never)\s+(?:force[- ]?push|skip|disable|ignore|bypass)\b"),
     re.compile(
-        r"(?i)\bbypass\s+" + _IL_QUALIFIERS +
-        r"(?:tests?|checks?|(?:code\s+)?review|validation|guard|ci)\b"
+        r"(?i)\bbypass\s+"
+        + _IL_QUALIFIERS
+        + r"(?:tests?|checks?|(?:code\s+)?review|validation|guard|ci)\b"
     ),
 )
 
@@ -4552,10 +4777,11 @@ ADAPTER_FILENAMES = (
     ".github/copilot-instructions.md",
 )
 ADAPTER_BLOAT_CHARS = 4000  # signpost files should be small pointers, not copies
-SESSIONS_GROWTH_NOTE = 50    # forward-ref §22 Q7 / Phase 10 rollup
+SESSIONS_GROWTH_NOTE = 50  # forward-ref §22 Q7 / Phase 10 rollup
 
 
 # ---- secret scan ----------------------------------------------------------- #
+
 
 def _shannon_entropy(s: str) -> float:
     if not s:
@@ -4582,9 +4808,7 @@ def _segment_is_wordy(seg: str) -> bool:
     identifier (Database/Migration/Helper…) qualifies while a random base64 run with
     an incidental 4-letter sequence does not.
     """
-    covered = sum(
-        len(w) for w in _WORD_RE.findall(seg) if any(c in "aeiouAEIOU" for c in w)
-    )
+    covered = sum(len(w) for w in _WORD_RE.findall(seg) if any(c in "aeiouAEIOU" for c in w))
     return covered >= 6 and covered * 2 >= len(seg)
 
 
@@ -4697,6 +4921,7 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
 
 # ---- instruction-like heuristic -------------------------------------------- #
 
+
 def scan_instruction_like(memory_dir: Path) -> list[dict]:
     """Lexical scan of known-traps.md + durable record bodies for override phrasing.
 
@@ -4732,6 +4957,7 @@ def scan_instruction_like(memory_dir: Path) -> list[dict]:
 
 
 # ---- generated-packet drift ------------------------------------------------ #
+
 
 def _stamped_inputs_hash(text: str) -> str | None:
     # Anchor to the generated source-header comment (written by render_packet_*
@@ -4773,6 +4999,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
 
 
 # ---- bloat ----------------------------------------------------------------- #
+
 
 def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
     """Bloat heuristics (plan §16.13, §12): over-budget packet, adapter duplication,
@@ -4968,6 +5195,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
 
 # ---- rendering + command entry points -------------------------------------- #
 
+
 def render_audit_human(findings: list[dict]) -> str:
     fails = [f for f in findings if f["severity"] == AUDIT_FAIL]
     warns = [f for f in findings if f["severity"] == AUDIT_WARN]
@@ -5158,8 +5386,10 @@ def cmd_mcp(args: argparse.Namespace) -> int:
             print(f"Registered MCP server '{MCP_SERVER_NAME}' in {path}")
             if not sdk:
                 print("  note: the MCP SDK isn't installed — run: pip install 'crumb-kit[mcp]'")
-            print("  note: in Claude Code a committed .mcp.json server starts "
-                  "'⏸ Pending approval' until you approve it once — this is expected.")
+            print(
+                "  note: in Claude Code a committed .mcp.json server starts "
+                "'⏸ Pending approval' until you approve it once — this is expected."
+            )
         return 0
 
     if what == "doctor":
@@ -5179,11 +5409,18 @@ def cmd_mcp(args: argparse.Namespace) -> int:
             print(json.dumps(report, indent=2))
         else:
             print("crumb mcp doctor")
-            print(f"  {'✓' if sdk else '✗'} [mcp] extra: "
-                  + ("importable" if sdk else "not installed — run: pip install 'crumb-kit[mcp]'"))
-            print(f"  {'✓' if registered else '✗'} registration: "
-                  + (f"'{MCP_SERVER_NAME}' in {mcp_path}" if registered
-                     else "not registered — run `crumb mcp register`"))
+            print(
+                f"  {'✓' if sdk else '✗'} [mcp] extra: "
+                + ("importable" if sdk else "not installed — run: pip install 'crumb-kit[mcp]'")
+            )
+            print(
+                f"  {'✓' if registered else '✗'} registration: "
+                + (
+                    f"'{MCP_SERVER_NAME}' in {mcp_path}"
+                    if registered
+                    else "not registered — run `crumb mcp register`"
+                )
+            )
         return 0 if (sdk and registered) else 1
 
     _emit_error(args, "specify: `crumb mcp serve`, `crumb mcp register`, or `crumb mcp doctor`")
@@ -5208,27 +5445,32 @@ def adapter_block() -> str:
     stays green — it practices what it preaches. Generic guidance text, never a
     record body, so it cannot trip audit's record-duplication check.
     """
-    return "\n".join([
-        ADAPTER_BEGIN,
-        "## Project memory (breadcrumbs)",
-        "",
-        "This repo has a durable memory store under `.project-memory/`. Use it:",
-        "",
-        "- **Starting work / new session:** read the resume packet first —",
-        "  `crumb resume` (or MCP resource `memory://resume-packet`).",
-        "- **Before any risky or irreversible action** (deletes, force-push, schema",
-        "  or build-system changes, rewrites): `crumb guard \"<action>\"` and honor a",
-        "  `PAUSE` / `ASK_HUMAN` verdict.",
-        "- **After a durable decision or a failed approach:**",
-        "  `crumb remember decision|attempt …`.",
-        "- **After checking whether something is still true / fixed:**",
-        "  `crumb verify \"<subject>\" --status fixed|open|regressed|… --evidence …`.",
-        "- **Leaving a note for the next agent:** `crumb note question|trap|idea …`.",
-        "- **Session end:** `crumb capture session`.",
-        "",
-        "Memory must never contain secrets; `crumb scan-secrets` gates commits.",
-        ADAPTER_END,
-    ]) + "\n"
+    return (
+        "\n".join(
+            [
+                ADAPTER_BEGIN,
+                "## Project memory (breadcrumbs)",
+                "",
+                "This repo has a durable memory store under `.project-memory/`. Use it:",
+                "",
+                "- **Starting work / new session:** read the resume packet first —",
+                "  `crumb resume` (or MCP resource `memory://resume-packet`).",
+                "- **Before any risky or irreversible action** (deletes, force-push, schema",
+                '  or build-system changes, rewrites): `crumb guard "<action>"` and honor a',
+                "  `PAUSE` / `ASK_HUMAN` verdict.",
+                "- **After a durable decision or a failed approach:**",
+                "  `crumb remember decision|attempt …`.",
+                "- **After checking whether something is still true / fixed:**",
+                '  `crumb verify "<subject>" --status fixed|open|regressed|… --evidence …`.',
+                "- **Leaving a note for the next agent:** `crumb note question|trap|idea …`.",
+                "- **Session end:** `crumb capture session`.",
+                "",
+                "Memory must never contain secrets; `crumb scan-secrets` gates commits.",
+                ADAPTER_END,
+            ]
+        )
+        + "\n"
+    )
 
 
 def present_adapters(root: Path) -> list[str]:
@@ -5263,8 +5505,7 @@ _HOOK_SPECS: dict[str, tuple[str, str | None, str]] = {
 
 def _group_has_command(group: object, command: str) -> bool:
     return isinstance(group, dict) and any(
-        isinstance(h, dict) and h.get("command") == command
-        for h in group.get("hooks", [])
+        isinstance(h, dict) and h.get("command") == command for h in group.get("hooks", [])
     )
 
 
@@ -5353,14 +5594,47 @@ def _resolve_tristate_list(value, all_items: list[str]) -> list[str] | None:
 
 
 def _prompt_yes(question: str, default: bool) -> bool:
+    """Ask a yes/no question. EOF takes the default; Ctrl+C aborts the command.
+
+    Mapping `KeyboardInterrupt` to the default meant Ctrl+C at "Register the MCP
+    server in .mcp.json?" (default yes) was recorded as consent and went on to edit
+    `.mcp.json` — the one input that unambiguously means "stop" (review #5 Low).
+    EOF still takes the default, so piped/non-tty input behaves as before.
+    """
     suffix = " [Y/n] " if default else " [y/N] "
     try:
         ans = input(question + suffix).strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except EOFError:
         return default
     if not ans:
         return default
     return ans in ("y", "yes")
+
+
+def validate_integration_flags(args: argparse.Namespace) -> str | None:
+    """Error message if `--with-adapter`/`--with-hooks` name unknown values, else None.
+
+    Must run before any filesystem mutation (review #5 M6/M7, audit #6 N4).
+    Unvalidated, `--with-hooks=bogus` reached `_HOOK_SPECS[ev]` and escaped as a raw
+    `KeyError` — *after* `init` had swapped in the scaffold and written
+    `.gitignore`, leaving a store with no hooks that the command then refused to
+    touch again. `--with-adapter=README.md` was worse: it injected the managed block
+    into an arbitrary file, and `--remove-integrations` (which knows only
+    `ADAPTER_FILENAMES`) reported "No integrations to remove." and left it there.
+    """
+    for flag, value, valid in (
+        ("--with-hooks", getattr(args, "hooks", None), HOOK_EVENTS),
+        ("--with-adapter", getattr(args, "adapter", None), ADAPTER_FILENAMES),
+    ):
+        requested = _resolve_tristate_list(value, list(valid)) or []
+        unknown = [name for name in requested if name not in valid]
+        if unknown:
+            return (
+                f"{flag}: unknown {'values' if len(unknown) > 1 else 'value'} "
+                f"{', '.join(repr(u) for u in unknown)}. Valid: {', '.join(valid)} "
+                f"(or the bare flag for all of them)."
+            )
+    return None
 
 
 def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
@@ -5369,7 +5643,14 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
     Returns {"adapters": [...], "mcp": bool, "hooks": [...]}. On a TTY with an
     integration left unspecified, the user is asked once per integration (the
     first-run picker). Non-interactive + unspecified means "off".
+
+    Raises ValueError on an unknown flag value. `cmd_init` checks the same thing up
+    front (and exits 2), so this is the backstop for any other caller: no plan is
+    ever resolved from values `apply_integrations` cannot honor.
     """
+    problem = validate_integration_flags(args)
+    if problem:
+        raise ValueError(problem)
     detected = present_adapters(root)
     adapters = _resolve_tristate_list(getattr(args, "adapter", None), detected)
     hooks = _resolve_tristate_list(getattr(args, "hooks", None), list(HOOK_EVENTS))
@@ -5381,17 +5662,21 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
         print("Set up agent integrations so the store is actually used (each is reversible):")
         if adapters is None:
             if detected:
-                adapters = detected if _prompt_yes(
-                    f"  Inject the signpost block into {', '.join(detected)}?", True
-                ) else []
+                adapters = (
+                    detected
+                    if _prompt_yes(f"  Inject the signpost block into {', '.join(detected)}?", True)
+                    else []
+                )
             else:
                 adapters = []  # nothing to point at; don't create files
         if mcp is None:
             mcp = _prompt_yes("  Register the MCP server in .mcp.json?", True)
         if hooks is None:
-            hooks = list(HOOK_EVENTS) if _prompt_yes(
-                "  Install Claude Code hooks (auto resume/guard/capture)?", False
-            ) else []
+            hooks = (
+                list(HOOK_EVENTS)
+                if _prompt_yes("  Install Claude Code hooks (auto resume/guard/capture)?", False)
+                else []
+            )
 
     return {
         "adapters": adapters or [],
@@ -5415,10 +5700,53 @@ def apply_integrations(root: Path, plan: dict) -> dict:
     return applied
 
 
+# Files bigger than this are not scanned for a stray signpost block: the block is
+# a few hundred bytes injected into a guidance file, and reading a repo's binaries
+# or bundles to find one is not worth it.
+ADAPTER_SCAN_MAX_BYTES = 1_000_000
+
+
+def discover_adapter_blocks(root: Path) -> list[str]:
+    """Every file carrying our managed signpost block, canonical or not.
+
+    Removal used to iterate `ADAPTER_FILENAMES` alone, so a block injected into any
+    other file — which `--with-adapter=<anything>` accepted before MF-14 validated
+    it — was unreachable via the documented undo. The scan stays bounded: the
+    canonical names plus the project root's own top-level files, skipping anything
+    too large to plausibly be a guidance file.
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    candidates = [root / name for name in ADAPTER_FILENAMES]
+    try:
+        candidates += sorted(p for p in root.iterdir() if p.is_file())
+    except OSError:
+        pass
+    for path in candidates:
+        try:
+            rel = path.relative_to(root).as_posix()
+        except ValueError:  # pragma: no cover - candidates are all under root
+            continue
+        if rel in seen or not path.is_file():
+            continue
+        seen.add(rel)
+        try:
+            if path.stat().st_size > ADAPTER_SCAN_MAX_BYTES:
+                continue
+        except OSError:
+            continue
+        # Lenient read (review #5 H4): an undecodable file in the project root must
+        # not take the whole removal down with it.
+        text, _ = read_text_lenient(path)
+        if ADAPTER_BEGIN in text:
+            names.append(rel)
+    return names
+
+
 def remove_integrations(root: Path) -> dict:
     """Reverse every integration breadcrumbs added; leave all other content intact."""
     removed: dict = {"adapters": [], "mcp": False, "hooks": False}
-    for name in ADAPTER_FILENAMES:
+    for name in discover_adapter_blocks(root):
         if remove_adapter_block(root, name):
             removed["adapters"].append(name)
     removed["mcp"] = unregister_mcp(root)
@@ -5427,6 +5755,7 @@ def remove_integrations(root: Path) -> dict:
 
 
 # ---- crumb doctor (review §A.7) -------------------------------------------- #
+
 
 def doctor_report(root: Path) -> dict:
     """Integration-health report: is memory actually wired up?"""
@@ -5437,7 +5766,11 @@ def doctor_report(root: Path) -> dict:
         checks.append({"check": name, "ok": ok, "detail": detail})
 
     store = memory_dir.is_dir()
-    add("store", store, f"{MEMORY_DIRNAME}/ present" if store else f"no {MEMORY_DIRNAME}/ — run `crumb init`")
+    add(
+        "store",
+        store,
+        f"{MEMORY_DIRNAME}/ present" if store else f"no {MEMORY_DIRNAME}/ — run `crumb init`",
+    )
 
     # Adapter blocks
     present = present_adapters(root)
@@ -5454,9 +5787,15 @@ def doctor_report(root: Path) -> dict:
     add(
         "adapter",
         bool(blocked) and not bloated and not unreadable,
-        (f"signpost in {', '.join(blocked)}" if blocked else
-         (f"adapter files present ({', '.join(present)}) but no signpost block" if present
-          else "no agent-guidance files detected"))
+        (
+            f"signpost in {', '.join(blocked)}"
+            if blocked
+            else (
+                f"adapter files present ({', '.join(present)}) but no signpost block"
+                if present
+                else "no agent-guidance files detected"
+            )
+        )
         + (f"; BLOATED: {', '.join(bloated)}" if bloated else "")
         + (f"; UNREADABLE: {', '.join(unreadable)}" if unreadable else ""),
     )
@@ -5466,23 +5805,37 @@ def doctor_report(root: Path) -> dict:
     registered = False
     if mcp_path.is_file():
         try:
-            registered = MCP_SERVER_NAME in (json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {})
+            registered = MCP_SERVER_NAME in (
+                json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {}
+            )
         except (json.JSONDecodeError, OSError):
             registered = False
     sdk = _mcp_sdk_available()
-    add("mcp", registered, ".mcp.json registered" if registered else "not registered (`crumb mcp register`)")
+    add(
+        "mcp",
+        registered,
+        ".mcp.json registered" if registered else "not registered (`crumb mcp register`)",
+    )
     add("mcp_extra", sdk, "[mcp] extra importable" if sdk else "optional [mcp] extra not installed")
 
     # Hooks
     hook_cmds = _installed_hook_commands(root)
-    add("hooks", bool(hook_cmds), f"{len(hook_cmds)} crumb hook(s) installed" if hook_cmds else "no hooks installed")
+    add(
+        "hooks",
+        bool(hook_cmds),
+        f"{len(hook_cmds)} crumb hook(s) installed" if hook_cmds else "no hooks installed",
+    )
 
     # Resume-packet staleness vs HEAD
     if store:
         packet = memory_dir / "generated" / "resume-packet.md"
         if packet.is_file():
             stale = _packet_is_stale(memory_dir, root)
-            add("resume_packet", not stale, "stale vs HEAD — run `crumb resume`" if stale else "fresh")
+            add(
+                "resume_packet",
+                not stale,
+                "stale vs HEAD — run `crumb resume`" if stale else "fresh",
+            )
         else:
             add("resume_packet", False, "not generated — run `crumb resume`")
 
@@ -5559,6 +5912,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 # ---- crumb hook session|guard|capture (review §A.6) ------------------------ #
 
+
 def _read_hook_stdin() -> dict:
     try:
         raw = sys.stdin.read()
@@ -5574,9 +5928,7 @@ def _read_hook_stdin() -> dict:
 
 
 def _hook_root(payload: dict) -> Path:
-    return Path(
-        payload.get("cwd") or os.environ.get("BREADCRUMBS_PROJECT") or Path.cwd()
-    ).resolve()
+    return Path(payload.get("cwd") or os.environ.get("BREADCRUMBS_PROJECT") or Path.cwd()).resolve()
 
 
 # Cheap risk patterns the keyword classifier misses (destructive shell/git ops).
@@ -5718,10 +6070,13 @@ def _work_dirty_files(files: list) -> tuple[str, ...]:
     current.md, the projections), so counting those paths as "work happened"
     would re-arm the Stop-hook dedupe on every firing.
     """
-    return tuple(sorted(
-        f for f in files
-        if isinstance(f, str) and f.strip() and MEMORY_DIRNAME not in f.split("/")
-    ))
+    return tuple(
+        sorted(
+            f
+            for f in files
+            if isinstance(f, str) and f.strip() and MEMORY_DIRNAME not in f.split("/")
+        )
+    )
 
 
 def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
@@ -5764,9 +6119,17 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     # The Next Action is placeholder text (`_is_placeholder` knows it), so this
     # machine capture cannot clobber a Next Action / Focus a human set.
     ns = argparse.Namespace(
-        project=str(root), json=True, plain=False, verbose=False, fast=True,
-        next_action=HOOK_SESSION_NEXT_ACTION, title="session", set=None,
-        focus=None, agent="agent", capture_what="session",
+        project=str(root),
+        json=True,
+        plain=False,
+        verbose=False,
+        fast=True,
+        next_action=HOOK_SESSION_NEXT_ACTION,
+        title="session",
+        set=None,
+        focus=None,
+        agent="agent",
+        capture_what="session",
     )
     try:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -5779,6 +6142,12 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
 
 def cmd_hook(args: argparse.Namespace) -> int:
     event = getattr(args, "hook_event", None)
+    # Validate the event *before* reading stdin (review #5 Low): `crumb hook` with
+    # no subcommand used to block on a terminal until EOF and only then report the
+    # usage error, which reads as a hang.
+    if event not in HOOK_EVENTS:
+        _emit_error(args, "specify: `crumb hook session|guard|capture`")
+        return 2
     payload = _read_hook_stdin()
     root = _hook_root(payload)
     memory_dir = root / MEMORY_DIRNAME
@@ -5786,15 +6155,13 @@ def cmd_hook(args: argparse.Namespace) -> int:
         return _hook_session(memory_dir, root)
     if event == "guard":
         return _hook_guard(memory_dir, root, payload)
-    if event == "capture":
-        return _hook_capture(memory_dir, root, payload)
-    _emit_error(args, "specify: `crumb hook session|guard|capture`")
-    return 2
+    return _hook_capture(memory_dir, root, payload)
 
 
 # --------------------------------------------------------------------------- #
 # Argument parsing
 # --------------------------------------------------------------------------- #
+
 
 def get_version() -> str:
     """Resolve the distribution version.
@@ -5802,12 +6169,15 @@ def get_version() -> str:
     Installed (pipx/pip): authoritative version from package metadata.
     Source checkout (no metadata): the in-tree __version__ (single source).
     """
+
     def _fallback() -> str:
         from breadcrumbs import __version__
+
         return __version__
 
     try:
         from importlib.metadata import PackageNotFoundError, version
+
         try:
             return version("crumb-kit")
         except PackageNotFoundError:
@@ -5845,14 +6215,24 @@ def build_parser() -> argparse.ArgumentParser:
     # Parent parser holds the global flags so every subcommand inherits them.
     # default=SUPPRESS is load-bearing — see _BreadcrumbsParser above.
     global_parser = argparse.ArgumentParser(add_help=False)
-    global_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
-                               help="machine-readable JSON output")
-    global_parser.add_argument("--plain", action="store_true", default=argparse.SUPPRESS,
-                               help="plain-text output (no decoration)")
-    global_parser.add_argument("--verbose", action="store_true", default=argparse.SUPPRESS,
-                               help="verbose output")
-    global_parser.add_argument("--project", metavar="PATH", default=argparse.SUPPRESS,
-                               help="project root (default: cwd)")
+    global_parser.add_argument(
+        "--json",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="machine-readable JSON output",
+    )
+    global_parser.add_argument(
+        "--plain",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="plain-text output (no decoration)",
+    )
+    global_parser.add_argument(
+        "--verbose", action="store_true", default=argparse.SUPPRESS, help="verbose output"
+    )
+    global_parser.add_argument(
+        "--project", metavar="PATH", default=argparse.SUPPRESS, help="project root (default: cwd)"
+    )
 
     parser = _BreadcrumbsParser(
         prog="crumb",
@@ -5862,16 +6242,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=(
-            f"breadcrumbs {get_version()} "
-            f"(record schema_version {SCHEMA_VERSION})"
-        ),
+        version=(f"breadcrumbs {get_version()} (record schema_version {SCHEMA_VERSION})"),
         help="show version and record schema_version, then exit",
     )
     # Subparsers are plain ArgumentParsers (not _BreadcrumbsParser) so the global
     # backfill runs only once, at the top level — never in a copied-back sub-namespace.
-    sub = parser.add_subparsers(dest="command", metavar="<command>",
-                                parser_class=argparse.ArgumentParser)
+    sub = parser.add_subparsers(
+        dest="command", metavar="<command>", parser_class=argparse.ArgumentParser
+    )
 
     # init
     p_init = sub.add_parser(
@@ -5897,26 +6275,57 @@ def build_parser() -> argparse.ArgumentParser:
     # Integration flags (review §7). Tri-state: unset -> prompt on a TTY / off when
     # non-interactive; --with-* enables; --no-* disables. set_defaults keeps all three
     # at None so default `crumb init` is byte-identical to before.
-    p_init.add_argument("--with-adapter", dest="adapter", nargs="?", const="*",
-                        metavar="FILES",
-                        help="inject the signpost block into detected agent-guidance "
-                             "files (optional: comma-separated list)")
-    p_init.add_argument("--no-adapter", dest="adapter", action="store_const", const=False,
-                        help="do not touch agent-guidance files")
-    p_init.add_argument("--with-mcp", dest="mcp", action="store_const", const=True,
-                        help="register the MCP server in .mcp.json")
-    p_init.add_argument("--no-mcp", dest="mcp", action="store_const", const=False,
-                        help="do not register the MCP server")
-    p_init.add_argument("--with-hooks", dest="hooks", nargs="?", const="*",
-                        metavar="EVENTS",
-                        help="install Claude Code hooks (optional: comma list of "
-                             "session,guard,capture)")
-    p_init.add_argument("--no-hooks", dest="hooks", action="store_const", const=False,
-                        help="do not install hooks")
-    p_init.add_argument("--print-integrations", action="store_true",
-                        help="show which integrations would be applied, then exit")
-    p_init.add_argument("--remove-integrations", action="store_true",
-                        help="reverse every breadcrumbs integration, then exit")
+    p_init.add_argument(
+        "--with-adapter",
+        dest="adapter",
+        nargs="?",
+        const="*",
+        metavar="FILES",
+        help="inject the signpost block into detected agent-guidance "
+        "files (optional: comma-separated list)",
+    )
+    p_init.add_argument(
+        "--no-adapter",
+        dest="adapter",
+        action="store_const",
+        const=False,
+        help="do not touch agent-guidance files",
+    )
+    p_init.add_argument(
+        "--with-mcp",
+        dest="mcp",
+        action="store_const",
+        const=True,
+        help="register the MCP server in .mcp.json",
+    )
+    p_init.add_argument(
+        "--no-mcp",
+        dest="mcp",
+        action="store_const",
+        const=False,
+        help="do not register the MCP server",
+    )
+    p_init.add_argument(
+        "--with-hooks",
+        dest="hooks",
+        nargs="?",
+        const="*",
+        metavar="EVENTS",
+        help="install Claude Code hooks (optional: comma list of session,guard,capture)",
+    )
+    p_init.add_argument(
+        "--no-hooks", dest="hooks", action="store_const", const=False, help="do not install hooks"
+    )
+    p_init.add_argument(
+        "--print-integrations",
+        action="store_true",
+        help="show which integrations would be applied, then exit",
+    )
+    p_init.add_argument(
+        "--remove-integrations",
+        action="store_true",
+        help="reverse every breadcrumbs integration, then exit",
+    )
     p_init.set_defaults(func=cmd_init, adapter=None, mcp=None, hooks=None)
 
     # validate (Phase 2)
@@ -5969,8 +6378,9 @@ def build_parser() -> argparse.ArgumentParser:
             pr.add_argument("--tried", help="Tried section")
             pr.add_argument("--result", help="Result section")
             pr.add_argument("--why", help="'Why It Failed / Succeeded' section")
-            pr.add_argument("--do-not-retry", dest="do_not_retry",
-                            help="'Do Not Retry Unless' section")
+            pr.add_argument(
+                "--do-not-retry", dest="do_not_retry", help="'Do Not Retry Unless' section"
+            )
             pr.add_argument("--related", help="'Related Records' section")
         pr.set_defaults(func=cmd_remember)
 
@@ -5981,11 +6391,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="print the record schema contract (or a fill-in template)",
     )
     p_schema.add_argument(
-        "schema_type", nargs="?", metavar="<type>",
+        "schema_type",
+        nargs="?",
+        metavar="<type>",
         help="limit to one record type (decision|attempt|verification|session|idea)",
     )
     p_schema.add_argument(
-        "--template", action="store_true",
+        "--template",
+        action="store_true",
         help="emit a copy-pasteable `crumb remember <type>` command skeleton",
     )
     p_schema.set_defaults(func=cmd_schema)
@@ -5999,16 +6412,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_note.set_defaults(func=cmd_note, note_kind=None)
     note_sub = p_note.add_subparsers(dest="note_kind", metavar="<kind>")
 
-    pq = note_sub.add_parser("question", parents=[global_parser],
-                             help="record an open question")
+    pq = note_sub.add_parser("question", parents=[global_parser], help="record an open question")
     pq.add_argument("text", help="the question, in one line")
     pq.add_argument("--why", help="why it matters / what is blocked")
     pq.add_argument("--needs", help="human input | investigation | a decision")
     pq.add_argument("--status", default="open", help="status (default: open)")
     pq.set_defaults(func=cmd_note)
 
-    pt = note_sub.add_parser("trap", parents=[global_parser],
-                             help="record a reusable known trap")
+    pt = note_sub.add_parser("trap", parents=[global_parser], help="record a reusable known trap")
     pt.add_argument("text", help="one-line trap summary")
     pt.add_argument("--slug", help="short slug (derived from the summary if omitted)")
     pt.add_argument("--area", help="where this bites (files / area)")
@@ -6018,11 +6429,15 @@ def build_parser() -> argparse.ArgumentParser:
     pt.add_argument("--verify", help="a command that proves it is OK")
     pt.set_defaults(func=cmd_note)
 
-    pi = note_sub.add_parser("idea", parents=[global_parser],
-                             help="record a speculative idea")
+    pi = note_sub.add_parser("idea", parents=[global_parser], help="record a speculative idea")
     pi.add_argument("text", help="the idea title")
-    pi.add_argument("--set", nargs=2, action="append", metavar=("HEADING", "TEXT"),
-                    help="set an idea body section (repeatable)")
+    pi.add_argument(
+        "--set",
+        nargs=2,
+        action="append",
+        metavar=("HEADING", "TEXT"),
+        help="set an idea body section (repeatable)",
+    )
     pi.add_argument("--tags", help="comma-separated tags")
     pi.add_argument("--agent", default="human", help="note author label (default: human)")
     pi.set_defaults(func=cmd_note)
@@ -6034,21 +6449,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="record a verification result (checked X; status fixed/open/regressed/…)",
     )
     p_verify.add_argument(
-        "subject", nargs="?", default=None,
+        "subject",
+        nargs="?",
+        default=None,
         metavar="SUBJECT",
         help="what was checked — a finding id, file, or claim (prompted if omitted in a TTY)",
     )
     p_verify.add_argument(
-        "--status", required=True, choices=VALID_VERIFICATION_OUTCOME,
+        "--status",
+        required=True,
+        choices=VALID_VERIFICATION_OUTCOME,
         help="the verification outcome",
     )
     p_verify.add_argument(
-        "--method", choices=VALID_VERIFICATION_METHOD,
+        "--method",
+        choices=VALID_VERIFICATION_METHOD,
         help="how it was checked (static|runtime|test)",
     )
     p_verify.add_argument("--note", help="free-text notes / what the evidence shows")
     p_verify.add_argument(
-        "--evidence", nargs=2, action="append", metavar=("TYPE", "REF"),
+        "--evidence",
+        nargs=2,
+        action="append",
+        metavar=("TYPE", "REF"),
         help="add an evidence pointer, e.g. --evidence file path/to/file.py:170 (repeatable)",
     )
     p_verify.add_argument("--tags", help="comma-separated tags")
@@ -6062,14 +6485,25 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         help="change a record's status (stale/disputed/superseded/…), validate-gated",
     )
-    p_mark.add_argument("record_id", metavar="ID", help="record id, e.g. dec_20260510_markdown-source-of-truth")
-    p_mark.add_argument("new_status", metavar="STATUS", choices=VALID_STATUS,
-                        help=f"new status ({', '.join(VALID_STATUS)})")
-    p_mark.add_argument("--reason", default="",
-                        help="why the status changed (recorded as a trailing comment)")
-    p_mark.add_argument("--superseded-by", dest="superseded_by", default=None, metavar="ID",
-                        help="the replacing record's id (required by validate when "
-                             "marking superseded)")
+    p_mark.add_argument(
+        "record_id", metavar="ID", help="record id, e.g. dec_20260510_markdown-source-of-truth"
+    )
+    p_mark.add_argument(
+        "new_status",
+        metavar="STATUS",
+        choices=VALID_STATUS,
+        help=f"new status ({', '.join(VALID_STATUS)})",
+    )
+    p_mark.add_argument(
+        "--reason", default="", help="why the status changed (recorded as a trailing comment)"
+    )
+    p_mark.add_argument(
+        "--superseded-by",
+        dest="superseded_by",
+        default=None,
+        metavar="ID",
+        help="the replacing record's id (required by validate when marking superseded)",
+    )
     p_mark.add_argument("--agent", default="human", help="author label (default: human)")
     p_mark.set_defaults(func=cmd_mark_status)
 
@@ -6094,8 +6528,12 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         help="record session end; auto-fills work/files/commands from git",
     )
-    p_session.add_argument("--fast", action="store_true", help="git snapshot + --next only; no prompts, no LLM")
-    p_session.add_argument("--next", dest="next_action", help="the Next Action (required on --fast)")
+    p_session.add_argument(
+        "--fast", action="store_true", help="git snapshot + --next only; no prompts, no LLM"
+    )
+    p_session.add_argument(
+        "--next", dest="next_action", help="the Next Action (required on --fast)"
+    )
     p_session.add_argument("--title", help="session topic (default: 'session')")
     p_session.add_argument(
         "--set",
@@ -6104,7 +6542,9 @@ def build_parser() -> argparse.ArgumentParser:
         metavar=("HEADING", "TEXT"),
         help="override a session body section (repeatable)",
     )
-    p_session.add_argument("--focus", help="Current Focus for handoff/current (default: Next Action)")
+    p_session.add_argument(
+        "--focus", help="Current Focus for handoff/current (default: Next Action)"
+    )
     p_session.add_argument("--agent", default="human", help="session author label (default: human)")
     p_session.set_defaults(func=cmd_capture_session)
 
@@ -6131,7 +6571,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="TEXT",
         help="resume FOR this task: scope likely-files to matching records (review F4); "
-             "a task-scoped packet prints only and does not overwrite the committed snapshot",
+        "a task-scoped packet prints only and does not overwrite the committed snapshot",
     )
     p_resume.set_defaults(func=cmd_resume)
 
@@ -6141,10 +6581,17 @@ def build_parser() -> argparse.ArgumentParser:
         parents=[global_parser],
         help="deterministic keyword/tag/file search over records (no embeddings)",
     )
-    p_search.add_argument("query", nargs="?", default="", help="search text (optional with filters)")
-    p_search.add_argument("--type", choices=("decision", "attempt", "verification", "trap", "question"))
-    p_search.add_argument("--status", help="filter by record status (e.g. active, superseded; "
-                                            "for verifications: the outcome, e.g. open/fixed)")
+    p_search.add_argument(
+        "query", nargs="?", default="", help="search text (optional with filters)"
+    )
+    p_search.add_argument(
+        "--type", choices=("decision", "attempt", "verification", "trap", "question")
+    )
+    p_search.add_argument(
+        "--status",
+        help="filter by record status (e.g. active, superseded; "
+        "for verifications: the outcome, e.g. open/fixed)",
+    )
     p_search.add_argument("--tag", help="filter by tag/component")
     p_search.add_argument("--file", help="filter by file path referenced in a record")
     p_search.add_argument("--stale-days", type=int, default=None, metavar="N")
@@ -6205,17 +6652,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp.set_defaults(func=cmd_mcp, mcp_what=None)
     mcp_sub = p_mcp.add_subparsers(dest="mcp_what", metavar="<what>")
     p_mcp_serve = mcp_sub.add_parser(
-        "serve", parents=[global_parser],
+        "serve",
+        parents=[global_parser],
         help="run the MCP server over stdio (needs the [mcp] extra)",
     )
     p_mcp_serve.set_defaults(func=cmd_mcp, mcp_what="serve")
     p_mcp_register = mcp_sub.add_parser(
-        "register", parents=[global_parser],
+        "register",
+        parents=[global_parser],
         help="add the breadcrumbs server to .mcp.json (preserves other servers)",
     )
     p_mcp_register.set_defaults(func=cmd_mcp, mcp_what="register")
     p_mcp_doctor = mcp_sub.add_parser(
-        "doctor", parents=[global_parser],
+        "doctor",
+        parents=[global_parser],
         help="report MCP wiring: [mcp] extra, .mcp.json registration",
     )
     p_mcp_doctor.set_defaults(func=cmd_mcp, mcp_what="doctor")
@@ -6263,6 +6713,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         return args.func(args)
+    except KeyboardInterrupt:
+        # Ctrl+C at a prompt aborts the command (review #5 Low). 130 is the shell
+        # convention for SIGINT; the message goes to stderr so `--json` output is
+        # never half a document followed by a traceback.
+        print("\naborted.", file=sys.stderr)
+        return 130
     except (OSError, ValueError) as exc:
         # Expected, user-facing failures (missing template/package, permissions,
         # unrepresentable values) surface as a clean error + nonzero exit rather

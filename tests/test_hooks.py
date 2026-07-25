@@ -17,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -82,22 +83,29 @@ class HookGuardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             init_store(root)
-            out = run_hook("guard", {
-                "cwd": str(root), "tool_name": "Bash",
-                "tool_input": {"command": "ls -la"},
-            })
+            out = run_hook(
+                "guard",
+                {
+                    "cwd": str(root),
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "ls -la"},
+                },
+            )
             self.assertEqual(out, {})
 
     def test_risky_action_escalates_with_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             init_store(root)
-            crumb.main(["note", "trap", "force-push to main loses history",
-                        "--project", str(root)])
-            out = run_hook("guard", {
-                "cwd": str(root), "tool_name": "Bash",
-                "tool_input": {"command": "git push --force origin main"},
-            })
+            crumb.main(["note", "trap", "force-push to main loses history", "--project", str(root)])
+            out = run_hook(
+                "guard",
+                {
+                    "cwd": str(root),
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "git push --force origin main"},
+                },
+            )
             hso = out["hookSpecificOutput"]
             self.assertEqual(hso["hookEventName"], "PreToolUse")
             # memory informs; it never allows or denies on its own, so whichever
@@ -109,18 +117,33 @@ class HookGuardTests(unittest.TestCase):
     def test_high_impact_deletion_asks_human(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
-            mem = init_store(root)
+            init_store(root)
             # a decision touching the schema makes a deletion of it high-impact
-            crumb.main([
-                "remember", "decision", "--project", str(root),
-                "--title", "users table schema is canonical",
-                "--set", "Decision", "keep users schema", "--confidence", "low",
-                "--tags", "schema,database",
-            ])
-            out = run_hook("guard", {
-                "cwd": str(root), "tool_name": "Bash",
-                "tool_input": {"command": "drop table users schema"},
-            })
+            crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "users table schema is canonical",
+                    "--set",
+                    "Decision",
+                    "keep users schema",
+                    "--confidence",
+                    "low",
+                    "--tags",
+                    "schema,database",
+                ]
+            )
+            out = run_hook(
+                "guard",
+                {
+                    "cwd": str(root),
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "drop table users schema"},
+                },
+            )
             # deletion is a high-impact class; with a memory hit this escalates to ask
             if "hookSpecificOutput" in out:
                 self.assertNotIn(
@@ -144,18 +167,21 @@ class HookGuardTests(unittest.TestCase):
         self.assertEqual(set(expected), set(_cli._VERDICTS))
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
-            mem = init_store(root)
+            init_store(root)
             payload = {
-                "cwd": str(root), "tool_name": "Bash",
+                "cwd": str(root),
+                "tool_name": "Bash",
                 "tool_input": {"command": "git push --force origin main"},
             }
             real_guard = _cli.guard
             for verdict, (decision, reason_key) in expected.items():
                 with self.subTest(verdict=verdict):
+
                     def fake_guard(*a, _v=verdict, **kw):
                         result = real_guard(*a, **kw)
                         result["verdict"] = _v
                         return result
+
                     _cli.guard = fake_guard
                     try:
                         out = run_hook("guard", payload)
@@ -190,8 +216,17 @@ class HookCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             mem = init_store(root)
-            crumb.main(["capture", "session", "--project", str(root), "--fast",
-                        "--next", "wire the parser into the CLI"])
+            crumb.main(
+                [
+                    "capture",
+                    "session",
+                    "--project",
+                    str(root),
+                    "--fast",
+                    "--next",
+                    "wire the parser into the CLI",
+                ]
+            )
             before = sorted(p.name for p in (mem / "sessions").glob("*.md"))
 
             for _ in range(3):
@@ -234,6 +269,50 @@ class HookCaptureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             out = run_hook("capture", {"cwd": tmp})
             self.assertEqual(out, {})
+
+
+class MF20HookUsageTests(unittest.TestCase):
+    """`crumb hook` with no subcommand read stdin before validating the event.
+
+    From a terminal that blocks until EOF, so the usage error a user is waiting
+    for looks like a hang instead (review #5 Low).
+    """
+
+    def test_MF20_missing_subcommand_never_reads_stdin(self):
+        def explode():
+            raise AssertionError("stdin was read before the event was validated")
+
+        err = io.StringIO()
+        with (
+            mock.patch.object(_cli, "_read_hook_stdin", side_effect=explode),
+            contextlib.redirect_stderr(err),
+        ):
+            code = crumb.main(["hook"])
+        self.assertEqual(code, 2)
+        self.assertIn("session|guard|capture", err.getvalue())
+
+    def test_MF20_does_not_block_on_a_terminal(self):
+        """End to end: a real process with a tty-less pipe that never sends EOF."""
+        proc = subprocess.Popen(
+            [sys.executable, str(REPO_ROOT / "crumb.py"), "hook"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            _, stderr = proc.communicate(timeout=15)
+        except subprocess.TimeoutExpired:  # pragma: no cover - the bug being fixed
+            proc.kill()
+            self.fail("`crumb hook` blocked on stdin instead of reporting usage")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("session|guard|capture", stderr)
+
+    def test_MF20_valid_events_still_read_their_payload(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            self.assertIsInstance(run_hook("session", {"cwd": str(root)}), dict)
 
 
 if __name__ == "__main__":

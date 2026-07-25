@@ -38,8 +38,6 @@ EXPECTED_TREE = [
     "evidence/refs.yml",
     "generated/README.md",
     "generated/resume-packet.md",
-    "generated/stale-report.md",
-    "generated/memory-index.md",
     "private/README.md",
     "index/README.md",
 ]
@@ -95,9 +93,7 @@ class InitTreeTests(unittest.TestCase):
             # second run without --force must refuse
             self.assertEqual(run_init(root, "--session-tracking", "full"), 1)
             # with --force it succeeds
-            self.assertEqual(
-                run_init(root, "--session-tracking", "distillate", "--force"), 0
-            )
+            self.assertEqual(run_init(root, "--session-tracking", "distillate", "--force"), 0)
             m = parse_manifest(root / ".project-memory")
             self.assertEqual(m["session_tracking"], "distillate")
 

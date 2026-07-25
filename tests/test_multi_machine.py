@@ -39,9 +39,7 @@ def run(argv: list[str]) -> tuple[int, str]:
 
 
 def git(root: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        ["git", *args], cwd=str(root), check=True, capture_output=True, text=True
-    )
+    return subprocess.run(["git", *args], cwd=str(root), check=True, capture_output=True, text=True)
 
 
 def make_store(tmp: str | Path, tracking: str = "distillate", *, git_repo: bool = True) -> Path:
@@ -52,14 +50,37 @@ def make_store(tmp: str | Path, tracking: str = "distillate", *, git_repo: bool 
         git(root, "init", "-q")
         git(root, "config", "user.email", "t@t")
         git(root, "config", "user.name", "t")
-    run(["init", "--project", str(root), "--session-tracking", tracking,
-         "--no-adapter", "--no-mcp", "--no-hooks"])
+    run(
+        [
+            "init",
+            "--project",
+            str(root),
+            "--session-tracking",
+            tracking,
+            "--no-adapter",
+            "--no-mcp",
+            "--no-hooks",
+        ]
+    )
     return root
 
 
 def seed_record(root: Path, title: str = "Split the worker") -> None:
-    run(["remember", "decision", "--title", title, "--confidence", "low",
-         "--set", "Rationale", "it is cheaper", "--project", str(root)])
+    run(
+        [
+            "remember",
+            "decision",
+            "--title",
+            title,
+            "--confidence",
+            "low",
+            "--set",
+            "Rationale",
+            "it is cheaper",
+            "--project",
+            str(root),
+        ]
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -100,13 +121,20 @@ class InputsHashPolicyTests(unittest.TestCase):
             git(author, "commit", "-qm", "memory")
 
             clone = Path(tmp) / "teammate"
-            subprocess.run(["git", "clone", "-q", str(author), str(clone)],
-                           check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["git", "clone", "-q", str(author), str(clone)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
             self.assertFalse((clone / crumb.MEMORY_DIRNAME / "sessions").exists())
 
             for who in (author, clone):
-                fails = [f for f in crumb.run_validate(who / crumb.MEMORY_DIRNAME)
-                         if f["status"] == "fail"]
+                fails = [
+                    f
+                    for f in crumb.run_validate(who / crumb.MEMORY_DIRNAME)
+                    if f["status"] == "fail"
+                ]
                 self.assertEqual(fails, [], f"{who}: {fails}")
 
             # ...and the teammate's own reindex restamps with the SAME hash, so the
@@ -114,10 +142,16 @@ class InputsHashPolicyTests(unittest.TestCase):
             run(["reindex", "--project", str(clone)])
             stamp = crumb._stamped_inputs_hash
             self.assertEqual(
-                stamp((clone / crumb.MEMORY_DIRNAME / "generated" / "resume-packet.md")
-                      .read_text(encoding="utf-8")),
-                stamp((author / crumb.MEMORY_DIRNAME / "generated" / "resume-packet.md")
-                      .read_text(encoding="utf-8")),
+                stamp(
+                    (clone / crumb.MEMORY_DIRNAME / "generated" / "resume-packet.md").read_text(
+                        encoding="utf-8"
+                    )
+                ),
+                stamp(
+                    (author / crumb.MEMORY_DIRNAME / "generated" / "resume-packet.md").read_text(
+                        encoding="utf-8"
+                    )
+                ),
             )
 
     def test_MF06_committed_gitignore_excludes_a_record_dir_from_the_hash(self):
@@ -206,9 +240,7 @@ class PacketPathTests(unittest.TestCase):
             "**svc** — `/Users/someone/code/svc`  \nbranch `main`\n"
         )
         other = md.replace("/Users/someone/code/svc", "/home/other/svc")
-        self.assertEqual(
-            crumb._strip_packet_volatile(md), crumb._strip_packet_volatile(other)
-        )
+        self.assertEqual(crumb._strip_packet_volatile(md), crumb._strip_packet_volatile(other))
 
 
 # --------------------------------------------------------------------------- #
@@ -235,7 +267,8 @@ class InputsHashIdentityTests(unittest.TestCase):
                 mem / "decisions" / "2026-02-02-bar.md"
             )
             self.assertNotEqual(
-                crumb._inputs_hash(mem), before,
+                crumb._inputs_hash(mem),
+                before,
                 "a rename changes every derived record id — the stamp must not survive it",
             )
 
@@ -248,8 +281,7 @@ class InputsHashIdentityTests(unittest.TestCase):
                 mem / "decisions" / "2026-02-02-bar.md"
             )
             self.assertTrue(
-                any(d["path"].endswith("resume-packet.md")
-                    for d in crumb.detect_packet_drift(mem)),
+                any(d["path"].endswith("resume-packet.md") for d in crumb.detect_packet_drift(mem)),
                 "validate/audit must see the projection built from ids that no longer exist",
             )
             fails = [f for f in crumb.run_validate(mem) if f["status"] == "fail"]
@@ -298,9 +330,7 @@ class ResumeReindexTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full", git_repo=False)
             mem = root / crumb.MEMORY_DIRNAME
-            with mock.patch.object(
-                bcli, "write_text_atomic", wraps=bcli.write_text_atomic
-            ) as spy:
+            with mock.patch.object(bcli, "write_text_atomic", wraps=bcli.write_text_atomic) as spy:
                 run(["resume", "--project", str(root)])
             written = {Path(c.args[0]).name for c in spy.call_args_list}
             self.assertIn("resume-packet.md", written)
@@ -333,18 +363,31 @@ class GeneratedJsonPolicyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             git(root, "init", "-q")
-            run(["init", "--project", str(root), "--session-tracking", "full",
-                 "--no-commit-generated", "--no-adapter", "--no-mcp", "--no-hooks"])
+            run(
+                [
+                    "init",
+                    "--project",
+                    str(root),
+                    "--session-tracking",
+                    "full",
+                    "--no-commit-generated",
+                    "--no-adapter",
+                    "--no-mcp",
+                    "--no-hooks",
+                ]
+            )
             run(["reindex", "--project", str(root)])
             rel = f"{crumb.MEMORY_DIRNAME}/generated/{crumb.GUARD_PREFILTER_FILENAME}"
             self.assertTrue((root / rel).is_file())
-            r = subprocess.run(["git", "check-ignore", rel], cwd=str(root),
-                               capture_output=True, text=True)
+            r = subprocess.run(
+                ["git", "check-ignore", rel], cwd=str(root), capture_output=True, text=True
+            )
             self.assertEqual(r.returncode, 0, f"{rel} escaped the local-only policy")
 
     def test_MF10_template_readme_documents_the_prefilter(self):
-        readme = (Path(bcli.__file__).parent / "templates" / "project-memory"
-                  / "generated" / "README.md").read_text(encoding="utf-8")
+        readme = (
+            Path(bcli.__file__).parent / "templates" / "project-memory" / "generated" / "README.md"
+        ).read_text(encoding="utf-8")
         self.assertIn(crumb.GUARD_PREFILTER_FILENAME, readme)
 
 
@@ -368,9 +411,7 @@ class MultiMachineFixtureTests(unittest.TestCase):
         text = (mem / "generated" / "resume-packet.md").read_text(encoding="utf-8")
         self.assertIn("**shared-service** — `.`", text)
         self.assertNotIn(str(REPO_ROOT), text)
-        self.assertEqual(
-            crumb._stamped_inputs_hash(text), crumb._inputs_hash(mem)
-        )
+        self.assertEqual(crumb._stamped_inputs_hash(text), crumb._inputs_hash(mem))
         self.assertEqual(crumb.detect_packet_drift(mem), [])
 
     def _checkout(self, parent: Path, name: str) -> Path:
@@ -401,8 +442,9 @@ class MultiMachineFixtureTests(unittest.TestCase):
                 checks = {c["check"]: c for c in report["checks"]}
                 self.assertTrue(report["integrated"], checks)
                 self.assertTrue(checks["adapter"]["ok"], checks["adapter"])
-                self.assertTrue(checks["resume_packet"]["ok"],
-                                f"{root.name}: {checks['resume_packet']}")
+                self.assertTrue(
+                    checks["resume_packet"]["ok"], f"{root.name}: {checks['resume_packet']}"
+                )
 
             self.assertEqual(
                 crumb._inputs_hash(a / ".project-memory"),
@@ -418,8 +460,9 @@ class MultiMachineFixtureTests(unittest.TestCase):
                 run(["reindex", "--project", str(root)])
             packets = [
                 crumb._strip_packet_volatile(
-                    (root / ".project-memory" / "generated" / "resume-packet.md")
-                    .read_text(encoding="utf-8")
+                    (root / ".project-memory" / "generated" / "resume-packet.md").read_text(
+                        encoding="utf-8"
+                    )
                 )
                 for root in (a, b)
             ]

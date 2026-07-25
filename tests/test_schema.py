@@ -33,7 +33,8 @@ class SchemaTests(unittest.TestCase):
         payload = json.loads(out)
         self.assertEqual(payload["schema_version"], crumb.SCHEMA_VERSION)
         self.assertEqual(
-            set(payload["record_types"]), set(crumb.BODY_SECTIONS),
+            set(payload["record_types"]),
+            set(crumb.BODY_SECTIONS),
         )
         self.assertEqual(
             payload["record_types"]["attempt"]["body_sections"],

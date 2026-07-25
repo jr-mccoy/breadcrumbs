@@ -32,6 +32,18 @@ dependencies = []
 [project.optional-dependencies]
 mcp = ["mcp>=1.2; python_version >= '3.10'"]
 
+# Contributor tooling. None of it is needed to *run* crumb-kit — the package has
+# no runtime dependencies and the canonical test runner is stdlib `unittest`
+# (what CI runs). This extra just declares the tools the repo's own workflows and
+# docs reference, so `pip install -e ".[dev]"` gets you a working bench instead of
+# a doc telling you to run a command nothing installed.
+dev = [
+    "pytest",       # optional alternative runner; `unittest discover` is canonical
+    "ruff",         # lint + format, enforced by the `lint` CI job
+    "build",        # `python -m build` (release dry-run)
+    "twine",        # `twine check` / Path B upload
+]
+
 # Versioning note: this is the package version (semantic). It is independent of
 # the *record* schema_version, which the manifest carries as `schema_version: 1`
 # and `crumb --version` prints alongside the package version. A bump to the
@@ -69,3 +81,31 @@ breadcrumbs = [
     "templates/project-memory/*/*.yml",
     "templates/project-memory/*/.gitkeep",
 ]
+
+# --------------------------------------------------------------------------- #
+# Tooling
+# --------------------------------------------------------------------------- #
+
+[tool.pytest.ini_options]
+# `unittest discover -s tests` is canonical (it is what CI runs, and it needs no
+# third-party package). pytest is supported for contributors who prefer it; this
+# section keeps it from walking the whole tree and scattering a root
+# `.pytest_cache` when it does.
+testpaths = ["tests"]
+
+[tool.ruff]
+# The code was written to ~100 columns; the formatter is set to match so adopting
+# it did not rewrap the whole codebase.
+line-length = 100
+target-version = "py39"   # the documented floor (requires-python >=3.9)
+
+[tool.ruff.lint]
+# ruff's default rules (pyflakes + the pycodestyle errors that indicate real
+# problems) plus warnings. E501 (line-too-long) is deliberately NOT enabled:
+# `ruff format` owns layout, and the lines it cannot split — long string literals,
+# URLs, the record-schema tables in comments — are not defects worth failing CI
+# over.
+select = ["E4", "E7", "E9", "F", "W"]
+
+[tool.ruff.format]
+docstring-code-format = false   # the docstrings here are prose, not doctests

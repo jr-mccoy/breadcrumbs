@@ -134,11 +134,16 @@ class HealthViewTests(unittest.TestCase):
             root = make_repo(tmp)
             mem = fresh_store(tmp)
             crumb.write_record(
-                mem, root, "decision", "keep accounts immutable",
+                mem,
+                root,
+                "decision",
+                "keep accounts immutable",
                 {"Decision": "never drop accounts", "Rationale": "billing depends on it"},
                 tags=["accounts"],
-                evidence=[{"type": "file", "ref": "src/db/accounts.ts"},
-                          {"type": "commit", "ref": "abc1234"}],
+                evidence=[
+                    {"type": "file", "ref": "src/db/accounts.ts"},
+                    {"type": "commit", "ref": "abc1234"},
+                ],
             )
             git(root, "checkout", "-q", "-b", "feature-x")
             findings = crumb.run_audit(mem, root)
@@ -167,8 +172,15 @@ class InstructionLikeTests(unittest.TestCase):
 
     def test_guard_treats_poisoned_text_as_data(self):
         res_code, out = run(
-            ["guard", "speed up the test runner", "--files", "src/runner.ts",
-             "--project", str(FIXTURES / "fixture-07-poisoned-text"), "--json"]
+            [
+                "guard",
+                "speed up the test runner",
+                "--files",
+                "src/runner.ts",
+                "--project",
+                str(FIXTURES / "fixture-07-poisoned-text"),
+                "--json",
+            ]
         )
         self.assertEqual(res_code, 0)
         res = json.loads(out)
@@ -208,7 +220,9 @@ class PacketDriftTests(unittest.TestCase):
 class BloatTests(unittest.TestCase):
     def test_sessions_growth_note(self):
         findings = audit_findings(str(FIXTURES / "fixture-10-many-sessions"))
-        bloat = [f for f in findings if f["check"] == "bloat" and f.get("kind") == "sessions-growth"]
+        bloat = [
+            f for f in findings if f["check"] == "bloat" and f.get("kind") == "sessions-growth"
+        ]
         self.assertTrue(bloat)
         self.assertEqual(bloat[0]["severity"], crumb.AUDIT_INFO)
 
@@ -217,9 +231,14 @@ class BloatTests(unittest.TestCase):
             root = Path(tmp)
             mem = fresh_store(tmp)
             rec_path, _ = crumb.write_record(
-                mem, root, "decision", "keep memory in plain files",
-                {"Decision": "plain markdown is canonical",
-                 "Rationale": "a read-only agent can read it"},
+                mem,
+                root,
+                "decision",
+                "keep memory in plain files",
+                {
+                    "Decision": "plain markdown is canonical",
+                    "Rationale": "a read-only agent can read it",
+                },
                 tags=["memory"],
                 evidence=[{"type": "commit", "ref": "abc1234"}],
             )

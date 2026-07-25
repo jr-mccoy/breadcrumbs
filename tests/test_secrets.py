@@ -13,7 +13,6 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-import shutil
 import sys
 import tempfile
 import unittest
@@ -73,9 +72,7 @@ class Fixture6Tests(unittest.TestCase):
         self.assertNotIn("hunter2hunter2", blob)
 
     def test_audit_treats_secret_as_blocking(self):
-        code, out = run(
-            ["audit", "--project", str(FIXTURES / "fixture-06-secret-leak"), "--json"]
-        )
+        code, out = run(["audit", "--project", str(FIXTURES / "fixture-06-secret-leak"), "--json"])
         self.assertEqual(code, 1, out)
         payload = json.loads(out)
         self.assertFalse(payload["ok"])
@@ -97,15 +94,15 @@ class SecretShapeTests(unittest.TestCase):
         self.assertIn("aws-access-key-id", self._scan_line("key=AKIAIOSFODNN7EXAMPLE"))
 
     def test_github_token(self):
-        self.assertIn(
-            "github-token", self._scan_line("ghp_" + "a" * 36)
-        )
+        self.assertIn("github-token", self._scan_line("ghp_" + "a" * 36))
 
     def test_pem_private_key(self):
         self.assertIn("pem-private-key", self._scan_line("-----BEGIN RSA PRIVATE KEY-----"))
 
     def test_bearer_token(self):
-        self.assertIn("bearer-token", self._scan_line("Authorization: Bearer abcdef0123456789abcdef"))
+        self.assertIn(
+            "bearer-token", self._scan_line("Authorization: Bearer abcdef0123456789abcdef")
+        )
 
     def test_assignment_pattern(self):
         self.assertIn("secret-assignment", self._scan_line("password=correcthorsebattery123"))
@@ -140,10 +137,10 @@ class LabeledHexTradeoffTests(unittest.TestCase):
         """A standalone sha — and the sha-bearing labels memory uses — stay quiet."""
         sha40 = "a" * 8 + "b" * 8 + "c" * 8 + "d" * 8 + "e" * 8
         for line in (
-            sha40,                       # bare hex on its own line
-            f"commit: {sha40}",          # commit ref
-            f"inputs_hash: {sha40}",     # generated header stamp
-            f"ref: {sha40}",             # evidence ref
+            sha40,  # bare hex on its own line
+            f"commit: {sha40}",  # commit ref
+            f"inputs_hash: {sha40}",  # generated header stamp
+            f"ref: {sha40}",  # evidence ref
         ):
             self.assertNotIn("labeled-hex-secret", self._scan_line(line), line)
 
@@ -202,9 +199,7 @@ class FalsePositiveTests(unittest.TestCase):
             "src/test/AndroidManifestV2InstrumentationRunner",
         )
         for tok in allowlisted:
-            self.assertFalse(
-                crumb._looks_high_entropy(tok), f"{tok} should not read as a secret"
-            )
+            self.assertFalse(crumb._looks_high_entropy(tok), f"{tok} should not read as a secret")
             with tempfile.TemporaryDirectory() as tmp:
                 mem = fresh_store(tmp)
                 (mem / "decisions" / "2026-06-25-p.md").write_text(tok + "\n", encoding="utf-8")
@@ -220,9 +215,7 @@ class FalsePositiveTests(unittest.TestCase):
             "aB3xYz9QdE7Lm2Pq8Rt6Vw1Nc4Kf0Gh5Js7Tb2Zx==",
         )
         for tok in still_secret:
-            self.assertTrue(
-                crumb._looks_high_entropy(tok), f"{tok} must still read as a secret"
-            )
+            self.assertTrue(crumb._looks_high_entropy(tok), f"{tok} must still read as a secret")
 
 
 # --------------------------------------------------------------------------- #
@@ -233,9 +226,13 @@ class SkipRuleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = fresh_store(tmp)
             (mem / "private").mkdir(exist_ok=True)
-            (mem / "private" / "notes.md").write_text("key=AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8")
+            (mem / "private" / "notes.md").write_text(
+                "key=AKIAIOSFODNN7EXAMPLE\n", encoding="utf-8"
+            )
             (mem / "index").mkdir(exist_ok=True)
-            (mem / "index" / "dump.md").write_text("password=correcthorsebattery123\n", encoding="utf-8")
+            (mem / "index" / "dump.md").write_text(
+                "password=correcthorsebattery123\n", encoding="utf-8"
+            )
             self.assertEqual(crumb.scan_secrets(mem), [])
 
 
@@ -284,8 +281,7 @@ class UndecodableFileTests(unittest.TestCase):
             mem = fresh_store(tmp)
             p = mem / "known-traps.md"
             p.write_bytes(
-                p.read_bytes()
-                + b"\n## trap_bad: \xff bad byte\n- aws key: AKIAIOSFODNN7EXAMPLE\n"
+                p.read_bytes() + b"\n## trap_bad: \xff bad byte\n- aws key: AKIAIOSFODNN7EXAMPLE\n"
             )
             self.assertIn("unscannable-file", patterns_hit(mem))
             self.assertTrue(

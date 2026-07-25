@@ -41,10 +41,19 @@ class NoteQuestionTests(unittest.TestCase):
     def test_question_is_written_and_parses_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            code, _ = run([
-                "note", "question", "Should age signals gate compliance?",
-                "--project", tmp, "--why", "blocks export", "--needs", "a decision",
-            ])
+            code, _ = run(
+                [
+                    "note",
+                    "question",
+                    "Should age signals gate compliance?",
+                    "--project",
+                    tmp,
+                    "--why",
+                    "blocks export",
+                    "--needs",
+                    "a decision",
+                ]
+            )
             self.assertEqual(code, 0)
             qs = crumb.load_open_questions(mem)
             self.assertTrue(any(q["question"] == "Should age signals gate compliance?" for q in qs))
@@ -72,19 +81,32 @@ class NoteTrapTests(unittest.TestCase):
     def test_trap_is_written_and_parses_back(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            code, _ = run([
-                "note", "trap", "gradlew --stop corrupts R.jar lock",
-                "--project", tmp, "--slug", "gradle-daemon", "--area", "build",
-            ])
+            code, _ = run(
+                [
+                    "note",
+                    "trap",
+                    "gradlew --stop corrupts R.jar lock",
+                    "--project",
+                    tmp,
+                    "--slug",
+                    "gradle-daemon",
+                    "--area",
+                    "build",
+                ]
+            )
             self.assertEqual(code, 0)
             traps = crumb.load_traps(mem)
-            self.assertTrue(any(t["heading"].lower().startswith("trap_gradle-daemon") for t in traps))
+            self.assertTrue(
+                any(t["heading"].lower().startswith("trap_gradle-daemon") for t in traps)
+            )
             self.assertEqual([f for f in crumb.run_validate(mem) if f["status"] == "fail"], [])
 
     def test_slug_derived_when_omitted(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mem = init_store(tmp)
-            code, out = run(["note", "trap", "Flaky migration on rotate", "--project", tmp, "--json"])
+            init_store(tmp)
+            code, out = run(
+                ["note", "trap", "Flaky migration on rotate", "--project", tmp, "--json"]
+            )
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out)["ref"], "trap_flaky-migration-on-rotate")
 
@@ -93,11 +115,22 @@ class NoteIdeaTests(unittest.TestCase):
     def test_idea_creates_valid_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            code, out = run([
-                "note", "idea", "cache resume packet across sessions",
-                "--project", tmp, "--set", "Idea", "memoize", "--set", "Motivation", "speed",
-                "--json",
-            ])
+            code, out = run(
+                [
+                    "note",
+                    "idea",
+                    "cache resume packet across sessions",
+                    "--project",
+                    tmp,
+                    "--set",
+                    "Idea",
+                    "memoize",
+                    "--set",
+                    "Motivation",
+                    "speed",
+                    "--json",
+                ]
+            )
             self.assertEqual(code, 0)
             payload = json.loads(out)
             self.assertTrue(payload["id"].startswith("idea_"))
@@ -130,7 +163,9 @@ class MemoryNoteToolTests(unittest.TestCase):
             mem = init_store(tmp)
             res = mcp_core.tool_note("question", "Tool-written?", fields={"why": "x"}, root=tmp)
             self.assertTrue(res["ok"])
-            self.assertTrue(any(q["question"] == "Tool-written?" for q in crumb.load_open_questions(mem)))
+            self.assertTrue(
+                any(q["question"] == "Tool-written?" for q in crumb.load_open_questions(mem))
+            )
 
     def test_tool_note_rejects_bad_kind(self):
         with tempfile.TemporaryDirectory() as tmp:

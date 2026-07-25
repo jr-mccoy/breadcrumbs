@@ -172,9 +172,7 @@ class WriteGateTests(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         # A real, initialized project (init writes the template tree + manifest).
-        code = crumb.main(
-            ["init", "--project", str(self.tmp), "--session-tracking", "full"]
-        )
+        code = crumb.main(["init", "--project", str(self.tmp), "--session-tracking", "full"])
         self.assertEqual(code, 0)
 
     def test_record_writes_valid_decision(self):
@@ -182,8 +180,10 @@ class WriteGateTests(unittest.TestCase):
             "decision",
             {
                 "title": "Use markdown as the source of truth",
-                "sections": {"Decision": "Records are plain markdown.",
-                             "Rationale": "Human-readable + diffable."},
+                "sections": {
+                    "Decision": "Records are plain markdown.",
+                    "Rationale": "Human-readable + diffable.",
+                },
                 "evidence": [{"type": "commit", "ref": "abc1234"}],
             },
             root=self.tmp,
@@ -209,8 +209,11 @@ class WriteGateTests(unittest.TestCase):
     def test_mark_status_is_validate_gated(self):
         rec = mcp_core.tool_record(
             "decision",
-            {"title": "Pick a queue", "sections": {"Decision": "Use a queue."},
-             "evidence": [{"type": "commit", "ref": "deadbee"}]},
+            {
+                "title": "Pick a queue",
+                "sections": {"Decision": "Use a queue."},
+                "evidence": [{"type": "commit", "ref": "deadbee"}],
+            },
             root=self.tmp,
         )
         rid = rec["id"]
@@ -228,6 +231,154 @@ class WriteGateTests(unittest.TestCase):
         res = mcp_core.tool_mark_status("dec_20200101_nope", "stale", "x", root=self.tmp)
         self.assertFalse(res["ok"])
 
+    def test_MF16_write_error_uses_the_structured_envelope(self):
+        """`cli.write_record` was called bare, so a ValueError escaped as a ToolError.
+
+        Every other write path wraps it; `docs/mcp-spec.md` promises
+        `{ok: false, error}` for all of them (review #5 M8).
+        """
+        for payload in (
+            {"title": "bad\ntitle", "confidence": "low"},
+            {
+                "title": "bad evidence",
+                "confidence": "low",
+                "evidence": [{"type": "commit", "ref": "abc\n1234"}],
+            },
+            {"title": "bad tag", "confidence": "low", "tags": ["multi\nline"]},
+        ):
+            with self.subTest(payload=payload):
+                res = mcp_core.tool_record("decision", payload, root=self.tmp)
+                self.assertIsInstance(res, dict)
+                self.assertFalse(res["ok"], res)
+                self.assertTrue(res["error"])
+                # …and the failed write left nothing behind.
+                self.assertTrue(mcp_core.tool_validate(root=self.tmp)["ok"])
+
+    def test_MF24_omitted_confidence_matches_the_documented_mcp_behavior(self):
+        """The MCP default (low) deliberately differs from the CLI's exit 2.
+
+        The code comment used to claim exact parity, which was false (review #5
+        Low). Only the *explicit* medium/high-without-evidence case is an error.
+        """
+        res = mcp_core.tool_record("decision", {"title": "no confidence stated"}, root=self.tmp)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["confidence"], "low")
+        bad = mcp_core.tool_record(
+            "decision", {"title": "stated high", "confidence": "high"}, root=self.tmp
+        )
+        self.assertFalse(bad["ok"])
+        self.assertIn("evidence", bad["error"])
+
+
+# --------------------------------------------------------------------------- #
+# MF-17 — no absolute host path in any tool payload (audit #6 N5)
+# --------------------------------------------------------------------------- #
+class ToolPathTests(unittest.TestCase):
+    """`mcp_core` states the rule at the top of the module and then broke it.
+
+    Every write tool returned `str(path)` — the record's absolute path on the
+    author's machine. Store-relative is the form validate/audit/doctor findings
+    already use, and the only one an MCP client can act on.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.assertEqual(
+            crumb.main(["init", "--project", str(self.tmp), "--session-tracking", "full"]), 0
+        )
+        self.mem = self.tmp / crumb.MEMORY_DIRNAME
+
+    def _assert_store_relative(self, res: dict, expected: str) -> None:
+        path = res["path"]
+        self.assertEqual(path, expected)
+        self.assertFalse(Path(path).is_absolute(), path)
+        self.assertNotIn(str(self.tmp), path)
+        self.assertNotIn(str(self.tmp.parent), path)
+        # …and it still resolves to the real file inside the store.
+        self.assertTrue((self.mem / path).exists(), path)
+
+    def test_MF17_record_path_is_store_relative(self):
+        res = mcp_core.tool_record(
+            "decision",
+            {
+                "title": "Pick a store",
+                "sections": {"Decision": "Use markdown."},
+                "evidence": [{"type": "commit", "ref": "abc1234"}],
+            },
+            root=self.tmp,
+        )
+        self.assertTrue(res["ok"], res)
+        self._assert_store_relative(res, f"decisions/{Path(res['path']).name}")
+
+    def test_MF17_note_paths_are_store_relative(self):
+        for kind, text, expected in (
+            ("question", "Does the cache need eviction?", "open-questions.md"),
+            ("trap", "the daemon holds a lock", "known-traps.md"),
+        ):
+            with self.subTest(kind=kind):
+                res = mcp_core.tool_note(kind, text, root=self.tmp)
+                self.assertTrue(res["ok"], res)
+                self._assert_store_relative(res, expected)
+
+    def test_MF17_idea_note_path_is_store_relative(self):
+        res = mcp_core.tool_note("idea", "Try a columnar layout", root=self.tmp)
+        self.assertTrue(res["ok"], res)
+        self._assert_store_relative(res, f"ideas/{Path(res['path']).name}")
+
+    def test_MF17_verify_path_is_store_relative(self):
+        res = mcp_core.tool_verify(
+            "the cache eviction path", "open", method="static", confidence="low", root=self.tmp
+        )
+        self.assertTrue(res["ok"], res)
+        self._assert_store_relative(res, f"verifications/{Path(res['path']).name}")
+
+    def test_MF17_reindex_path_is_store_relative(self):
+        res = mcp_core.tool_reindex(root=self.tmp)
+        self._assert_store_relative(res, "generated/resume-packet.md")
+
+    def test_MF17_mark_status_path_is_store_relative(self):
+        rec = mcp_core.tool_record(
+            "decision",
+            {
+                "title": "Adopt a queue",
+                "sections": {"Decision": "Use a queue."},
+                "evidence": [{"type": "commit", "ref": "deadbee"}],
+            },
+            root=self.tmp,
+        )
+        res = mcp_core.tool_mark_status(rec["id"], "stale", "superseded by reality", root=self.tmp)
+        self.assertTrue(res["ok"], res)
+        self._assert_store_relative(res, f"decisions/{Path(res['path']).name}")
+
+    def test_MF17_no_tool_payload_contains_a_host_path(self):
+        """A sweep, so the next tool added does not quietly reintroduce the leak."""
+        results = [
+            mcp_core.tool_record(
+                "attempt", {"title": "Tried a ram cache", "confidence": "low"}, root=self.tmp
+            ),
+            mcp_core.tool_note("question", "Is the queue durable?", root=self.tmp),
+            mcp_core.tool_verify(
+                "queue durability", "open", method="static", confidence="low", root=self.tmp
+            ),
+            mcp_core.tool_reindex(root=self.tmp),
+            mcp_core.tool_search("queue", root=self.tmp),
+            mcp_core.tool_validate(root=self.tmp),
+            mcp_core.tool_build_resume_packet(root=self.tmp),
+            mcp_core.tool_scan_secrets(root=self.tmp),
+            mcp_core.tool_guard_before_action("edit the queue", root=self.tmp),
+        ]
+        blob = repr(results)
+        self.assertNotIn(str(self.tmp), blob)
+        self.assertNotIn(str(self.tmp.parent), blob)
+
+    def test_MF17_cli_still_prints_absolute_paths_for_humans(self):
+        """The relativization belongs to the MCP layer, not to `cli`."""
+        res = crumb.note(
+            self.mem, self.tmp, "question", "Human-facing path?", fields={}, tags=[], agent="test"
+        )
+        self.assertTrue(Path(res["path"]).is_absolute(), res["path"])
+
 
 # --------------------------------------------------------------------------- #
 # Prompts exist for every §13 flow and carry the data-not-instruction posture
@@ -235,8 +386,12 @@ class WriteGateTests(unittest.TestCase):
 class PromptTests(unittest.TestCase):
     def test_all_six_prompts_present_and_nonempty(self):
         expected = {
-            "resume_project", "capture_session", "remember_decision",
-            "remember_attempt", "guard_before_action", "audit_project_memory",
+            "resume_project",
+            "capture_session",
+            "remember_decision",
+            "remember_attempt",
+            "guard_before_action",
+            "audit_project_memory",
         }
         self.assertEqual(set(mcp_core.PROMPTS), expected)
         for name, fn in mcp_core.PROMPTS.items():
@@ -276,25 +431,117 @@ class GracefulDegradationTests(unittest.TestCase):
         self.assertNotIn(str(empty.parent), msg)
 
     def test_missing_memory_dir_tools_return_structured_error(self):
-        """Every tool reports a missing store as {ok: False, error} (issue #7)."""
+        """*Every* tool reports a missing store as {ok: False, error} (issue #7).
+
+        All ten, checked by name against the documented surface: the tuple used to
+        cover eight, and the two it omitted (`tool_verify`, `tool_reindex`) are
+        exactly the ones whose envelope nothing else exercised (review #5 Low).
+        """
         empty = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
-        calls = (
-            lambda: mcp_core.tool_search("q", root=empty),
-            lambda: mcp_core.tool_guard_before_action("do x", root=empty),
-            lambda: mcp_core.tool_build_resume_packet(root=empty),
-            lambda: mcp_core.tool_validate(root=empty),
-            lambda: mcp_core.tool_scan_secrets(root=empty),
-            lambda: mcp_core.tool_record("decision", {"title": "x"}, root=empty),
-            lambda: mcp_core.tool_note("question", "x", root=empty),
-            lambda: mcp_core.tool_mark_status("dec_x", "stale", "why", root=empty),
-        )
-        for call in calls:
-            res = call()
-            self.assertIsInstance(res, dict)
-            self.assertFalse(res.get("ok", None), res)
-            self.assertIn("error", res)
-            self.assertNotIn(str(empty), res["error"])  # no host path leaked
+        calls = {
+            "tool_search": lambda: mcp_core.tool_search("q", root=empty),
+            "tool_guard_before_action": lambda: mcp_core.tool_guard_before_action(
+                "do x", root=empty
+            ),
+            "tool_build_resume_packet": lambda: mcp_core.tool_build_resume_packet(root=empty),
+            "tool_validate": lambda: mcp_core.tool_validate(root=empty),
+            "tool_scan_secrets": lambda: mcp_core.tool_scan_secrets(root=empty),
+            "tool_record": lambda: mcp_core.tool_record("decision", {"title": "x"}, root=empty),
+            "tool_note": lambda: mcp_core.tool_note("question", "x", root=empty),
+            "tool_mark_status": lambda: mcp_core.tool_mark_status(
+                "dec_x", "stale", "why", root=empty
+            ),
+            "tool_verify": lambda: mcp_core.tool_verify("subj", "open", root=empty),
+            "tool_reindex": lambda: mcp_core.tool_reindex(root=empty),
+        }
+        # No tool may be added without an entry here.
+        exported = {n for n in dir(mcp_core) if n.startswith("tool_")}
+        self.assertEqual(exported, set(calls), "a tool is missing from this test")
+        for name, call in calls.items():
+            with self.subTest(tool=name):
+                res = call()
+                self.assertIsInstance(res, dict)
+                self.assertFalse(res.get("ok", None), res)
+                self.assertIn("error", res)
+                self.assertNotIn(str(empty), res["error"])  # no host path leaked
+
+    def test_record_resource_rejects_an_unknown_id(self):
+        """`memory://decisions/{id}` / `attempts/{id}` reject an id they don't hold.
+
+        Lookup is by record id against the loaded records, never by path — so a
+        traversal-shaped id is just another miss, not a file read.
+        """
+        for fn, rid in (
+            (mcp_core.resource_decision, "dec_20200101_nope"),
+            (mcp_core.resource_attempt, "att_20200101_nope"),
+            (mcp_core.resource_attempt, "../../../etc/passwd"),
+        ):
+            with self.subTest(fn=fn.__name__, rid=rid):
+                with self.assertRaises(KeyError) as ctx:
+                    fn(rid, root=root_of("fixture-01-fresh-resume"))
+                self.assertIn(rid, str(ctx.exception))
+                self.assertNotIn(str(FIXTURES), str(ctx.exception))
+
+
+# --------------------------------------------------------------------------- #
+# The resource manifest and the server's explicit bindings cannot drift
+# --------------------------------------------------------------------------- #
+class ResourceRegistryTests(unittest.TestCase):
+    """`STATIC_RESOURCES`/`TEMPLATE_RESOURCES` were dead code with a comment
+    claiming the server consumed them; nothing referenced them (review #5 Low).
+
+    `build_server` binds each URI explicitly on purpose — one visible endpoint per
+    resource — so the registries are kept as the *declared* surface (the "8
+    resources" the README and mcp-spec advertise) and pinned to the bindings here.
+    Read from the AST rather than from a built server so the check runs without the
+    optional SDK installed; the CI `mcp` job asserts the live count too.
+    """
+
+    def _bound_uris(self) -> set[str]:
+        import ast
+        import inspect
+        import textwrap
+
+        tree = ast.parse(textwrap.dedent(inspect.getsource(mcp_server.build_server)))
+        uris = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef):
+                continue
+            for dec in node.decorator_list:
+                if (
+                    isinstance(dec, ast.Call)
+                    and isinstance(dec.func, ast.Attribute)
+                    and dec.func.attr == "resource"
+                    and dec.args
+                ):
+                    arg = dec.args[0]
+                    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        uris.add(arg.value)
+        return uris
+
+    def test_bound_uris_equal_the_registry_keys(self):
+        declared = set(mcp_core.STATIC_RESOURCES) | set(mcp_core.TEMPLATE_RESOURCES)
+        self.assertEqual(self._bound_uris(), declared)
+
+    def test_the_advertised_count_is_eight(self):
+        self.assertEqual(len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 8)
+
+    def test_every_registry_target_is_callable(self):
+        for uri, fn in {**mcp_core.STATIC_RESOURCES, **mcp_core.TEMPLATE_RESOURCES}.items():
+            with self.subTest(uri=uri):
+                self.assertTrue(callable(fn))
+
+    def test_live_server_binds_the_same_resources(self):
+        if not mcp_server.sdk_available():
+            self.skipTest("MCP SDK not installed; the CI `mcp` job covers the live count")
+        import asyncio
+
+        server = mcp_server.build_server()
+        static = {str(r.uri) for r in asyncio.run(server.list_resources())}
+        templates = {t.uriTemplate for t in asyncio.run(server.list_resource_templates())}
+        self.assertEqual(static, set(mcp_core.STATIC_RESOURCES))
+        self.assertEqual(templates, set(mcp_core.TEMPLATE_RESOURCES))
 
 
 # --------------------------------------------------------------------------- #
@@ -312,12 +559,20 @@ class InputSchemaTests(unittest.TestCase):
         self.assertEqual(set(mcp_server.RecordPayload.__required_keys__), {"title"})
         self.assertEqual(
             set(mcp_server.RecordPayload.__optional_keys__),
-            {"sections", "evidence", "tags", "confidence", "privacy", "scope",
-             "status", "agent"},
+            {"sections", "evidence", "tags", "confidence", "privacy", "scope", "status", "agent"},
         )
 
     def test_evidence_item_keys(self):
         self.assertEqual(set(mcp_server.EvidenceItem.__required_keys__), {"type", "ref"})
+
+    def test_MF25_install_hint_names_the_python_floor(self):
+        """`pip install "crumb-kit[mcp]"` succeeds and installs nothing on 3.9.
+
+        The extra's marker is `python_version >= '3.10'`, so the hint was a
+        no-op instruction for exactly the users who needed it (review #5 Low).
+        """
+        self.assertIn("3.10", mcp_server._INSTALL_HINT)
+        self.assertIn('pip install "crumb-kit[mcp]"', mcp_server._INSTALL_HINT)
 
     def test_tools_advertise_properties_when_sdk_present(self):
         if not mcp_server.sdk_available():

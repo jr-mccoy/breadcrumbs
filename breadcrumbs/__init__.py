@@ -23,6 +23,23 @@ from.
 #     The release workflow tags the commit and publishes; do not tag by hand.
 __version__ = "0.1.7"
 
-from breadcrumbs.cli import SCHEMA_VERSION, get_version, main
-
 __all__ = ["main", "get_version", "SCHEMA_VERSION", "__version__"]
+
+
+# The re-exports are resolved lazily (PEP 562), so the claim above — that
+# importing this package does not require importing the CLI module — holds for a
+# real `import breadcrumbs`, not only for setuptools' static read. It used to be
+# an unconditional `from breadcrumbs.cli import …` on the next line, which pulled
+# in the whole CLI (and `re`, `subprocess`, `tempfile`, …) just to read
+# `__version__`. `from breadcrumbs import main` still works: Python falls back to
+# this hook when the attribute is not already in the module namespace.
+def __getattr__(name: str):
+    if name in ("main", "get_version", "SCHEMA_VERSION"):
+        from breadcrumbs import cli
+
+        return getattr(cli, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(__all__)
