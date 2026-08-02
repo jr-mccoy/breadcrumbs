@@ -46,10 +46,10 @@ A read-only cloud agent with no CLI can resume from these files directly:
 | `sessions/` | One record per work session. |
 | `verifications/` | One record per `crumb verify` — "I checked X; here is its state". |
 | `ideas/` | Potential future directions. |
-| `evidence/refs.yml` | Pointers to commits/tests/docs/issues/PRs. |
+| `evidence/refs.yml` | Pointers to commits/tests/docs/issues/PRs. Hand-maintained — no command writes it; per-record evidence lives in each record's `evidence:` frontmatter. |
 | `generated/` | Rebuildable projections — **not source of truth**. |
 | `private/` | Local-only notes — **never committed**. |
-| `index/` | Disposable search index — **never committed** (except this kind of README). |
+| `index/` | Reserved slot for a disposable search index — **never committed** (except this kind of README). Nothing builds one today. |
 
 Source-of-truth and status rules live in the tool's `docs/` (architecture,
 record-schema, security).

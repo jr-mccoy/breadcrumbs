@@ -53,8 +53,8 @@ is [`pipx`](https://pipx.pypa.io/), which puts the CLI on your PATH in its own
 isolated environment:
 
 ```bash
-pipx install crumb-kit          # from PyPI
-pipx install .                       # from a source checkout (this repo dir)
+pipx install crumb-kit   # from PyPI
+pipx install .           # from a source checkout (this repo dir)
 ```
 
 Plain `pip` works too (prefer a virtualenv):
@@ -264,7 +264,7 @@ gitignored — promote durable items with `remember` to commit them.
 python crumb.py resume                       # full bounded packet (writes generated/resume-packet.md)
 python crumb.py resume --fast                # git snapshot + focus + next action + staleness (print-only)
 python crumb.py resume --json                # structured packet (sections + warnings) for agents
-python crumb.py resume --stale-days 14       # tighten the aged-unresolved threshold (default 21)
+python crumb.py resume --stale-days 14       # tighten the age cutoff (default 21)
 python crumb.py resume --task "verify the perf audit"   # scope likely-files to matching records (print-only)
 ```
 
@@ -276,7 +276,9 @@ actionable outcomes first), and verification commands — followed by
 **computed staleness warnings**:
 
 - handoff **age + commit-distance** ("handoff is 6 days old, written 14 commits
-  behind current HEAD") — the primary "train of thought went cold" signal;
+  behind current HEAD") — the primary "train of thought went cold" signal, carried
+  in `--json` as `handoff_age_days` / `handoff_commit_distance`, separately from the
+  `stale_after_days` threshold they are compared against;
 - **aged-unresolved** open questions and active decisions older than the threshold;
 - **branch mismatch** (record/handoff branch ≠ current HEAD, incl. detached HEAD);
 - **expired** (`expires_at`) and **low-confidence** records.
@@ -423,6 +425,13 @@ automatically so it stays in step.)
 ---
 
 ## Status
+
+> **Installed vs. this checkout.** The table below describes the code in this
+> repository. The newest version on PyPI is **0.1.7**, which predates everything in
+> `CHANGELOG.md` → `[Unreleased]` — several correctness fixes to the hooks, the
+> trust primitives and multi-machine projections. Until the next release, `pipx
+> install crumb-kit` gives you 0.1.7; install from a source checkout to get the
+> current behavior.
 
 | Command | State |
 |---|---|

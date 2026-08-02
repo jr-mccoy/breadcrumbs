@@ -2,7 +2,7 @@
 
 Sample `.project-memory/` stores and expected outputs for the evaluation suite.
 
-These are populated in later phases as the commands they exercise are built:
+All eleven are built and run in CI on every push (see the bottom of this file):
 
 | Fixture | Exercises | Phase |
 |---|---|---|

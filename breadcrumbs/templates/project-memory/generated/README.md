@@ -7,7 +7,7 @@ win and the projection should be regenerated.
 
 | File | Built by | What it is |
 |---|---|---|
-| `resume-packet.md` | `crumb resume` / `crumb reindex` | Bounded boot summary (3k–5k tokens) for pasting into any agent. |
+| `resume-packet.md` | `crumb resume` / `crumb reindex` | Bounded boot summary (≤ 5k tokens) for pasting into any agent. |
 | `guard-prefilter.json` | `crumb resume` / `crumb reindex` | Token + path index over known traps and do-not-retry attempts, so the `PreToolUse` hook can spot a trap-shaped command with one small read instead of walking every record. |
 
 Every projection here is rebuilt on every canonical write (and by `crumb reindex`),

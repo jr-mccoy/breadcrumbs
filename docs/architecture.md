@@ -13,8 +13,8 @@ taxonomy, and build philosophy for `breadcrumbs`. It is the conceptual map;
    special runtime.
 2. **Typed records over transcript sludge.** Memory is structured enough to
    validate, search, audit, and guard against.
-3. **Generated projections are not source of truth.** Resume packets, indexes,
-   stale reports, FTS databases, and vector stores are rebuildable artifacts.
+3. **Generated projections are not source of truth.** Resume packets, guard
+   pre-filters, FTS databases, and vector stores are rebuildable artifacts.
 4. **Memory is advisory.** Current user instruction, code, tests, build output, and
    authoritative docs outrank memory.
 5. **Status beats silent edits.** Use `active`, `superseded`, `stale`, `disputed`,
@@ -57,6 +57,7 @@ taxonomy, and build philosophy for `breadcrumbs`. It is the conceptual map;
 | Handoff | What the next session does first | `handoff.md` | until resumed/superseded | yes |
 | Decision | What was decided/rejected and why | `decisions/YYYY-MM-DD-slug.md` | long-lived | yes |
 | Attempt | What was tried, outcome, do-not-retry | `attempts/YYYY-MM-DD-slug.md` | long-lived if instructive | yes |
+| Verification | A finding about reality: "I checked X; here is its state" | `verifications/YYYY-MM-DD-slug.md` | until the subject changes | yes |
 | Trap | Reusable warning about fragile areas | `known-traps.md` (or future `traps/`) | long-lived, reviewed | yes |
 | Open question | Unresolved ambiguity or blocker | `open-questions.md` | until resolved | yes |
 | Idea | Potential future direction | `ideas/YYYY-MM-DD-slug.md` | reviewed periodically | yes |
@@ -64,7 +65,13 @@ taxonomy, and build philosophy for `breadcrumbs`. It is the conceptual map;
 | Evidence | Pointers to commits/tests/docs/issues/PRs | `evidence/refs.yml` | as long as referenced | yes |
 | Private note | Local-only personal/sensitive context | `private/` | local policy | local-only |
 | Resume packet | Bounded generated boot summary | `generated/resume-packet.md` | regenerated | no |
+| Guard pre-filter | Token/path index the `PreToolUse` hook reads before a risky call | `generated/guard-prefilter.json` | regenerated | no |
 | Search index | FTS/vector/cache | `index/` | regenerated | no |
+
+Two rows describe reserved space rather than working machinery: `evidence/refs.yml`
+is **hand-maintained** — no command reads or writes it, and per-record evidence
+lives in each record's `evidence:` frontmatter — and nothing builds an `index/`
+today (`search` scans the records directly).
 
 See [`record-schema.md`](record-schema.md) for the directory layout and the
 git-tracking policy.
@@ -75,7 +82,7 @@ git-tracking policy.
 
 ```text
 plain files  →  CLI  →  agent signposts  →  MCP  →  hooks  →  indexes/vectors
-(always)        (Ph1+)  (Ph9)              (Ph8)   (Ph9)     (Ph10)
+(always)        (built) (built)            (built) (built)   (not built)
 ```
 
 The baseline (plain files) must always work. Each higher layer is optional and

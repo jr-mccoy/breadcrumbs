@@ -2943,6 +2943,15 @@ TOKEN_BUDGET_MAX = 5000
 # Default aged-unresolved threshold in days (§12; configurable via --stale-days).
 STALE_AGE_DAYS = 21
 
+# One wording for `--stale-days` everywhere it appears. The flag was described as an
+# "aged-unresolved threshold" on resume/audit and a "recency de-weighting threshold"
+# on guard — two names for one cutoff, which is half of the confusion F10 reported.
+# It is always the same thing: the age at which a record stops counting as recent.
+# Each command appends what it does with that fact.
+STALE_DAYS_HELP = (
+    f"age cutoff in days — a record older than this counts as aged (default: {STALE_AGE_DAYS})"
+)
+
 # Per-section item caps applied before budget trimming (keeps 100s of records bounded).
 SECTION_CAPS = {
     "active_decisions": 15,
@@ -3484,7 +3493,16 @@ def build_resume_packet(
             "generated_at": now_iso(),
         },
         "fast": bool(fast),
-        "stale_days": stale_days,
+        # Two different numbers used to be one confusable word (agentic review #2
+        # F10): `stale_after_days` is the *threshold* the caller chose, while
+        # `handoff_age_days`/`handoff_commit_distance` are the measured *age* and
+        # distance the warnings are computed from. The ages used to exist only as
+        # prose inside a warning string ("handoff is 6 day(s) old"), so a consumer
+        # reading the packet had the threshold as data and the fact as English.
+        # Both are None when unknown: an unparseable timestamp, or no git repo.
+        "stale_after_days": stale_days,
+        "handoff_age_days": _age_days(handoff_meta.get("updated_at")),
+        "handoff_commit_distance": git_commit_distance(root, handoff_meta.get("commit")),
         "project": project,
         "current_focus": _focus(),
         "next_action": next_action,
@@ -3762,6 +3780,13 @@ def render_packet_markdown(packet: dict) -> str:
         out.append("")
 
     out += ["## Stale / Risk Warnings"]
+    # Name the threshold next to the ages it governs: every age below is measured,
+    # this one number is the cutoff they are compared against (F10).
+    if packet.get("stale_after_days") is not None:
+        out.append(
+            f"_(ages below are measured; the cutoff is "
+            f"{packet['stale_after_days']} days — set with `--stale-days`)_"
+        )
     if packet["warnings"]:
         out += [f"- {w}" for w in packet["warnings"]]
     else:
@@ -4777,7 +4802,7 @@ ADAPTER_FILENAMES = (
     ".github/copilot-instructions.md",
 )
 ADAPTER_BLOAT_CHARS = 4000  # signpost files should be small pointers, not copies
-SESSIONS_GROWTH_NOTE = 50  # forward-ref §22 Q7 / Phase 10 rollup
+SESSIONS_GROWTH_NOTE = 50  # session count above which audit suggests promoting + pruning
 
 
 # ---- secret scan ----------------------------------------------------------- #
@@ -5056,7 +5081,9 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 }
             )
 
-    # sessions/ growth note (forward-ref §22 Q7 / Phase 10 rollup).
+    # sessions/ growth note. The advice is what a human can do today (promote the
+    # durable parts, prune the rest); no rollup command exists, so telling users to
+    # wait for one — as this note used to — is telling them to wait for nothing.
     sess = memory_dir / "sessions"
     n = len(list(sess.glob("*.md"))) if sess.is_dir() else 0
     if n > SESSIONS_GROWTH_NOTE:
@@ -5065,8 +5092,8 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 "kind": "sessions-growth",
                 "path": "sessions/",
                 "message": (
-                    f"{n} session records — consider a periodic rollup so the store stays "
-                    "navigable (forward-ref Phase 10)"
+                    f"{n} session records — promote what still matters with `crumb "
+                    "remember` and prune the rest so the store stays navigable"
                 ),
             }
         )
@@ -6564,7 +6591,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help=f"aged-unresolved threshold in days (default: {STALE_AGE_DAYS})",
+        help=f"{STALE_DAYS_HELP}; aged questions/decisions raise a staleness warning",
     )
     p_resume.add_argument(
         "--task",
@@ -6594,7 +6621,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_search.add_argument("--tag", help="filter by tag/component")
     p_search.add_argument("--file", help="filter by file path referenced in a record")
-    p_search.add_argument("--stale-days", type=int, default=None, metavar="N")
+    p_search.add_argument(
+        "--stale-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help=f"{STALE_DAYS_HELP}; aged records score lower",
+    )
     p_search.set_defaults(func=cmd_search)
 
     # guard (Phase 5) — guard-before-action: warn before repeating a mistake
@@ -6616,7 +6649,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help=f"recency de-weighting threshold in days (default: {STALE_AGE_DAYS})",
+        help=f"{STALE_DAYS_HELP}; aged records score lower",
     )
     p_guard.set_defaults(func=cmd_guard)
 
@@ -6631,7 +6664,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="N",
-        help=f"aged-unresolved threshold in days (default: {STALE_AGE_DAYS})",
+        help=f"{STALE_DAYS_HELP}; aged questions/decisions become warn findings",
     )
     p_audit.set_defaults(func=cmd_audit)
 
