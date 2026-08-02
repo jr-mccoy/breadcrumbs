@@ -12,6 +12,7 @@ Run with:  python -m pytest tests/
 
 from __future__ import annotations
 
+import re
 import shutil
 import sys
 import tempfile
@@ -545,13 +546,75 @@ class ResourceRegistryTests(unittest.TestCase):
 
         server = mcp_server.build_server()
         static = {str(r.uri) for r in asyncio.run(server.list_resources())}
-        # `uriTemplate` on SDK 1.x, `uri_template` on 2.x (MF-59).
         templates = {
-            getattr(t, "uriTemplate", None) or t.uri_template
-            for t in asyncio.run(server.list_resource_templates())
+            sdk_field(t, "uriTemplate") for t in asyncio.run(server.list_resource_templates())
         }
         self.assertEqual(static, set(mcp_core.STATIC_RESOURCES))
         self.assertEqual(templates, set(mcp_core.TEMPLATE_RESOURCES))
+
+
+def sdk_field(model, json_key: str):
+    """Read an SDK model field by its **JSON** name, on either SDK major (MF-66).
+
+    SDK 2.0 renamed every camelCase attribute on its models to snake_case —
+    `Tool.inputSchema` → `input_schema`, `Resource.mimeType` → `mime_type`,
+    `ResourceTemplate.uriTemplate` → `uri_template`, and so on. The serialized
+    form did *not* change: each keeps its camelCase alias, so an MCP client sees
+    identical JSON either way and only in-process readers like this suite are
+    affected. Reading by the stable JSON key beats hand-writing a
+    `getattr(x, "uriTemplate", None) or x.uri_template` fallback at each site —
+    which is what `docs/mcp-spec.md` used to imply was the whole of the problem.
+    """
+    if hasattr(model, json_key):
+        return getattr(model, json_key)
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", json_key).lower()
+    return getattr(model, snake)
+
+
+class SdkFieldAliasTests(unittest.TestCase):
+    """The camelCase→snake_case rename is an attribute rename, not a wire change.
+
+    Pinned because `docs/mcp-spec.md` now says so, and because a future reader of
+    a *different* renamed field (`mimeType`, `inputSchema`) needs the claim to
+    still hold. Runs on whichever major is installed; the CI `mcp` job runs it on
+    both.
+    """
+
+    RENAMED = (
+        ("tool", "inputSchema"),
+        ("tool", "outputSchema"),
+        ("resource", "mimeType"),
+        ("template", "mimeType"),
+        ("template", "uriTemplate"),
+    )
+
+    def _models(self):
+        import asyncio
+
+        server = mcp_server.build_server()
+        return {
+            "tool": asyncio.run(server.list_tools())[0],
+            "resource": asyncio.run(server.list_resources())[0],
+            "template": asyncio.run(server.list_resource_templates())[0],
+        }
+
+    def test_the_json_key_is_the_same_on_either_major(self):
+        if not mcp_server.sdk_available():
+            self.skipTest("MCP SDK not installed; the CI `mcp` job runs this on both majors")
+        models = self._models()
+        for kind, json_key in self.RENAMED:
+            with self.subTest(model=kind, field=json_key):
+                self.assertIn(json_key, models[kind].model_dump(by_alias=True))
+
+    def test_sdk_field_reads_every_renamed_attribute(self):
+        if not mcp_server.sdk_available():
+            self.skipTest("MCP SDK not installed; the CI `mcp` job runs this on both majors")
+        models = self._models()
+        for kind, json_key in self.RENAMED:
+            with self.subTest(model=kind, field=json_key):
+                # No exception on either major is the assertion; the value may be
+                # None (an optional field) but the attribute must resolve.
+                sdk_field(models[kind], json_key)
 
 
 # --------------------------------------------------------------------------- #

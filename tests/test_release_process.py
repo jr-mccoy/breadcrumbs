@@ -341,6 +341,32 @@ class WorkflowHygieneTests(unittest.TestCase):
             with self.subTest(version=version):
                 self.assertIn(f'"{version}"', matrix)
 
+    def test_MF68_mcp_job_covers_every_python_the_extra_installs_on(self):
+        """The `mcp` job stopped at 3.12 while `test` already ran to 3.14.
+
+        The `[mcp]` extra is marked `python_version >= '3.10'` with no ceiling and
+        both SDK majors declare 3.13/3.14 support, so those two legs installed the
+        extra in the wild and nothing exercised it — the mirror image of the gap
+        MF-42 closed for the `test` job.
+        """
+        text = self.files["ci.yml"]
+        # Scope to the `mcp` job, then take its matrix line — the file has several
+        # other `python-version:` keys (each job's setup-python step).
+        mcp_job = text.split("\n  mcp:", 1)[1].split("\n  package:", 1)[0]
+        matrix = next(
+            ln for ln in mcp_job.splitlines() if "python-version:" in ln and "matrix" not in ln
+        )
+        for version in ("3.10", "3.11", "3.12", "3.13", "3.14"):
+            with self.subTest(version=version):
+                self.assertIn(f'"{version}"', matrix)
+
+    def test_MF59_mcp_job_runs_both_sdk_majors(self):
+        """A rename in a future major must not pass unnoticed the way 2.0's did."""
+        text = self.files["ci.yml"]
+        matrix = text.split("mcp-version:", 1)[1].splitlines()[0]
+        self.assertIn('"<2"', matrix)
+        self.assertIn('">=2,<3"', matrix)
+
     def test_MF41_mcp_job_asserts_the_advertised_resource_count(self):
         """It pinned 10 tools and 6 prompts but never the 8 resources."""
         text = self.files["ci.yml"]

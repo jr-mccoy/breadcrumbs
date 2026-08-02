@@ -9,8 +9,8 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [0.1.8] — 2026-08-02
 
-The first release since 0.1.7, and the one that puts eight review batches
-(MF-01 … MF-64) in front of users: every entry below has been sitting in
+The first release since 0.1.7, and the one that puts nine review batches
+(MF-01 … MF-68) in front of users: every entry below has been sitting in
 `[Unreleased]` against a PyPI release that predates all of it. Two changes are
 user-visible beyond a bug fix — the resume packet renames a JSON key
 (`stale_days` → `stale_after_days`, plus two new measurement fields), and
@@ -130,6 +130,58 @@ stamp once; run `crumb reindex` and it clears.
   unaffected** — nothing looks for the file, and you can delete it.
 
 ### Fixed
+- **`scan-secrets` missed credentials embedded in a connection string (MF-67).**
+  `postgres://app:<password>@db.example.com/prod`, `mongodb+srv://root:<pw>@…`,
+  `redis://:<pw>@…`, `https://user:<token>@host/repo.git` — every form of it reported
+  **OK**. Nothing in the covered set could see them: the password follows a bare
+  `:` inside a URL, so there is no `password=`-style label for the keyword pattern
+  to match, and such passwords are usually too short and too word-like for the
+  standalone entropy heuristic. A "how do I run this" note carrying a
+  `DATABASE_URL` is among the likeliest secrets to be written into project memory,
+  which is precisely what the scanner exists to block. A new
+  `url-embedded-credentials` pattern covers it, kept conservative in the module's
+  own spirit: a username with no password is not a secret, `$VAR` / `${VAR}` /
+  `<placeholder>` interpolations and the obvious doc placeholders are excluded, and
+  a six-character floor drops well-known defaults like `amqp://guest:guest@`. The
+  pattern was accepted only after a zero-hit sweep of this whole repository, which
+  `tests/test_secrets.py` now re-runs as a test. `docs/security.md` §2 records the
+  new coverage and the new deliberate gap.
+- **`crumb init --with-adapter` could install nothing, silently, while `doctor`
+  told you to run it (MF-65).** In a project with no `AGENTS.md`/`CLAUDE.md`, the
+  flag resolved to the *detected* guidance files — an empty list — applied nothing,
+  and printed no explanation, while `doctor` reported `✗ [adapter] no
+  agent-guidance files detected` and the first-run nudge recommended exactly that
+  command. Naming a file was no better: `--with-adapter=CLAUDE.md` was accepted,
+  `--print-integrations` promised `adapter signpost -> CLAUDE.md`, and the real run
+  skipped it because the file did not exist. An explicitly named adapter file is
+  now **created** (a name can only reach the plan by detection, which lists
+  existing files, or by being named — so a planned name that is not on disk was
+  asked for), including its parent directory for
+  `.github/copilot-instructions.md`. A bare `--with-adapter` still invents nothing,
+  but now says so and names the fix; `--print-integrations` marks a target as
+  `(will be created)`; and `doctor`'s miss message names a command that can
+  actually clear it. Removal is unchanged and still reverses a created file's
+  block.
+- **The `[mcp]` extra was untested on two Pythons it installs on (MF-68).** The CI
+  `mcp` job's matrix stopped at 3.12 while the `test` job already ran to 3.14, the
+  extra is marked `python_version >= '3.10'` with no ceiling, and both SDK majors
+  declare 3.13/3.14 support — so the SDK-present paths had no coverage on the two
+  newest Pythons. The matrix now runs 3.10–3.14 against both majors, and
+  `tests/test_release_process.py` pins the range (and the two-major axis) so it
+  cannot quietly narrow again. This is the mirror image of the gap MF-42 closed.
+- **The documented list of SDK 1.x/2.x differences was incomplete and
+  miscategorized (MF-66).** `docs/mcp-spec.md` said "two differences are visible to
+  a caller" and listed `uriTemplate` → `uri_template`, which was simply the one
+  attribute the code happened to touch. SDK 2.0 renamed **every** camelCase model
+  attribute to snake_case (`Tool.inputSchema`, `Tool.outputSchema`,
+  `Resource.mimeType`, `ResourceTemplate.mimeType` as well), so the table read as
+  exhaustive when it was not and the next field read would have broken on 2.x. It
+  is also not a protocol difference at all: dumping both majors' models shows every
+  one of them keeps its camelCase **JSON alias**, so an MCP client sees identical
+  bytes and only in-process readers are affected. The doc now says all of that, the
+  suite and the CI job read fields through one alias-tolerant accessor instead of a
+  per-field fallback, and `tests/test_mcp.py` pins the alias invariant on whichever
+  major is installed (CI runs it on both).
 - **The optional `[mcp]` extra installed an SDK the server could not import
   (MF-59).** The extra was declared `mcp>=1.2` with no upper bound. MCP SDK **2.0
   renamed `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`**, so a

@@ -321,6 +321,83 @@ class UndecodableFileTests(unittest.TestCase):
             self.assertTrue(mem.is_dir())
 
 
+class UrlEmbeddedCredentialTests(unittest.TestCase):
+    """MF-67 — a password inside a connection string is a secret the scanner missed.
+
+    Nothing in the keyword list could see these: the password follows a bare `:`
+    inside a URL, with no `password=`-style label anywhere, and the standalone
+    entropy heuristic never fires on short mixed-case passwords. A "how do I run
+    this" note carrying a `DATABASE_URL` is one of the likeliest secrets to land
+    in project memory, and `scan-secrets` reported OK on every one of them.
+    """
+
+    NAME = "url-embedded-credentials"
+
+    def _scan_line(self, line: str) -> set[str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = fresh_store(tmp)
+            (mem / "decisions" / "2026-06-25-x.md").write_text(line + "\n", encoding="utf-8")
+            return patterns_hit(mem)
+
+    def test_flags_real_connection_strings(self):
+        for line in (
+            "postgres://app:s3cr3tp4ss@db.example.com:5432/prod",
+            "DATABASE_URL=postgresql://admin:Hunter2Hunter2@10.0.0.4/main",
+            "mongodb+srv://root:pw123456@cluster0.mongodb.net/test",
+            "redis://:MyR3disPass@cache.internal:6379/0",  # empty username
+            "https://user:tok3nv4lue@internal.example.com/repo.git",
+            "mysql://svc_acct:p%40ssw0rd@prod-db/app",
+        ):
+            with self.subTest(line=line):
+                self.assertIn(self.NAME, self._scan_line(line))
+
+    def test_does_not_flag_ordinary_urls_and_placeholders(self):
+        """The scanner's posture is conservative: a false positive blocks a commit."""
+        for line in (
+            "https://example.com:8080/path",  # port, not a password
+            "git@github.com:org/repo.git",  # scp-style, no scheme
+            "see https://pypi.org/pypi/crumb-kit/json",
+            "https://user@host.example.com/x",  # username only
+            "[link](https://a.example.com/b@c)",  # @ after the path starts
+            "mailto:someone@example.com",
+            "postgres://user:password@localhost/db",  # doc placeholder
+            "postgres://app:${DB_PASS}@db/prod",  # interpolation
+            "postgres://app:$DB_PASS@db/prod",
+            "postgres://app:<your-password>@db/prod",
+            "amqp://guest:guest@rabbit:5672/",  # well-known default, under the floor
+        ):
+            with self.subTest(line=line):
+                self.assertNotIn(self.NAME, self._scan_line(line))
+
+    def test_the_repos_own_docs_do_not_trip_it(self):
+        """The pattern was accepted only after a zero-hit sweep of this tree.
+
+        This is also why the docs describing the pattern write their examples in
+        `<placeholder>` form: prose about a secret shape should not itself contain
+        a secret-shaped string. The one exception is this module, which needs real
+        positives to test against and is skipped below.
+        """
+        pat = dict(_cli.SECRET_PATTERNS)[self.NAME]
+        root = Path(__file__).resolve().parent.parent
+        offenders = []
+        for path in root.rglob("*"):
+            if not path.is_file() or ".git/" in str(path) or "__pycache__" in str(path):
+                continue
+            if path.suffix not in (".md", ".py", ".yml", ".yaml", ".json", ".toml", ".txt"):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            for i, line in enumerate(text.splitlines(), 1):
+                # This test file itself carries the positive cases on purpose.
+                if path.name == "test_secrets.py":
+                    continue
+                if pat.search(line):
+                    offenders.append(f"{path.relative_to(root)}:{i}")
+        self.assertEqual(offenders, [], f"url-credential pattern false-positives: {offenders}")
+
+
 class CleanStoreTests(unittest.TestCase):
     def test_scan_secrets_ok_on_fresh_store(self):
         with tempfile.TemporaryDirectory() as tmp:

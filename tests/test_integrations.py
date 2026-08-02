@@ -184,9 +184,128 @@ class InitFlagTests(unittest.TestCase):
     def test_no_adapter_file_means_nothing_created(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            run(["init", "--project", tmp, "--session-tracking", "full", "--with-adapter"])
-            # we never CREATE an adapter file that didn't exist
+            code, out = run(
+                ["init", "--project", tmp, "--session-tracking", "full", "--with-adapter"]
+            )
+            self.assertEqual(code, 0)
+            # A *bare* --with-adapter means "every guidance file I can detect", so
+            # with none detected we still invent nothing (MF-65 kept this half).
             self.assertFalse((root / "CLAUDE.md").exists())
+            # ...but it may no longer be silent about it: `doctor` reports ✗ on
+            # this very check and the first-run nudge recommends the command that
+            # just ran, so the no-op has to say why and how to get past it.
+            self.assertIn("no agent-guidance file detected", out)
+            self.assertIn("--with-adapter=AGENTS.md", out)
+
+
+class AdapterCreationTests(unittest.TestCase):
+    """MF-65 — an *explicitly named* adapter file is created, not silently skipped.
+
+    A name only reaches the plan by detection (existing files only) or by
+    `--with-adapter=NAME`, so a planned name that is not on disk was asked for by
+    name. `apply_integrations` used to guard on `is_file()` and drop it — after
+    `--print-integrations` had promised to write it.
+    """
+
+    def test_named_adapter_that_does_not_exist_is_created(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _ = run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter=CLAUDE.md",
+                    "--no-mcp",
+                    "--no-hooks",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertTrue((root / "CLAUDE.md").exists())
+            self.assertIn("breadcrumbs managed", (root / "CLAUDE.md").read_text())
+
+    def test_the_created_adapter_clears_the_doctor_check(self):
+        """The loop this closes: doctor said ✗, the fix produced no adapter, repeat."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter=AGENTS.md",
+                    "--no-mcp",
+                    "--no-hooks",
+                ]
+            )
+            _, out = run(["doctor", "--project", tmp, "--json"])
+            checks = {c["check"]: c for c in json.loads(out)["checks"]}
+            self.assertTrue(checks["adapter"]["ok"], checks["adapter"])
+
+    def test_the_doctor_miss_message_names_a_command_that_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run(["init", "--project", tmp, "--session-tracking", "full"])
+            _, out = run(["doctor", "--project", tmp, "--json"])
+            checks = {c["check"]: c for c in json.loads(out)["checks"]}
+            self.assertFalse(checks["adapter"]["ok"])
+            self.assertIn("--with-adapter=AGENTS.md", checks["adapter"]["detail"])
+
+    def test_a_nested_adapter_path_creates_its_directory(self):
+        """`.github/copilot-instructions.md` is the one name inside a subdirectory."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            code, _ = run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter=.github/copilot-instructions.md",
+                    "--no-mcp",
+                    "--no-hooks",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn(
+                "breadcrumbs managed",
+                (root / ".github" / "copilot-instructions.md").read_text(),
+            )
+
+    def test_the_dry_run_marks_a_file_it_would_create(self):
+        """`--print-integrations` printed a bare name for a file it then skipped."""
+        with tempfile.TemporaryDirectory() as tmp:
+            run(["init", "--project", tmp, "--session-tracking", "full"])
+            code, out = run(
+                ["init", "--project", tmp, "--print-integrations", "--with-adapter=CLAUDE.md"]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("CLAUDE.md (will be created)", out)
+
+    def test_a_created_adapter_is_still_reversible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter=CLAUDE.md",
+                    "--no-mcp",
+                    "--no-hooks",
+                ]
+            )
+            code, out = run(["init", "--project", tmp, "--remove-integrations"])
+            self.assertEqual(code, 0)
+            self.assertIn("CLAUDE.md", out)
+            # The block is gone; the (now empty) file it was created in remains,
+            # which is the same thing removal does to a file it did not create.
+            self.assertNotIn("breadcrumbs managed", (root / "CLAUDE.md").read_text())
 
     def test_print_integrations_is_dry_run(self):
         with tempfile.TemporaryDirectory() as tmp:

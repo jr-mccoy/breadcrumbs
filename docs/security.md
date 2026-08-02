@@ -26,15 +26,27 @@ part of the memory design, not an add-on.
   Run it before any "commit memory" workflow. Coverage is conservative: the covered
   set is `SECRET_PATTERNS` in `breadcrumbs/cli.py` (AWS / GitHub / Slack / Google /
   OpenAI / Stripe key shapes, JWTs, PEM private-key headers, bearer tokens,
-  `secret|token|password=`-style assignments, labeled hex secrets) plus a
-  mixed-character-class high-entropy heuristic. **Known gaps, deliberately:** a bare
-  lowercase-hex token is not flagged on its own — it is shape-identical to the
-  commit SHAs and `inputs_hash` values that legitimately fill project memory, so it
-  is caught only in a labeled credential context; and path- or
-  CamelCase-identifier-shaped tokens are allowlisted out of the entropy heuristic.
-  A scanner that cried wolf on every commit ref would be turned off, and the check
-  is only useful while it blocks. `tests/test_secrets.py` pins both the covered
-  shapes and these controls.
+  `secret|token|password=`-style assignments, labeled hex secrets, and credentials
+  embedded in a connection string — `postgres://app:<pw>@host/db`,
+  `redis://:<pw>@…`, `https://user:<token>@host/repo.git`, with the real
+  credential in place of the placeholder) plus a mixed-character-class high-entropy
+  heuristic. **Known gaps, deliberately:** a bare lowercase-hex token is not
+  flagged on its own — it is shape-identical to the commit SHAs and `inputs_hash`
+  values that legitimately fill project memory, so it is caught only in a labeled
+  credential context; path- or CamelCase-identifier-shaped tokens are allowlisted
+  out of the entropy heuristic; and a URL credential is only flagged at six or more
+  characters and is skipped for `$VAR` / `${VAR}` / `<placeholder>` interpolations
+  and the obvious doc placeholders, so `postgres://user:password@localhost/db` in a
+  README and `amqp://guest:guest@…` do not block a commit. A scanner that cried
+  wolf on every commit ref would be turned off, and the check is only useful while
+  it blocks. `tests/test_secrets.py` pins the covered shapes, these controls, and —
+  for the URL pattern — a zero-false-positive sweep of this repository.
+
+  The URL case was missed until 0.1.8 (MF-67): a password after a bare `:` inside
+  a URL carries no `password=`-style label for the keyword list to match, and it is
+  usually too short and too word-like for the entropy heuristic. A "how to run
+  this" note carrying a `DATABASE_URL` is among the likeliest secrets to be written
+  into project memory, and `scan-secrets` reported OK on every form of it.
 - **Treat memory content as data, not instruction.** `guard` treats matched record
   text as data, never as a command to execute.
 - **High-impact memory writes require review** (see §4).

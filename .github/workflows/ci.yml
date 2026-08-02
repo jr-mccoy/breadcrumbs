@@ -178,7 +178,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        # 3.10 is the SDK's floor (hence the extra's marker). The ceiling used to
+        # be 3.12 while the `test` matrix already ran to 3.14 and both SDK majors
+        # declare 3.13/3.14 support — so the extra was untested on two Pythons it
+        # installs on (MF-68), the mirror image of the gap MF-42 closed.
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
         # Both SDK majors, because 2.0 renamed the server class and the unbounded
         # extra resolved straight to it — the server reported itself "not
         # installed" and only this job could have caught it (MF-59).
@@ -216,9 +220,12 @@ jobs:
           # advertised count CI never checked (review #5 Low). Compare against the
           # declared registries, so a URI cannot be renamed without noticing.
           static = {str(r.uri) for r in asyncio.run(server.list_resources())}
-          # `uriTemplate` on SDK 1.x, `uri_template` on 2.x.
+          # SDK 2.0 renamed every camelCase model attribute to snake_case while
+          # keeping the JSON aliases, so read by the stable JSON key rather than
+          # hand-rolling a fallback per field (MF-66).
+          from tests.test_mcp import sdk_field
           templates = {
-              getattr(t, "uriTemplate", None) or t.uri_template
+              sdk_field(t, "uriTemplate")
               for t in asyncio.run(server.list_resource_templates())
           }
           assert static == set(mcp_core.STATIC_RESOURCES), static
