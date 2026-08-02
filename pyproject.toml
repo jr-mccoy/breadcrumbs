@@ -43,7 +43,13 @@ mcp = ["mcp>=1.2,<3; python_version >= '3.10'"]
 # a doc telling you to run a command nothing installed.
 dev = [
     "pytest",       # optional alternative runner; `unittest discover` is canonical
-    "ruff",         # lint + format, enforced by the `lint` CI job
+    # Pinned, and the CI `lint` job installs the SAME pin — bump both together
+    # (MF-69). A formatter is a moving spec: ruff 0.16 began formatting fenced
+    # Python inside Markdown, which took the checked file set from 29 to 234 and
+    # turned `lint` red on an untouched `main`. Every GitHub Action here is pinned
+    # to a commit SHA for exactly this reason (MF-39); the tool that decides
+    # pass/fail was the one thing left floating.
+    "ruff==0.16.1", # lint + format, enforced by the `lint` CI job
     "build",        # `python -m build` (release dry-run)
     "twine",        # `twine check` / Path B upload
 ]
@@ -102,6 +108,14 @@ testpaths = ["tests"]
 # it did not rewrap the whole codebase.
 line-length = 100
 target-version = "py39"   # the documented floor (requires-python >=3.9)
+
+# The archived review/audit documents quote `cli.py` **verbatim as it was**, which
+# is the whole point of keeping them (see docs/fix-list.md → MF-53). Since ruff
+# 0.16 formats fenced Python inside Markdown, they became formatter input and it
+# wanted to rewrap a quotation to today's style — silently falsifying the excerpt
+# an old finding is evidence for. Living prose (README, CHANGELOG, the spec docs)
+# stays in scope (MF-69).
+extend-exclude = ["docs/crumb-kit-*.md"]
 
 [tool.ruff.lint]
 # ruff's default rules (pyflakes + the pycodestyle errors that indicate real

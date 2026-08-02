@@ -341,8 +341,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install ruff
-        run: python -m pip install ruff
+      # Pinned to the exact version the `dev` extra declares — bump both together
+      # (MF-69). Unpinned, a ruff release turned this job red on a `main` nobody
+      # had touched: 0.16 began formatting fenced Python inside Markdown, so the
+      # checked file set jumped from 29 to 234 and a *historical* review document's
+      # verbatim code excerpt became a formatting failure. `publish` gates on this
+      # workflow, so a floating linter could block a release outright.
+      - name: Install ruff (pinned — must match the `dev` extra)
+        run: python -m pip install "ruff==0.16.1"
 
       - name: ruff check
         run: ruff check --output-format=github .

@@ -8,10 +8,10 @@ re-reporting it.
 
 **State as of 2026-08-02** (`main` @ `9a5aaf0`, `crumb-kit` **0.1.8 — prepared,
 not yet published**, record `schema_version` 1): **0 open items.** Every finding
-from every review round (MF-01 … MF-68) has shipped. **Maintainer decision 1 was
+from every review round (MF-01 … MF-69) has shipped. **Maintainer decision 1 was
 taken:** the version is bumped to 0.1.8 and the `[Unreleased]` section is dated,
 so `CHANGELOG.md` now records everything under `[0.1.8]`. Batch 9 is the release
-cut plus a fresh pass that found four more (MF-65 … MF-68), all folded into
+cut plus a fresh pass that found five more (MF-65 … MF-69), all folded into
 0.1.8 because it has not been published yet. **D1 and D4 remain deferred**, both
 re-examined in Batch 9 and neither taken up; see the Deferred table for why.
 
@@ -47,7 +47,7 @@ requires merging this branch to `main` and running the release workflow from
 | System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | N1–N6 all shipped (in MF-06/MF-07/MF-04/MF-14/MF-17/MF-18) — nothing open (resolution banner added in Batch 7) |
 | Doc review #7 (2026-08-02) | this file, Batch 7 | Doc/code drift sweep: MF-43 … MF-55 shipped, D2 taken up as MF-56, two feature gaps filed as O1/O2 |
 | Open-items round #8 (2026-08-02) | this file, Batch 8 | O1 and O2 decided and closed, D3 taken up, plus a fresh pass that found a live packaging break (MF-59) and three drift/test-gap items (MF-61 … MF-64) |
-| Release round #9 (2026-08-02) | this file, Batch 9 | 0.1.8 cut (maintainer decision 1 taken), D1/D4 re-examined and left deferred, plus a fresh pass that found a missed secret class (MF-67), a silent-no-op CLI flag (MF-65) and two coverage gaps (MF-66, MF-68) |
+| Release round #9 (2026-08-02) | this file, Batch 9 | 0.1.8 cut (maintainer decision 1 taken), D1/D4 re-examined and left deferred, plus a fresh pass that found a release-blocking red `lint` job (MF-69), a missed secret class (MF-67), a silent-no-op CLI flag (MF-65) and two coverage gaps (MF-66, MF-68) |
 
 **Verification legend** (historical — every item below has since shipped, and each
 was independently reproduced against a throwaway store immediately before its fix):
@@ -601,6 +601,28 @@ had not been published when they were found.
   closed for the `test` job, in the other direction — which is the argument for
   pinning it rather than just widening it.
 
+- **MF-69 (new, and it was blocking the release) — CI's `lint` job was already
+  red on an untouched `main`, because ruff was unpinned.** Found the way it
+  should be found: the version-bump commit was pushed, CI ran, and `lint` failed
+  on a commit that changed one line of Python and some Markdown. The job ran
+  `pip install ruff`, taking whatever was newest — and **ruff 0.16 began
+  formatting fenced Python inside Markdown**, so the checked file set jumped from
+  **29 files to 234** and `ruff format --check` demanded a rewrite of a code
+  excerpt inside `docs/crumb-kit-system-audit-2026-07-24.md`. Reproduced against
+  `main` @ `9a5aaf0` in a clean venv with ruff 0.16.1 — it fails there too, so
+  this predates every change in this batch. **It mattered for the release
+  specifically:** `mode: publish` requires the `ci` workflow to have concluded
+  `success` on the exact commit, so `publish` would have refused. Two fixes, both
+  root-cause: the CI job and the `dev` extra now pin `ruff==0.16.1` (with a test
+  asserting the two pins exist and agree, since two copies of a version is the
+  drift this repo already removed for its own version and its actions), and
+  `[tool.ruff] extend-exclude` takes the archived review/audit documents out of
+  the formatter's input — their code blocks are **quotations of old source**,
+  which is why MF-53 kept them, and reformatting a quotation falsifies the
+  evidence a finding rests on. Living prose stays in scope. Note the precedent
+  this completes: MF-39 pinned every GitHub Action to a commit SHA against
+  exactly this failure mode, and left the tool that decides pass/fail floating.
+
 **D1 and D4 were both re-examined this round and neither was taken up** — see the
 Deferred table for the reasoning, which is recorded there rather than here so the
 next reviewer finds it where they look for it.
@@ -667,6 +689,7 @@ Original review ID → master ID. Use this when reading an old review doc.
 | Round #9 fresh pass (CLI silent no-op) | **MF-65** (shipped) |
 | Round #9 fresh pass (MCP doc/coverage) | MF-66, MF-68 (shipped) |
 | Round #9 fresh pass (security control gap) | **MF-67** (shipped — a missed secret class, not from any review) |
+| Round #9 fresh pass (CI already red on `main`) | **MF-69** (shipped — an unpinned formatter; it would have refused the publish) |
 
 ---
 

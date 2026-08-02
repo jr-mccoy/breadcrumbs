@@ -379,6 +379,36 @@ class WorkflowHygieneTests(unittest.TestCase):
         self.assertIn("ruff check", text)
         self.assertIn("ruff format --check", text)
 
+    def test_MF69_ruff_is_pinned_and_ci_matches_the_dev_extra(self):
+        """An unpinned formatter turned `lint` red on an untouched `main`.
+
+        ruff 0.16 began formatting fenced Python inside Markdown; the checked file
+        set went from 29 to 234 and a historical review document's verbatim code
+        excerpt became a failure. `publish` gates on `ci`, so a floating linter can
+        block a release. Both pins must exist and agree — two copies of a version
+        is exactly the drift this repo removed for its own version (MF-12) and its
+        actions (MF-39).
+        """
+        import re
+
+        ci = self.files["ci.yml"]
+        pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        ci_pin = re.search(r'ruff==([0-9][0-9.]*)"', ci)
+        extra_pin = re.search(r'"ruff==([0-9][0-9.]*)"', pyproject)
+        self.assertIsNotNone(ci_pin, "the `lint` job installs ruff unpinned")
+        self.assertIsNotNone(extra_pin, "the `dev` extra declares ruff unpinned")
+        self.assertEqual(
+            ci_pin.group(1),
+            extra_pin.group(1),
+            "CI and the `dev` extra pin different ruff versions — bump them together",
+        )
+
+    def test_MF69_archived_review_docs_are_not_formatter_input(self):
+        """Their code excerpts are quotations; reformatting one falsifies it."""
+        pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn("extend-exclude", pyproject)
+        self.assertIn("docs/crumb-kit-*.md", pyproject)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

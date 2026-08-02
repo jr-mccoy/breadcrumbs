@@ -10,7 +10,7 @@ uses semantic versioning. The package version is independent of the on-disk reco
 ## [0.1.8] — 2026-08-02
 
 The first release since 0.1.7, and the one that puts nine review batches
-(MF-01 … MF-68) in front of users: every entry below has been sitting in
+(MF-01 … MF-69) in front of users: every entry below has been sitting in
 `[Unreleased]` against a PyPI release that predates all of it. Two changes are
 user-visible beyond a bug fix — the resume packet renames a JSON key
 (`stale_days` → `stale_after_days`, plus two new measurement fields), and
@@ -130,6 +130,22 @@ stamp once; run `crumb reindex` and it clears.
   unaffected** — nothing looks for the file, and you can delete it.
 
 ### Fixed
+- **CI's `lint` job was red on an untouched `main`, because ruff was unpinned
+  (MF-69).** The job ran `pip install ruff`, so it silently took whatever was
+  newest. ruff **0.16 began formatting fenced Python inside Markdown**, which took
+  the checked file set from 29 files to 234 and made `ruff format --check` demand
+  a rewrite of a code excerpt inside an **archived review document** — an excerpt
+  quoted verbatim from an older `cli.py`, which is the entire reason that document
+  is kept. Nobody had changed a line: any commit pushed after that ruff release
+  failed. This is not cosmetic, because `mode: publish` requires the `ci` workflow
+  to have succeeded on the commit being released, so a floating linter could block
+  a release outright. Both the CI job and the `dev` extra now pin `ruff==0.16.1`,
+  a test asserts the two pins exist and agree, and `[tool.ruff] extend-exclude`
+  keeps the archived review/audit documents out of the formatter's input —
+  reformatting a quotation falsifies it. Living prose (README, CHANGELOG, the spec
+  docs) stays in scope. Every GitHub Action here has been pinned to a commit SHA
+  since MF-39 for exactly this class of failure; the tool that decides pass/fail
+  was the one thing left moving.
 - **`scan-secrets` missed credentials embedded in a connection string (MF-67).**
   `postgres://app:<password>@db.example.com/prod`, `mongodb+srv://root:<pw>@…`,
   `redis://:<pw>@…`, `https://user:<token>@host/repo.git` — every form of it reported
