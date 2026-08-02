@@ -20,6 +20,14 @@ Every command accepts:
 --fast            capture/resume only: git-only, no prompts or LLM narrative
 ```
 
+`crumb --version` (top level, not a subcommand) prints the package version and the
+record `schema_version` — two independent numbers, see `README.md`.
+
+`--stale-days N` is accepted by `resume`, `search`, `guard` and `audit`. It is one
+cutoff with one meaning everywhere — *a record older than N days counts as aged*
+(default: 21). What each command does with that differs: `resume`/`audit` raise a
+warning on aged questions and decisions, `search`/`guard` score aged records lower.
+
 Default output is human-readable Markdown / plain text.
 
 ---
@@ -29,16 +37,17 @@ Default output is human-readable Markdown / plain text.
 | Command | Reads | Writes | Purpose | Phase |
 |---|---|---|---|---|
 | `init` | project root | `.project-memory/`, `manifest.yml`, `.gitignore` edits | Install memory layout; record session + generated-projection policy in `manifest.yml`. | **1 (built)** |
-| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection whose stamped `inputs_hash` no longer matches the live records. | 2 |
-| `remember decision` | git state, user input | decision record | Capture a durable choice. | 3 |
-| `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. | 3 |
+| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection whose stamped `inputs_hash` no longer matches the live records. | **2 (built)** |
+| `remember decision` | git state, user input | decision record | Capture a durable choice. | **3 (built)** |
+| `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. | **3 (built)** |
 | `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. Reindexes on write. | **built** |
 | `reindex` | all canonical files | `generated/` projections | Rebuild the generated projections from the records (mutations reindex automatically). | **built** |
-| `capture session` | git state (log, status, diff --shortstat) | session record, handoff, current | Record session end; git-prefill body sections (Files Touched is a counts-only summary). `--fast` = git-only snapshot + one-line next action. | 3 |
+| `capture session` | git state (log, status, diff --shortstat) | session record, handoff, current | Record session end; git-prefill body sections (Files Touched is a counts-only summary). `--fast` = git-only snapshot + one-line next action. | **3 (built)** |
 | `schema [<type>]` | (none) | record contract | Print body sections / vocab / rules from source constants. `--template <type>` emits a `remember` skeleton. | **built** |
 | `note question\|trap\|idea` | user input, git state | open-questions / known-traps / idea record | Write-surface for the three kinds with no `remember` type; refreshes the resume packet. | **built** |
 | `resume` | current, handoff, records, git state | generated resume packet | Print a bounded resume packet (≤5k tokens) with computed staleness. `--fast` = git snapshot + focus + next action + staleness (print-only). `--task TEXT` scopes `likely_files` to matching records (print-only). | **4 (built)** |
-| `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). | 5 |
+| `search [<query>]` | decisions, attempts, verifications, traps, open questions | search output (read-only — `search` writes nothing) | Deterministic keyword/tag/file lookup over the records; the permissive layer `guard` builds on. | **5 (built)** |
+| `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). | **5 (built)** |
 | `audit` | all memory + adapters | health report | Find stale / unsafe / bloated memory (incl. secret + instruction-like heuristics). Heuristic — does NOT gate `validate`. | **6 (built)** |
 | `scan-secrets` | committed memory | secret report | Scan committed memory for secret-like strings; non-zero on a hit. Run before committing memory. | **6 (built)** |
 | `mark-status <id> <status>` | one record | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. | **built** |
@@ -72,9 +81,12 @@ Ctrl+C at any `init` prompt aborts with exit 130 and writes nothing further; EOF
 
 ### Later commands (post-MVP)
 
+**None of these exist**, and none is scheduled. They are recorded here as the shape
+a later version might take, not as work in progress:
+
 ```text
 supersede <old-id> <new-id>   # sugar over `mark-status --superseded-by` (which is built)
-build-index
+build-index                   # nothing builds an index today; see `index/` in the store
 dashboard | recent | where-was-i
 ```
 
@@ -122,7 +134,8 @@ Behavior:
 crumb resume                  # full bounded packet; writes generated/resume-packet.md
 crumb resume --fast           # reduced reorientation view (print-only)
 crumb resume --json           # structured packet (sections + warnings + source header)
-crumb resume --stale-days N   # aged-unresolved threshold in days (default: 21)
+crumb resume --stale-days N   # age cutoff in days (default: 21)
+crumb resume --task TEXT      # resume FOR this task: scope likely-files (print-only)
 ```
 
 Behavior:
@@ -136,6 +149,15 @@ Behavior:
 - **Computed staleness** (not just authored): handoff **age + commit-distance**,
   **aged-unresolved** questions/decisions (> `--stale-days`), **branch mismatch**
   (incl. detached HEAD), and **expired**/**low-confidence** records.
+- **The threshold and the ages are separate, separately named fields.** `--json`
+  carries `stale_after_days` (the cutoff in force) alongside `handoff_age_days` and
+  `handoff_commit_distance` (what was measured; `null` when the timestamp is
+  unparseable or there is no git repo), and the rendered packet names the cutoff
+  above the warnings. One number is a policy, the others are facts — a distinction
+  the old single `stale_days` field hid.
+- The **committed** projection is always written with the default cutoff, not the
+  one a given invocation passed: a shared artifact must not change because one
+  developer preferred `--stale-days 7`. `--stale-days` affects what *you* see.
 - **Source header:** every packet carries `source_commit` / `inputs_hash` /
   `generated_at` (carrying the `GENERATED PROJECTION` marker so `validate` accepts
   it and `audit` can later detect drift).
@@ -150,13 +172,48 @@ Behavior:
 
 ---
 
+## `search` (built)
+
+```bash
+crumb search "auth middleware"      # keyword search over the records
+crumb search --tag auth             # filter by tag/component
+crumb search --file src/auth/x.ts   # filter by referenced file path
+crumb search --type verification --status open    # filter-only lookup (no query)
+crumb search "session" --type decision --json
+```
+
+```text
+--type {decision,attempt,verification,trap,question}
+--status <value>     record status; for a verification, its outcome (open, fixed, …)
+--tag <value>        tag / component
+--file <path>        a file path referenced by the record
+--stale-days N       age cutoff in days (default: 21) — aged records score lower
+```
+
+Behavior:
+
+- **Deterministic and dependency-free.** Exact/keyword text, tag/component and file
+  path; no embeddings, no index (see `index/` in the store — nothing builds one).
+  Same input → same output.
+- The **corpus** is decisions, attempts, verifications, known traps and open
+  questions. `ideas/` and `sessions/` are **not searchable** — `crumb note idea`
+  writes records `search` cannot find, and `--type` does not offer them.
+- A query with no filters ranks by overlap; filters with no query list every
+  matching record instead of returning nothing.
+- `guard` is this same engine with a stricter keyword floor and a verdict on top,
+  so a `search` hit is the permissive case of a `guard` match.
+- Exit codes: `0` on success (including zero matches), `2` when no
+  `.project-memory/` store is present.
+
+---
+
 ## `audit` (built)
 
 ```bash
 crumb audit                  # human health report
 crumb audit --json           # structured findings (check/severity/path/message)
 crumb audit --plain          # one line per finding
-crumb audit --stale-days N   # aged-unresolved threshold (default: 21)
+crumb audit --stale-days N   # age cutoff in days (default: 21)
 ```
 
 `audit` is the **heuristic** safety net that `validate`'s determinism intentionally
@@ -195,8 +252,11 @@ pre-push gate before memory is committed (§2.6, §15). Scans committed memory o
 **name** and location, never the secret value. Coverage is deliberately conservative
 (AWS/GitHub/Slack/Google/OpenAI-style keys, JWTs, PEM private-key headers, bearer
 tokens, `secret/token/password=`-style assignments, and mixed-class high-entropy
-blobs); see the Phase 6 doc for the covered-set / known-gaps record. Exit codes: `1`
-on any hit, `0` when clean, `2` when no store is present.
+blobs). The covered set is `SECRET_PATTERNS` in `breadcrumbs/cli.py`, and the
+false-positive controls (git SHAs, record ids, path- and CamelCase-shaped tokens)
+are pinned by `tests/test_secrets.py`; known gaps are listed in
+[`security.md`](security.md) §2. Exit codes: `1` on any hit, `0` when clean, `2`
+when no store is present.
 
 ---
 

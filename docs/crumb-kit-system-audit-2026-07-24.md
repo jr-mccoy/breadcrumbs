@@ -1,5 +1,17 @@
 # crumb-kit (breadcrumbs) — System Audit #6
 
+> **Resolution status (added 2026-08-02): every finding in this document has
+> shipped.** N1–N6 became MF-06, MF-07, MF-04, MF-14, MF-17 and MF-18, and the
+> review #5 backlog this audit re-verified as open (the tables in §1 and §2) shipped
+> as MF-01 … MF-42. See [`fix-list.md`](fix-list.md) for what each became and why.
+> The document is kept, unedited below this banner, because deferred item **D4**
+> (splitting `cli.py`) is still sourced from its §5 — and because a re-verification
+> round is worth reading even after its findings are closed.
+>
+> **Read the rest as a snapshot of 2026-07-24, not of today.** Every "Open" verdict
+> below was true then and is false now, and the `cli.py` line numbers no longer
+> point at the code cited: the tree was reformatted in `d293796`.
+
 **Reviewer:** Claude (Claude Code agent)
 **Date:** 2026-07-24
 **Version audited:** `crumb-kit` 0.1.7 (record `schema_version` 1), `main` @ `4790c4a`

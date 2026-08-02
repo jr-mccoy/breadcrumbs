@@ -6,12 +6,16 @@ and mark the batch SHIPPED here with a one-line summary per item — the shipped
 sections stay, so the next reviewer can see what was decided and why rather than
 re-reporting it.
 
-**State as of 2026-07-25** (`main` @ `10cd505`, `crumb-kit` 0.1.7, record
-`schema_version` 1): **0 open items** — every finding from every review round
-(MF-01 … MF-42) has shipped and is recorded in `CHANGELOG.md` `[Unreleased]`.
-Four items remain **explicitly deferred** (D1–D4), each with the condition that
-would reopen it. Nothing is queued: the next entry in this file will come from the
-next review round, or from D1–D4 being taken up.
+**State as of 2026-08-02** (`main` @ `48b52d2`, `crumb-kit` 0.1.7, record
+`schema_version` 1): **2 open items** (O1, O2 — both feature work, neither
+blocking). Every finding from every review round (MF-01 … MF-56) has shipped and
+is recorded in `CHANGELOG.md` `[Unreleased]`. **D2 was taken up** in Batch 7 and is
+no longer deferred; D1, D3 and D4 remain deferred, each with the condition that
+would reopen it.
+
+*Previous stamp said "`main` @ `10cd505`, 0 open" — but `10cd505` is the Batch 3
+merge and batches 4–6 landed after it, so the SHA never matched the claim. Fixed
+in Batch 7 (MF-52), which is also where that class of error came from.*
 
 ## Sources
 
@@ -21,8 +25,9 @@ next review round, or from D1–D4 being taken up.
 | Agentic review #2 (2026-06-27) | `docs/crumb-kit-agentic-review-2026-06-27.md` | Resolved except F9/F10/F11-partial → **D1–D3** |
 | System review #3 (2026-07-01) | doc deleted in `a4da5c0` | R1–R26 resolved in 0.1.6 |
 | System review #4 | folded into 0.1.6 | Resolved |
-| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | **Fully resolved** — all H, M and Low findings shipped as MF-01 … MF-42 |
-| System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | N1–N6 all shipped (in MF-06/MF-07/MF-04/MF-14/MF-17/MF-18) — nothing open |
+| System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | **Fully resolved** — all H, M and Low findings shipped as MF-01 … MF-42 (resolution banner added in Batch 7) |
+| System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | N1–N6 all shipped (in MF-06/MF-07/MF-04/MF-14/MF-17/MF-18) — nothing open (resolution banner added in Batch 7) |
+| Doc review #7 (2026-08-02) | this file, Batch 7 | Doc/code drift sweep: MF-43 … MF-55 shipped, D2 taken up as MF-56, two feature gaps filed as O1/O2 |
 
 **Verification legend** (historical — every item below has since shipped, and each
 was independently reproduced against a throwaway store immediately before its fix):
@@ -270,14 +275,120 @@ into a workflow nobody reads.
 
 ---
 
+## Batch 7 — doc/code drift sweep + D2 — **SHIPPED** (`[Unreleased]`)
+
+The first round with no reviewer behind it: a systematic read of every doc against
+the code it describes. The through-line is that batches 1–6 changed behavior faster
+than the prose describing it, plus a class of text nobody re-reads — a spec's
+command table, a bundled template, an audit note — that quietly kept promising
+things that were dropped, renamed, or never built.
+
+- **MF-43** (doc review #7) — `docs/cli-spec.md` had **no `search` row and no
+  `search` section**: a command shipped in Phase 5 was missing from the document
+  whose job is the command surface, so its flags (`--type`, `--status`, `--tag`,
+  `--file`, `--stale-days`) were specified nowhere. Added both, including the
+  corpus limit the omission hid — `ideas/` and `sessions/` are not searchable
+  (see **O1**).
+- **MF-44** (doc review #7) — the same file's drift: `--version` missing from the
+  global flags, `--task` missing from the `resume` synopsis (it was in the table
+  three sections earlier), and a Phase column that marked built commands `2`/`3`/`5`
+  while their neighbors said `**built**`. "Later commands (post-MVP)" now says
+  outright that none of them exists and none is scheduled.
+- **MF-45** (doc review #7) — `docs/security.md` and `docs/cli-spec.md` both sent
+  the reader to "the Phase 6 doc" for the secret scanner's covered set and known
+  gaps. **No phase doc exists** (same class as MF-33). The record now lives where it
+  is actually kept — `SECRET_PATTERNS` in `cli.py`, the controls in
+  `tests/test_secrets.py` — and `security.md` §2 states the two deliberate gaps
+  (bare hex is only caught in a labeled context; path/CamelCase tokens are
+  allowlisted) instead of pointing at nothing.
+- **MF-46** (doc review #7) — `docs/architecture.md`, untouched since the June
+  rebrand and the only doc where the string "verification" never appeared: the
+  taxonomy gained a **Verification** row and a **guard pre-filter** row, "stale
+  reports" left the projection list (dropped by MF-26), and the layering diagram
+  stopped labelling shipped layers `(Ph8)`/`(Ph9)` as if pending. It also now says
+  which two rows are reserved space rather than machinery — `evidence/refs.yml` and
+  `index/` (see **O2**).
+- **MF-47** (doc review #7) — `docs/record-schema.md` §2 omitted
+  `verifications/` from the committed-by-default list although §1 creates it, so
+  whether verification records are shared was unanswerable; and §1 listed
+  `generated/guard-prefilter.json` under "`crumb init` creates this tree" when
+  `init` does not create it (the first `resume`/`reindex` does — as the bundled
+  `generated/README.md` already said, contradicting the spec).
+- **MF-48** (doc review #7) — `docs/mcp-spec.md` cited "§7" for filename-canonical
+  identity (that is §5; §7 is the non-git fallback) and called the hook templates
+  "(Phase 9)". It also now documents the packet's two look-alike key pairs:
+  `verification` (commands from the handoff) vs `verifications` (records), and the
+  threshold vs the measured ages. **Renaming `verification`/`verifications` was
+  considered and rejected** — those keys are section names driving `SECTION_CAPS`
+  and `TRIM_ORDER`, so a rename edits the bounding machinery, not a label.
+- **MF-49** (doc review #7) — the bundled `index/README.md` promised the SQLite FTS
+  and vector index "in a later phase", "regenerated by a build command (planned)".
+  Nothing builds one; `search` scans records directly. This text ships into every
+  user's repo, so the template is what was wrong — it now says the directory is a
+  reserved, always-gitignored slot with no writer.
+- **MF-50** (doc review #7) — the bundled `generated/README.md` advertised a
+  "3k–5k tokens" packet; the bound is `TOKEN_BUDGET_MAX = 5000` with no floor. The
+  lower number was invented.
+- **MF-51** (doc review #7) — `audit`'s sessions-growth note told users to "consider
+  a periodic rollup (forward-ref Phase 10)" — advice to wait for a command that
+  does not exist. It now says what a human can do today: promote with `remember`,
+  prune the rest.
+- **MF-52** (doc review #7) — this file's own state header claimed "0 open items"
+  at `main @ 10cd505`, three merges before batches 4–6 landed. Restamped, with the
+  error recorded rather than quietly overwritten.
+- **MF-53** (doc review #7) — reviews #5 and #6 carried no resolution banner, so
+  both still read as live: audit #6's summary asserts "All five High and all
+  thirteen Medium findings from review #5 are still present in `main`, verbatim",
+  which stopped being true six commits later. Both now open with a resolution
+  banner pointing here, and both say their `cli.py` line numbers predate the
+  `d293796` reformat. **Kept, not deleted** — the repo's delete-when-resolved policy
+  does not apply while D4 is sourced from `#5 §5` + `#6 §5`, exactly as the 06-27
+  review is kept for D1/D3.
+- **MF-54** (doc review #7) — `fixtures/README.md` opened with "these are populated
+  in later phases" above a table where all eleven rows say **built** and a closing
+  line saying all eleven run in CI.
+- **MF-55** (doc review #7) — release/version honesty, four places: `RELEASING.md`
+  Path B said `cd breadcrumbs` before `python -m build`, which from the repo root
+  lands in the *package* directory where the build fails (the doc itself explains
+  that both are named `breadcrumbs`); `CHANGELOG.md` jumped 0.1.6 → 0.1.4 with no
+  word on the missing 0.1.5 and presented 0.1.6 as a release although it never
+  reached PyPI; `README.md`'s Status table described this checkout while readers
+  install 0.1.7, which predates every fix in `[Unreleased]`; and `security.md` §4
+  deferred the high-impact-change enforcement decision to "Phases 6, 9", both long
+  shipped — it now states plainly that the decision has not been made and names the
+  one mechanism that does block today.
+- **MF-56 — D2, taken up** (agentic review #2 F10) — the packet carried exactly one
+  staleness number, `stale_days`, which was the **threshold**; the **age** it was
+  compared against existed only as English inside a warning string ("handoff is 6
+  day(s) old"), so a consumer had the policy as data and the fact as prose. The
+  threshold is now `stale_after_days` and the measurements are their own fields,
+  `handoff_age_days` / `handoff_commit_distance` (`null` when the timestamp is
+  unparseable or there is no git repo). The rendered packet names the cutoff above
+  the warnings, and `--stale-days` has one help string everywhere instead of being
+  an "aged-unresolved threshold" on `resume`/`audit` and a "recency de-weighting
+  threshold" on `guard` — one cutoff described as two things, which was half the
+  confusion. `tests/test_resume.py` pins the split, the agreement between
+  `handoff_age_days` and the prose, and the `None` path.
+
+---
+
+## Open — not blocking, not forgotten
+
+| ID | Item | Source | Why it is open rather than fixed |
+|---|---|---|---|
+| **O1** | `ideas/` records are unsearchable. `crumb note idea` writes a real record that `_candidate_items` never loads, so `search --type idea` is not even offered and an idea can only be found by opening the directory | Doc review #7 (MF-43) | A feature, not drift — nothing ever documented ideas as searchable. The fix needs a **search-only** corpus switch: `guard` shares `_candidate_items`, so simply adding ideas would let a speculative note raise a guard verdict, which is a different decision and needs its own fixture |
+| **O2** | `evidence/refs.yml` is scaffolding. `init` ships it and it is listed as a source-of-truth record type, but no code reads or writes it; the only reference outside the template is a test asserting the path exists | Doc review #7 (MF-46) | Batch 7 made the docs honest (it is hand-maintained; per-record evidence lives in `evidence:` frontmatter). Giving it a writer — or deleting it — is a product decision: it is the one place a cross-record evidence ledger could live |
+
+---
+
 ## Deferred — decide explicitly, don't let them rot
 
 | ID | Item | Source | Why deferred | What would change the call |
 |---|---|---|---|---|
 | **D1** | Optional streamable-HTTP MCP transport (Codex cloud supports no stdio MCP; Claude web needs a setup-script bootstrap) | Agentic review #2 F9 | Depends on the optional MCP SDK and a real cloud harness to validate; out of scope for a stdlib-only change set | A user actually blocked on Codex cloud, or the HTTP transport becoming testable offline |
-| **D2** | Confusing dual staleness numbers: `stale_days` (a threshold) vs "handoff N days old" (an age) | Agentic review #2 F10 | Cosmetic | Batch 3 shipped without renaming either field; the next change that touches one anyway |
+| ~~**D2**~~ | ~~Confusing dual staleness numbers~~ | Agentic review #2 F10 | ~~Cosmetic~~ | **Closed — taken up in Batch 7 as MF-56.** Deferred twice as cosmetic; it was not. The threshold was the only one of the two numbers a machine could read, so every consumer that wanted the age had to parse a warning sentence to get it |
 | **D3** | FastMCP self-reports its own version (`1.28.1`), not the package version | Agentic review #2 F11 (partial) | The FastMCP version API is SDK-version-fragile and untestable in the stdlib-only suite; risking server startup wasn't worth it | The SDK exposing a stable way to set it |
-| **D4** | Split `cli.py` (~6,300 lines, 180+ top-level defs) into modules | Review #5 §5, audit #6 §5 | Large, and best done *as* the vehicle for other fixes rather than as a big-bang refactor | **Deferred again at MF-15, explicitly.** MF-15 turned out to be a *deletion* — `Record.sections` became a one-line delegation to the splitter that already existed — so it carried no structural work to ride along with, and pairing a 6,000-line file move with a correctness fix would have made both unreviewable. The vehicle argument has now failed twice (MF-09, MF-15), which is itself the finding: no incidental fix is ever going to be large enough to justify the split, so it needs to be scheduled as its own change with its own review. The three separate notions of "is this projection current" (`_inputs_hash`, `_packet_is_stale`, `detect_packet_drift`) still all exist and remain the strongest argument for doing it |
+| **D4** | Split `cli.py` (~6,760 lines, 190+ top-level defs — it grows every round) into modules | Review #5 §5, audit #6 §5 | Large, and best done *as* the vehicle for other fixes rather than as a big-bang refactor | **Deferred again at MF-15, explicitly.** MF-15 turned out to be a *deletion* — `Record.sections` became a one-line delegation to the splitter that already existed — so it carried no structural work to ride along with, and pairing a 6,000-line file move with a correctness fix would have made both unreviewable. The vehicle argument has now failed twice (MF-09, MF-15), which is itself the finding: no incidental fix is ever going to be large enough to justify the split, so it needs to be scheduled as its own change with its own review. The three separate notions of "is this projection current" (`_inputs_hash`, `_packet_is_stale`, `detect_packet_drift`) still all exist and remain the strongest argument for doing it |
 
 ---
 
@@ -308,5 +419,8 @@ Original review ID → master ID. Use this when reading an old review doc.
 | #5 Lows (CI) | MF-38 … MF-42 (shipped) |
 | #6 N1, N2 | MF-06, MF-07 (shipped) |
 | #6 N5, N6 | MF-17, MF-18 (shipped) |
-| Agentic #2 F9, F10, F11 | D1, D2, D3 |
+| Agentic #2 F9, F11 | D1, D3 |
+| Agentic #2 F10 | D2 → **MF-56** (shipped, Batch 7) |
 | #5 §5 + #6 §5 (structural) | D4 |
+| Doc review #7 (docs vs code) | MF-43 … MF-55 (shipped) |
+| Doc review #7 (feature gaps) | O1, O2 (open) |

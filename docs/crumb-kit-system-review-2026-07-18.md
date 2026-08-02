@@ -1,5 +1,16 @@
 # crumb-kit (breadcrumbs) — System Review #5
 
+> **Resolution status (added 2026-08-02): every finding in this document has
+> shipped.** All five High, all thirteen Medium and every Low became MF-01 … MF-42
+> across batches 1–6 — see [`fix-list.md`](fix-list.md) for the master ID each maps
+> to, what was decided, and the two that were deliberately *not* implemented as
+> written (M10 → MF-26, dropped by deleting the templates; §5 → **D4**, still
+> deferred). The document is kept, unedited below this banner, because D4 is
+> sourced from its §5.
+>
+> **Read the rest as a snapshot of 2026-07-18.** The `cli.py` line numbers no longer
+> point at the code cited: the tree was reformatted in `d293796`.
+
 **Reviewer:** Claude (Claude Code agent)
 **Date:** 2026-07-18
 **Version reviewed:** `crumb-kit` 0.1.7 (record `schema_version` 1), `main` @ `8fdb4cc`

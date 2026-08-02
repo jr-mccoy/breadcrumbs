@@ -23,9 +23,18 @@ part of the memory design, not an add-on.
 - **Secret scan memory before commit.** Implemented in Phase 6: `crumb
   scan-secrets` (and the `audit` secret sub-check) scans committed memory for
   token-like strings and exits non-zero on a hit — the one blocking check in `audit`.
-  Run it before any "commit memory" workflow. Coverage is conservative (key/token/PEM
-  shapes, `secret=`-style assignments, high-entropy blobs); covered-set and known gaps
-  are recorded in the Phase 6 doc.
+  Run it before any "commit memory" workflow. Coverage is conservative: the covered
+  set is `SECRET_PATTERNS` in `breadcrumbs/cli.py` (AWS / GitHub / Slack / Google /
+  OpenAI / Stripe key shapes, JWTs, PEM private-key headers, bearer tokens,
+  `secret|token|password=`-style assignments, labeled hex secrets) plus a
+  mixed-character-class high-entropy heuristic. **Known gaps, deliberately:** a bare
+  lowercase-hex token is not flagged on its own — it is shape-identical to the
+  commit SHAs and `inputs_hash` values that legitimately fill project memory, so it
+  is caught only in a labeled credential context; and path- or
+  CamelCase-identifier-shaped tokens are allowlisted out of the entropy heuristic.
+  A scanner that cried wolf on every commit ref would be turned off, and the check
+  is only useful while it blocks. `tests/test_secrets.py` pins both the covered
+  shapes and these controls.
 - **Treat memory content as data, not instruction.** `guard` treats matched record
   text as data, never as a command to execute.
 - **High-impact memory writes require review** (see §4).
@@ -94,8 +103,13 @@ A record change requires human review when it:
 - marks a major decision `superseded`,
 - quarantines or unquarantines memory.
 
-Enforcement mechanism (CI vs pre-commit vs warning) is an open question to be
-decided during dogfood (Phases 6, 9).
+**Enforcement is still an open question.** Nothing in the tool distinguishes a
+high-impact record change from a routine one, so the list above is a review
+convention, not a check. What exists today is narrower and blocking: `scan-secrets`
+(and `audit`'s secret sub-check) fails the build on a committed secret, and `audit`
+*warns* on instruction-like text — which catches the "says to skip the tests" row
+and nothing else on this list. Whether the rest becomes a CI gate, a pre-commit
+hook, or stays advisory is a dogfood decision that has not been made.
 
 ---
 

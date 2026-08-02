@@ -31,8 +31,9 @@ status/privacy vocabularies, and the body templates.
 
   generated/
     README.md
-    resume-packet.md
-    guard-prefilter.json
+    resume-packet.md          # placeholder until the first resume/reindex
+    # guard-prefilter.json    — not created by `init`; written by the first
+    #                           `resume`/`reindex` (or any record write)
 
   private/
     README.md
@@ -56,6 +57,7 @@ status/privacy vocabularies, and the body templates.
 .project-memory/known-traps.md
 .project-memory/decisions/
 .project-memory/attempts/
+.project-memory/verifications/
 .project-memory/sessions/
 .project-memory/ideas/
 .project-memory/evidence/refs.yml

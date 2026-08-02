@@ -102,6 +102,24 @@ namespace, and the project's absolute location is not the client's business
 (issue #7). The CLI still prints absolute paths, because a human's shell can use
 them.
 
+### `memory_build_resume_packet` — two pairs of look-alike keys
+
+The packet has two names that differ by one letter and two staleness numbers that
+are not the same kind of thing. Both pairs are deliberate:
+
+| Key | What it holds |
+|---|---|
+| `verifications` | verification **records** (`{id, subject, outcome, method}`) |
+| `verification` | verification **commands** — the lines under the handoff's *Verification Commands* heading |
+| `stale_after_days` | the **threshold** in force (default 21) |
+| `handoff_age_days` / `handoff_commit_distance` | the **measured** handoff age and commit distance; `null` when the timestamp is unparseable or there is no git repo |
+
+The staleness pair was one field named `stale_days` until the round that added the
+ages (agentic review #2 F10): the threshold was data and the age was English inside
+a warning string. The `verification`/`verifications` pair is kept as-is — those keys
+are section names driving the packet's cap and trim order, so renaming them changes
+the bounding machinery, not just a label.
+
 ### `memory_verify`
 
 The home for a verification result — "I checked X; here is its state" (review
@@ -177,7 +195,8 @@ replacing record's id) — the same flow as `crumb mark-status <id> superseded
 - **Secret-scan before commit.** `memory_scan_secrets` is available so an agent
   can check before any "commit memory" step (§2.6, §15, Fixture 6).
 - **No new identity scheme.** `find_record_by_id` uses the same filename-canonical
-  id (§7) the CLI, search, guard and resume already use.
+  id ([`record-schema.md`](record-schema.md) §5) the CLI, search, guard and resume
+  already use.
 
 ## Design constraints (carried forward)
 
@@ -185,7 +204,7 @@ replacing record's id) — the same flow as `crumb mark-status <id> superseded
   logic — no separate source of truth.
 - Executable MCP/hook configuration checked into a repo is a threat surface
   ([`security.md`](security.md)); the generated `.mcp.json` / hook templates are
-  opt-in and reviewable (Phase 9).
+  opt-in, reviewable, and reversible with `crumb init --remove-integrations`.
 - Every MCP capability has a manual CLI / plain-file fallback.
 
 ---

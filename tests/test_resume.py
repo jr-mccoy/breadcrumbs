@@ -223,6 +223,61 @@ class StalenessAgeDistanceTests(unittest.TestCase):
             self.assertIn("3 commit(s) behind", out)
 
 
+class StalenessFieldNamingTests(unittest.TestCase):
+    """The threshold and the measured ages are separate, distinctly named fields (F10/D2).
+
+    `stale_days` used to be the only staleness number in the packet — a *threshold*
+    named as if it were an age, while the actual age ("handoff is 6 day(s) old") was
+    reachable only by parsing English out of a warning string.
+    """
+
+    def test_threshold_and_ages_are_separate_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = root / crumb.MEMORY_DIRNAME
+            crumb.main(["init", "--project", tmp, "--session-tracking", "full"])
+            run(["capture", "session", "--project", tmp, "--fast", "--next", "x"])
+            handoff = mem / "handoff.md"
+            handoff.write_text(
+                re.sub(
+                    r"_Last updated:.*_",
+                    "_Last updated: 2020-01-01T00:00:00-05:00_",
+                    handoff.read_text(),
+                )
+            )
+            commit(root, "a.txt", "c1")
+            commit(root, "b.txt", "c2")
+
+            code, out = run(["resume", "--project", tmp, "--json", "--stale-days", "14"])
+            self.assertEqual(code, 0)
+            payload = json.loads(out)
+            # The threshold is the value the caller passed, under a name that says so.
+            self.assertEqual(payload["stale_after_days"], 14)
+            self.assertNotIn("stale_days", payload)
+            # The measured age is data, not prose — and agrees with the prose.
+            self.assertGreater(payload["handoff_age_days"], 365)
+            self.assertEqual(payload["handoff_commit_distance"], 2)
+            warning = next(w for w in payload["warnings"] if w.startswith("⚠ handoff is"))
+            self.assertIn(f"{payload['handoff_age_days']} day(s) old", warning)
+
+    def test_rendered_packet_names_the_cutoff(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", tmp, "--session-tracking", "full"])
+            run(["capture", "session", "--project", tmp, "--fast", "--next", "x"])
+            _, out = run(["resume", "--project", str(root), "--stale-days", "14"])
+            self.assertIn("the cutoff is 14 days", out)
+
+    def test_unknown_age_and_distance_are_null_not_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture(tmp)  # a store with no git repo around it
+            code, out = run(["resume", "--project", str(root), "--json"])
+            self.assertEqual(code, 0)
+            payload = json.loads(out)
+            self.assertEqual(payload["stale_after_days"], crumb.STALE_AGE_DAYS)
+            self.assertIsNone(payload["handoff_commit_distance"])
+
+
 class BranchMismatchTests(unittest.TestCase):
     def test_handoff_branch_mismatch_surfaced(self):
         with tempfile.TemporaryDirectory() as tmp:

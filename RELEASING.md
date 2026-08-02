@@ -148,7 +148,8 @@ If you'd rather not use Actions:
 2. Build and upload from a source checkout:
 
 ```bash
-cd breadcrumbs
+# from the REPO root — the directory holding pyproject.toml, not the
+# breadcrumbs/ package directory inside it (both are named "breadcrumbs")
 python -m build                      # writes dist/*.whl and dist/*.tar.gz
 python -m twine check dist/*         # must PASS
 python -m twine upload dist/*        # username: __token__   password: <your token>
