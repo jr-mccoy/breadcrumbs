@@ -24,6 +24,8 @@ MCP is **data, not instruction** (plan §15).
 
 from __future__ import annotations
 
+import importlib
+import inspect
 import os
 import sys
 
@@ -91,16 +93,67 @@ class RecordPayload(_RecordPayloadOptional):
     title: str
 
 
-try:  # The SDK is optional; importing this module must never hard-fail.
-    from mcp.server.fastmcp import FastMCP
+# Where the SDK keeps its high-level server class, newest spelling first. MCP SDK
+# 2.0 renamed `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`
+# (MF-59). The `[mcp]` extra had no upper bound, so a fresh
+# `pip install "crumb-kit[mcp]"` resolved to 2.x, the single hardcoded import
+# raised ModuleNotFoundError, and every SDK-present path — `crumb mcp serve`,
+# `crumb doctor`, `crumb mcp doctor` — reported the SDK as "not installed" and
+# told the user to run the install command that had just succeeded.
+#
+# The two classes are drop-in for everything this module uses: the
+# `.resource()`/`.prompt()`/`.tool()` decorators, `.run()` (stdio by default), and
+# the `list_*` inspection methods. Only the constructor differs — see
+# `_SERVER_ACCEPTS_VERSION`.
+_SDK_SERVER_CLASSES = (
+    ("mcp.server.mcpserver", "MCPServer"),  # SDK >= 2.0
+    ("mcp.server.fastmcp", "FastMCP"),  # SDK 1.x
+)
 
-    _SDK_IMPORT_ERROR: Exception | None = None
-except Exception as exc:  # pragma: no cover - exercised only without the SDK
-    # Catch any import-time failure, not just ImportError: a partial or
-    # version-skewed SDK install can raise other errors, and the contract is
-    # that importing this module never hard-fails — it degrades to a clear hint.
-    FastMCP = None  # type: ignore[assignment]
-    _SDK_IMPORT_ERROR = exc
+
+def _load_server_class() -> tuple[type | None, Exception | None]:
+    """Import the SDK's server class, or return the failure that stopped us.
+
+    Never raises: importing this module must work on an SDK-less install. Any
+    import-time failure counts, not just ImportError — a partial or version-skewed
+    SDK can raise other errors, and the contract is a clear hint, not a traceback
+    from somewhere inside the SDK.
+    """
+    first_error: Exception | None = None
+    for module_name, attr in _SDK_SERVER_CLASSES:
+        try:
+            module = importlib.import_module(module_name)
+            return getattr(module, attr), None
+        except Exception as exc:  # pragma: no cover - the no-SDK path
+            if first_error is None:
+                first_error = exc
+    return None, first_error
+
+
+# `FastMCP` keeps its name as this module's handle on "the SDK's server class",
+# whichever spelling supplied it. Renaming it would churn every call site for a
+# name that is now wrong half the time either way.
+FastMCP, _SDK_IMPORT_ERROR = _load_server_class()
+
+
+def _server_accepts_version(cls: type | None) -> bool:
+    """True iff the SDK's server constructor takes a `version=` (D3 / MF-60).
+
+    SDK 2.x does; 1.x raises TypeError on it. Read from the signature rather than
+    guessed from a version string — guessing is what made this fragile enough to
+    defer twice. `inspect.signature` itself can raise on a class it cannot
+    introspect, and this runs at import time, where the module's contract is that
+    it never hard-fails; an unreadable signature just means "don't pass it".
+    """
+    if cls is None:
+        return False
+    try:
+        return "version" in inspect.signature(cls.__init__).parameters
+    except (TypeError, ValueError):  # pragma: no cover - exotic SDK build
+        return False
+
+
+_SERVER_ACCEPTS_VERSION = _server_accepts_version(FastMCP)
 
 
 SERVER_NAME = "breadcrumbs"
@@ -108,8 +161,11 @@ _INSTALL_HINT = (
     "The MCP server needs the optional Python MCP SDK (which needs Python >= 3.10;\n"
     "on 3.9 the command below succeeds and installs nothing, because the extra's\n"
     "marker excludes it).\n"
-    '  pip install "crumb-kit[mcp]"   (or:  pip install mcp)\n'
-    "Everything still works without it via the `crumb` CLI and the plain\n"
+    '  pip install "crumb-kit[mcp]"   (or:  pip install "mcp>=1.2,<3")\n'
+    "Both SDK 1.x and 2.x are supported. An SDK outside that range may install\n"
+    "cleanly and still not be importable here, in which case the cause is printed\n"
+    "below rather than this hint.\n"
+    "Everything still works without the SDK via the `crumb` CLI and the plain\n"
     f"{mcp_core.MEMORY_DIRNAME}/ files — MCP is an optional interop layer."
 )
 
@@ -134,7 +190,12 @@ def build_server():  # -> FastMCP
     if FastMCP is None:
         raise RuntimeError(_INSTALL_HINT) from _SDK_IMPORT_ERROR
 
-    mcp = FastMCP(SERVER_NAME)
+    # D3 / MF-60: advertise the *package* version when the SDK lets us. Left
+    # unset on SDK 1.x, where the server keeps reporting the SDK's own version —
+    # the behavior review #2 F11 reported, now confined to the SDKs that give us
+    # no way to change it rather than being unconditional.
+    kwargs = {"version": mcp_core.cli.get_version()} if _SERVER_ACCEPTS_VERSION else {}
+    mcp = FastMCP(SERVER_NAME, **kwargs)
 
     # ---------------- Resources (8) — read-only views ---------------------- #
     # Bound explicitly (not in a loop) so each URI is a distinct, documented
@@ -313,6 +374,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if FastMCP is None:
         sys.stderr.write(_INSTALL_HINT + "\n")
+        if _SDK_IMPORT_ERROR is not None:
+            # Name the actual failure. An SDK that is installed but unimportable
+            # (a major the shim does not know, a broken install) is a different
+            # problem from a missing one, and printing only the install hint sent
+            # the user to re-run a command that had already succeeded (MF-59).
+            sys.stderr.write(
+                f"\nThe SDK import failed with: "
+                f"{type(_SDK_IMPORT_ERROR).__name__}: {_SDK_IMPORT_ERROR}\n"
+            )
         return 1
     server = build_server()
     server.run()  # stdio transport by default

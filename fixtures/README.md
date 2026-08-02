@@ -2,7 +2,7 @@
 
 Sample `.project-memory/` stores and expected outputs for the evaluation suite.
 
-All eleven are built and run in CI on every push (see the bottom of this file):
+All twelve are built and run in CI on every push (see the bottom of this file):
 
 | Fixture | Exercises | Phase |
 |---|---|---|
@@ -17,6 +17,7 @@ All eleven are built and run in CI on every push (see the bottom of this file):
 | 9 — Cloud fallback | plain files + generated packet support manual resume, no CLI | **6 (built)** |
 | 10 — Many sessions | resume packet stays bounded with 100 session records | **6 (built)** |
 | 11 — Multi-machine | a `distillate` store with no `sessions/` stays clean from two checkout paths | **6 (built)** |
+| 12 — Speculative idea | `search` finds an `ideas/` record; `guard` still returns `PROCEED` on it | **built** |
 
 Phase 1 created this directory and tracker. Phase 4 committed **Fixture 1**
 (`fixture-01-fresh-resume/`), a hand-authored sample `.project-memory/` store that
@@ -59,8 +60,19 @@ requires `validate`, `audit` and `doctor` to come up clean at both, the committe
 packet to be accepted unchanged at either path, and a reindex on either machine to
 reproduce the same bytes. Before Batch 3 every one of those failed.
 
-All eleven run in CI on every push: `validate` over all eleven, `audit` over all
-eleven (only Fixture 6 blocks), plus the guard / drift / instruction-like spot
+**12 — Speculative idea** (`fixture-12-speculative-idea/`) was added with Batch 8
+(MF-57 / O1), when `ideas/` became searchable. Its only record is an untried hunch
+— "cache parsed sessions in the auth middleware", explicitly *not measured* — that
+names `src/auth/middleware.ts` and carries the `auth`/`session` tags. That makes it
+the control for the corpus split: `crumb search` must find it, and `crumb guard
+"rewrite the auth middleware to cache parsed sessions" --files src/auth/middleware.ts`
+must still answer `PROCEED` with **zero** matches. Scored in the lookup corpus the
+same record clears the `READ_FIRST` band on file + tag + keyword, so the `PROCEED`
+is the split doing the work rather than a weak fixture —
+`tests/test_guard.py::SpeculativeIdeaTests` pins both halves.
+
+All twelve run in CI on every push: `validate` over all twelve, `audit` over all
+twelve (only Fixture 6 blocks), plus the guard / drift / instruction-like spot
 checks.
 
 > The fixture store is committed as canonical source. A `generated/resume-packet.md`

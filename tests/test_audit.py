@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
+from breadcrumbs import cli  # noqa: E402  (`crumb` is a flat re-export; patching needs the module)
 
 FIXTURES = REPO_ROOT / "fixtures"
 DATA = REPO_ROOT / "tests" / "data"
@@ -269,6 +270,76 @@ class CliTests(unittest.TestCase):
         _, out = run(["audit", "--project", str(FIXTURES / "fixture-06-secret-leak")])
         self.assertIn("Blocking", out)
         self.assertIn("secret", out)
+
+
+class FreshnessComplementarityTests(unittest.TestCase):
+    """MF-64 — pin that the two staleness checks answer *different* questions.
+
+    The fix list files "three competing notions of projection freshness" as the
+    strongest argument for splitting `cli.py` (D4). Two of the three are not
+    competing: `_inputs_hash` is the primitive, and the other two are complementary
+    detectors, each catching a class the other cannot. This test reproduces both
+    directions, so a future split (or a well-meant "deduplicate these") cannot
+    collapse them without going red. The map is in the comment above `_inputs_hash`.
+    """
+
+    def _store(self, tmp: str) -> tuple[Path, Path]:
+        root = Path(tmp)
+        self.assertEqual(
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"]), 0
+        )
+        self.assertEqual(
+            crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "Use markdown as the source of truth",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                    "--set",
+                    "Decision",
+                    "Markdown files are canonical.",
+                ]
+            ),
+            0,
+        )
+        mem = root / crumb.MEMORY_DIRNAME
+        crumb.reindex_projections(mem, root)
+        return root, mem
+
+    def test_hash_drift_fires_where_a_byte_compare_cannot(self):
+        """An edit the *bounded* packet never renders still invalidates the stamp."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with contextlib.redirect_stdout(io.StringIO()):
+                root, mem = self._store(tmp)
+            self.assertFalse(crumb.detect_packet_drift(mem))
+            self.assertFalse(crumb._packet_is_stale(mem, root))
+
+            rec = next((mem / "decisions").glob("*.md"))
+            rec.write_text(
+                rec.read_text(encoding="utf-8")
+                + "\n\n## Consequences\nDetail the bounded packet never prints.\n",
+                encoding="utf-8",
+            )
+            self.assertTrue(crumb.detect_packet_drift(mem), "stamp must go stale")
+            self.assertFalse(crumb._packet_is_stale(mem, root), "rendered bytes are unchanged here")
+
+    def test_byte_compare_fires_where_a_hash_over_inputs_cannot(self):
+        """A renderer change leaves every input untouched — no hash can see it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with contextlib.redirect_stdout(io.StringIO()):
+                root, mem = self._store(tmp)
+            real = cli.render_packet_markdown
+            cli.render_packet_markdown = lambda p: real(p) + "\n<!-- newer renderer -->\n"
+            try:
+                self.assertFalse(crumb.detect_packet_drift(mem), "inputs are untouched")
+                self.assertTrue(crumb._packet_is_stale(mem, root), "output would differ")
+            finally:
+                cli.render_packet_markdown = real
 
 
 if __name__ == "__main__":

@@ -33,14 +33,23 @@ EXPECTED_TREE = [
     "known-traps.md",
     "decisions/.gitkeep",
     "attempts/.gitkeep",
+    # MF-62: `verifications/` shipped in the template from the day the record type
+    # landed, but this list — the only test of the §1 tree — never learned about it,
+    # so deleting it from the scaffold would have gone unnoticed.
+    "verifications/.gitkeep",
     "sessions/.gitkeep",
     "ideas/.gitkeep",
-    "evidence/refs.yml",
     "generated/README.md",
     "generated/resume-packet.md",
     "private/README.md",
     "index/README.md",
 ]
+
+# MF-58 / O2: `evidence/refs.yml` was scaffolded for the whole life of the package
+# and never read or written by anything. It is gone; nothing replaces it, because
+# per-record evidence already lives in each record's `evidence:` frontmatter, which
+# `resume`, `guard` and `search` actually consume.
+REMOVED_FROM_TREE = ["evidence/refs.yml", "evidence"]
 
 
 def run_init(root: Path, *extra: str):
@@ -74,6 +83,36 @@ class InitTreeTests(unittest.TestCase):
             memory = root / ".project-memory"
             for rel in EXPECTED_TREE:
                 self.assertTrue((memory / rel).exists(), f"missing {rel}")
+
+    def test_tree_matches_the_bundled_template_exactly(self):
+        """MF-62 — pin the *whole* tree, not a hand-kept subset of it.
+
+        `EXPECTED_TREE` silently missed `verifications/.gitkeep` for as long as that
+        record type has existed, because an inclusion list only catches deletions of
+        the entries someone remembered to add. Comparing against the template
+        catches both directions.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(run_init(root, "--session-tracking", "full"), 0)
+            memory = root / ".project-memory"
+            shipped = {
+                str(p.relative_to(crumb.TEMPLATE_DIR)) for p in crumb.TEMPLATE_DIR.rglob("*")
+            }
+            created = {str(p.relative_to(memory)) for p in memory.rglob("*")}
+            self.assertEqual(shipped - created, set(), "template entries init did not create")
+            # Everything in EXPECTED_TREE must be a real template entry, so the list
+            # cannot drift into asserting files that no longer ship.
+            self.assertEqual(set(EXPECTED_TREE) - shipped, set())
+
+    def test_removed_scaffold_is_not_recreated(self):
+        """MF-58 / O2 — `evidence/refs.yml` is gone and must stay gone."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(run_init(root, "--session-tracking", "full"), 0)
+            memory = root / ".project-memory"
+            for rel in REMOVED_FROM_TREE:
+                self.assertFalse((memory / rel).exists(), f"{rel} came back")
 
     def test_manifest_records_both_policies(self):
         with tempfile.TemporaryDirectory() as tmp:

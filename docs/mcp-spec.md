@@ -19,7 +19,7 @@ and every MCP capability has a manual CLI / plain-file equivalent.
 The SDK is an **optional extra** (the core package stays standard-library-only):
 
 ```bash
-pip install "crumb-kit[mcp]"     # adds the `mcp` SDK (needs Python >=3.10)
+pip install "crumb-kit[mcp]"     # adds the `mcp` SDK (1.x or 2.x; needs Python >=3.10)
 ```
 
 Run the server (stdio transport):
@@ -36,8 +36,26 @@ if set, otherwise the current working directory. `crumb init --with-mcp` (or
 
 **Graceful degradation.** If the `mcp` SDK is not installed, importing
 `breadcrumbs.mcp_server` still succeeds; `build_server()` raises a clear
-install hint and `breadcrumbs-mcp` prints that hint and exits non-zero. Nothing
-about the CLI or plain files depends on the SDK.
+install hint and `breadcrumbs-mcp` prints that hint — plus the underlying import
+error, so "installed but unimportable" is distinguishable from "missing" — and
+exits non-zero. Nothing about the CLI or plain files depends on the SDK.
+
+**Supported SDK majors: 1.x and 2.x.** SDK 2.0 renamed the high-level server class
+from `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`;
+`mcp_server` tries both, newest first. The two are drop-in for everything this
+server uses — the `resource`/`prompt`/`tool` decorators, `run()` (stdio by
+default), and the `list_*` inspection methods. Two differences are visible to a
+caller:
+
+| | SDK 1.x | SDK 2.x |
+|---|---|---|
+| Server version advertised over MCP | the **SDK's** version (no way to set it) | the **package** version, via the constructor's `version=` |
+| `list_resource_templates()` field | `uriTemplate` | `uri_template` |
+
+The extra is bounded (`mcp>=1.2,<3`) because an unbounded range is how 2.0 arrived
+unannounced: it installed cleanly, the hardcoded 1.x import failed, and the server
+reported itself as "not installed". The CI `mcp` job runs the full suite and a live
+server build against **both** majors on Python 3.10–3.12.
 
 ---
 
@@ -86,6 +104,13 @@ current instruction, the code, the tests, or authoritative docs (plan §15).
 | `memory_validate` | `()` | `cli.run_validate` | `{ok, fail_count, findings[]}` (includes the projection-freshness check) |
 | `memory_mark_status` | `(id, status, reason, superseded_by?)` | `cli.set_record_status`, reindex | `{ok, id, from, to, path}` or `{ok:false, error}` |
 | `memory_scan_secrets` | `()` | `cli.scan_secrets` | `{ok, clean, count, findings[]}` (pattern names + locations only) |
+
+**`memory_search` and `memory_guard_before_action` read different corpora.** The
+search tool includes `ideas/`; the guard tool does not, exactly as `crumb search`
+and `crumb guard` differ (see `cli-spec.md` → `search`). An idea is a proposal
+exempt from the §16.9 evidence rule, so it may be *retrieved* but must never reach
+a verdict. Do not "fix" the asymmetry by passing `include_ideas=True` into
+`cli.guard`; `tests/test_guard.py::SpeculativeIdeaTests` fails if you do.
 
 **Envelope.** Every tool success carries `ok`; a missing store is always
 `{ok:false, error}`. For `memory_validate` and `memory_scan_secrets`, `ok`

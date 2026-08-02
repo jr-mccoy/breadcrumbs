@@ -45,7 +45,6 @@ A read-only cloud agent with no CLI can resume from these files directly:
 | `attempts/` | One record per tried path + outcome + do-not-retry. |
 | `sessions/` | One record per work session. |
 | `ideas/` | Potential future directions. |
-| `evidence/refs.yml` | Pointers to commits/tests/docs/issues/PRs. |
 | `generated/` | Rebuildable projections — **not source of truth**. |
 | `private/` | Local-only notes — **never committed**. |
 | `index/` | Disposable search index — **never committed** (except this kind of README). |

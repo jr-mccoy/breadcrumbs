@@ -1,13 +1,15 @@
 """End-to-end fixture suite (Phase 6, plan §17 / §19b.11).
 
-Runs all eleven evaluation fixtures through `validate` and `audit`, and pins the
+Runs all twelve evaluation fixtures through `validate` and `audit`, and pins the
 fixtures that assert a whole-system property rather than a single check:
   - Fixture 9 (cloud fallback): plain files + a committed packet answer the six
     reorientation questions with NO CLI execution;
   - Fixture 10 (many sessions): the resume packet stays bounded and prioritises
     current/handoff/active decisions over old session observations;
   - Fixture 11 (multi-machine): a distillate store with no `sessions/` stays clean
-    from two different checkout paths — pinned in `tests/test_multi_machine.py`.
+    from two different checkout paths — pinned in `tests/test_multi_machine.py`;
+  - Fixture 12 (speculative idea): an `ideas/` record is searchable but never
+    raises a guard verdict — pinned in `tests/test_search.py` and `test_guard.py`.
 
 Run with:  python -m unittest discover -s tests
        or:  python tests/test_fixtures.py
@@ -41,6 +43,7 @@ ALL_FIXTURES = [
     "fixture-09-cloud-fallback",
     "fixture-10-many-sessions",
     "fixture-11-multi-machine",
+    "fixture-12-speculative-idea",
 ]
 
 # fixture-06 is the one fixture whose audit is expected to BLOCK (a committed secret).
@@ -67,6 +70,16 @@ def mem_of(name: str) -> Path:
 # Every fixture validates (structure is well-formed even when audit objects)
 # --------------------------------------------------------------------------- #
 class ValidateAllTests(unittest.TestCase):
+    def test_all_fixtures_are_registered(self):
+        """MF-63 — a fixture on disk that nothing runs is worse than no fixture.
+
+        `ALL_FIXTURES` drives every loop in this file, and CI's own loops now glob
+        the directory rather than a numeric range. This is the check that stops the
+        two from drifting: add a directory, and the suite fails until it is listed.
+        """
+        on_disk = sorted(p.name for p in FIXTURES.iterdir() if p.name.startswith("fixture-"))
+        self.assertEqual(on_disk, sorted(ALL_FIXTURES))
+
     def test_all_fixtures_validate_clean(self):
         for name in ALL_FIXTURES:
             if name in VALIDATE_SHOULD_FLAG_FRESHNESS:

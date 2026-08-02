@@ -3375,6 +3375,45 @@ def _hashed_input_dirs(memory_dir: Path, project_root: Path, manifest: dict) -> 
     return sorted(d for d in DIR_TYPES if d not in skipped)
 
 
+# --------------------------------------------------------------------------- #
+# Projection freshness — three functions, one primitive (map for D4)
+# --------------------------------------------------------------------------- #
+# The fix list calls these "three competing notions of projection freshness". Two
+# of them are complementary and the third is the primitive both are built on;
+# writing that down here is a precondition for splitting this module, because the
+# split will scatter them across files.
+#
+#   1. `_inputs_hash(memory_dir, root)` — the PRIMITIVE. A content hash over the
+#      canonical inputs the store's own policy says are shared. It *defines* what
+#      "unchanged" means. Stamped into every `generated/*.md` header when written.
+#
+#   2. `detect_packet_drift(memory_dir)` — "is the stamp stale?" Compares each
+#      projection's stamped hash against a freshly computed one. Cheap: no packet
+#      is rebuilt. Used by `validate` (§16.12 freshness, which FAILS) and `audit`.
+#
+#   3. `_packet_is_stale(memory_dir, root)` — "would a rebuild produce different
+#      output?" Re-renders the packet and compares bytes, minus the lines that
+#      vary by machine rather than by content. Expensive. Used only by `doctor`.
+#
+# They can legitimately disagree, in both directions, and neither answer is wrong:
+#
+#   * (2) fires and (3) does not — a record changed in a way the *bounded* packet
+#     does not surface (an edit below the section cap, a record trimmed by
+#     `TRIM_ORDER`). The projection is out of date with respect to its inputs even
+#     though re-rendering yields the same bytes.
+#   * (3) fires and (2) does not — the inputs are untouched but the *renderer*
+#     changed, which no hash over inputs can see. This is what catches a packet
+#     written by an older version of this package.
+#
+# Both directions were reproduced against a throwaway store and are pinned by
+# `tests/test_audit.py::FreshnessComplementarityTests`.
+#
+# So: (2) is the gate (deterministic, cheap, and what CI enforces), and (3) is the
+# advisory second opinion `doctor` gives a human. Collapsing them would lose one of
+# the two classes above. Any split of this file must keep all three together, or
+# keep this comment with whichever file gets `_inputs_hash`.
+
+
 def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     """Short content hash of the canonical inputs (so audit/Phase 6 can spot drift)."""
     memory_dir = Path(memory_dir)
@@ -3593,8 +3632,12 @@ def _task_scoped_files(
 
     Reuses the deterministic `search` scoring rather than inventing a second
     relevance notion. Returns (files, note); note is set only when nothing matched.
+
+    Ideas are excluded (the default corpus): this list goes into a packet that
+    boots the next session, and a file path is only "likely" because someone did
+    work there — not because someone proposed it (O1).
     """
-    matches, by_id = search(memory_dir, root, task, stale_days=stale_days)
+    matches, by_id = search(memory_dir, root, task, stale_days=stale_days, include_ideas=False)
     files: list[str] = []
     for m in matches:
         files.extend(m.get("matched_files") or [])
@@ -4183,10 +4226,39 @@ def _item_from_question(q: dict) -> dict:
     }
 
 
-def _candidate_items(memory_dir: Path) -> list[dict]:
-    """Every searchable item: durable decision/attempt records + trap + question blocks."""
+# The corpus every ranked lookup draws from. Two corpora, not one — see
+# `_candidate_items`.
+JUDGING_ITEM_TYPES = ("decision", "attempt", "verification")
+SPECULATIVE_ITEM_TYPES = ("idea",)
+
+
+def _candidate_items(memory_dir: Path, *, include_ideas: bool = False) -> list[dict]:
+    """Every searchable item: durable decision/attempt records + trap + question blocks.
+
+    `include_ideas` is the **search-only corpus switch**. `crumb note idea` writes a
+    real, validated record, but for most of this package's life nothing loaded it, so
+    an idea could only be found by opening `ideas/` (O1). The reason it stayed out is
+    that `guard` is built on this same function: an idea is a *proposal*, deliberately
+    exempt from the §16.9 evidence rule, and `_decide_verdict`'s score band is
+    kind-agnostic — so a speculative note that happened to name the files being edited
+    would have raised a real verdict on the strength of nobody having done the work.
+    That is the one thing guard must never do.
+
+    So the corpus forks by *who is asking*, not by record type:
+
+    - **Lookup** (`crumb search`, the `memory_search` MCP tool) passes True. A human
+      or agent asking "what do we know about X" wants the idea.
+    - **Judging** (`guard`, the `PreToolUse` hook path, `resume --task`'s likely-file
+      scoping) leaves it False. These turn matches into advice or into a packet, and
+      speculation is not evidence.
+
+    Sessions stay out of both: they are narrative, and under
+    `session_tracking: distillate` a clone may not have them at all, so including
+    them would make results depend on which checkout you ran in.
+    """
+    types = JUDGING_ITEM_TYPES + (SPECULATIVE_ITEM_TYPES if include_ideas else ())
     items: list[dict] = []
-    for rec in load_records(memory_dir, types=("decision", "attempt", "verification")):
+    for rec in load_records(memory_dir, types=types):
         if rec.error:
             continue
         items.append(_item_from_record(rec))
@@ -4350,14 +4422,19 @@ def search(
     stale_days: int = STALE_AGE_DAYS,
     min_keyword: int = 1,
     noise_floor: int = 1,
+    include_ideas: bool = False,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Deterministic search over the canonical records (§20.10).
 
     Returns (matches sorted best-first, items_by_id). Matching signals: exact/
     keyword text, tag/component, and file path. No embeddings; same input ->
     same output. `filters` narrows the corpus by type/status/tag/file first.
+
+    `include_ideas` selects the wider, lookup-only corpus — see `_candidate_items`.
+    It defaults to False so a caller that forgets it gets guard's corpus, which is
+    the safe side of the mistake.
     """
-    items = _candidate_items(memory_dir)
+    items = _candidate_items(memory_dir, include_ideas=include_ideas)
     by_id = {it["id"]: it for it in items}
     filters = filters or {}
     q_specific = _specific(query)
@@ -4510,6 +4587,11 @@ def guard(
     Active records drive the verdict; superseded/rejected/stale records and
     resolved questions are demoted to history (mention-only, never 'active').
     Bounded to GUARD_MAX_WARNINGS ranked records. Matched text is data, not command.
+
+    Ideas are **not** in this corpus (`include_ideas` stays False). An idea is a
+    proposal exempt from the evidence rule; the score band below is kind-agnostic,
+    so including them would let a speculative note that names the right files raise
+    a real verdict. `crumb search` sees them; the verdict never does (O1).
     """
     primary, classes = classify_action(action)
     matches, by_id = search(
@@ -4520,6 +4602,7 @@ def guard(
         stale_days=stale_days,
         min_keyword=GUARD_MIN_KEYWORD_OVERLAP,
         noise_floor=GUARD_NOISE_FLOOR,
+        include_ideas=False,
     )
 
     active, history = [], []
@@ -4649,7 +4732,10 @@ def cmd_search(args: argparse.Namespace) -> int:
     filters = {k: v for k, v in filters.items() if v}
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
     query = args.query or ""
-    matches, _ = search(memory_dir, root, query, filters=filters, stale_days=stale_days)
+    # Lookup, not judging: ideas are in this corpus and out of guard's (O1).
+    matches, _ = search(
+        memory_dir, root, query, filters=filters, stale_days=stale_days, include_ideas=True
+    )
 
     if args.json:
         print(json.dumps({"query": query, "filters": filters, "matches": matches}, indent=2))
@@ -4709,8 +4795,12 @@ AUDIT_INFO = "info"  # health/context note
 _SECRET_SKIP_DIRS = {"private", "index", "generated"}
 
 # Common secret SHAPES (plan §15, §17.6). Deliberately conservative: better to miss
-# an exotic secret than to flag every git sha. Coverage / known gaps are recorded in
-# the Phase 6 doc ("Decisions resolved this phase").
+# an exotic secret than to flag every git sha. The covered set is this tuple; the
+# two deliberate gaps (bare hex only in a labeled context, path/CamelCase tokens
+# allowlisted) are written up in `docs/security.md` §2 and pinned by
+# `tests/test_secrets.py`. MF-45 replaced the "see the Phase 6 doc" pointers in
+# security.md and cli-spec.md — no phase doc has ever existed — but missed this
+# copy of the same dead reference (MF-61).
 SECRET_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("aws-access-key-id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
@@ -6612,7 +6702,10 @@ def build_parser() -> argparse.ArgumentParser:
         "query", nargs="?", default="", help="search text (optional with filters)"
     )
     p_search.add_argument(
-        "--type", choices=("decision", "attempt", "verification", "trap", "question")
+        "--type",
+        choices=("decision", "attempt", "verification", "idea", "trap", "question"),
+        help="narrow the corpus to one record type ('idea' is searchable but never "
+        "reaches a guard verdict)",
     )
     p_search.add_argument(
         "--status",

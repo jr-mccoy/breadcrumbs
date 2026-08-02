@@ -45,11 +45,16 @@ A read-only cloud agent with no CLI can resume from these files directly:
 | `attempts/` | One record per tried path + outcome + do-not-retry. |
 | `sessions/` | One record per work session. |
 | `verifications/` | One record per `crumb verify` — "I checked X; here is its state". |
-| `ideas/` | Potential future directions. |
-| `evidence/refs.yml` | Pointers to commits/tests/docs/issues/PRs. Hand-maintained — no command writes it; per-record evidence lives in each record's `evidence:` frontmatter. |
+| `ideas/` | Potential future directions. Searchable (`crumb search --type idea`), but never the basis of a `guard` verdict — an idea is a proposal, not a finding. |
 | `generated/` | Rebuildable projections — **not source of truth**. |
 | `private/` | Local-only notes — **never committed**. |
 | `index/` | Reserved slot for a disposable search index — **never committed** (except this kind of README). Nothing builds one today. |
+
+Evidence — a commit, a test, a file, a PR — is recorded **per record**, in each
+record's `evidence:` frontmatter (`crumb remember … --evidence commit SHA`). That
+is the field `resume`, `guard` and `search` actually read. There is no separate
+evidence ledger file; earlier versions scaffolded an `evidence/refs.yml` that
+nothing ever read or wrote, and you can delete it if your store still has one.
 
 Source-of-truth and status rules live in the tool's `docs/` (architecture,
 record-schema, security).
