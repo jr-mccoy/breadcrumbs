@@ -62,16 +62,32 @@ taxonomy, and build philosophy for `breadcrumbs`. It is the conceptual map;
 | Open question | Unresolved ambiguity or blocker | `open-questions.md` | until resolved | yes |
 | Idea | Potential future direction | `ideas/YYYY-MM-DD-slug.md` | reviewed periodically | yes |
 | Session | What happened in one work session | `sessions/YYYY-MM-DD-tool-topic.md` | historical | yes (lower priority) |
-| Evidence | Pointers to commits/tests/docs/issues/PRs | `evidence/refs.yml` | as long as referenced | yes |
+| Evidence | Pointers to commits/tests/docs/issues/PRs | each record's `evidence:` frontmatter | with its record | yes |
 | Private note | Local-only personal/sensitive context | `private/` | local policy | local-only |
 | Resume packet | Bounded generated boot summary | `generated/resume-packet.md` | regenerated | no |
 | Guard pre-filter | Token/path index the `PreToolUse` hook reads before a risky call | `generated/guard-prefilter.json` | regenerated | no |
 | Search index | FTS/vector/cache | `index/` | regenerated | no |
 
-Two rows describe reserved space rather than working machinery: `evidence/refs.yml`
-is **hand-maintained** — no command reads or writes it, and per-record evidence
-lives in each record's `evidence:` frontmatter — and nothing builds an `index/`
-today (`search` scans the records directly).
+Evidence is **not a file of its own**. It is a frontmatter field on the record it
+supports, which is what makes it consumable: `resume` builds *Likely Relevant
+Files* and *Verification Commands* out of it, and `guard` cites those commands in
+its next-safest-action. Through 0.1.7 `init` also scaffolded an `evidence/refs.yml`
+for a cross-record ledger. Nothing read or wrote it in any released version, and it
+was **removed** rather than given a writer — a hand-maintained second copy of these
+pointers would have had no validator, no consumer, and no way to notice a dangling
+reference, while the per-record field already answers the question. Old stores can
+delete the file; no code looks for it.
+
+One row is still reserved space rather than working machinery: nothing builds an
+`index/` today (`search` scans the records directly). It stays because it is
+gitignored and therefore costs a user nothing — the difference from `refs.yml`,
+which shipped committed, with example entries to clean up.
+
+**Ideas are searchable but never judged.** `ideas/` is in `search`'s corpus and
+deliberately absent from `guard`'s: an idea is a proposal, exempt from the
+evidence rule, and `guard`'s scoring band is kind-agnostic, so a speculative note
+naming the right files would otherwise gate a real edit. See `cli-spec.md` →
+`search`, and Fixture 12.
 
 See [`record-schema.md`](record-schema.md) for the directory layout and the
 git-tracking policy.

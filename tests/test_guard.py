@@ -25,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
+from breadcrumbs import cli  # noqa: E402  (the real module — `crumb` is a flat re-export)
 
 FIXTURES = REPO_ROOT / "fixtures"
 
@@ -364,6 +365,75 @@ class JsonShapeTests(unittest.TestCase):
             root = copy_fixture("fixture-02-guard-true-positive", tmp)
             code, _ = run(["guard", "   ", "--project", str(root)])
             self.assertEqual(code, 2)
+
+
+class SpeculativeIdeaTests(unittest.TestCase):
+    """MF-57 / O1 — Fixture 12: a speculative idea must never raise a verdict.
+
+    An idea is a proposal, deliberately exempt from the §16.9 evidence rule, and
+    `_decide_verdict`'s score band is kind-agnostic. Making `ideas/` searchable
+    without splitting the corpus would let a note that says "nobody has measured
+    it" gate a real edit. This class pins both halves of that split.
+    """
+
+    ACTION = "rewrite the auth middleware to cache parsed sessions"
+    FILES = ["--files", "src/auth/middleware.ts"]
+
+    def test_idea_alone_leaves_guard_at_proceed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture("fixture-12-speculative-idea", tmp)
+            res = guard_json(["guard", self.ACTION, *self.FILES, "--project", str(root)])
+            self.assertEqual(res["verdict"], "PROCEED")
+            self.assertEqual(res["matches"], [])
+            self.assertEqual(res["history"], [])
+
+    def test_the_same_idea_scores_well_above_the_read_first_band(self):
+        """The counterfactual, pinned: this is not a fixture that would pass anyway.
+
+        Scored in the lookup corpus the idea clears `GUARD_READ_FIRST_SCORE` on
+        file + tag + keyword — so the PROCEED above is the corpus split doing the
+        work, not a weak fixture.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture("fixture-12-speculative-idea", tmp)
+            mem = root / crumb.MEMORY_DIRNAME
+            matches, _ = crumb.search(
+                mem,
+                root,
+                self.ACTION,
+                files=["src/auth/middleware.ts"],
+                min_keyword=crumb.GUARD_MIN_KEYWORD_OVERLAP,
+                noise_floor=crumb.GUARD_NOISE_FLOOR,
+                include_ideas=True,
+            )
+            self.assertEqual([m["kind"] for m in matches], ["idea"])
+            self.assertGreaterEqual(matches[0]["score"], crumb.GUARD_READ_FIRST_SCORE)
+
+    def test_guard_never_asks_for_the_wide_corpus(self):
+        """Belt and braces: the hook path and `resume --task` share this engine."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture("fixture-12-speculative-idea", tmp)
+            mem = root / crumb.MEMORY_DIRNAME
+            seen = {}
+            real = cli.search
+
+            def spy(*a, **kw):
+                seen["include_ideas"] = kw.get("include_ideas", False)
+                return real(*a, **kw)
+
+            cli.search = spy
+            try:
+                cli.guard(mem, root, self.ACTION, files=["src/auth/middleware.ts"])
+            finally:
+                cli.search = real
+            self.assertIs(seen["include_ideas"], False)
+
+    def test_prefilter_index_carries_no_idea_tokens(self):
+        """`crumb hook guard` reads the pre-filter before it reads records — an
+        idea must not be able to escalate a routine command either."""
+        mem = FIXTURES / "fixture-12-speculative-idea" / ".project-memory"
+        pre = crumb._build_guard_prefilter(mem)
+        self.assertEqual(pre, {"tokens": [], "paths": []})
 
 
 if __name__ == "__main__":

@@ -26,9 +26,6 @@ status/privacy vocabularies, and the body templates.
   sessions/       .gitkeep
   ideas/          .gitkeep
 
-  evidence/
-    refs.yml
-
   generated/
     README.md
     resume-packet.md          # placeholder until the first resume/reindex
@@ -60,7 +57,6 @@ status/privacy vocabularies, and the body templates.
 .project-memory/verifications/
 .project-memory/sessions/
 .project-memory/ideas/
-.project-memory/evidence/refs.yml
 .project-memory/generated/README.md
 .project-memory/index/README.md
 ```
@@ -169,6 +165,16 @@ evidence:
   - type: command
     ref: npm test
 ```
+
+**`evidence:` is the only evidence store.** There is no shared ledger file. Every
+consumer reads this field: `resume` derives *Likely Relevant Files* from `file`/
+`path` refs and *Verification Commands* from `command`/`test` refs, `guard` quotes
+those same commands in its next-safest-action, and `search` folds the file refs
+into path matching. Through 0.1.7 the scaffold also created an `evidence/refs.yml`
+for a cross-record ledger; nothing ever read or wrote it, and it was removed rather
+than given a writer — a second, hand-maintained copy of these pointers would have
+had no validator, no consumer, and no way to detect a dangling reference. Stores
+created by an older version can delete the file; nothing looks for it.
 
 ---
 

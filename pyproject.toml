@@ -30,7 +30,11 @@ dependencies = []
 # plan §3 / §13 "MCP later"). Install it explicitly with `pip install
 # "crumb-kit[mcp]"`. The SDK needs Python >=3.10, hence the marker.
 [project.optional-dependencies]
-mcp = ["mcp>=1.2; python_version >= '3.10'"]
+# Upper-bounded on purpose (MF-59). SDK 2.0 renamed the server class, and an
+# unbounded `mcp>=1.2` silently resolved to it — the server then reported itself
+# as "not installed". `mcp_server` supports both 1.x and 2.x; a future 3.x is
+# assumed to break again until someone checks.
+mcp = ["mcp>=1.2,<3; python_version >= '3.10'"]
 
 # Contributor tooling. None of it is needed to *run* crumb-kit — the package has
 # no runtime dependencies and the canonical test runner is stdlib `unittest`

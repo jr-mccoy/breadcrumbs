@@ -6,16 +6,27 @@ and mark the batch SHIPPED here with a one-line summary per item — the shipped
 sections stay, so the next reviewer can see what was decided and why rather than
 re-reporting it.
 
-**State as of 2026-08-02** (`main` @ `48b52d2`, `crumb-kit` 0.1.7, record
-`schema_version` 1): **2 open items** (O1, O2 — both feature work, neither
-blocking). Every finding from every review round (MF-01 … MF-56) has shipped and
-is recorded in `CHANGELOG.md` `[Unreleased]`. **D2 was taken up** in Batch 7 and is
-no longer deferred; D1, D3 and D4 remain deferred, each with the condition that
-would reopen it.
+**State as of 2026-08-02** (`main` @ `c4e31d9`, `crumb-kit` 0.1.7, record
+`schema_version` 1): **0 open items.** Every finding from every review round
+(MF-01 … MF-64) has shipped and is recorded in `CHANGELOG.md` `[Unreleased]`.
+**O1 and O2 were both decided and closed** in Batch 8, along with a live
+packaging break the earlier rounds could not have seen (MF-59). **D3 was taken
+up** — the SDK now exposes the setter it was waiting for. **D2** closed in Batch
+7. **D1 and D4 remain deferred**, each with a sharpened condition below.
 
-*Previous stamp said "`main` @ `10cd505`, 0 open" — but `10cd505` is the Batch 3
-merge and batches 4–6 landed after it, so the SHA never matched the claim. Fixed
-in Batch 7 (MF-52), which is also where that class of error came from.*
+*Two earlier stamps were wrong in the same way — a SHA that predated the batches
+it claimed to cover. MF-52 fixed the first; this one is `c4e31d9`, the `main`
+Batch 8 branched from.*
+
+**Two maintainer decisions are outstanding** and are deliberately not acted on
+here — see *Maintainer decisions* at the bottom. Neither is a bug; both change
+what users get, so they are the maintainer's call:
+
+1. Everything from MF-01 … MF-64 sits in `CHANGELOG.md` `[Unreleased]` against
+   **0.1.7, which is already on PyPI**. Anyone installing `crumb-kit` today gets
+   pre-fix behavior — including the MCP break in MF-59, which is now *actively*
+   biting anyone whose resolver picks SDK 2.x.
+2. `v0.1.5` / `v0.1.6` are dead tags and `0.1.2` is on PyPI untagged.
 
 ## Sources
 
@@ -28,6 +39,7 @@ in Batch 7 (MF-52), which is also where that class of error came from.*
 | System review #5 (2026-07-18) | `docs/crumb-kit-system-review-2026-07-18.md` | **Fully resolved** — all H, M and Low findings shipped as MF-01 … MF-42 (resolution banner added in Batch 7) |
 | System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | N1–N6 all shipped (in MF-06/MF-07/MF-04/MF-14/MF-17/MF-18) — nothing open (resolution banner added in Batch 7) |
 | Doc review #7 (2026-08-02) | this file, Batch 7 | Doc/code drift sweep: MF-43 … MF-55 shipped, D2 taken up as MF-56, two feature gaps filed as O1/O2 |
+| Open-items round #8 (2026-08-02) | this file, Batch 8 | O1 and O2 decided and closed, D3 taken up, plus a fresh pass that found a live packaging break (MF-59) and three drift/test-gap items (MF-61 … MF-64) |
 
 **Verification legend** (historical — every item below has since shipped, and each
 was independently reproduced against a throwaway store immediately before its fix):
@@ -372,12 +384,127 @@ things that were dropped, renamed, or never built.
 
 ---
 
+## Batch 8 — the two open items, decided; D3 taken up; a live packaging break — **SHIPPED** (`[Unreleased]`)
+
+Batch 7 left two product questions and three deferrals. This batch answers both
+questions, takes up one deferral because the SDK finally exposed what it was
+waiting for, and — from the fresh pass the round was also asked to do — finds a
+**break that had already shipped**: the optional `[mcp]` extra installs an SDK the
+server cannot import.
+
+The through-line is dependencies and lists that moved while nothing was watching:
+an unbounded version range, a CI glob that counted, a fixture roster kept in two
+places, a doc pointer left behind in the one copy that was code.
+
+- **MF-57 — O1, decided and closed** (doc review #7) — `ideas/` records are
+  **searchable, and still invisible to `guard`**. `crumb note idea` wrote a real,
+  validated record that `_candidate_items` never loaded, so `search --type idea`
+  was not offered and an idea could only be found by opening the directory. The
+  corpus now forks by **who is asking**, not by record type: lookup
+  (`crumb search`, the `memory_search` MCP tool) passes `include_ideas=True`;
+  judging (`guard`, the `PreToolUse` hook path, `resume --task`'s likely-file
+  scoping) does not. The default is the narrow corpus, so a caller that forgets
+  the flag makes the safe mistake. The reason for the split is not hypothetical:
+  scored in the lookup corpus, **Fixture 12's** idea — an untried hunch whose own
+  text says nobody measured it — reaches **8.96** against a `READ_FIRST` band of
+  5, i.e. a speculative note would have gated a real edit purely by naming the
+  right file. `tests/test_guard.py::SpeculativeIdeaTests` pins the `PROCEED`
+  *and* that counterfactual score, so the fixture cannot decay into one that
+  would have passed anyway. `sessions/` deliberately stays out of both corpora:
+  a `distillate` clone may not have them, so including them would make results
+  depend on which checkout you ran in.
+- **MF-58 — O2, decided and closed: `evidence/refs.yml` is dropped, not given a
+  writer** (doc review #7) — it was scaffolded for the entire life of the package
+  and no released version ever read or wrote it. Deciding factors, in order: the
+  question it would answer is already answered by the per-record `evidence:`
+  frontmatter, which **is** consumed (`resume`'s Likely Relevant Files and
+  Verification Commands, `guard`'s next-safest-action, `search`'s path matching);
+  a hand-maintained second copy would have had no validator, no consumer, and no
+  way to notice a dangling `ref_*` id; and there is no YAML *emitter* in this
+  codebase at all — the parser is a deliberate read-only subset — so "give it a
+  writer" was a larger change than it sounds. This is MF-26's precedent applied
+  again, with MF-26's decisive evidence present too: **not one of the twelve
+  fixtures ships an `evidence/` directory.** Note the asymmetry with `index/`,
+  which MF-49 *kept*: `index/` is gitignored and costs a user nothing, while
+  `refs.yml` shipped **committed**, with example entries and an instruction to
+  delete them. Docs updated in all four places (`architecture.md` §3,
+  `record-schema.md` §1/§2 and the frontmatter section, the bundled
+  `.project-memory/README.md`, and fixture 11's copy of it); old stores can
+  delete the file, and nothing looks for it.
+- **MF-59 (new, and already shipped broken) — the `[mcp]` extra installs an SDK
+  the server cannot import.** `mcp = ["mcp>=1.2; …"]` had no upper bound. MCP SDK
+  **2.0 renamed `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`**,
+  so a fresh `pip install "crumb-kit[mcp]"` resolves to 2.x, the single hardcoded
+  import raises `ModuleNotFoundError`, the module's own graceful-degradation path
+  swallows it, and every SDK-present surface — `crumb mcp serve`, `crumb mcp
+  doctor`, `crumb doctor` — reports the SDK as **"not installed — run: pip install
+  'crumb-kit[mcp]'"**, i.e. tells the user to re-run the command that just
+  succeeded. The CI `mcp` job installs the extra unpinned and asserts
+  `sdk_available()`, so it fails on this too. Fixed three ways: `mcp_server` tries
+  both spellings newest-first (verified against real installs of **mcp 1.29.0 and
+  2.0.0** — 10 tools, 6 prompts, 8 resources register identically on both); the
+  extra is bounded `mcp>=1.2,<3`; and the CI job gained an `mcp-version` matrix
+  axis so a future rename cannot pass unnoticed. `main()` now also prints the
+  underlying import error, so "installed but unimportable" stops looking like
+  "missing". One SDK-visible difference is documented rather than papered over:
+  `list_resource_templates()` returns `uriTemplate` on 1.x and `uri_template` on
+  2.x, which CI and `tests/test_mcp.py` both read leniently.
+- **MF-60 — D3, taken up** (agentic review #2 F11) — the deferral's condition was
+  "the SDK exposing a stable way to set it", and SDK 2.x does:
+  `MCPServer(name, version=...)`. The server now advertises the **package**
+  version. Whether to pass it is read from `inspect.signature(...)`, not guessed
+  from a version string — SDK 1.x has no such parameter and raises `TypeError` on
+  one, which is exactly the SDK-version fragility that justified deferring twice.
+  On 1.x the old behavior stands (the SDK reports its own version), because there
+  is still no way to change it there. Verified live: `0.1.7` on 2.0.0, unset on
+  1.29.0.
+- **MF-61 (new) — MF-45 missed the one copy that was code.** MF-45 replaced the
+  "see the Phase 6 doc" pointers in `security.md` and `cli-spec.md` — no phase doc
+  has ever existed — but the same dead reference sat above `SECRET_PATTERNS` in
+  `cli.py`, which is where a reader looking for the covered set actually lands. It
+  now names the real record: this tuple, `docs/security.md` §2, and
+  `tests/test_secrets.py`.
+- **MF-62 (new) — the only test of the `init` tree omitted `verifications/`.**
+  `EXPECTED_TREE` in `tests/test_init.py` listed `decisions/`, `attempts/`,
+  `sessions/` and `ideas/` but not `verifications/.gitkeep`, although the template
+  has shipped it since the record type landed and `record-schema.md` §1 documents
+  it — so deleting it from the scaffold would have gone unnoticed. Fixed, plus the
+  root cause: an inclusion list only catches deletions of the entries someone
+  remembered to add, so the tree is now also compared **against the bundled
+  template itself**, which catches both directions.
+- **MF-63 (new) — a new fixture was invisible to CI and to half the suite.** CI
+  looped over `fixtures/fixture-0[2-9]-* fixtures/fixture-1[01]-*`; a
+  `fixture-12-*` would simply not have been globbed, and `validate`/`audit` would
+  have reported success over eleven of twelve. `tests/test_mcp.py` kept a *second*
+  hand-maintained copy of the fixture roster, independent of the one in
+  `test_fixtures.py`. Both now derive from the directory (CI globs
+  `fixtures/fixture-*/`), and `test_fixtures.py` asserts the registered list
+  equals what is on disk — so a fixture that nothing runs is a red suite, not a
+  silent gap.
+- **MF-64 (new, and it defuses part of D4) — the three "competing" notions of
+  projection freshness are one primitive and two complementary detectors.** The
+  D4 entry cites `_inputs_hash` / `_packet_is_stale` / `detect_packet_drift` as
+  its strongest argument. Reading them: `_inputs_hash` is the primitive that
+  *defines* "unchanged"; `detect_packet_drift` asks "is the stamp stale?" (cheap,
+  no rebuild — the `validate`/`audit` gate); `_packet_is_stale` asks "would a
+  rebuild produce different bytes?" (expensive — `doctor`'s advisory second
+  opinion). They disagree in **both** directions, and both were reproduced
+  against a throwaway store: an edit to a section the *bounded* packet never
+  renders makes the stamp stale while the bytes are identical, and a change to
+  the **renderer** changes the bytes while no hash over inputs can see it.
+  Neither subsumes the other. A map is now written above `_inputs_hash` and
+  `tests/test_audit.py::FreshnessComplementarityTests` pins both directions, so a
+  future split — or a well-meant "deduplicate these" — cannot quietly collapse
+  them.
+
+---
+
 ## Open — not blocking, not forgotten
 
-| ID | Item | Source | Why it is open rather than fixed |
-|---|---|---|---|
-| **O1** | `ideas/` records are unsearchable. `crumb note idea` writes a real record that `_candidate_items` never loads, so `search --type idea` is not even offered and an idea can only be found by opening the directory | Doc review #7 (MF-43) | A feature, not drift — nothing ever documented ideas as searchable. The fix needs a **search-only** corpus switch: `guard` shares `_candidate_items`, so simply adding ideas would let a speculative note raise a guard verdict, which is a different decision and needs its own fixture |
-| **O2** | `evidence/refs.yml` is scaffolding. `init` ships it and it is listed as a source-of-truth record type, but no code reads or writes it; the only reference outside the template is a test asserting the path exists | Doc review #7 (MF-46) | Batch 7 made the docs honest (it is hand-maintained; per-record evidence lives in `evidence:` frontmatter). Giving it a writer — or deleting it — is a product decision: it is the one place a cross-record evidence ledger could live |
+**None.** O1 and O2 were the last two, and both were decided in Batch 8 (MF-57,
+MF-58). New findings go here; a claim of "0 open" is only worth anything if the
+next reviewer re-derives it from the code rather than from this line — the last
+two state headers were wrong in exactly that way (MF-52).
 
 ---
 
@@ -385,10 +512,10 @@ things that were dropped, renamed, or never built.
 
 | ID | Item | Source | Why deferred | What would change the call |
 |---|---|---|---|---|
-| **D1** | Optional streamable-HTTP MCP transport (Codex cloud supports no stdio MCP; Claude web needs a setup-script bootstrap) | Agentic review #2 F9 | Depends on the optional MCP SDK and a real cloud harness to validate; out of scope for a stdlib-only change set | A user actually blocked on Codex cloud, or the HTTP transport becoming testable offline |
+| **D1** | Optional streamable-HTTP MCP transport (Codex cloud supports no stdio MCP; Claude web needs a setup-script bootstrap) | Agentic review #2 F9 | **Re-examined in Batch 8, still deferred — but the reason has changed.** The transport is *not* the hard part: `run(transport="streamable-http")` exists on both SDK majors, so switching it is one argument. What is missing is everything around it. (a) A `--http` flag needs host/port/path and a documented default. (b) **It binds a network listener that serves the whole project memory with no authentication** — that is a security decision, not a flag, and this repo has a `docs/security.md` that would have to answer it. (c) The stdlib-only suite cannot cover it (needs the SDK plus uvicorn/starlette), so it would live only in the `mcp` CI job. (d) The actual requirement — that a given cloud harness accepts it — is still unverifiable here | An authentication posture decided (even "localhost-only, no auth, documented as such"), **or** a user actually blocked on Codex cloud who can validate the round trip |
 | ~~**D2**~~ | ~~Confusing dual staleness numbers~~ | Agentic review #2 F10 | ~~Cosmetic~~ | **Closed — taken up in Batch 7 as MF-56.** Deferred twice as cosmetic; it was not. The threshold was the only one of the two numbers a machine could read, so every consumer that wanted the age had to parse a warning sentence to get it |
-| **D3** | FastMCP self-reports its own version (`1.28.1`), not the package version | Agentic review #2 F11 (partial) | The FastMCP version API is SDK-version-fragile and untestable in the stdlib-only suite; risking server startup wasn't worth it | The SDK exposing a stable way to set it |
-| **D4** | Split `cli.py` (~6,760 lines, 190+ top-level defs — it grows every round) into modules | Review #5 §5, audit #6 §5 | Large, and best done *as* the vehicle for other fixes rather than as a big-bang refactor | **Deferred again at MF-15, explicitly.** MF-15 turned out to be a *deletion* — `Record.sections` became a one-line delegation to the splitter that already existed — so it carried no structural work to ride along with, and pairing a 6,000-line file move with a correctness fix would have made both unreviewable. The vehicle argument has now failed twice (MF-09, MF-15), which is itself the finding: no incidental fix is ever going to be large enough to justify the split, so it needs to be scheduled as its own change with its own review. The three separate notions of "is this projection current" (`_inputs_hash`, `_packet_is_stale`, `detect_packet_drift`) still all exist and remain the strongest argument for doing it |
+| ~~**D3**~~ | ~~FastMCP self-reports its own version (`1.28.1`), not the package version~~ | Agentic review #2 F11 (partial) | ~~SDK-version-fragile~~ | **Closed — taken up in Batch 8 as MF-60.** The stated condition was met: SDK 2.x takes `version=` on the constructor. The fragility that justified deferring is real and is handled by reading `inspect.signature` rather than a version string — 1.x raises `TypeError` on the same kwarg, and keeps the old behavior |
+| **D4** | Split `cli.py` (~6,800 lines, 190+ top-level defs — it grows every round) into modules | Review #5 §5, audit #6 §5 | Large; needs its own change and its own review | **Deferred a third time, and the case for it is now weaker than it looked.** The "ride along with another fix" plan failed at MF-09 and MF-15, which was the finding: no incidental fix will ever be big enough to justify it, so it must be scheduled standalone. Batch 8 did not become that vehicle either — pairing a 6,800-line move with a live packaging break (MF-59) and two product decisions would have made all four unreviewable, which is the exact mistake this row already records twice. What *did* change: **MF-64 examined the freshness trio this row cites as its strongest argument and found it is not one.** `_inputs_hash` is the primitive; the other two are complementary detectors that each catch a class the other cannot, reproduced in both directions and now pinned by a test. So the remaining argument is plain size, not tangled semantics. Batch 8 paid down the precondition instead: the map lives above `_inputs_hash`, and a splitter must keep all three together or carry that comment with `_inputs_hash`. **Anyone taking this up:** do it as a pure move, no behavior change, in a commit that does nothing else; `tests/test_release_process.py` asserts workflow guarantees by grepping YAML as text, and several tests import through the `crumb.py` shim, which re-exports `breadcrumbs.cli`'s module namespace flatly (tests that monkeypatch must patch the real module — see `test_guard.py` / `test_audit.py`) |
 
 ---
 
@@ -419,8 +546,49 @@ Original review ID → master ID. Use this when reading an old review doc.
 | #5 Lows (CI) | MF-38 … MF-42 (shipped) |
 | #6 N1, N2 | MF-06, MF-07 (shipped) |
 | #6 N5, N6 | MF-17, MF-18 (shipped) |
-| Agentic #2 F9, F11 | D1, D3 |
+| Agentic #2 F9 | D1 (still deferred — condition sharpened in Batch 8) |
 | Agentic #2 F10 | D2 → **MF-56** (shipped, Batch 7) |
-| #5 §5 + #6 §5 (structural) | D4 |
+| Agentic #2 F11 | D3 → **MF-60** (shipped, Batch 8) |
+| #5 §5 + #6 §5 (structural) | D4 (still deferred; its freshness-trio argument answered by MF-64) |
 | Doc review #7 (docs vs code) | MF-43 … MF-55 (shipped) |
-| Doc review #7 (feature gaps) | O1, O2 (open) |
+| Doc review #7 (feature gap: unsearchable ideas) | O1 → **MF-57** (shipped, Batch 8) |
+| Doc review #7 (feature gap: `evidence/refs.yml`) | O2 → **MF-58** (shipped, Batch 8 — dropped, not written) |
+| Round #8 fresh pass (packaging) | **MF-59** (shipped — a live break, not from any review) |
+| Round #8 fresh pass (drift + test gaps) | MF-61 … MF-64 (shipped) |
+
+---
+
+## Maintainer decisions — raised, deliberately not acted on
+
+Neither is a bug. Both change what users get, so they are not an agent's call.
+
+### 1. Cut 0.1.8?
+
+Every fix from **MF-01 … MF-64** sits in `CHANGELOG.md` `[Unreleased]`, against a
+`__version__` of **0.1.7 — which is already on PyPI**. So `pip install crumb-kit`
+today gives pre-fix behavior: the fail-open guard hook (MF-01), the porcelain
+path-truncation bug (MF-03), the release pre-flight that made a partial publish
+permanent (MF-11), and now **MF-59**, which is the one actively getting worse —
+every day makes it likelier that a user's resolver picks MCP SDK 2.x, and the
+released `crumb-kit` then reports its own MCP server as "not installed".
+
+Cutting the release is two edits and a workflow run: bump `__version__` in
+`breadcrumbs/__init__.py` (the single source of truth — do not add a literal
+anywhere else), date the `[Unreleased]` section, merge to `main`, then *Actions →
+release → Run workflow* with `mode=dry-run` and, once clean, `mode=publish`. The
+workflow cuts the tag and the GitHub Release itself, on the commit it builds.
+
+**Not done here, because choosing a version number and publishing to an immutable
+index is the maintainer's decision.** (A PyPI version is permanent; there is no
+re-publish.)
+
+### 2. Delete the dead tags?
+
+`v0.1.5` (tag only, no Release, never published) and `v0.1.6` (tag + Release,
+never published) both break the tags-equal-releases invariant, and `0.1.2` is on
+PyPI with no tag. All three are documented in `RELEASING.md` → *Tag / PyPI
+history*, re-verified against the GitHub tag/release lists and the PyPI JSON API
+on 2026-07-25.
+
+The release workflow refuses to re-use a tag either way, so nothing is blocked by
+leaving them. Deleting a published git ref is the maintainer's call.

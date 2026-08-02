@@ -27,19 +27,10 @@ from breadcrumbs import cli, mcp_core, mcp_server  # noqa: E402
 
 FIXTURES = REPO_ROOT / "fixtures"
 
-ALL_FIXTURES = [
-    "fixture-01-fresh-resume",
-    "fixture-02-guard-true-positive",
-    "fixture-03-guard-false-positive",
-    "fixture-04-stale-handoff",
-    "fixture-05-superseded-decision",
-    "fixture-06-secret-leak",
-    "fixture-07-poisoned-text",
-    "fixture-08-packet-stale",
-    "fixture-09-cloud-fallback",
-    "fixture-10-many-sessions",
-    "fixture-11-multi-machine",
-]
+# Derived, not hand-listed (MF-63). This file kept a second, independent copy of
+# the fixture roster that silently fell behind the one in `test_fixtures.py` —
+# the same drift that let CI's numeric globs skip a new fixture.
+ALL_FIXTURES = sorted(p.name for p in FIXTURES.iterdir() if p.name.startswith("fixture-"))
 
 
 def root_of(name: str) -> Path:
@@ -135,10 +126,25 @@ class ToolParityTests(unittest.TestCase):
     def test_search_matches_cli(self):
         name = "fixture-02-guard-true-positive"
         root = root_of(name)
-        matches, _ = cli.search(mem_of(name), root, "sqlite")
+        # `memory_search` is the lookup surface, so it uses the same wider corpus
+        # `crumb search` does — ideas in, sessions out (MF-57 / O1).
+        matches, _ = cli.search(mem_of(name), root, "sqlite", include_ideas=True)
         tool = mcp_core.tool_search("sqlite", root=root)
         self.assertEqual(tool["count"], len(matches))
         self.assertEqual([m["id"] for m in tool["matches"]], [m["id"] for m in matches])
+
+    def test_search_tool_sees_ideas_and_guard_tool_does_not(self):
+        """MF-57 / O1 — the corpus split holds across the MCP surface too."""
+        root = root_of("fixture-12-speculative-idea")
+        found = mcp_core.tool_search("auth middleware cache", root=root)
+        self.assertEqual({m["kind"] for m in found["matches"]}, {"idea"})
+        verdict = mcp_core.tool_guard_before_action(
+            "rewrite the auth middleware to cache parsed sessions",
+            files=["src/auth/middleware.ts"],
+            root=root,
+        )
+        self.assertEqual(verdict["verdict"], "PROCEED")
+        self.assertEqual(verdict["matches"], [])
 
     def test_validate_reports_clean_fixtures(self):
         # fixture-08 ships a deliberately stale projection; the freshness check
@@ -539,7 +545,11 @@ class ResourceRegistryTests(unittest.TestCase):
 
         server = mcp_server.build_server()
         static = {str(r.uri) for r in asyncio.run(server.list_resources())}
-        templates = {t.uriTemplate for t in asyncio.run(server.list_resource_templates())}
+        # `uriTemplate` on SDK 1.x, `uri_template` on 2.x (MF-59).
+        templates = {
+            getattr(t, "uriTemplate", None) or t.uri_template
+            for t in asyncio.run(server.list_resource_templates())
+        }
         self.assertEqual(static, set(mcp_core.STATIC_RESOURCES))
         self.assertEqual(templates, set(mcp_core.TEMPLATE_RESOURCES))
 
@@ -587,6 +597,63 @@ class InputSchemaTests(unittest.TestCase):
             payload_schema = record_schema["$defs"][ref]
         self.assertIn("title", payload_schema.get("properties", {}))
         self.assertIn("title", payload_schema.get("required", []))
+
+
+# --------------------------------------------------------------------------- #
+# MF-59 / MF-60 — the SDK moved its server class in 2.0
+# --------------------------------------------------------------------------- #
+class SdkMajorCompatibilityTests(unittest.TestCase):
+    """The `[mcp]` extra had no upper bound, so `pip install "crumb-kit[mcp]"`
+    resolved to SDK 2.x, where `mcp.server.fastmcp` no longer exists. The single
+    hardcoded import raised ModuleNotFoundError, the module's own degradation path
+    swallowed it, and every SDK-present surface — `crumb mcp serve`, `crumb mcp
+    doctor`, `crumb doctor` — reported the SDK as "not installed", pointing the
+    user at the install command that had just succeeded.
+
+    These run without the SDK: they pin the shim's shape and the extra's bound,
+    which is what regressed. The CI `mcp` job runs the real thing on both majors.
+    """
+
+    def test_both_sdk_spellings_are_tried_newest_first(self):
+        self.assertEqual(
+            mcp_server._SDK_SERVER_CLASSES,
+            (("mcp.server.mcpserver", "MCPServer"), ("mcp.server.fastmcp", "FastMCP")),
+        )
+
+    def test_loader_never_raises_on_a_missing_sdk(self):
+        """Importing this module must work on an SDK-less install — the whole
+        point of the optional extra. A loader that raised would break `crumb`."""
+        cls, err = mcp_server._load_server_class()
+        if cls is None:
+            self.assertIsNotNone(err)
+        else:
+            self.assertIsNone(err)
+
+    def test_install_hint_names_the_supported_sdk_range(self):
+        self.assertIn("<3", mcp_server._INSTALL_HINT)
+
+    def test_extra_is_upper_bounded(self):
+        """An unbounded `mcp>=1.2` is what let 2.0 in unannounced."""
+        text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn("mcp = [\"mcp>=1.2,<3; python_version >= '3.10'\"]", text)
+
+    def test_version_is_passed_only_when_the_constructor_takes_it(self):
+        """D3 / MF-60. SDK 1.x has no `version` parameter and raises TypeError on
+        one, so the decision is read from the signature, never guessed."""
+        if not mcp_server.sdk_available():
+            self.skipTest("MCP SDK not installed; the CI `mcp` job covers both majors")
+        import inspect
+
+        takes_it = "version" in inspect.signature(mcp_server.FastMCP.__init__).parameters
+        self.assertIs(mcp_server._SERVER_ACCEPTS_VERSION, takes_it)
+        server = mcp_server.build_server()
+        if takes_it:
+            self.assertEqual(server.version, crumb.get_version())
+
+    def test_ci_exercises_both_sdk_majors(self):
+        """Only CI can catch this class of break; pin that it still tries both."""
+        ci = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn('mcp-version: ["<2", ">=2,<3"]', ci)
 
 
 if __name__ == "__main__":

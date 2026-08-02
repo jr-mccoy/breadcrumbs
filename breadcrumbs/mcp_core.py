@@ -207,11 +207,18 @@ def tool_search(
     files: list[str] | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_search` — wraps `cli.search` (deterministic; same input→same output)."""
+    """`memory_search` — wraps `cli.search` (deterministic; same input→same output).
+
+    Lookup, so it uses the wider corpus that includes `ideas/`, matching
+    `crumb search` exactly. `memory_guard_before_action` keeps the narrower one —
+    the same split the CLI makes (O1).
+    """
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    matches, _by_id = cli.search(mem, project_root, query, files=files, filters=filters or {})
+    matches, _by_id = cli.search(
+        mem, project_root, query, files=files, filters=filters or {}, include_ideas=True
+    )
     # `ok: True` on success so every tool shares one envelope (review #3 R25).
     return {
         "ok": True,

@@ -5,7 +5,7 @@ name: ci
 # Phase 5 wires Fixtures 2–5 (guard true positive / false-positive control /
 # stale handoff / superseded).
 # Phase 6 (MVP-trust / 19b): adds `audit` + Fixtures 6–10 and runs `validate`
-# AND `audit` across all eleven fixtures (§19b.11). Only the secret fixture (6)
+# AND `audit` across every fixture (§19b.11). Only the secret fixture (6)
 # is expected to make `audit` block; every fixture must `validate` clean.
 
 on:
@@ -70,15 +70,20 @@ jobs:
           print("Fixture 1: all six questions answered; packet within budget.")
           PY
 
-      - name: validate Fixtures 2-11 (every fixture is structurally well-formed)
+      - name: validate every fixture but 1 (each is structurally well-formed)
         run: |
           # fixture-08 ships a DELIBERATELY stale generated projection; since the
           # 0.1.4 projection-freshness check (review F3) it must FAIL validate on
           # exactly that finding (the test suite pins this too — this loop broke
           # on main the day F3 landed and nobody taught it about fixture-08).
-          for f in fixtures/fixture-0[2-9]-* fixtures/fixture-1[01]-*; do
+          # Glob every fixture dir, never a numeric range: `fixture-1[01]-*` meant
+          # a newly added fixture was silently skipped by CI (MF-63).
+          for f in fixtures/fixture-*/; do
+            f="${f%/}"
             name="$(basename "$f")"
-            if [ "$name" = "fixture-08-packet-stale" ]; then
+            if [ "$name" = "fixture-01-fresh-resume" ]; then
+              continue    # validated by its own step above
+            elif [ "$name" = "fixture-08-packet-stale" ]; then
               if python crumb.py validate --project "$f" > /tmp/v8.out; then
                 echo "FAIL: validate should flag $name's stale projection"; exit 1
               fi
@@ -107,11 +112,33 @@ jobs:
           print("Fixtures 2/3: guard true-positive fires, false-positive control stays quiet.")
           PY
 
-      - name: audit Fixtures 1-11 (only the secret fixture blocks)
+      - name: fixture 12 — a speculative idea is searchable but never a verdict
+        run: |
+          # MF-57 / O1: `ideas/` is in `search`'s corpus and out of `guard`'s. The
+          # same record clears the READ_FIRST band when scored, so a PROCEED here
+          # is the corpus split working, not a weak fixture.
+          python crumb.py search "auth middleware cache" \
+            --project fixtures/fixture-12-speculative-idea --json > /tmp/s12.json
+          python crumb.py guard "rewrite the auth middleware to cache parsed sessions" \
+            --files src/auth/middleware.ts \
+            --project fixtures/fixture-12-speculative-idea --json > /tmp/g12.json
+          python - <<'PY'
+          import json
+          s12 = json.load(open("/tmp/s12.json"))
+          g12 = json.load(open("/tmp/g12.json"))
+          kinds = {m["kind"] for m in s12["matches"]}
+          assert kinds == {"idea"}, s12["matches"]
+          assert g12["verdict"] == "PROCEED", g12["verdict"]
+          assert g12["matches"] == [], g12["matches"]
+          print("Fixture 12: search sees the idea; guard's verdict never does.")
+          PY
+
+      - name: audit every fixture (only the secret fixture blocks)
         run: |
           # Every fixture except 6 must audit cleanly (exit 0). Fixture 6 ships a
           # committed secret, so `audit`/`scan-secrets` MUST block (non-zero).
-          for f in fixtures/fixture-0[1-9]-* fixtures/fixture-1[01]-*; do
+          for f in fixtures/fixture-*/; do
+            f="${f%/}"
             name="$(basename "$f")"
             if [ "$name" = "fixture-06-secret-leak" ]; then
               if python crumb.py audit --project "$f" > /dev/null; then
@@ -152,6 +179,10 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+        # Both SDK majors, because 2.0 renamed the server class and the unbounded
+        # extra resolved straight to it — the server reported itself "not
+        # installed" and only this job could have caught it (MF-59).
+        mcp-version: ["<2", ">=2,<3"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -160,7 +191,12 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install with the [mcp] extra
-        run: python -m pip install ".[mcp]"
+        run: |
+          python -m pip install ".[mcp]"
+          # Pin this leg's SDK major *after* the extra, so the extra's own range
+          # is still exercised by the install above.
+          python -m pip install "mcp${{ matrix.mcp-version }}"
+          python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
 
       - name: Unit tests (SDK present — the registration test must not self-skip)
         run: python -m unittest discover -s tests -p 'test_*.py'
@@ -180,12 +216,22 @@ jobs:
           # advertised count CI never checked (review #5 Low). Compare against the
           # declared registries, so a URI cannot be renamed without noticing.
           static = {str(r.uri) for r in asyncio.run(server.list_resources())}
-          templates = {t.uriTemplate for t in asyncio.run(server.list_resource_templates())}
+          # `uriTemplate` on SDK 1.x, `uri_template` on 2.x.
+          templates = {
+              getattr(t, "uriTemplate", None) or t.uri_template
+              for t in asyncio.run(server.list_resource_templates())
+          }
           assert static == set(mcp_core.STATIC_RESOURCES), static
           assert templates == set(mcp_core.TEMPLATE_RESOURCES), templates
           assert len(static) + len(templates) == 8, (static, templates)
+          # D3 / MF-60: on an SDK that accepts it, the server advertises the
+          # *package* version rather than the SDK's own.
+          if mcp_server._SERVER_ACCEPTS_VERSION:
+              from breadcrumbs.cli import get_version
+              assert server.version == get_version(), (server.version, get_version())
           print(f"{len(tools)} tools, {len(prompts)} prompts, "
-                f"{len(static) + len(templates)} resources registered.")
+                f"{len(static) + len(templates)} resources registered; "
+                f"server version {getattr(server, 'version', '(SDK 1.x: unset)')!r}.")
           PY
 
   # Phase 7 (packaging / §18 Phase 4): the package must install from source AND

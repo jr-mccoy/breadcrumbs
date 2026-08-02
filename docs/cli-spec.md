@@ -46,8 +46,8 @@ Default output is human-readable Markdown / plain text.
 | `schema [<type>]` | (none) | record contract | Print body sections / vocab / rules from source constants. `--template <type>` emits a `remember` skeleton. | **built** |
 | `note question\|trap\|idea` | user input, git state | open-questions / known-traps / idea record | Write-surface for the three kinds with no `remember` type; refreshes the resume packet. | **built** |
 | `resume` | current, handoff, records, git state | generated resume packet | Print a bounded resume packet (≤5k tokens) with computed staleness. `--fast` = git snapshot + focus + next action + staleness (print-only). `--task TEXT` scopes `likely_files` to matching records (print-only). | **4 (built)** |
-| `search [<query>]` | decisions, attempts, verifications, traps, open questions | search output (read-only — `search` writes nothing) | Deterministic keyword/tag/file lookup over the records; the permissive layer `guard` builds on. | **5 (built)** |
-| `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). | **5 (built)** |
+| `search [<query>]` | decisions, attempts, verifications, ideas, traps, open questions | search output (read-only — `search` writes nothing) | Deterministic keyword/tag/file lookup over the records; the permissive layer `guard` builds on. | **5 (built)** |
+| `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff (**not** ideas) | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). | **5 (built)** |
 | `audit` | all memory + adapters | health report | Find stale / unsafe / bloated memory (incl. secret + instruction-like heuristics). Heuristic — does NOT gate `validate`. | **6 (built)** |
 | `scan-secrets` | committed memory | secret report | Scan committed memory for secret-like strings; non-zero on a hit. Run before committing memory. | **6 (built)** |
 | `mark-status <id> <status>` | one record | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. | **built** |
@@ -183,7 +183,7 @@ crumb search "session" --type decision --json
 ```
 
 ```text
---type {decision,attempt,verification,trap,question}
+--type {decision,attempt,verification,idea,trap,question}
 --status <value>     record status; for a verification, its outcome (open, fixed, …)
 --tag <value>        tag / component
 --file <path>        a file path referenced by the record
@@ -195,9 +195,16 @@ Behavior:
 - **Deterministic and dependency-free.** Exact/keyword text, tag/component and file
   path; no embeddings, no index (see `index/` in the store — nothing builds one).
   Same input → same output.
-- The **corpus** is decisions, attempts, verifications, known traps and open
-  questions. `ideas/` and `sessions/` are **not searchable** — `crumb note idea`
-  writes records `search` cannot find, and `--type` does not offer them.
+- The **corpus** is decisions, attempts, verifications, **ideas**, known traps and
+  open questions. `sessions/` is deliberately out: sessions are narrative, and a
+  `session_tracking: distillate` clone may not have them at all, so including them
+  would make results depend on which checkout you ran in.
+- **`ideas/` is searchable here and invisible to `guard`.** That asymmetry is the
+  point, not an oversight. An idea is a proposal — exempt from the §16.9 evidence
+  rule — and `guard`'s score band does not care what kind of record it is scoring,
+  so a speculative note naming the right files would otherwise gate a real edit on
+  the strength of nobody having done the work. `crumb search --type idea` finds it;
+  a `guard` verdict never sees it. Fixture 12 is the control.
 - A query with no filters ranks by overlap; filters with no query list every
   matching record instead of returning nothing.
 - `guard` is this same engine with a stricter keyword floor and a verdict on top,

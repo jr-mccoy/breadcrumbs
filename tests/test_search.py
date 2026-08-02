@@ -180,5 +180,60 @@ class QuestionIdCollisionTests(unittest.TestCase):
         self.assertEqual(out, ["trap_x", "trap_x-2", "trap_x-3", "trap_y"])
 
 
+IDEA_ID = "idea_20260620_cache-parsed-sessions-in-the-auth-middleware"
+
+
+class SearchableIdeasTests(unittest.TestCase):
+    """MF-57 / O1 — `ideas/` joins the lookup corpus, and only the lookup corpus.
+
+    `crumb note idea` has always written a real, validated record that nothing
+    loaded, so an idea could be found only by opening the directory. Fixture 12 is
+    the control: a store whose *only* record is an untried hunch naming the file
+    an action would touch.
+    """
+
+    def test_idea_is_found_by_keyword(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture("fixture-12-speculative-idea", tmp)
+            code, out = run(["search", "auth middleware cache", "--project", str(root), "--json"])
+            self.assertEqual(code, 0)
+            matches = json.loads(out)["matches"]
+            self.assertEqual([m["id"] for m in matches], [IDEA_ID])
+            self.assertEqual(matches[0]["kind"], "idea")
+
+    def test_type_idea_filter_is_offered_and_works(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture("fixture-12-speculative-idea", tmp)
+            code, out = run(["search", "--type", "idea", "--project", str(root), "--json"])
+            self.assertEqual(code, 0)
+            self.assertEqual([m["id"] for m in json.loads(out)["matches"]], [IDEA_ID])
+
+    def test_idea_is_found_by_the_file_it_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture("fixture-12-speculative-idea", tmp)
+            code, out = run(
+                ["search", "--file", "src/auth/middleware.ts", "--project", str(root), "--json"]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn(IDEA_ID, [m["id"] for m in json.loads(out)["matches"]])
+
+    def test_corpus_switch_defaults_to_the_narrow_one(self):
+        """A caller that forgets the flag gets guard's corpus — the safe mistake."""
+        mem = FIXTURES / "fixture-12-speculative-idea" / ".project-memory"
+        narrow = {i["id"] for i in crumb._candidate_items(mem)}
+        wide = {i["id"] for i in crumb._candidate_items(mem, include_ideas=True)}
+        self.assertNotIn(IDEA_ID, narrow)
+        self.assertEqual(wide - narrow, {IDEA_ID})
+
+    def test_sessions_stay_out_of_both_corpora(self):
+        """Only `ideas/` moved. Sessions are absent from a distillate clone, so
+        including them would make results depend on which checkout you ran in."""
+        mem = FIXTURES / "fixture-10-many-sessions" / ".project-memory"
+        self.assertTrue((mem / "sessions").is_dir())
+        for kwargs in ({}, {"include_ideas": True}):
+            kinds = {i["kind"] for i in crumb._candidate_items(mem, **kwargs)}
+            self.assertNotIn("session", kinds)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
