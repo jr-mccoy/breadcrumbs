@@ -85,6 +85,15 @@ crumb --version
 - **The upload failed** (nothing reached PyPI): nothing to clean up — no tag or
   Release was created, because PyPI is uploaded *before* the tag is cut. Fix the
   cause and re-run; `skip-existing` tolerates any file that did make it up.
+- **`ConnectTimeout` / `MaxRetryError` on `upload.pypi.org`**: a network failure,
+  not a problem with your release. The publish step attempts the upload **twice**
+  (30s apart) for exactly this reason; if both attempts hit it, PyPI or the
+  runner's network was down for the duration. Nothing was published and no tag
+  was cut — **just re-run the workflow**, unchanged, and confirm with the
+  pre-flight line in the build log (`on_pypi=no  tag_exists=false`) that the
+  version is still free. The 0.1.8 publish died this way, on the action's
+  Trusted-Publishing token exchange (`GET /_/oidc/audience`, 5-second connect
+  timeout, no retry inside the action) — before a single byte was uploaded.
 - **The upload succeeded but the tag/Release step failed** — the version is on
   PyPI with no tag. **Re-running is the fix.** The pre-flight recognises
   published-but-untagged as a recovery: it lets the run continue, the upload

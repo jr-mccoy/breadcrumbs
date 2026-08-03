@@ -238,12 +238,38 @@ jobs:
       # step below failed, a re-run is also the fix: the pre-flight recognises
       # published-but-untagged as a recovery, this upload no-ops on skip-existing,
       # and the tag step completes the release (MF-11).
+      #
+      # Two attempts, because the 0.1.8 publish died here on a network blip and
+      # nothing else was wrong (MF-70). The action's very first call is the
+      # Trusted-Publishing token exchange, `GET upload.pypi.org/_/oidc/audience`,
+      # made with a hard 5-second connect timeout and no retry inside the action;
+      # that connect timed out, so the run failed before a single byte was
+      # uploaded. Retrying an upload is safe for exactly the reason a re-run is:
+      # `skip-existing` makes a repeat of an already-accepted file a no-op. The
+      # first attempt is `continue-on-error` so the job survives it; the retry is
+      # not, so two failures still fail the job with no tag cut.
       - name: Publish to PyPI (Trusted Publishing)
+        id: publish
+        continue-on-error: true
         uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # release/v1 @ 2026-07-25
         with:
           packages-dir: dist/
           # Tolerate a re-run after a partial upload instead of failing with
           # "400 File already exists".
+          skip-existing: true
+
+      - name: Pause before retrying the upload
+        if: steps.publish.outcome == 'failure'
+        run: |
+          echo "::warning::PyPI upload attempt 1 failed; retrying once in 30s. The upload is idempotent (skip-existing), so a retry cannot double-publish."
+          sleep 30
+
+      - name: Publish to PyPI (retry after a transient failure)
+        id: publish-retry
+        if: steps.publish.outcome == 'failure'
+        uses: pypa/gh-action-pypi-publish@ba38be9e461d3875417946c167d0b5f3d385a247  # release/v1 @ 2026-07-25
+        with:
+          packages-dir: dist/
           skip-existing: true
 
       # Only after PyPI accepted it do we record the release. The tag is created
