@@ -14,7 +14,9 @@ Run with:  python -m unittest discover -s tests
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -111,36 +113,71 @@ class PreflightRecoveryTests(unittest.TestCase):
         self.assertTrue(d.ok, d.reason())
         self.assertTrue(any(level == preflight.WARNING for level, _ in d.messages), d.messages)
 
+    def _run_cli(self, *, tag_exists: str) -> tuple[int, str]:
+        """Run the pre-flight CLI, capturing what it prints.
+
+        The capture is not incidental (MF-70). `main()` prints GitHub Actions
+        annotations — `::error::…` — and this suite runs *inside* the release
+        workflow's build job, where the runner reads stdout for exactly those
+        commands. Left uncaptured, this test stamped a red
+        "crumb-kit 0.1.8 is already released" annotation onto every release run,
+        including the one where the pre-flight had in fact passed. That is a
+        false failure report on the one job whose annotations an operator reads
+        first when a release breaks.
+        """
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = preflight.main(
+                [
+                    "--version",
+                    "0.1.8",
+                    "--on-pypi",
+                    "yes",
+                    "--latest-on-pypi",
+                    "0.1.8",
+                    "--tag-exists",
+                    tag_exists,
+                    "--mode",
+                    "publish",
+                ]
+            )
+        return code, buf.getvalue()
+
     def test_MF11_cli_exit_codes_match_the_decision(self):
-        ok = preflight.main(
-            [
-                "--version",
-                "0.1.8",
-                "--on-pypi",
-                "yes",
-                "--latest-on-pypi",
-                "0.1.8",
-                "--tag-exists",
-                "false",
-                "--mode",
-                "publish",
-            ]
-        )
-        blocked = preflight.main(
-            [
-                "--version",
-                "0.1.8",
-                "--on-pypi",
-                "yes",
-                "--latest-on-pypi",
-                "0.1.8",
-                "--tag-exists",
-                "true",
-                "--mode",
-                "publish",
-            ]
-        )
+        ok, _ = self._run_cli(tag_exists="false")
+        blocked, _ = self._run_cli(tag_exists="true")
         self.assertEqual((ok, blocked), (0, 1))
+
+    def test_MF11_cli_emits_the_decision_as_an_annotation(self):
+        _, recovered = self._run_cli(tag_exists="false")
+        self.assertIn("::warning::recovering an untagged publish", recovered)
+        _, stopped = self._run_cli(tag_exists="true")
+        self.assertIn("::error::crumb-kit 0.1.8 is already released", stopped)
+
+    def test_MF70_the_cli_helper_leaks_nothing_to_the_real_stdout(self):
+        """An annotation printed by a test is indistinguishable from a real one."""
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self._run_cli(tag_exists="true")
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_MF70_no_test_calls_the_pre_flight_cli_uncaptured(self):
+        """The next test to add must go through `_run_cli`, not `preflight.main`.
+
+        Read from source, because the leak is invisible at runtime: a stray
+        direct call passes every assertion and only shows up as a red annotation
+        on a release run, days later.
+        """
+        needle = "preflight" + ".main("  # split so this line is not its own match
+        lines = Path(__file__).read_text(encoding="utf-8").splitlines()
+        hits = [i for i, ln in enumerate(lines) if needle in ln]
+        start = next(i for i, ln in enumerate(lines) if ln.lstrip().startswith("def _run_cli"))
+        end = next(i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("def "))
+        self.assertEqual(len(hits), 1, f"pre-flight CLI called {len(hits)} times, expected 1")
+        self.assertTrue(
+            start < hits[0] < end,
+            f"line {hits[0] + 1} calls the pre-flight CLI outside the capturing helper",
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -213,6 +250,85 @@ class PreflightWiringTests(unittest.TestCase):
     def test_preflight_is_bundled_nowhere_near_the_package(self):
         """Release tooling must not leak into the wheel."""
         self.assertFalse((REPO_ROOT / "breadcrumbs" / "release_preflight.py").exists())
+
+
+# --------------------------------------------------------------------------- #
+# MF-70 — a transient network failure must not cost a release run
+# --------------------------------------------------------------------------- #
+class PublishRetryTests(unittest.TestCase):
+    """The 0.1.8 publish failed on a 5-second connect timeout to upload.pypi.org.
+
+    The action's Trusted-Publishing token exchange
+    (`GET upload.pypi.org/_/oidc/audience`) is its first network call, has a hard
+    5-second connect timeout and no internal retry, so a blip on that one request
+    sank the run before anything was uploaded. Nothing in the release was wrong;
+    the build, the pre-flight and every gate had passed.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.yml = RELEASE_YML.read_text(encoding="utf-8")
+
+    def _publish_job(self) -> str:
+        return self.yml.split("\n  publish-pypi:", 1)[1]
+
+    def _upload_steps(self) -> list[str]:
+        """The publish job's steps that invoke the PyPI action, as text blocks."""
+        steps, current = [], None
+        for ln in self._publish_job().splitlines():
+            if ln.startswith("      - "):  # a step begins
+                if current is not None:
+                    steps.append("\n".join(current))
+                current = [ln]
+            elif current is not None:
+                current.append(ln)
+        if current is not None:
+            steps.append("\n".join(current))
+        return [s for s in steps if "uses: pypa/gh-action-pypi-publish@" in s]
+
+    def test_MF70_the_upload_is_attempted_twice(self):
+        self.assertEqual(
+            len(self._upload_steps()),
+            2,
+            "the PyPI upload has no retry — one network blip loses the run",
+        )
+
+    def test_MF70_the_first_attempt_does_not_fail_the_job(self):
+        """Without this the retry never runs: a failed step ends the job."""
+        self.assertIn("continue-on-error: true", self._upload_steps()[0])
+
+    def test_MF70_the_retry_is_conditional_on_the_first_attempt_failing(self):
+        """A second unconditional upload would run on every green publish."""
+        self.assertIn("if: steps.publish.outcome == 'failure'", self._upload_steps()[1])
+
+    def test_MF70_the_retry_itself_can_still_fail_the_job(self):
+        """Two failures must leave no tag, so only the first attempt may be soft."""
+        self.assertNotIn("continue-on-error:", self._upload_steps()[1])
+        soft = [
+            ln.strip()
+            for ln in self._publish_job().splitlines()
+            if ln.strip().startswith("continue-on-error:")  # not the prose in the comments
+        ]
+        self.assertEqual(
+            len(soft),
+            1,
+            f"more than one step in the publish job swallows its own failure: {soft}",
+        )
+
+    def test_MF70_every_attempt_uses_skip_existing(self):
+        """What makes a retry safe: a re-upload of an accepted file is a no-op."""
+        for i, step in enumerate(self._upload_steps()):
+            with self.subTest(attempt=i + 1):
+                self.assertIn("skip-existing: true", step)
+
+    def test_MF70_the_tag_step_still_runs_only_after_a_successful_upload(self):
+        """`continue-on-error` on attempt 1 must not let the tag outlive a failure."""
+        job = self._publish_job()
+        self.assertLess(
+            job.rindex("uses: pypa/gh-action-pypi-publish@"),
+            job.index("gh release create"),
+            "the tag is cut before the last upload attempt",
+        )
 
 
 # --------------------------------------------------------------------------- #

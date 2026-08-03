@@ -130,6 +130,27 @@ stamp once; run `crumb reindex` and it clears.
   unaffected** — nothing looks for the file, and you can delete it.
 
 ### Fixed
+- **A single network blip cost a whole release run, and the build job blamed the
+  wrong thing (MF-70).** The first `publish` run of this version failed at the
+  upload step with `ConnectTimeout` on `upload.pypi.org`. Nothing about the
+  release was wrong: the suite, the CI gate, the pre-flight (`on_pypi=no
+  tag_exists=false`), `twine check` and the installed-binary smoke test had all
+  passed, and the failure landed on the action's *first* network call — the
+  Trusted-Publishing token exchange, `GET /_/oidc/audience`, made with a hard
+  5-second connect timeout and no retry inside the action — so not a byte was
+  uploaded and no tag was cut. The publish step now **attempts the upload twice**,
+  30 seconds apart; `skip-existing` is what makes that safe, since a re-upload of
+  an accepted file is already a no-op (it is the same property the
+  published-but-untagged recovery relies on). Only the first attempt is
+  `continue-on-error`, so two failures still fail the job with no tag, and
+  `RELEASING.md` now names this failure by its traceback. Separately, the build
+  job of that run displayed a red **`crumb-kit 0.1.8 is already released`**
+  annotation that was flatly false: the release suite runs *inside* the release
+  workflow, and a pre-flight unit test called the CLI entry point without
+  capturing stdout, so the annotations it printed were read by the runner as the
+  step's own. Anyone debugging the failure read that first. The test now captures
+  its output, and a source-level check keeps the next one from calling the CLI
+  uncaptured.
 - **CI's `lint` job was red on an untouched `main`, because ruff was unpinned
   (MF-69).** The job ran `pip install ruff`, so it silently took whatever was
   newest. ruff **0.16 began formatting fenced Python inside Markdown**, which took
