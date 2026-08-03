@@ -118,10 +118,11 @@ tags and will happily install a version PyPI never shipped:
 
 All three predate `release.yml` owning the tag: 0.1.7 was the first release the
 workflow tagged itself. Verified against the GitHub tag and release lists and the
-PyPI JSON API on 2026-07-25.
+PyPI JSON API on 2026-07-25, and re-verified unchanged on 2026-08-02.
 
-Everything else (`v0.1.0`, `v0.1.1`, `v0.1.3`, `v0.1.4`, `v0.1.7`) is tagged,
-released, and on PyPI.
+Everything else (`v0.1.0`, `v0.1.1`, `v0.1.3`, `v0.1.4`, `v0.1.7`, and every
+release cut after them) is tagged, released, and on PyPI — the workflow now owns
+all three, so a release it completes cannot add a fourth row to the table above.
 
 Deleting `v0.1.5`/`v0.1.6` and the `v0.1.6` Release would restore the invariant
 and is safe (nothing depends on a version that was never published); it is left as

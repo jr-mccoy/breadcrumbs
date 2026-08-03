@@ -44,18 +44,42 @@ exits non-zero. Nothing about the CLI or plain files depends on the SDK.
 from `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`;
 `mcp_server` tries both, newest first. The two are drop-in for everything this
 server uses — the `resource`/`prompt`/`tool` decorators, `run()` (stdio by
-default), and the `list_*` inspection methods. Two differences are visible to a
-caller:
+default), and the `list_*` inspection methods.
+
+**One difference is visible to an MCP client:**
 
 | | SDK 1.x | SDK 2.x |
 |---|---|---|
 | Server version advertised over MCP | the **SDK's** version (no way to set it) | the **package** version, via the constructor's `version=` |
-| `list_resource_templates()` field | `uriTemplate` | `uri_template` |
+
+**The other is not a protocol difference at all**, though it reads like one: SDK
+2.0 renamed the camelCase *Python attributes* on its model classes to snake_case.
+The serialized form is unchanged — every one of these keeps its camelCase alias on
+the wire, verified by dumping both majors' models — so an MCP client sees
+identical JSON either way, and only in-process code reading the model objects
+(this repo's tests and the CI `mcp` job) has to care:
+
+| Model | SDK 1.x attribute | SDK 2.x attribute | JSON key on both |
+|---|---|---|---|
+| `Tool` | `inputSchema` | `input_schema` | `inputSchema` |
+| `Tool` | `outputSchema` | `output_schema` | `outputSchema` |
+| `Resource` | `mimeType` | `mime_type` | `mimeType` |
+| `ResourceTemplate` | `mimeType` | `mime_type` | `mimeType` |
+| `ResourceTemplate` | `uriTemplate` | `uri_template` | `uriTemplate` |
+
+This table used to list only `uriTemplate` — the one attribute the code happened
+to touch — which read as an exhaustive list of a two-item difference and would
+have made the next attribute read (say `mimeType`) look safe (MF-66). Code that
+must read one of these should go through the alias-tolerant accessor in
+`tests/test_mcp.py`, or dump the model with `by_alias=True` and read the JSON key,
+which is stable across both majors.
 
 The extra is bounded (`mcp>=1.2,<3`) because an unbounded range is how 2.0 arrived
 unannounced: it installed cleanly, the hardcoded 1.x import failed, and the server
 reported itself as "not installed". The CI `mcp` job runs the full suite and a live
-server build against **both** majors on Python 3.10–3.12.
+server build against **both** majors on Python 3.10–3.14 — the full range the SDK
+declares support for, since stopping at 3.12 left the extra untested on two
+Pythons it installs on (MF-68).
 
 ---
 

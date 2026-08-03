@@ -421,9 +421,12 @@ def cmd_init(args: argparse.Namespace) -> int:
             print(json.dumps({"would_apply": plan}, indent=2))
         else:
             print("Integrations that would be applied:")
-            print(f"  adapter signpost -> {', '.join(plan['adapters']) or '(none)'}")
+            print(f"  adapter signpost -> {_fmt_adapter_targets(root, plan['adapters'])}")
             print(f"  MCP register     -> {'yes' if plan['mcp'] else 'no'}")
             print(f"  Claude hooks     -> {', '.join(plan['hooks']) or '(none)'}")
+            note = _adapter_request_note(args, plan["adapters"])
+            if note:
+                print(f"  note: {note}")
         return 0
 
     if memory_dir.exists() and not args.force:
@@ -445,6 +448,9 @@ def cmd_init(args: argparse.Namespace) -> int:
                 print(f"  adapter signpost -> {', '.join(applied['adapters']) or '(none)'}")
                 print(f"  MCP register     -> {'yes' if applied['mcp'] else 'no'}")
                 print(f"  Claude hooks     -> {', '.join(applied['hooks']) or '(none)'}")
+                note = _adapter_request_note(args, applied["adapters"])
+                if note:
+                    print(f"  note: {note}")
             return 0
         _emit_error(
             args,
@@ -508,6 +514,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         "git_repo": git_present,
         "integrations": applied,
     }
+    note = _adapter_request_note(args, plan["adapters"])
+    if note:
+        summary["integration_note"] = note
     if not git_present:
         summary["git_notice"] = (
             f"no git repo detected; git-derived record fields will use sentinels "
@@ -539,6 +548,8 @@ def _emit_init_summary(args: argparse.Namespace, summary: dict) -> None:
             print(f"    Claude hooks:                {', '.join(integ['hooks'])}")
     else:
         print("\n" + FIRST_RUN_NUDGE)
+    if summary.get("integration_note"):
+        print(f"\nnote: {summary['integration_note']}")
     if not summary["git_repo"]:
         print(f"\nNotice: {summary['git_notice']}")
     if args.verbose:
@@ -4796,8 +4807,9 @@ _SECRET_SKIP_DIRS = {"private", "index", "generated"}
 
 # Common secret SHAPES (plan §15, §17.6). Deliberately conservative: better to miss
 # an exotic secret than to flag every git sha. The covered set is this tuple; the
-# two deliberate gaps (bare hex only in a labeled context, path/CamelCase tokens
-# allowlisted) are written up in `docs/security.md` §2 and pinned by
+# three deliberate gaps (bare hex only in a labeled context, path/CamelCase tokens
+# allowlisted, URL credentials floored at 6 characters and placeholder-aware) are
+# written up in `docs/security.md` §2 and pinned by
 # `tests/test_secrets.py`. MF-45 replaced the "see the Phase 6 doc" pointers in
 # security.md and cli-spec.md — no phase doc has ever existed — but missed this
 # copy of the same dead reference (MF-61).
@@ -4835,6 +4847,24 @@ SECRET_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     # `secret-assignment` keyword list above misses: bare `token:`,
     # `Authorization:` (no "Bearer", so `bearer-token` skips it), and
     # `X-…-Key:` / `X-…-Token:` HTTP headers. No label ⇒ still no flag.
+    # Credentials embedded in a connection string — `postgres://app:pw@host/db`,
+    # `mongodb+srv://…`, `redis://:pw@…`, `https://user:token@host/repo.git`. The
+    # keyword list above cannot see these: the password follows a bare `:` inside
+    # a URL, with no `password=` label anywhere (MF-67). Conservative on purpose:
+    # a username with no password (`https://user@host`) is not a secret and does
+    # not match; `$VAR` / `${VAR}` / `%VAR%` / `<placeholder>` interpolations and
+    # the obvious doc placeholders are excluded; and the 6-character floor drops
+    # well-known defaults like amqp's `guest:guest`.
+    (
+        "url-embedded-credentials",
+        re.compile(
+            r"(?i)\b[a-z][a-z0-9+.\-]*://[^/\s:@]*:"
+            r"(?!(?:password|passwd|pass|secret|token|changeme|placeholder|redacted|"
+            r"example|user|username|test|xxx+|\*+)@)"
+            r"(?![$%<{])"
+            r"[^/\s:@]{6,}@"
+        ),
+    ),
     (
         "labeled-hex-secret",
         re.compile(
@@ -5596,7 +5626,14 @@ def present_adapters(root: Path) -> list[str]:
 
 
 def write_adapter_block(root: Path, name: str) -> None:
-    rewrite_managed_block(root / name, ADAPTER_BEGIN, ADAPTER_END, adapter_block())
+    """Insert/replace the signpost block in an agent-guidance file, creating it if absent.
+
+    `.github/copilot-instructions.md` is the one adapter name that lives in a
+    subdirectory, so creating it means creating `.github/` too.
+    """
+    path = root / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, adapter_block())
 
 
 def remove_adapter_block(root: Path, name: str) -> bool:
@@ -5710,6 +5747,36 @@ def _resolve_tristate_list(value, all_items: list[str]) -> list[str] | None:
     return [s.strip() for s in str(value).split(",") if s.strip()]
 
 
+def _fmt_adapter_targets(root: Path, names: list[str]) -> str:
+    """Render planned adapter targets, marking the ones that do not exist yet.
+
+    `--print-integrations` used to print a bare filename for a file that was
+    never going to be touched, so the dry run promised what the real run then
+    silently skipped (MF-65).
+    """
+    if not names:
+        return "(none)"
+    return ", ".join(n if (root / n).is_file() else f"{n} (will be created)" for n in names)
+
+
+def _adapter_request_note(args: argparse.Namespace, adapters: list[str]) -> str | None:
+    """Explain an adapter request that legitimately resolved to nothing (MF-65).
+
+    Bare `--with-adapter` means "every agent-guidance file I can detect", so in a
+    project with none it is a defensible no-op — inventing a `CLAUDE.md` nobody
+    asked for is worse. What was not defensible is that it was a *silent* no-op
+    while `doctor` reported `✗ [adapter]` and the first-run nudge kept
+    recommending exactly the command that had just done nothing. Naming a file
+    (`--with-adapter=AGENTS.md`) creates it.
+    """
+    if adapters or getattr(args, "adapter", None) in (None, False):
+        return None
+    return (
+        "no agent-guidance file detected, so no signpost was written. "
+        f"Name one to create it, e.g. `--with-adapter={ADAPTER_FILENAMES[0]}`."
+    )
+
+
 def _prompt_yes(question: str, default: bool) -> bool:
     """Ask a yes/no question. EOF takes the default; Ctrl+C aborts the command.
 
@@ -5803,12 +5870,20 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
 
 
 def apply_integrations(root: Path, plan: dict) -> dict:
-    """Write the resolved integrations; return a summary of what was touched."""
+    """Write the resolved integrations; return a summary of what was touched.
+
+    A name reaches `plan["adapters"]` only two ways: detection (bare
+    `--with-adapter` / the prompt, which list *existing* files only) or an
+    explicit `--with-adapter=NAME`. So a name here that is not on disk was asked
+    for by name, and the file is created (MF-65). Guarding on `is_file()` made
+    `--with-adapter=CLAUDE.md` a silent no-op in a repo without one, while
+    `--print-integrations` had just promised the opposite and `doctor` went on
+    recommending the command that could not help.
+    """
     applied: dict = {"adapters": [], "mcp": None, "hooks": []}
     for name in plan["adapters"]:
-        if (root / name).is_file():
-            write_adapter_block(root, name)
-            applied["adapters"].append(name)
+        write_adapter_block(root, name)
+        applied["adapters"].append(name)
     if plan["mcp"]:
         applied["mcp"] = str(register_mcp(root))
     if plan["hooks"]:
@@ -5910,7 +5985,14 @@ def doctor_report(root: Path) -> dict:
             else (
                 f"adapter files present ({', '.join(present)}) but no signpost block"
                 if present
-                else "no agent-guidance files detected"
+                # Naming the fix matters here: `crumb init --with-adapter` (what
+                # the first-run nudge recommends) resolves to the *detected*
+                # files, so in a project with none it cannot clear this check
+                # (MF-65).
+                else (
+                    "no agent-guidance files detected — create one with "
+                    f"`crumb init --with-adapter={ADAPTER_FILENAMES[0]}`"
+                )
             )
         )
         + (f"; BLOATED: {', '.join(bloated)}" if bloated else "")

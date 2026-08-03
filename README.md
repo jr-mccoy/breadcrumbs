@@ -429,11 +429,11 @@ automatically so it stays in step.)
 ## Status
 
 > **Installed vs. this checkout.** The table below describes the code in this
-> repository. The newest version on PyPI is **0.1.7**, which predates everything in
-> `CHANGELOG.md` → `[Unreleased]` — several correctness fixes to the hooks, the
-> trust primitives and multi-machine projections. Until the next release, `pipx
-> install crumb-kit` gives you 0.1.7; install from a source checkout to get the
-> current behavior.
+> repository, which is **0.1.8** — the release that carries the correctness fixes
+> to the hooks, the trust primitives and multi-machine projections that had been
+> accumulating since 0.1.7 (see `CHANGELOG.md` → `[0.1.8]`). Work landing after it
+> collects in `[Unreleased]`; whenever that section is non-empty, `pipx install
+> crumb-kit` gives you less than this checkout does.
 
 | Command | State |
 |---|---|

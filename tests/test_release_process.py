@@ -341,6 +341,32 @@ class WorkflowHygieneTests(unittest.TestCase):
             with self.subTest(version=version):
                 self.assertIn(f'"{version}"', matrix)
 
+    def test_MF68_mcp_job_covers_every_python_the_extra_installs_on(self):
+        """The `mcp` job stopped at 3.12 while `test` already ran to 3.14.
+
+        The `[mcp]` extra is marked `python_version >= '3.10'` with no ceiling and
+        both SDK majors declare 3.13/3.14 support, so those two legs installed the
+        extra in the wild and nothing exercised it — the mirror image of the gap
+        MF-42 closed for the `test` job.
+        """
+        text = self.files["ci.yml"]
+        # Scope to the `mcp` job, then take its matrix line — the file has several
+        # other `python-version:` keys (each job's setup-python step).
+        mcp_job = text.split("\n  mcp:", 1)[1].split("\n  package:", 1)[0]
+        matrix = next(
+            ln for ln in mcp_job.splitlines() if "python-version:" in ln and "matrix" not in ln
+        )
+        for version in ("3.10", "3.11", "3.12", "3.13", "3.14"):
+            with self.subTest(version=version):
+                self.assertIn(f'"{version}"', matrix)
+
+    def test_MF59_mcp_job_runs_both_sdk_majors(self):
+        """A rename in a future major must not pass unnoticed the way 2.0's did."""
+        text = self.files["ci.yml"]
+        matrix = text.split("mcp-version:", 1)[1].splitlines()[0]
+        self.assertIn('"<2"', matrix)
+        self.assertIn('">=2,<3"', matrix)
+
     def test_MF41_mcp_job_asserts_the_advertised_resource_count(self):
         """It pinned 10 tools and 6 prompts but never the 8 resources."""
         text = self.files["ci.yml"]
@@ -352,6 +378,36 @@ class WorkflowHygieneTests(unittest.TestCase):
         text = self.files["ci.yml"]
         self.assertIn("ruff check", text)
         self.assertIn("ruff format --check", text)
+
+    def test_MF69_ruff_is_pinned_and_ci_matches_the_dev_extra(self):
+        """An unpinned formatter turned `lint` red on an untouched `main`.
+
+        ruff 0.16 began formatting fenced Python inside Markdown; the checked file
+        set went from 29 to 234 and a historical review document's verbatim code
+        excerpt became a failure. `publish` gates on `ci`, so a floating linter can
+        block a release. Both pins must exist and agree — two copies of a version
+        is exactly the drift this repo removed for its own version (MF-12) and its
+        actions (MF-39).
+        """
+        import re
+
+        ci = self.files["ci.yml"]
+        pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        ci_pin = re.search(r'ruff==([0-9][0-9.]*)"', ci)
+        extra_pin = re.search(r'"ruff==([0-9][0-9.]*)"', pyproject)
+        self.assertIsNotNone(ci_pin, "the `lint` job installs ruff unpinned")
+        self.assertIsNotNone(extra_pin, "the `dev` extra declares ruff unpinned")
+        self.assertEqual(
+            ci_pin.group(1),
+            extra_pin.group(1),
+            "CI and the `dev` extra pin different ruff versions — bump them together",
+        )
+
+    def test_MF69_archived_review_docs_are_not_formatter_input(self):
+        """Their code excerpts are quotations; reformatting one falsifies it."""
+        pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn("extend-exclude", pyproject)
+        self.assertIn("docs/crumb-kit-*.md", pyproject)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,17 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-08-02
+
+The first release since 0.1.7, and the one that puts nine review batches
+(MF-01 … MF-69) in front of users: every entry below has been sitting in
+`[Unreleased]` against a PyPI release that predates all of it. Two changes are
+user-visible beyond a bug fix — the resume packet renames a JSON key
+(`stale_days` → `stale_after_days`, plus two new measurement fields), and
+`init` no longer scaffolds `evidence/refs.yml`. Both are called out where they
+appear below. Upgrading also invalidates every stored `inputs_hash` projection
+stamp once; run `crumb reindex` and it clears.
+
 ### Added
 - **`ideas/` records are searchable (MF-57).** `crumb note idea` has always written
   a real, validated record that nothing loaded, so an idea could only be found by
@@ -28,15 +39,41 @@ uses semantic versioning. The package version is independent of the on-disk reco
   1.x has no such parameter and raises `TypeError`, so on 1.x the previous
   behavior stands.
 
-### Removed
-- **`evidence/refs.yml` is no longer scaffolded by `init` (MF-58).** It was created
-  for the whole life of the package and **no released version ever read or wrote
-  it**. Nothing replaces it: per-record evidence already lives in each record's
-  `evidence:` frontmatter, which `resume` (Likely Relevant Files, Verification
-  Commands), `guard` (next-safest-action) and `search` (path matching) all
-  consume. A second, hand-maintained copy would have had no validator, no
-  consumer, and no way to notice a dangling reference. **Existing stores are
-  unaffected** — nothing looks for the file, and you can delete it.
+- **A `lint` CI job — the repo had no static analysis of any kind (MF-27).** No
+  ruff, flake8, mypy or formatter config existed and no workflow ran one, so every
+  unused import, dead assignment and placeholder f-string was left for a human
+  review round to find; this was the sixth such round. CI now runs `ruff check` and
+  `ruff format --check`, configured in `pyproject.toml` so a contributor's machine
+  behaves identically. `line-length` is 100 to match how the code was already
+  written; E501 is deliberately off — the formatter owns layout, and the lines it
+  cannot split (long string literals, URLs) are not worth failing CI over. The ten
+  findings the first run surfaced are fixed here: two placeholder f-strings, three
+  unused imports, five unused assignments. The codebase was formatted with
+  `ruff format` in a separate, mechanical commit.
+- **Workflow hygiene, with tests (MF-38 … MF-42).** Neither workflow set a
+  **top-level `permissions:`**, so any job without its own ran with the repository
+  default token scope; both now floor at `contents: read`. Neither declared a
+  **`concurrency`** group: `ci` triggers on both `push` and `pull_request`, so every
+  PR ran the full matrix twice, and two simultaneous publish dispatches could both
+  clear the pre-flight's PyPI check and race to upload — `ci` now supersedes stale
+  runs (never on `main`), and `release` serializes and never cancels, since
+  cancelling mid-publish is how a version lands on PyPI with no tag. Every action is
+  **pinned to a commit SHA** with its version in a trailing comment; the worst
+  offender was `pypa/gh-action-pypi-publish@release/v1`, a moving *branch* on the
+  OIDC-publishing path. The `mcp` job now asserts the **8 resources** the README and
+  mcp-spec advertise (it pinned 10 tools and 6 prompts but never the resources), and
+  the **test matrix** covers 3.9–3.14: 3.10 was previously exercised only by the
+  `mcp` job, which runs neither the fixture nor the packaging checks, and 3.13/3.14
+  were untested despite an unbounded `requires-python`.
+  `tests/test_release_process.py` pins all five so they cannot silently regress.
+- **Fixture 11 — multi-machine** (`fixtures/fixture-11-multi-machine/`): the
+  multi-developer store the suite had no example of, which is why all five bugs
+  above stayed green. `session_tracking: distillate` with no `sessions/` directory,
+  a committed packet and guard pre-filter, and an `AGENTS.md` signpost.
+  `tests/test_multi_machine.py` checks it out at two different paths and requires
+  `validate`, `audit` and `doctor` to come up clean at both, the committed packet
+  to be accepted unchanged at either path, and a reindex on either machine to
+  reproduce the same bytes.
 
 ### Changed
 - **The resume packet names its staleness numbers for what they are (MF-56,
@@ -57,7 +94,110 @@ uses semantic versioning. The package version is independent of the on-disk reco
   Phase 10)". Nothing is scheduled to build one, so the advice is now what a human
   can act on today: promote what still matters with `crumb remember`, prune the rest.
 
+- **The tag / PyPI history is documented instead of implied (MF-13).** The
+  intended invariant is one git tag per published PyPI version, and three
+  entries break it: `v0.1.5` (tag only, never published), `v0.1.6` (tag **and**
+  GitHub Release, never published), and `0.1.2` (**on PyPI, never tagged** — the
+  exact shape MF-11 made permanent). `pipx install git+…@v0.1.6` therefore yields a
+  version PyPI never shipped. `RELEASING.md` now carries a *Tag / PyPI history*
+  table recording all three and why `0.1.2` is deliberately left untagged rather
+  than hand-tagged; `CLAUDE.md` points at it. The dead tags are left in place —
+  deleting them is the maintainer's call — and the release workflow refuses to
+  re-use either one.
+- **The CLI/MCP fork on an omitted `confidence` is a stated choice, not a lying
+  comment (MF-24).** Non-interactive `crumb remember` exits 2 when there is no
+  evidence and no `--confidence`; the identical `memory_record` payload records
+  `low`. The `mcp_core` comment claimed exact parity with the CLI, which was false.
+  Both behaviors are kept — the CLI's error names the flag a human forgot, while a
+  tool call has no such conversation and `low` is precisely what "the caller stated
+  no confidence" means — and the divergence is now documented in
+  `docs/mcp-spec.md` and described accurately in the code. An *explicit*
+  `medium`/`high` without evidence remains an error on both surfaces.
+- **The `[mcp]` extra hint names the Python floor (MF-25).** The extra is marked
+  `python_version >= '3.10'`, so `pip install "crumb-kit[mcp]"` succeeds and
+  installs **nothing** on 3.9 — and the hint told the user to run exactly that
+  command without mentioning it. The message now says the SDK needs Python ≥ 3.10
+  and what happens on 3.9.
+
+### Removed
+- **`evidence/refs.yml` is no longer scaffolded by `init` (MF-58).** It was created
+  for the whole life of the package and **no released version ever read or wrote
+  it**. Nothing replaces it: per-record evidence already lives in each record's
+  `evidence:` frontmatter, which `resume` (Likely Relevant Files, Verification
+  Commands), `guard` (next-safest-action) and `search` (path matching) all
+  consume. A second, hand-maintained copy would have had no validator, no
+  consumer, and no way to notice a dangling reference. **Existing stores are
+  unaffected** — nothing looks for the file, and you can delete it.
+
 ### Fixed
+- **CI's `lint` job was red on an untouched `main`, because ruff was unpinned
+  (MF-69).** The job ran `pip install ruff`, so it silently took whatever was
+  newest. ruff **0.16 began formatting fenced Python inside Markdown**, which took
+  the checked file set from 29 files to 234 and made `ruff format --check` demand
+  a rewrite of a code excerpt inside an **archived review document** — an excerpt
+  quoted verbatim from an older `cli.py`, which is the entire reason that document
+  is kept. Nobody had changed a line: any commit pushed after that ruff release
+  failed. This is not cosmetic, because `mode: publish` requires the `ci` workflow
+  to have succeeded on the commit being released, so a floating linter could block
+  a release outright. Both the CI job and the `dev` extra now pin `ruff==0.16.1`,
+  a test asserts the two pins exist and agree, and `[tool.ruff] extend-exclude`
+  keeps the archived review/audit documents out of the formatter's input —
+  reformatting a quotation falsifies it. Living prose (README, CHANGELOG, the spec
+  docs) stays in scope. Every GitHub Action here has been pinned to a commit SHA
+  since MF-39 for exactly this class of failure; the tool that decides pass/fail
+  was the one thing left moving.
+- **`scan-secrets` missed credentials embedded in a connection string (MF-67).**
+  `postgres://app:<password>@db.example.com/prod`, `mongodb+srv://root:<pw>@…`,
+  `redis://:<pw>@…`, `https://user:<token>@host/repo.git` — every form of it reported
+  **OK**. Nothing in the covered set could see them: the password follows a bare
+  `:` inside a URL, so there is no `password=`-style label for the keyword pattern
+  to match, and such passwords are usually too short and too word-like for the
+  standalone entropy heuristic. A "how do I run this" note carrying a
+  `DATABASE_URL` is among the likeliest secrets to be written into project memory,
+  which is precisely what the scanner exists to block. A new
+  `url-embedded-credentials` pattern covers it, kept conservative in the module's
+  own spirit: a username with no password is not a secret, `$VAR` / `${VAR}` /
+  `<placeholder>` interpolations and the obvious doc placeholders are excluded, and
+  a six-character floor drops well-known defaults like `amqp://guest:guest@`. The
+  pattern was accepted only after a zero-hit sweep of this whole repository, which
+  `tests/test_secrets.py` now re-runs as a test. `docs/security.md` §2 records the
+  new coverage and the new deliberate gap.
+- **`crumb init --with-adapter` could install nothing, silently, while `doctor`
+  told you to run it (MF-65).** In a project with no `AGENTS.md`/`CLAUDE.md`, the
+  flag resolved to the *detected* guidance files — an empty list — applied nothing,
+  and printed no explanation, while `doctor` reported `✗ [adapter] no
+  agent-guidance files detected` and the first-run nudge recommended exactly that
+  command. Naming a file was no better: `--with-adapter=CLAUDE.md` was accepted,
+  `--print-integrations` promised `adapter signpost -> CLAUDE.md`, and the real run
+  skipped it because the file did not exist. An explicitly named adapter file is
+  now **created** (a name can only reach the plan by detection, which lists
+  existing files, or by being named — so a planned name that is not on disk was
+  asked for), including its parent directory for
+  `.github/copilot-instructions.md`. A bare `--with-adapter` still invents nothing,
+  but now says so and names the fix; `--print-integrations` marks a target as
+  `(will be created)`; and `doctor`'s miss message names a command that can
+  actually clear it. Removal is unchanged and still reverses a created file's
+  block.
+- **The `[mcp]` extra was untested on two Pythons it installs on (MF-68).** The CI
+  `mcp` job's matrix stopped at 3.12 while the `test` job already ran to 3.14, the
+  extra is marked `python_version >= '3.10'` with no ceiling, and both SDK majors
+  declare 3.13/3.14 support — so the SDK-present paths had no coverage on the two
+  newest Pythons. The matrix now runs 3.10–3.14 against both majors, and
+  `tests/test_release_process.py` pins the range (and the two-major axis) so it
+  cannot quietly narrow again. This is the mirror image of the gap MF-42 closed.
+- **The documented list of SDK 1.x/2.x differences was incomplete and
+  miscategorized (MF-66).** `docs/mcp-spec.md` said "two differences are visible to
+  a caller" and listed `uriTemplate` → `uri_template`, which was simply the one
+  attribute the code happened to touch. SDK 2.0 renamed **every** camelCase model
+  attribute to snake_case (`Tool.inputSchema`, `Tool.outputSchema`,
+  `Resource.mimeType`, `ResourceTemplate.mimeType` as well), so the table read as
+  exhaustive when it was not and the next field read would have broken on 2.x. It
+  is also not a protocol difference at all: dumping both majors' models shows every
+  one of them keeps its camelCase **JSON alias**, so an MCP client sees identical
+  bytes and only in-process readers are affected. The doc now says all of that, the
+  suite and the CI job read fields through one alias-tolerant accessor instead of a
+  per-field fallback, and `tests/test_mcp.py` pins the alias invariant on whichever
+  major is installed (CI runs it on both).
 - **The optional `[mcp]` extra installed an SDK the server could not import
   (MF-59).** The extra was declared `mcp>=1.2` with no upper bound. MCP SDK **2.0
   renamed `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`**, so a
@@ -97,9 +237,10 @@ uses semantic versioning. The package version is independent of the on-disk reco
   `resume`/`reindex` does; shipped layers still labelled `(Ph8)`/`(Ph9)` as if
   pending; a `RELEASING.md` build step that `cd`s into the package directory where
   the build fails; and two review documents that still read as if nothing had been
-  fixed. `README.md` now states that PyPI's newest release predates everything in
-  this section, and `CHANGELOG.md` explains the missing 0.1.5 and the never-published
-  0.1.6 where a reader hits them. See `docs/fix-list.md` → Batch 7.
+  fixed. `README.md` gained an *installed vs. this checkout* note (it said PyPI's
+  newest release predated everything here, which this release is what resolves),
+  and `CHANGELOG.md` explains the missing 0.1.5 and the never-published 0.1.6 where
+  a reader hits them. See `docs/fix-list.md` → Batch 7.
 - **`git_dirty_files` no longer corrupts the first filename in the most common
   dirty state (MF-03).** `git status --porcelain` emits a worktree-only
   modification as `" M path"` — a leading space in the status columns — and
@@ -375,69 +516,6 @@ uses semantic versioning. The package version is independent of the on-disk reco
   it. Both cases are now reproduced by `tests/test_audit.py`, with a map of the
   three functions above `_inputs_hash`. No behavior change — this stops a future
   refactor from collapsing them.
-
-### Added
-- **A `lint` CI job — the repo had no static analysis of any kind (MF-27).** No
-  ruff, flake8, mypy or formatter config existed and no workflow ran one, so every
-  unused import, dead assignment and placeholder f-string was left for a human
-  review round to find; this was the sixth such round. CI now runs `ruff check` and
-  `ruff format --check`, configured in `pyproject.toml` so a contributor's machine
-  behaves identically. `line-length` is 100 to match how the code was already
-  written; E501 is deliberately off — the formatter owns layout, and the lines it
-  cannot split (long string literals, URLs) are not worth failing CI over. The ten
-  findings the first run surfaced are fixed here: two placeholder f-strings, three
-  unused imports, five unused assignments. The codebase was formatted with
-  `ruff format` in a separate, mechanical commit.
-- **Workflow hygiene, with tests (MF-38 … MF-42).** Neither workflow set a
-  **top-level `permissions:`**, so any job without its own ran with the repository
-  default token scope; both now floor at `contents: read`. Neither declared a
-  **`concurrency`** group: `ci` triggers on both `push` and `pull_request`, so every
-  PR ran the full matrix twice, and two simultaneous publish dispatches could both
-  clear the pre-flight's PyPI check and race to upload — `ci` now supersedes stale
-  runs (never on `main`), and `release` serializes and never cancels, since
-  cancelling mid-publish is how a version lands on PyPI with no tag. Every action is
-  **pinned to a commit SHA** with its version in a trailing comment; the worst
-  offender was `pypa/gh-action-pypi-publish@release/v1`, a moving *branch* on the
-  OIDC-publishing path. The `mcp` job now asserts the **8 resources** the README and
-  mcp-spec advertise (it pinned 10 tools and 6 prompts but never the resources), and
-  the **test matrix** covers 3.9–3.14: 3.10 was previously exercised only by the
-  `mcp` job, which runs neither the fixture nor the packaging checks, and 3.13/3.14
-  were untested despite an unbounded `requires-python`.
-  `tests/test_release_process.py` pins all five so they cannot silently regress.
-- **Fixture 11 — multi-machine** (`fixtures/fixture-11-multi-machine/`): the
-  multi-developer store the suite had no example of, which is why all five bugs
-  above stayed green. `session_tracking: distillate` with no `sessions/` directory,
-  a committed packet and guard pre-filter, and an `AGENTS.md` signpost.
-  `tests/test_multi_machine.py` checks it out at two different paths and requires
-  `validate`, `audit` and `doctor` to come up clean at both, the committed packet
-  to be accepted unchanged at either path, and a reindex on either machine to
-  reproduce the same bytes.
-
-### Changed
-- **The tag / PyPI history is documented instead of implied (MF-13).** The
-  intended invariant is one git tag per published PyPI version, and three
-  entries break it: `v0.1.5` (tag only, never published), `v0.1.6` (tag **and**
-  GitHub Release, never published), and `0.1.2` (**on PyPI, never tagged** — the
-  exact shape MF-11 made permanent). `pipx install git+…@v0.1.6` therefore yields a
-  version PyPI never shipped. `RELEASING.md` now carries a *Tag / PyPI history*
-  table recording all three and why `0.1.2` is deliberately left untagged rather
-  than hand-tagged; `CLAUDE.md` points at it. The dead tags are left in place —
-  deleting them is the maintainer's call — and the release workflow refuses to
-  re-use either one.
-- **The CLI/MCP fork on an omitted `confidence` is a stated choice, not a lying
-  comment (MF-24).** Non-interactive `crumb remember` exits 2 when there is no
-  evidence and no `--confidence`; the identical `memory_record` payload records
-  `low`. The `mcp_core` comment claimed exact parity with the CLI, which was false.
-  Both behaviors are kept — the CLI's error names the flag a human forgot, while a
-  tool call has no such conversation and `low` is precisely what "the caller stated
-  no confidence" means — and the divergence is now documented in
-  `docs/mcp-spec.md` and described accurately in the code. An *explicit*
-  `medium`/`high` without evidence remains an error on both surfaces.
-- **The `[mcp]` extra hint names the Python floor (MF-25).** The extra is marked
-  `python_version >= '3.10'`, so `pip install "crumb-kit[mcp]"` succeeds and
-  installs **nothing** on 3.9 — and the hint told the user to run exactly that
-  command without mentioning it. The message now says the SDK needs Python ≥ 3.10
-  and what happens on 3.9.
 
 ## [0.1.7] — 2026-07-02
 

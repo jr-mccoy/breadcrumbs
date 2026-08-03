@@ -6,27 +6,34 @@ and mark the batch SHIPPED here with a one-line summary per item — the shipped
 sections stay, so the next reviewer can see what was decided and why rather than
 re-reporting it.
 
-**State as of 2026-08-02** (`main` @ `c4e31d9`, `crumb-kit` 0.1.7, record
-`schema_version` 1): **0 open items.** Every finding from every review round
-(MF-01 … MF-64) has shipped and is recorded in `CHANGELOG.md` `[Unreleased]`.
-**O1 and O2 were both decided and closed** in Batch 8, along with a live
-packaging break the earlier rounds could not have seen (MF-59). **D3 was taken
-up** — the SDK now exposes the setter it was waiting for. **D2** closed in Batch
-7. **D1 and D4 remain deferred**, each with a sharpened condition below.
+**State as of 2026-08-02** (`main` @ `9a5aaf0`, `crumb-kit` **0.1.8 — prepared,
+not yet published**, record `schema_version` 1): **0 open items.** Every finding
+from every review round (MF-01 … MF-69) has shipped. **Maintainer decision 1 was
+taken:** the version is bumped to 0.1.8 and the `[Unreleased]` section is dated,
+so `CHANGELOG.md` now records everything under `[0.1.8]`. Batch 9 is the release
+cut plus a fresh pass that found five more (MF-65 … MF-69), all folded into
+0.1.8 because it has not been published yet. **D1 and D4 remain deferred**, both
+re-examined in Batch 9 and neither taken up; see the Deferred table for why.
 
-*Two earlier stamps were wrong in the same way — a SHA that predated the batches
-it claimed to cover. MF-52 fixed the first; this one is `c4e31d9`, the `main`
-Batch 8 branched from.*
+*Three earlier stamps were wrong in the same way — a SHA that predated the
+batches it claimed to cover. MF-52 fixed the first; Batch 8's own stamp said
+`c4e31d9` when `main` was already at `9a5aaf0` (the Batch 8 merge), which is the
+same error one more time. This one is `9a5aaf0`, the `main` Batch 9 branched
+from — verified with `git rev-parse origin/main`, which is the step the previous
+three skipped.*
 
-**Two maintainer decisions are outstanding** and are deliberately not acted on
-here — see *Maintainer decisions* at the bottom. Neither is a bug; both change
-what users get, so they are the maintainer's call:
+**One maintainer decision is outstanding** and is deliberately not acted on here
+— see *Maintainer decisions* at the bottom. It is not a bug; it changes a
+published git ref, so it is the maintainer's call:
 
-1. Everything from MF-01 … MF-64 sits in `CHANGELOG.md` `[Unreleased]` against
-   **0.1.7, which is already on PyPI**. Anyone installing `crumb-kit` today gets
-   pre-fix behavior — including the MCP break in MF-59, which is now *actively*
-   biting anyone whose resolver picks SDK 2.x.
-2. `v0.1.5` / `v0.1.6` are dead tags and `0.1.2` is on PyPI untagged.
+1. `v0.1.5` / `v0.1.6` are dead tags and `0.1.2` is on PyPI untagged. All three
+   re-verified on 2026-08-02 against the live GitHub tag/release lists and the
+   PyPI JSON API; all three entries in `RELEASING.md` are still exactly right.
+
+**And one action is left to the maintainer, not a decision:** publishing 0.1.8
+requires merging this branch to `main` and running the release workflow from
+`main` (`mode=dry-run`, then `mode=publish`). The workflow refuses `publish` off
+`main`, so no agent can finish it from a feature branch.
 
 ## Sources
 
@@ -40,6 +47,7 @@ what users get, so they are the maintainer's call:
 | System audit #6 (2026-07-24) | `docs/crumb-kit-system-audit-2026-07-24.md` | N1–N6 all shipped (in MF-06/MF-07/MF-04/MF-14/MF-17/MF-18) — nothing open (resolution banner added in Batch 7) |
 | Doc review #7 (2026-08-02) | this file, Batch 7 | Doc/code drift sweep: MF-43 … MF-55 shipped, D2 taken up as MF-56, two feature gaps filed as O1/O2 |
 | Open-items round #8 (2026-08-02) | this file, Batch 8 | O1 and O2 decided and closed, D3 taken up, plus a fresh pass that found a live packaging break (MF-59) and three drift/test-gap items (MF-61 … MF-64) |
+| Release round #9 (2026-08-02) | this file, Batch 9 | 0.1.8 cut (maintainer decision 1 taken), D1/D4 re-examined and left deferred, plus a fresh pass that found a release-blocking red `lint` job (MF-69), a missed secret class (MF-67), a silent-no-op CLI flag (MF-65) and two coverage gaps (MF-66, MF-68) |
 
 **Verification legend** (historical — every item below has since shipped, and each
 was independently reproduced against a throwaway store immediately before its fix):
@@ -499,6 +507,128 @@ places, a doc pointer left behind in the one copy that was code.
 
 ---
 
+## Batch 9 — the release cut, and a fresh pass over it — **SHIPPED** (`[0.1.8]`)
+
+The round that finally publishes eight batches of fixes. The release itself was
+mechanical (`RELEASING.md` step 1: one version line, one changelog retitle) —
+what took the time was the fresh pass, and the through-line there is **surfaces
+that report success while doing nothing**: a flag that applies no integration, a
+scanner that returns OK on a password, a CI matrix that runs green over Pythons
+it never tests, a doc table that reads exhaustive because it lists everything
+someone happened to look at.
+
+Every item below was reproduced before it was written down, and all four are in
+the **`[0.1.8]`** section rather than a new `[Unreleased]`, because the release
+had not been published when they were found.
+
+- **The 0.1.8 cut itself** — `__version__` 0.1.7 → 0.1.8 (the single source of
+  truth; no literal added anywhere else), `[Unreleased]` retitled `[0.1.8] —
+  2026-08-02` with a fresh empty `[Unreleased]` above it. The file keeps **no
+  link reference definitions**, so there was nothing to update at the bottom.
+  The section had accumulated **two `### Added` and two `### Changed` headings**
+  across eight batches, so it was merged to one heading per category in
+  Added/Changed/Removed/Fixed order — a pure regroup, all 88 bullets preserved
+  verbatim, verified by counting them before and after. Nothing in the section
+  claimed to be released already; the one sentence that would have gone stale
+  (MF-44's "`README.md` now states that PyPI's newest release predates
+  everything in this section") was reworded, and `README.md`'s *installed vs.
+  this checkout* note now describes 0.1.8 as the release that resolves the drift.
+  The MF-56 packet key rename and the MF-58 `evidence/refs.yml` removal are named
+  in a new lead paragraph as well as in their own entries, along with the
+  one-time `inputs_hash` invalidation. Verified: 474 tests green on stdlib and
+  against real installs of **mcp 1.29.0 and 2.0.0**; `ruff check` + `ruff format
+  --check` clean; `python -m build` + `twine check` pass; the wheel bundles all
+  15 tracked template files with no extras; and the installed-binary smoke test
+  (the one the release workflow runs) reports `breadcrumbs 0.1.8` with a clean
+  `crumb validate`.
+- **MF-65 (new) — `crumb init --with-adapter` could install nothing, silently,
+  inside a loop that kept recommending it.** In a project with no
+  `AGENTS.md`/`CLAUDE.md`, the flag resolves to the *detected* guidance files —
+  an empty list — and applied nothing while printing no explanation; `doctor`
+  then reported `✗ [adapter] no agent-guidance files detected` and the first-run
+  nudge said to run `crumb init --with-adapter`, i.e. the command that had just
+  done nothing. Naming the file was worse, not better: `--with-adapter=CLAUDE.md`
+  passed validation, **`--print-integrations` printed `adapter signpost ->
+  CLAUDE.md`**, and the real run then skipped it on an `is_file()` guard — the
+  dry run promising exactly what the real run would not do. Fixed by observing
+  that a name can only reach the plan two ways (detection, which lists existing
+  files, or `--with-adapter=NAME`), so a planned name that is not on disk was
+  asked for by name and is now **created**, parent directory included for
+  `.github/copilot-instructions.md`. The other half is deliberately kept: a bare
+  `--with-adapter` still invents no file — but now says so and names the fix, the
+  dry run marks a target `(will be created)`, and `doctor`'s miss message names a
+  command that can actually clear it. `tests/test_integrations.py` pins all of it
+  including the reversal.
+- **MF-67 (new) — `scan-secrets` reported OK on every connection string with a
+  password in it.** `postgres://app:<password>@db.example.com/prod`,
+  `mongodb+srv://`, `redis://:<pw>@`, `https://user:<token>@host/repo.git` — none
+  flagged. The reason is structural, not an oversight in the keyword list: the
+  password sits after a bare `:` inside a URL with no `password=`-style label to
+  match, and such passwords are too short and too word-like for the standalone
+  entropy heuristic. This is the single blocking check in `audit`, and a "how do
+  I run this" note carrying a `DATABASE_URL` is about the likeliest secret anyone
+  writes into project memory. A `url-embedded-credentials` pattern now covers it,
+  conservative in the module's own stated spirit — a username with no password is
+  not a secret, `$VAR`/`${VAR}`/`<placeholder>` interpolations and the obvious doc
+  placeholders are excluded, and a six-character floor drops `amqp://guest:guest@`
+  — and it was accepted only after a **zero-hit sweep of this entire repository**,
+  which `tests/test_secrets.py` now re-runs as a test alongside six positives and
+  eleven negatives. `docs/security.md` §2 records the coverage and the new
+  deliberate gap.
+- **MF-66 (new) — the SDK 1.x/2.x difference table listed the one field someone
+  had looked at.** `docs/mcp-spec.md` said "two differences are visible to a
+  caller" and gave `uriTemplate` → `uri_template`. Dumping both majors' models
+  shows SDK 2.0 renamed **every** camelCase model attribute to snake_case:
+  `Tool.inputSchema`, `Tool.outputSchema`, `Resource.mimeType`,
+  `ResourceTemplate.mimeType` and `uriTemplate`. So the table read as exhaustive
+  while being one fifth of the list, and the next field read would have broken on
+  2.x with the doc saying it was safe. It is also **not a protocol difference**:
+  every one of those keeps its camelCase JSON alias, so `model_dump(by_alias=True)`
+  is byte-identical across majors and an MCP client sees no difference at all —
+  only in-process readers (this suite, the CI job) are affected. The doc now says
+  both things, the suite and CI read through one alias-tolerant accessor instead
+  of a hand-rolled fallback per field, and `tests/test_mcp.py::SdkFieldAliasTests`
+  pins the alias invariant for all five fields on whichever major is installed.
+- **MF-68 (new) — the `[mcp]` extra was untested on two Pythons it installs on.**
+  The CI `mcp` matrix ran 3.10–3.12 while the `test` matrix already ran to 3.14;
+  the extra is marked `python_version >= '3.10'` with no ceiling and **both SDK
+  majors declare 3.13 and 3.14 support** (checked against their PyPI metadata),
+  so every SDK-present path had zero coverage on the two newest Pythons. Verified
+  safe to extend before extending it: the full dependency closure of both majors
+  resolves from wheels on 3.13 and 3.14. The matrix is now 3.10–3.14 × both
+  majors, and `tests/test_release_process.py` pins the range **and** the
+  two-major axis, so neither can quietly narrow. This is exactly the gap MF-42
+  closed for the `test` job, in the other direction — which is the argument for
+  pinning it rather than just widening it.
+
+- **MF-69 (new, and it was blocking the release) — CI's `lint` job was already
+  red on an untouched `main`, because ruff was unpinned.** Found the way it
+  should be found: the version-bump commit was pushed, CI ran, and `lint` failed
+  on a commit that changed one line of Python and some Markdown. The job ran
+  `pip install ruff`, taking whatever was newest — and **ruff 0.16 began
+  formatting fenced Python inside Markdown**, so the checked file set jumped from
+  **29 files to 234** and `ruff format --check` demanded a rewrite of a code
+  excerpt inside `docs/crumb-kit-system-audit-2026-07-24.md`. Reproduced against
+  `main` @ `9a5aaf0` in a clean venv with ruff 0.16.1 — it fails there too, so
+  this predates every change in this batch. **It mattered for the release
+  specifically:** `mode: publish` requires the `ci` workflow to have concluded
+  `success` on the exact commit, so `publish` would have refused. Two fixes, both
+  root-cause: the CI job and the `dev` extra now pin `ruff==0.16.1` (with a test
+  asserting the two pins exist and agree, since two copies of a version is the
+  drift this repo already removed for its own version and its actions), and
+  `[tool.ruff] extend-exclude` takes the archived review/audit documents out of
+  the formatter's input — their code blocks are **quotations of old source**,
+  which is why MF-53 kept them, and reformatting a quotation falsifies the
+  evidence a finding rests on. Living prose stays in scope. Note the precedent
+  this completes: MF-39 pinned every GitHub Action to a commit SHA against
+  exactly this failure mode, and left the tool that decides pass/fail floating.
+
+**D1 and D4 were both re-examined this round and neither was taken up** — see the
+Deferred table for the reasoning, which is recorded there rather than here so the
+next reviewer finds it where they look for it.
+
+---
+
 ## Open — not blocking, not forgotten
 
 **None.** O1 and O2 were the last two, and both were decided in Batch 8 (MF-57,
@@ -512,10 +642,10 @@ two state headers were wrong in exactly that way (MF-52).
 
 | ID | Item | Source | Why deferred | What would change the call |
 |---|---|---|---|---|
-| **D1** | Optional streamable-HTTP MCP transport (Codex cloud supports no stdio MCP; Claude web needs a setup-script bootstrap) | Agentic review #2 F9 | **Re-examined in Batch 8, still deferred — but the reason has changed.** The transport is *not* the hard part: `run(transport="streamable-http")` exists on both SDK majors, so switching it is one argument. What is missing is everything around it. (a) A `--http` flag needs host/port/path and a documented default. (b) **It binds a network listener that serves the whole project memory with no authentication** — that is a security decision, not a flag, and this repo has a `docs/security.md` that would have to answer it. (c) The stdlib-only suite cannot cover it (needs the SDK plus uvicorn/starlette), so it would live only in the `mcp` CI job. (d) The actual requirement — that a given cloud harness accepts it — is still unverifiable here | An authentication posture decided (even "localhost-only, no auth, documented as such"), **or** a user actually blocked on Codex cloud who can validate the round trip |
+| **D1** | Optional streamable-HTTP MCP transport (Codex cloud supports no stdio MCP; Claude web needs a setup-script bootstrap) | Agentic review #2 F9 | **Re-examined in Batch 8, still deferred — but the reason has changed.** The transport is *not* the hard part: `run(transport="streamable-http")` exists on both SDK majors, so switching it is one argument. What is missing is everything around it. (a) A `--http` flag needs host/port/path and a documented default. (b) **It binds a network listener that serves the whole project memory with no authentication** — that is a security decision, not a flag, and this repo has a `docs/security.md` that would have to answer it. (c) The stdlib-only suite cannot cover it (needs the SDK plus uvicorn/starlette), so it would live only in the `mcp` CI job. (d) The actual requirement — that a given cloud harness accepts it — is still unverifiable here **Re-examined again in Batch 9; still deferred, and the blocker is unchanged.** The transport was re-confirmed to be one argument on both installed majors. What was *not* done is propose an auth posture and implement it, because the round's brief made that a question to put to the maintainer first, and because nothing found this round changes the calculus: it is still a listener serving the entire project memory — every decision, attempt, session and open question — to anything that can reach the port. Note the interaction with **MF-67**: the store is now known to be a place users put database URLs, which is an argument for *more* care here, not less. The three concrete sub-decisions someone has to make are (a) bind address (`127.0.0.1` only, or configurable), (b) whether a shared-secret header is required, and (c) whether `docs/security.md` §2 gains a "network exposure" control or the feature is documented as unsuitable for anything but loopback | An authentication posture decided (even "localhost-only, no auth, documented as such"), **or** a user actually blocked on Codex cloud who can validate the round trip |
 | ~~**D2**~~ | ~~Confusing dual staleness numbers~~ | Agentic review #2 F10 | ~~Cosmetic~~ | **Closed — taken up in Batch 7 as MF-56.** Deferred twice as cosmetic; it was not. The threshold was the only one of the two numbers a machine could read, so every consumer that wanted the age had to parse a warning sentence to get it |
 | ~~**D3**~~ | ~~FastMCP self-reports its own version (`1.28.1`), not the package version~~ | Agentic review #2 F11 (partial) | ~~SDK-version-fragile~~ | **Closed — taken up in Batch 8 as MF-60.** The stated condition was met: SDK 2.x takes `version=` on the constructor. The fragility that justified deferring is real and is handled by reading `inspect.signature` rather than a version string — 1.x raises `TypeError` on the same kwarg, and keeps the old behavior |
-| **D4** | Split `cli.py` (~6,800 lines, 190+ top-level defs — it grows every round) into modules | Review #5 §5, audit #6 §5 | Large; needs its own change and its own review | **Deferred a third time, and the case for it is now weaker than it looked.** The "ride along with another fix" plan failed at MF-09 and MF-15, which was the finding: no incidental fix will ever be big enough to justify it, so it must be scheduled standalone. Batch 8 did not become that vehicle either — pairing a 6,800-line move with a live packaging break (MF-59) and two product decisions would have made all four unreviewable, which is the exact mistake this row already records twice. What *did* change: **MF-64 examined the freshness trio this row cites as its strongest argument and found it is not one.** `_inputs_hash` is the primitive; the other two are complementary detectors that each catch a class the other cannot, reproduced in both directions and now pinned by a test. So the remaining argument is plain size, not tangled semantics. Batch 8 paid down the precondition instead: the map lives above `_inputs_hash`, and a splitter must keep all three together or carry that comment with `_inputs_hash`. **Anyone taking this up:** do it as a pure move, no behavior change, in a commit that does nothing else; `tests/test_release_process.py` asserts workflow guarantees by grepping YAML as text, and several tests import through the `crumb.py` shim, which re-exports `breadcrumbs.cli`'s module namespace flatly (tests that monkeypatch must patch the real module — see `test_guard.py` / `test_audit.py`) |
+| **D4** | Split `cli.py` (~6,800 lines, 190+ top-level defs — it grows every round) into modules | Review #5 §5, audit #6 §5 | Large; needs its own change and its own review | **Deferred a third time, and the case for it is now weaker than it looked.** The "ride along with another fix" plan failed at MF-09 and MF-15, which was the finding: no incidental fix will ever be big enough to justify it, so it must be scheduled standalone. Batch 8 did not become that vehicle either — pairing a 6,800-line move with a live packaging break (MF-59) and two product decisions would have made all four unreviewable, which is the exact mistake this row already records twice. What *did* change: **MF-64 examined the freshness trio this row cites as its strongest argument and found it is not one.** `_inputs_hash` is the primitive; the other two are complementary detectors that each catch a class the other cannot, reproduced in both directions and now pinned by a test. So the remaining argument is plain size, not tangled semantics. Batch 8 paid down the precondition instead: the map lives above `_inputs_hash`, and a splitter must keep all three together or carry that comment with `_inputs_hash`. **Anyone taking this up:** do it as a pure move, no behavior change, in a commit that does nothing else; `tests/test_release_process.py` asserts workflow guarantees by grepping YAML as text, and several tests import through the `crumb.py` shim, which re-exports `breadcrumbs.cli`'s module namespace flatly (tests that monkeypatch must patch the real module — see `test_guard.py` / `test_audit.py`). **Deferred a fourth time, in Batch 9, for the one reason the row has always given and this round proved again:** the round's other work was a *release*, and the standing rule is that a publish comes off a `main` whose diff a human can read. Pairing a 6,800-line pure move with the commit that bumps the version would have made the release diff unreviewable and the move un-bisectable — the same mistake this row records three times, in the one context where it is most expensive, since a PyPI version cannot be withdrawn. `cli.py` grew ~90 lines this round (MF-65's helpers, MF-67's pattern), so the size argument is not getting smaller; that is an argument for scheduling it, not for smuggling it in. **The precondition work is done and nothing new was added to it:** MF-64's map above `_inputs_hash` still stands, and the three freshness functions must still travel together |
 
 ---
 
@@ -555,40 +685,65 @@ Original review ID → master ID. Use this when reading an old review doc.
 | Doc review #7 (feature gap: `evidence/refs.yml`) | O2 → **MF-58** (shipped, Batch 8 — dropped, not written) |
 | Round #8 fresh pass (packaging) | **MF-59** (shipped — a live break, not from any review) |
 | Round #8 fresh pass (drift + test gaps) | MF-61 … MF-64 (shipped) |
+| Maintainer decision 1 (cut 0.1.8?) | **Taken in Batch 9** — version bumped, changelog dated; publishing is the maintainer's workflow run |
+| Round #9 fresh pass (CLI silent no-op) | **MF-65** (shipped) |
+| Round #9 fresh pass (MCP doc/coverage) | MF-66, MF-68 (shipped) |
+| Round #9 fresh pass (security control gap) | **MF-67** (shipped — a missed secret class, not from any review) |
+| Round #9 fresh pass (CI already red on `main`) | **MF-69** (shipped — an unpinned formatter; it would have refused the publish) |
 
 ---
 
-## Maintainer decisions — raised, deliberately not acted on
+## Maintainer decisions
 
-Neither is a bug. Both change what users get, so they are not an agent's call.
+Neither is a bug; both change something a user can see, so neither is an agent's
+call to make unilaterally. **Decision 1 was taken by the maintainer for Batch 9
+and is prepared but not published.** Decision 2 is still open and untouched.
 
-### 1. Cut 0.1.8?
+### 1. Cut 0.1.8? — **decided: yes, and prepared in Batch 9**
 
-Every fix from **MF-01 … MF-64** sits in `CHANGELOG.md` `[Unreleased]`, against a
-`__version__` of **0.1.7 — which is already on PyPI**. So `pip install crumb-kit`
-today gives pre-fix behavior: the fail-open guard hook (MF-01), the porcelain
-path-truncation bug (MF-03), the release pre-flight that made a partial publish
-permanent (MF-11), and now **MF-59**, which is the one actively getting worse —
-every day makes it likelier that a user's resolver picks MCP SDK 2.x, and the
-released `crumb-kit` then reports its own MCP server as "not installed".
+The maintainer approved it for this round, so the two edits `RELEASING.md` step 1
+calls for are done: `__version__` is **0.1.8**, and the `[Unreleased]` section is
+retitled `[0.1.8] — 2026-08-02` with an empty `[Unreleased]` above it.
 
-Cutting the release is two edits and a workflow run: bump `__version__` in
-`breadcrumbs/__init__.py` (the single source of truth — do not add a literal
-anywhere else), date the `[Unreleased]` section, merge to `main`, then *Actions →
-release → Run workflow* with `mode=dry-run` and, once clean, `mode=publish`. The
-workflow cuts the tag and the GitHub Release itself, on the commit it builds.
+**What remains is not a decision, it is a workflow run only a human can start
+from `main`:**
 
-**Not done here, because choosing a version number and publishing to an immutable
-index is the maintainer's decision.** (A PyPI version is permanent; there is no
-re-publish.)
+1. Merge this branch to `main`.
+2. *Actions → release → Run workflow*, branch `main`, `mode=dry-run`. Confirm green.
+3. Same again with `mode=publish`.
 
-### 2. Delete the dead tags?
+The workflow cuts the git tag and the GitHub Release itself, on the exact commit
+it builds. **Never hand-tag** — that is what broke nearly every past release. If
+`publish` fails, **re-run it rather than bumping the version**: PyPI is uploaded
+before the tag is cut, and the pre-flight treats published-but-untagged as a
+recovery (MF-11). A PyPI version is permanent.
+
+`mode=dry-run` is *not* restricted to `main` — only `publish` is — so a dry-run
+can be fired at the release branch before the merge if you want the artifact
+checked first.
+
+### 2. Delete the dead tags? — **still open, re-verified 2026-08-02**
 
 `v0.1.5` (tag only, no Release, never published) and `v0.1.6` (tag + Release,
 never published) both break the tags-equal-releases invariant, and `0.1.2` is on
 PyPI with no tag. All three are documented in `RELEASING.md` → *Tag / PyPI
-history*, re-verified against the GitHub tag/release lists and the PyPI JSON API
-on 2026-07-25.
+history*.
+
+Re-checked live in Batch 9 against the GitHub tag list, the GitHub release list
+and the PyPI JSON API. **All three entries are still exactly right**, and so is
+the rest of the table:
+
+- tags: `v0.1.0`, `v0.1.1`, `v0.1.3`, `v0.1.4`, `v0.1.5`, `v0.1.6`, `v0.1.7` —
+  no `v0.1.2`;
+- Releases: the same minus `v0.1.5`, which has a tag and no Release, exactly as
+  the table says;
+- PyPI: `0.1.0`, `0.1.1`, `0.1.2`, `0.1.3`, `0.1.4`, `0.1.7` — no `0.1.5`/`0.1.6`,
+  and `0.1.7` is still the newest published version.
+
+Publishing 0.1.8 changes none of this: it adds a `v0.1.8` tag, Release and PyPI
+version that agree with each other, and touches nothing historical.
 
 The release workflow refuses to re-use a tag either way, so nothing is blocked by
-leaving them. Deleting a published git ref is the maintainer's call.
+leaving them. **Deleting a published git ref is the maintainer's call** — a
+deleted tag breaks any link that referenced it, and `pipx install git+…@v0.1.6`
+resolving to a version PyPI never shipped is the reason to consider it.
