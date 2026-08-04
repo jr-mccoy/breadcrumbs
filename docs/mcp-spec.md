@@ -123,11 +123,20 @@ current instruction, the code, the tests, or authoritative docs (plan §15).
 | `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, path}` or `{ok:false, error}` |
 | `memory_note` | `(kind, text, fields?, tags?)` | `cli.note` | `{ok, kind, ref|id, path}` or `{ok:false, error}` |
 | `memory_reindex` | `()` | `cli.reindex_projections` | `{ok, path}` |
-| `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, next_action, …}` |
+| `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
 | `memory_build_resume_packet` | `(task?)` | `cli.build_resume_packet` | `{ok, …packet}` (`task` is passed to the engine: scoped `likely_files`, echoed `requested_task`, `starting cold` label — identical to `crumb resume --task`) |
 | `memory_validate` | `()` | `cli.run_validate` | `{ok, fail_count, findings[]}` (includes the projection-freshness check) |
 | `memory_mark_status` | `(id, status, reason, superseded_by?)` | `cli.set_record_status`, reindex | `{ok, id, from, to, path}` or `{ok:false, error}` |
 | `memory_scan_secrets` | `()` | `cli.scan_secrets` | `{ok, clean, count, findings[]}` (pattern names + locations only) |
+
+**`recommended_action` (guard) and `next_action` (resume packet) are not the same
+field.** `memory_guard_before_action`'s **`recommended_action`** is *synthesized by
+this code* from the match kinds behind the verdict — advice about the action you
+just proposed, always a non-empty string. `memory_build_resume_packet`'s
+**`next_action`** is *recorded state*: the `## Next Action` a session handoff left
+behind, and `""` when nobody set one. Both were called `next_action` until MF-77,
+and a reader who saw the empty resume value naturally concluded guard returns
+null. Do not treat one as a fallback for the other.
 
 **`memory_search` and `memory_guard_before_action` read different corpora.** The
 search tool includes `ideas/`; the guard tool does not, exactly as `crumb search`

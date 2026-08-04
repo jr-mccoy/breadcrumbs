@@ -155,6 +155,11 @@ Behavior:
   unparseable or there is no git repo), and the rendered packet names the cutoff
   above the warnings. One number is a policy, the others are facts — a distinction
   the old single `stale_days` field hid.
+- **`next_action` here is recorded state, not advice.** The packet's
+  `next_action` is the `## Next Action` a session handoff left behind — `""` when
+  nobody set one. `guard --json` has no `next_action`: its synthesized advice is
+  **`recommended_action`**, and it is always a non-empty string. The two were one
+  name until MF-77, which made an unset handoff look like a broken guard.
 - The **committed** projection is always written with the default cutoff, not the
   one a given invocation passed: a shared artifact must not change because one
   developer preferred `--stale-days 7`. `--stale-days` affects what *you* see.
