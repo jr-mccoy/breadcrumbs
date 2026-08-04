@@ -321,5 +321,91 @@ class GlobalFlagPositionTests(unittest.TestCase):
             self.assertEqual(rc, 0)
 
 
+class MF76StartupCostTests(unittest.TestCase):
+    """Startup work that every invocation paid for and almost none of it used.
+
+    `build_parser()` constructed all ~20 subparsers before argparse looked at
+    argv, and it resolved `--version` eagerly — which imports `importlib.metadata`
+    and, transitively, `email`/`zipfile`/`csv`/`socket`. Both costs landed on the
+    `hook guard` pre-filter that fires on every tool call. Measured on Linux
+    (min of 25 interleaved runs): `crumb hook guard` 85.9 ms -> 52.4 ms against a
+    13.3 ms bare-interpreter floor.
+    """
+
+    def _in_subprocess(self, code: str) -> str:
+        import subprocess
+
+        out = subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            cwd=str(REPO_ROOT),
+        )
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return out.stdout.strip()
+
+    def test_MF76_requested_command_finds_the_subcommand(self):
+        cases = {
+            (): None,
+            ("guard", "rm -rf /"): "guard",
+            ("--json", "guard", "x"): "guard",
+            # the value of a value-taking global flag is not the subcommand …
+            ("--project", "guard", "validate"): "validate",
+            # … including when argparse's long-option abbreviation is used
+            ("--proj", "guard", "validate"): "validate",
+            ("--project=guard", "validate"): "validate",
+            # unknown token -> full parser, so "invalid choice" lists everything
+            ("nosuchcommand",): None,
+            ("--", "validate"): None,
+            ("--help",): None,
+        }
+        for argv, expected in cases.items():
+            with self.subTest(argv=argv):
+                self.assertEqual(crumb.requested_command(list(argv)), expected)
+
+    def test_MF76_only_builds_one_subparser_but_parses_it_identically(self):
+        lean = crumb.build_parser("guard")
+        full = crumb.build_parser()
+        self.assertEqual(
+            vars(lean.parse_args(["guard", "delete the auth module"])),
+            vars(full.parse_args(["guard", "delete the auth module"])),
+        )
+
+    def test_MF76_full_parser_still_offers_every_command(self):
+        """`only` is an optimisation — the registry stays the complete set."""
+        full = crumb.build_parser()
+        sub = next(
+            a for a in full._subparsers._group_actions if hasattr(a, "choices")
+        )  # the subparsers action
+        self.assertEqual(list(sub.choices), list(crumb._SUBCOMMAND_BUILDERS))
+
+    def test_MF76_version_is_not_resolved_while_building_the_parser(self):
+        """The eager `--version` string pulled in importlib.metadata + email + zipfile."""
+        seen = self._in_subprocess(
+            "import sys, breadcrumbs.cli as c\n"
+            "c.build_parser()\n"
+            "print(','.join(m for m in ('importlib.metadata','email','zipfile','csv')"
+            " if m in sys.modules) or 'none')"
+        )
+        self.assertEqual(seen, "none")
+
+    def test_MF76_version_output_is_unchanged(self):
+        out = self._in_subprocess("import breadcrumbs.cli as c; c.main(['--version'])")
+        self.assertRegex(out, r"^breadcrumbs \d+\.\d+\.\d+.* \(record schema_version \d+\)$")
+
+    def test_MF76_secret_and_poison_patterns_compile_on_first_use(self):
+        """~3.5 ms of module body that only `audit`/`scan-secrets` ever need."""
+        state = self._in_subprocess(
+            "import breadcrumbs.cli as c\n"
+            "lazy = [p for _n, p in c.SECRET_PATTERNS] + list(c.INSTRUCTION_LIKE_PATTERNS)\n"
+            "print(any(p._compiled is not None for p in lazy))"
+        )
+        self.assertEqual(state, "False")
+        # …and they behave exactly like the compiled patterns they replaced.
+        self.assertTrue(
+            any(p.search("AKIAIOSFODNN7EXAMPLE") for _n, p in crumb.SECRET_PATTERNS),
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

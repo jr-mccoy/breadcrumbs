@@ -133,7 +133,7 @@ class QuestionIdCollisionTests(unittest.TestCase):
     """Question ids were `q:` + the first 48 characters of the slug.
 
     Two distinct questions sharing that prefix collapsed to one id, and `search`'s
-    by_id map kept only the last — which `guard`'s `_next_safest_action` resolves
+    by_id map kept only the last — which `guard`'s `_recommended_action` resolves
     through, so one question's advice was silently served for another's.
     """
 

@@ -186,7 +186,7 @@ class InstructionLikeTests(unittest.TestCase):
         self.assertEqual(res_code, 0)
         res = json.loads(out)
         self.assertTrue(res["matches"])  # the record surfaces...
-        na = res["next_action"].lower()
+        na = res["recommended_action"].lower()
         # ...but the imperative is never lifted into the recommended action.
         self.assertNotIn("ignore the tests", na)
         self.assertNotIn("skip verification", na)

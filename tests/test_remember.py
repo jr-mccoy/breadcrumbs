@@ -366,5 +366,96 @@ class MF19InteractiveSectionPromptTests(unittest.TestCase):
             self.assertEqual(rec.sections["Context"], "ctx")
 
 
+class MF74AgentProvenanceTests(unittest.TestCase):
+    """A record an agent wrote must not claim a human wrote it (MF-74).
+
+    `derive_fields` defaulted `agent="human"`, so every CLI write without
+    `--agent` was attributed to a person — while the MCP surface recorded the
+    same write as `agent`. In a store whose `confidence`/`review_status` are
+    trust signals, that default manufactured the one claim it had no evidence
+    for.
+    """
+
+    def _clean_env(self, **overrides: str):
+        """os.environ with every known agent marker cleared, plus `overrides`."""
+        env = {var: "" for _label, variables in crumb.AGENT_ENV_MARKERS for var in variables}
+        env.update(overrides)
+        return mock.patch.dict("os.environ", env, clear=False)
+
+    def test_MF74_no_flag_and_no_agent_env_records_unknown_not_human(self):
+        with self._clean_env():
+            self.assertEqual(crumb.detect_agent(), "unknown")
+        with tempfile.TemporaryDirectory() as tmp, self._clean_env():
+            mem = init_store(tmp)
+            code, _ = run(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "No agent flag given",
+                    "--set",
+                    "Decision",
+                    "d",
+                    "--confidence",
+                    "low",
+                ]
+            )
+            self.assertEqual(code, 0)
+            rec = crumb.Record.from_file(next((mem / "decisions").glob("*.md")), "decision")
+            self.assertEqual(rec.meta["agent"], "unknown")
+
+    def test_MF74_agent_harness_is_detected_from_the_environment(self):
+        for var, expected in (
+            ("CLAUDECODE", "claude-code"),
+            ("CURSOR_AGENT", "cursor"),
+            ("CODEX_SANDBOX", "codex"),
+            ("GEMINI_CLI", "gemini"),
+            ("OPENCODE", "opencode"),
+        ):
+            with self.subTest(var=var), self._clean_env(**{var: "1"}):
+                self.assertEqual(crumb.detect_agent(), expected)
+
+    def test_MF74_explicit_flag_still_wins(self):
+        with tempfile.TemporaryDirectory() as tmp, self._clean_env(CLAUDECODE="1"):
+            mem = init_store(tmp)
+            code, _ = run(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "A person asserted this",
+                    "--set",
+                    "Decision",
+                    "d",
+                    "--confidence",
+                    "low",
+                    "--agent",
+                    "human",
+                ]
+            )
+            self.assertEqual(code, 0)
+            rec = crumb.Record.from_file(next((mem / "decisions").glob("*.md")), "decision")
+            self.assertEqual(rec.meta["agent"], "human")
+
+    def test_MF74_known_agent_surfaces_floor_at_agent_not_unknown(self):
+        """MCP tools and the Stop hook know the writer is a machine."""
+        with self._clean_env():
+            self.assertEqual(crumb.detect_agent(fallback="agent"), "agent")
+        with self._clean_env(CLAUDECODE="1"):
+            self.assertEqual(crumb.detect_agent(fallback="agent"), "claude-code")
+
+    def test_MF74_no_argparse_default_reintroduces_human(self):
+        """The flag defaults must stay None so `derive_fields` gets to decide."""
+        parser = crumb.build_parser()
+        defaults = parser.parse_args(
+            ["remember", "decision", "--title", "t", "--set", "Decision", "d"]
+        )
+        self.assertIsNone(defaults.agent)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

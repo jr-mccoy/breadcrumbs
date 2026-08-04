@@ -124,6 +124,37 @@ CORE_FILES = ("current.md", "handoff.md", "open-questions.md", "known-traps.md")
 # id/slug are derived from the filename (§7), so they are not required here.
 REQUIRED_RECORD_KEYS = ("title", "status", "created_at", "privacy")
 
+
+class _LazyPattern:
+    """A `re.Pattern` stand-in that compiles the first time it is actually used.
+
+    The secret-shape and instruction-like tables are the bulk of this module's
+    top-level `re.compile` calls — ~3.5 ms of the ~7.5 ms module body (MF-76) —
+    and only `audit`/`scan_secrets` ever touch them. Every other invocation,
+    including the `hook guard` pre-filter that runs on every tool call, was
+    paying for them. Attribute access proxies to the real pattern, so `.search`,
+    `.finditer`, `.pattern` and friends behave exactly as before.
+    """
+
+    __slots__ = ("_spec", "_compiled")
+
+    def __init__(self, pattern: str, flags: int = 0) -> None:
+        self._spec = (pattern, flags)
+        self._compiled: "re.Pattern[str] | None" = None
+
+    @property
+    def compiled(self) -> "re.Pattern[str]":
+        if self._compiled is None:
+            self._compiled = re.compile(*self._spec)
+        return self._compiled
+
+    def __getattr__(self, name: str):
+        return getattr(self.compiled, name)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<lazy re {self._spec[0]!r}>"
+
+
 # Filename of a directory record: <YYYY-MM-DD>-<slug>.md
 #
 # The slug is restricted to the charset `slugify` emits — lowercase alphanumerics
@@ -979,15 +1010,59 @@ def current_user() -> str:
     return os.environ.get("USER") or os.environ.get("USERNAME") or "unknown"
 
 
-def derive_fields(project_root: Path, agent: str = "human") -> dict:
-    """Auto-derived frontmatter fields (clock + git + environment, plan §7)."""
+# Environment markers that identify the agent harness a command is running under
+# (MF-74). Ordered: the first marker whose variable is set (to anything non-empty)
+# wins. Keep this cheap — it is consulted on every record write and must not
+# import anything.
+AGENT_ENV_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("claude-code", ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")),
+    ("cursor", ("CURSOR_AGENT", "CURSOR_TRACE_ID")),
+    ("codex", ("CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED")),
+    ("gemini", ("GEMINI_CLI", "GEMINI_SANDBOX")),
+    ("opencode", ("OPENCODE", "OPENCODE_BIN_PATH")),
+    ("aider", ("AIDER_CHAT",)),
+)
+
+AGENT_UNKNOWN = "unknown"
+
+
+def detect_agent(fallback: str = AGENT_UNKNOWN) -> str:
+    """Best-effort author label for a record written without an explicit `--agent`.
+
+    `human` used to be the default, so anything an agent wrote through the CLI
+    without passing `--agent` was attributed to a person — while the MCP surface
+    recorded the same write as `agent` (MF-74). In a store whose `confidence` and
+    `review_status` are trust signals, "a human stood behind this" is the one
+    claim a missing flag must never manufacture.
+
+    So: name the harness when the environment names it, and otherwise return
+    `unknown`. That covers CI and every unrecognised agent runner too — none of
+    them are evidence of a human, and neither is a bare shell. A person who wants
+    the stronger claim asserts it with `--agent human`.
+
+    `fallback` is for the surfaces that already know an agent is calling — the
+    MCP tools and the hooks pass `"agent"`, so those writes name the harness when
+    the environment names it and stay honest ("agent") when it doesn't.
+    """
+    for label, variables in AGENT_ENV_MARKERS:
+        if any(os.environ.get(var) for var in variables):
+            return label
+    return fallback
+
+
+def derive_fields(project_root: Path, agent: str | None = None) -> dict:
+    """Auto-derived frontmatter fields (clock + git + environment, plan §7).
+
+    `agent=None` means "nobody said" — resolved by `detect_agent()`, never to
+    `human` (MF-74).
+    """
     root = Path(project_root)
     now = now_iso()
     return {
         "created_at": now,
         "updated_at": now,
         "created_by": current_user(),
-        "agent": agent,
+        "agent": agent or detect_agent(),
         "project": derive_project_name(root),
         "branch": git_branch(root),
         "commit": git_commit(root),
@@ -1635,14 +1710,50 @@ def slugify(title: str) -> str:
     return s or "untitled"
 
 
+# How much of a title a *filename* may carry (MF-75). `slugify` itself stays
+# uncapped — it also names traps and open questions, which are not files — so the
+# cap lives here, where a path is built. A full-sentence title used to become a
+# full-sentence filename: at ~240 characters `remember` failed outright with
+# ENAMETOOLONG on Linux, and well before that `<repo>/.project-memory/<type>/` +
+# the name pushed a Windows checkout past MAX_PATH (260), so `git clone` failed on
+# a repo that had committed one. The record's `title` frontmatter carries the full
+# text either way; the filename only has to be a readable, unique handle.
+SLUG_MAX_CHARS = 60
+
+
+def truncate_slug(slug: str, limit: int = SLUG_MAX_CHARS) -> str:
+    """Cap `slug` at `limit` characters, preferring a whole-word cut.
+
+    The result is still canonical for `RECORD_STEM_RE` (no leading/trailing or
+    doubled `-`), so `derive_identity` reads it back unchanged. Cutting mid-word
+    is allowed rather than dropping below half the budget — a slug of one very
+    long word should still say something.
+    """
+    if limit <= 0 or len(slug) <= limit:
+        return slug
+    cut = slug[:limit]
+    head, sep, _tail = cut.rpartition("-")
+    if sep and len(head) >= limit // 2:
+        cut = head
+    return cut.rstrip("-") or slug[:limit].rstrip("-")
+
+
 def _unique_record_path(directory: Path, date: str, slug: str) -> tuple[Path, str]:
-    """Pick a non-colliding `<date>-<slug>.md` (append -2, -3, … on same-day clash)."""
-    candidate = directory / f"{date}-{slug}.md"
+    """Pick a non-colliding `<date>-<slug>.md` (append -2, -3, … on same-day clash).
+
+    The slug is capped at `SLUG_MAX_CHARS` *including* the collision suffix, so
+    the disambiguated names stay inside the budget too. Truncation can make two
+    long titles land on the same base — that is just another same-day clash, and
+    the suffix already handles it.
+    """
+    base = truncate_slug(slug)
+    candidate = directory / f"{date}-{base}.md"
     if not candidate.exists():
-        return candidate, slug
+        return candidate, base
     i = 2
     while True:
-        s2 = f"{slug}-{i}"
+        suffix = f"-{i}"
+        s2 = truncate_slug(slug, SLUG_MAX_CHARS - len(suffix)) + suffix
         candidate = directory / f"{date}-{s2}.md"
         if not candidate.exists():
             return candidate, s2
@@ -1674,7 +1785,7 @@ def write_record(
     privacy: str | None = None,
     scope: str | None = None,
     status: str | None = None,
-    agent: str = "human",
+    agent: str | None = None,
     extra: dict | None = None,
 ) -> tuple[Path, dict]:
     """Assemble + write a durable record; return (path, frontmatter dict).
@@ -1762,7 +1873,7 @@ def set_record_status(
     status: str,
     reason: str,
     *,
-    agent: str = "human",
+    agent: str | None = None,
     superseded_by: str | None = None,
 ) -> dict:
     """Change a durable record's `status`, gated by `validate` (§16.6).
@@ -1796,7 +1907,8 @@ def set_record_status(
     # A literal `-->` inside the reason would terminate the comment early and
     # leak the remainder as content (review #3 R24) — neutralize it.
     reason = (reason or "").replace("-->", "-- >")
-    note = f"<!-- status: {prev} -> {status} ({reason}) by {agent} at {meta['updated_at']} -->"
+    author = agent or detect_agent()
+    note = f"<!-- status: {prev} -> {status} ({reason}) by {author} at {meta['updated_at']} -->"
     try:
         rendered = render_frontmatter(meta)
     except ValueError as exc:
@@ -2240,7 +2352,7 @@ def note(
     *,
     fields: dict | None = None,
     tags: list[str] | None = None,
-    agent: str = "human",
+    agent: str | None = None,
 ) -> dict:
     """Write an open-question / known-trap / idea and refresh projections (review §6.6).
 
@@ -2372,7 +2484,7 @@ def cmd_note(args: argparse.Namespace) -> int:
         args.text or "",
         fields=fields,
         tags=tags,
-        agent=getattr(args, "agent", "human"),
+        agent=getattr(args, "agent", None),
     )
     if not result.get("ok"):
         _emit_error(args, result.get("error", "note failed"))
@@ -2400,7 +2512,7 @@ def verify(
     evidence: list[dict] | None = None,
     tags: list[str] | None = None,
     confidence: str | None = None,
-    agent: str = "human",
+    agent: str | None = None,
 ) -> dict:
     """Record a verification result — a finding about reality (review F1).
 
@@ -2498,7 +2610,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         evidence=_parse_evidence_pairs(args.evidence),
         tags=_split_tags(args.tags),
         confidence=args.confidence,
-        agent=getattr(args, "agent", "human"),
+        agent=getattr(args, "agent", None),
     )
     if not result.get("ok"):
         _emit_error(args, result.get("error", "verify failed"))
@@ -2535,7 +2647,7 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
         args.record_id,
         args.new_status,
         args.reason or "",
-        agent=getattr(args, "agent", "human"),
+        agent=getattr(args, "agent", None),
         superseded_by=args.superseded_by,
     )
     if not result.get("ok"):
@@ -4227,7 +4339,7 @@ def question_item_id(question: str) -> str:
     Truncating the slug at 48 characters made two distinct questions share one id
     ("… to the new columnar store this quarter" / "… to the new row store next
     quarter" both slugify past the cut with the same prefix), and `search`'s
-    by_id map kept only the last — which `guard`'s `_next_safest_action` resolves
+    by_id map kept only the last — which `guard`'s `_recommended_action` resolves
     through (audit #6 N6). A short digest of the *full* question restores
     uniqueness; ids for questions short enough not to be cut are unchanged.
     """
@@ -4589,7 +4701,7 @@ def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
     return verdict
 
 
-def _next_safest_action(verdict: str, top: list[dict], by_id: dict, root: Path) -> str:
+def _recommended_action(verdict: str, top: list[dict], by_id: dict, root: Path) -> str:
     """Synthesize the next safest action from match kinds (§11.6).
 
     Generated by this code from structure — never copied as an imperative out of a
@@ -4719,7 +4831,9 @@ def guard(
         "matches": top,
         "history": history[:GUARD_MAX_WARNINGS],
         "staleness": staleness,
-        "next_action": _next_safest_action(verdict, top, by_id, root),
+        # NOT `next_action` — that key is the resume packet's *recorded* Next
+        # Action, and one name for two unrelated things read as one thing (MF-77).
+        "recommended_action": _recommended_action(verdict, top, by_id, root),
         "thresholds": {
             "noise_floor": GUARD_NOISE_FLOOR,
             "read_first_score": GUARD_READ_FIRST_SCORE,
@@ -4762,7 +4876,7 @@ def render_guard_human(result: dict) -> str:
         out.append("")
 
     out.append("Recommended next action:")
-    out.append(result["next_action"])
+    out.append(result["recommended_action"])
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -4866,23 +4980,23 @@ _SECRET_SKIP_DIRS = {"private", "index", "generated"}
 # `tests/test_secrets.py`. MF-45 replaced the "see the Phase 6 doc" pointers in
 # security.md and cli-spec.md — no phase doc has ever existed — but missed this
 # copy of the same dead reference (MF-61).
-SECRET_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
-    ("aws-access-key-id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    ("github-token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
-    ("github-fine-grained-pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
-    ("slack-token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
-    ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
+SECRET_PATTERNS: tuple[tuple[str, "_LazyPattern"], ...] = (
+    ("aws-access-key-id", _LazyPattern(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("github-token", _LazyPattern(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("github-fine-grained-pat", _LazyPattern(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
+    ("slack-token", _LazyPattern(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
+    ("google-api-key", _LazyPattern(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
     # sk-… covers both the legacy `sk-<base62>` and modern `sk-proj-<base62>`
     # OpenAI shapes (the hyphen in `proj-` broke the old alnum-only pattern).
-    ("openai-style-key", re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
+    ("openai-style-key", _LazyPattern(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
     # Stripe-style secret/restricted/publishable keys: sk_live_…, rk_test_…, etc.
-    ("stripe-style-key", re.compile(r"\b[srp]k_(?:live|test)_[A-Za-z0-9]{16,}\b")),
-    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b")),
-    ("pem-private-key", re.compile(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")),
-    ("bearer-token", re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{20,}")),
+    ("stripe-style-key", _LazyPattern(r"\b[srp]k_(?:live|test)_[A-Za-z0-9]{16,}\b")),
+    ("jwt", _LazyPattern(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b")),
+    ("pem-private-key", _LazyPattern(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")),
+    ("bearer-token", _LazyPattern(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{20,}")),
     (
         "secret-assignment",
-        re.compile(
+        _LazyPattern(
             r"(?i)\b(?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token|"
             r"refresh[_-]?token|id[_-]?token|session[_-]?token|private[_-]?key|"
             r"signing[_-]?key|client[_-]?secret|password|passwd|pwd)\b"
@@ -4910,7 +5024,7 @@ SECRET_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     # well-known defaults like amqp's `guest:guest`.
     (
         "url-embedded-credentials",
-        re.compile(
+        _LazyPattern(
             r"(?i)\b[a-z][a-z0-9+.\-]*://[^/\s:@]*:"
             r"(?!(?:password|passwd|pass|secret|token|changeme|placeholder|redacted|"
             r"example|user|username|test|xxx+|\*+)@)"
@@ -4920,7 +5034,7 @@ SECRET_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ),
     (
         "labeled-hex-secret",
-        re.compile(
+        _LazyPattern(
             r"(?i)\b(?:token|authorization|x-[a-z0-9-]*-(?:key|token))\b\s*[:=]\s*"
             r"['\"]?[0-9a-fA-F]{32,}\b"
         ),
@@ -4930,7 +5044,7 @@ SECRET_PATTERNS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 # Standalone high-entropy tokens (base64-ish). The charset excludes `_`/`-`, so
 # record ids like `dec_20260605_markdown-source-of-truth` never form a long run,
 # and the mixed-class + entropy floor below skips lowercase-only ids and hex shas.
-_HIGH_ENTROPY_TOKEN = re.compile(r"\b[A-Za-z0-9+/=]{32,}\b")
+_HIGH_ENTROPY_TOKEN = _LazyPattern(r"\b[A-Za-z0-9+/=]{32,}\b")
 
 # Override-style phrasing audit flags for human review (plan §16 note). A *flag*,
 # never a gate — same content-as-data posture as guard (Fixture 7).
@@ -4939,26 +5053,26 @@ _HIGH_ENTROPY_TOKEN = re.compile(r"\b[A-Za-z0-9+/=]{32,}\b")
 # suite's checks") are caught, not just the bare determiner forms (review #3 R26).
 _IL_QUALIFIERS = r"(?:(?:all|the|any|every|these|those|prior|previous|earlier|existing|above|failing|flaky|broken|remaining|other)\s+){0,3}"
 
-INSTRUCTION_LIKE_PATTERNS: tuple["re.Pattern[str]", ...] = (
-    re.compile(
+INSTRUCTION_LIKE_PATTERNS: tuple["_LazyPattern", ...] = (
+    _LazyPattern(
         r"(?i)\bignore\s+"
         + _IL_QUALIFIERS
         + r"(?:tests?|instructions?|previous|above|rules?|warnings?|memory|checks?|errors?|failures?)\b"
     ),
-    re.compile(
+    _LazyPattern(
         r"(?i)\bskip\s+"
         + _IL_QUALIFIERS
         + r"(?:tests?|validation|verification|checks?|review|ci)\b"
     ),
-    re.compile(
+    _LazyPattern(
         r"(?i)\bdisable\s+"
         + _IL_QUALIFIERS
         + r"(?:tests?|checks?|validation|guard|safety|linter?|ci)\b"
     ),
-    re.compile(r"(?i)\b(?:never|always)\s+run\b"),
-    re.compile(r"(?i)\bdo\s+not\s+run\b"),
-    re.compile(r"(?i)\b(?:always|never)\s+(?:force[- ]?push|skip|disable|ignore|bypass)\b"),
-    re.compile(
+    _LazyPattern(r"(?i)\b(?:never|always)\s+run\b"),
+    _LazyPattern(r"(?i)\bdo\s+not\s+run\b"),
+    _LazyPattern(r"(?i)\b(?:always|never)\s+(?:force[- ]?push|skip|disable|ignore|bypass)\b"),
+    _LazyPattern(
         r"(?i)\bbypass\s+"
         + _IL_QUALIFIERS
         + r"(?:tests?|checks?|(?:code\s+)?review|validation|guard|ci)\b"
@@ -6406,7 +6520,9 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
         title="session",
         set=None,
         focus=None,
-        agent="agent",
+        # A Stop-hook capture is always a machine write, so `agent` is the floor
+        # here, not `unknown` (MF-74) — named harness when the env names one.
+        agent=detect_agent(fallback="agent"),
         capture_what="session",
     )
     try:
@@ -6478,6 +6594,36 @@ def get_version() -> str:
 _GLOBAL_FLAG_DEFAULTS = {"project": None, "json": False, "plain": False, "verbose": False}
 
 
+# One wording for every `--agent` flag. The default is deliberately *not* `human`
+# (MF-74): an omitted flag is an absence of evidence, so it resolves to the
+# detected harness or to `unknown`, and a person asserts authorship explicitly.
+_AGENT_FLAG_HELP = "{what} label (default: detected agent harness, else 'unknown')"
+
+
+class _LazyVersionAction(argparse.Action):
+    """`--version`, without charging every *other* command for it (MF-76).
+
+    argparse's built-in `version` action wants the finished string at parser
+    construction time, so `build_parser()` called `get_version()` — which imports
+    `importlib.metadata`, and with it `email`, `zipfile`, `csv`, `socket`,
+    `typing`, … That was ~24 ms of a ~30 ms `build_parser()`, paid on every
+    invocation including the `hook guard` pre-filter that fires on every tool
+    call, for a flag almost nothing passes. Resolving the version inside
+    `__call__` moves that cost to the one command that asked for it.
+    """
+
+    def __init__(
+        self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None
+    ):
+        super().__init__(
+            option_strings=option_strings, dest=dest, default=default, nargs=0, help=help
+        )
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        print(f"breadcrumbs {get_version()} (record schema_version {SCHEMA_VERSION})")
+        parser.exit()
+
+
 class _BreadcrumbsParser(argparse.ArgumentParser):
     """Top-level parser that keeps global flags working in any position."""
 
@@ -6489,47 +6635,8 @@ class _BreadcrumbsParser(argparse.ArgumentParser):
         return ns, argv
 
 
-def build_parser() -> argparse.ArgumentParser:
-    # Parent parser holds the global flags so every subcommand inherits them.
-    # default=SUPPRESS is load-bearing — see _BreadcrumbsParser above.
-    global_parser = argparse.ArgumentParser(add_help=False)
-    global_parser.add_argument(
-        "--json",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="machine-readable JSON output",
-    )
-    global_parser.add_argument(
-        "--plain",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="plain-text output (no decoration)",
-    )
-    global_parser.add_argument(
-        "--verbose", action="store_true", default=argparse.SUPPRESS, help="verbose output"
-    )
-    global_parser.add_argument(
-        "--project", metavar="PATH", default=argparse.SUPPRESS, help="project root (default: cwd)"
-    )
-
-    parser = _BreadcrumbsParser(
-        prog="crumb",
-        description="Breadcrumbs — a repo-local ledger of durable project state you and your agents can follow back.",
-        parents=[global_parser],
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version=(f"breadcrumbs {get_version()} (record schema_version {SCHEMA_VERSION})"),
-        help="show version and record schema_version, then exit",
-    )
-    # Subparsers are plain ArgumentParsers (not _BreadcrumbsParser) so the global
-    # backfill runs only once, at the top level — never in a copied-back sub-namespace.
-    sub = parser.add_subparsers(
-        dest="command", metavar="<command>", parser_class=argparse.ArgumentParser
-    )
-
-    # init
+# init
+def _add_init(sub, global_parser: argparse.ArgumentParser) -> None:
     p_init = sub.add_parser(
         "init",
         parents=[global_parser],
@@ -6606,7 +6713,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_init.set_defaults(func=cmd_init, adapter=None, mcp=None, hooks=None)
 
-    # validate (Phase 2)
+
+# validate (Phase 2)
+def _add_validate(sub, global_parser: argparse.ArgumentParser) -> None:
     p_validate = sub.add_parser(
         "validate",
         parents=[global_parser],
@@ -6614,7 +6723,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_validate.set_defaults(func=cmd_validate)
 
-    # remember decision | attempt (Phase 3)
+
+# remember decision | attempt (Phase 3)
+def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
     p_remember = sub.add_parser(
         "remember",
         parents=[global_parser],
@@ -6648,7 +6759,7 @@ def build_parser() -> argparse.ArgumentParser:
         pr.add_argument("--privacy", choices=VALID_PRIVACY)
         pr.add_argument("--scope")
         pr.add_argument("--status", choices=VALID_STATUS)
-        pr.add_argument("--agent", default="human", help="record author label (default: human)")
+        pr.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author"))
         if rtype == "attempt":
             # The fixed attempt vocabulary as named flags (review §6.2/§8); each
             # overrides the matching --set heading.
@@ -6662,7 +6773,9 @@ def build_parser() -> argparse.ArgumentParser:
             pr.add_argument("--related", help="'Related Records' section")
         pr.set_defaults(func=cmd_remember)
 
-    # schema introspection (review §6.2/§8)
+
+# schema introspection (review §6.2/§8)
+def _add_schema(sub, global_parser: argparse.ArgumentParser) -> None:
     p_schema = sub.add_parser(
         "schema",
         parents=[global_parser],
@@ -6681,7 +6794,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_schema.set_defaults(func=cmd_schema)
 
-    # note question|trap|idea (review §6.6 write-surface)
+
+# note question|trap|idea (review §6.6 write-surface)
+def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     p_note = sub.add_parser(
         "note",
         parents=[global_parser],
@@ -6717,10 +6832,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="set an idea body section (repeatable)",
     )
     pi.add_argument("--tags", help="comma-separated tags")
-    pi.add_argument("--agent", default="human", help="note author label (default: human)")
+    pi.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
     pi.set_defaults(func=cmd_note)
 
-    # verify (review F1) — record a verification result (a finding about reality)
+
+# verify (review F1) — record a verification result (a finding about reality)
+def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
     p_verify = sub.add_parser(
         "verify",
         parents=[global_parser],
@@ -6754,10 +6871,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_verify.add_argument("--tags", help="comma-separated tags")
     p_verify.add_argument("--confidence", choices=("low", "medium", "high"))
-    p_verify.add_argument("--agent", default="human", help="record author label (default: human)")
+    p_verify.add_argument(
+        "--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author")
+    )
     p_verify.set_defaults(func=cmd_verify)
 
-    # mark-status (review #3 R25) — record lifecycle mutation from the CLI
+
+# mark-status (review #3 R25) — record lifecycle mutation from the CLI
+def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mark = sub.add_parser(
         "mark-status",
         parents=[global_parser],
@@ -6782,10 +6903,12 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="ID",
         help="the replacing record's id (required by validate when marking superseded)",
     )
-    p_mark.add_argument("--agent", default="human", help="author label (default: human)")
+    p_mark.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
     p_mark.set_defaults(func=cmd_mark_status)
 
-    # reindex (review F2) — explicit projection refresh (mutations reindex automatically)
+
+# reindex (review F2) — explicit projection refresh (mutations reindex automatically)
+def _add_reindex(sub, global_parser: argparse.ArgumentParser) -> None:
     p_reindex = sub.add_parser(
         "reindex",
         parents=[global_parser],
@@ -6793,7 +6916,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_reindex.set_defaults(func=cmd_reindex)
 
-    # capture session (Phase 3)
+
+# capture session (Phase 3)
+def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
     p_capture = sub.add_parser(
         "capture",
         parents=[global_parser],
@@ -6823,10 +6948,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_session.add_argument(
         "--focus", help="Current Focus for handoff/current (default: Next Action)"
     )
-    p_session.add_argument("--agent", default="human", help="session author label (default: human)")
+    p_session.add_argument(
+        "--agent", default=None, help=_AGENT_FLAG_HELP.format(what="session author")
+    )
     p_session.set_defaults(func=cmd_capture_session)
 
-    # resume (Phase 4)
+
+# resume (Phase 4)
+def _add_resume(sub, global_parser: argparse.ArgumentParser) -> None:
     p_resume = sub.add_parser(
         "resume",
         parents=[global_parser],
@@ -6853,7 +6982,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_resume.set_defaults(func=cmd_resume)
 
-    # search (Phase 5) — deterministic exact/keyword/tag/file lookup
+
+# search (Phase 5) — deterministic exact/keyword/tag/file lookup
+def _add_search(sub, global_parser: argparse.ArgumentParser) -> None:
     p_search = sub.add_parser(
         "search",
         parents=[global_parser],
@@ -6884,7 +7015,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_search.set_defaults(func=cmd_search)
 
-    # guard (Phase 5) — guard-before-action: warn before repeating a mistake
+
+# guard (Phase 5) — guard-before-action: warn before repeating a mistake
+def _add_guard(sub, global_parser: argparse.ArgumentParser) -> None:
     p_guard = sub.add_parser(
         "guard",
         parents=[global_parser],
@@ -6907,7 +7040,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_guard.set_defaults(func=cmd_guard)
 
-    # audit (Phase 6) — heuristic stale/unsafe/bloated detection (does NOT gate validate)
+
+# audit (Phase 6) — heuristic stale/unsafe/bloated detection (does NOT gate validate)
+def _add_audit(sub, global_parser: argparse.ArgumentParser) -> None:
     p_audit = sub.add_parser(
         "audit",
         parents=[global_parser],
@@ -6922,7 +7057,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_audit.set_defaults(func=cmd_audit)
 
-    # scan-secrets (Phase 6) — the secret sub-check as a standalone command
+
+# scan-secrets (Phase 6) — the secret sub-check as a standalone command
+def _add_scan_secrets(sub, global_parser: argparse.ArgumentParser) -> None:
     p_scan = sub.add_parser(
         "scan-secrets",
         parents=[global_parser],
@@ -6930,7 +7067,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_scan.set_defaults(func=cmd_scan_secrets)
 
-    # mcp serve|register — surface the optional MCP server from the CLI (review §6.3)
+
+# mcp serve|register — surface the optional MCP server from the CLI (review §6.3)
+def _add_mcp(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mcp = sub.add_parser(
         "mcp",
         parents=[global_parser],
@@ -6957,7 +7096,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_mcp_doctor.set_defaults(func=cmd_mcp, mcp_what="doctor")
 
-    # doctor — integration health (review §A.7)
+
+# doctor — integration health (review §A.7)
+def _add_doctor(sub, global_parser: argparse.ArgumentParser) -> None:
     p_doctor = sub.add_parser(
         "doctor",
         parents=[global_parser],
@@ -6965,7 +7106,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_doctor.set_defaults(func=cmd_doctor)
 
-    # hook session|guard|capture — harness translation layer (review §A.6)
+
+# hook session|guard|capture — harness translation layer (review §A.6)
+def _add_hook(sub, global_parser: argparse.ArgumentParser) -> None:
     p_hook = sub.add_parser(
         "hook",
         parents=[global_parser],
@@ -6981,6 +7124,85 @@ def build_parser() -> argparse.ArgumentParser:
         ph = hook_sub.add_parser(ev, parents=[global_parser], help=_help)
         ph.set_defaults(func=cmd_hook, hook_event=ev)
 
+
+# Every subcommand's parser, built on demand (MF-76). `build_parser()` used to
+# construct all of these up front — ~5 ms before argparse had even looked at
+# argv — on every invocation, including the `hook guard` pre-filter that fires
+# on every tool call and usually returns `{}` without touching memory. `main()`
+# now names the one command argv asks for and only that parser is built; the
+# full set is still built for `--help`, for an unrecognised command (so the
+# "invalid choice" message lists everything), and for any caller that wants the
+# whole parser. Insertion order is the order `--help` lists them in.
+_SUBCOMMAND_BUILDERS: dict[str, object] = {
+    "init": _add_init,
+    "validate": _add_validate,
+    "remember": _add_remember,
+    "schema": _add_schema,
+    "note": _add_note,
+    "verify": _add_verify,
+    "mark-status": _add_mark_status,
+    "reindex": _add_reindex,
+    "capture": _add_capture,
+    "resume": _add_resume,
+    "search": _add_search,
+    "guard": _add_guard,
+    "audit": _add_audit,
+    "scan-secrets": _add_scan_secrets,
+    "mcp": _add_mcp,
+    "doctor": _add_doctor,
+    "hook": _add_hook,
+}
+
+
+def build_parser(only: str | None = None) -> argparse.ArgumentParser:
+    """The `crumb` parser. `only` builds just that one subcommand's parser (MF-76).
+
+    `only` is an optimisation, never a behaviour change: pass a name from
+    `_SUBCOMMAND_BUILDERS` and the returned parser handles exactly that command;
+    pass nothing (every caller that needs help text, or an unknown command) and
+    the full parser is built as before.
+    """
+    # Parent parser holds the global flags so every subcommand inherits them.
+    # default=SUPPRESS is load-bearing — see _BreadcrumbsParser above.
+    global_parser = argparse.ArgumentParser(add_help=False)
+    global_parser.add_argument(
+        "--json",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="machine-readable JSON output",
+    )
+    global_parser.add_argument(
+        "--plain",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="plain-text output (no decoration)",
+    )
+    global_parser.add_argument(
+        "--verbose", action="store_true", default=argparse.SUPPRESS, help="verbose output"
+    )
+    global_parser.add_argument(
+        "--project", metavar="PATH", default=argparse.SUPPRESS, help="project root (default: cwd)"
+    )
+
+    parser = _BreadcrumbsParser(
+        prog="crumb",
+        description="Breadcrumbs — a repo-local ledger of durable project state you and your agents can follow back.",
+        parents=[global_parser],
+    )
+    parser.add_argument(
+        "--version",
+        action=_LazyVersionAction,
+        help="show version and record schema_version, then exit",
+    )
+    # Subparsers are plain ArgumentParsers (not _BreadcrumbsParser) so the global
+    # backfill runs only once, at the top level — never in a copied-back sub-namespace.
+    sub = parser.add_subparsers(
+        dest="command", metavar="<command>", parser_class=argparse.ArgumentParser
+    )
+    for name, add_subcommand in _SUBCOMMAND_BUILDERS.items():
+        if only is None or name == only:
+            add_subcommand(sub, global_parser)
+
     return parser
 
 
@@ -6992,8 +7214,42 @@ def _capture_dispatch(args: argparse.Namespace) -> int:
     return cmd_capture_session(args)
 
 
+# Global flags that take a separate value, so the argv pre-scan below doesn't
+# mistake `--project guard` for the `guard` subcommand. Matched by prefix,
+# because argparse accepts long-option abbreviations (`--proj guard …`).
+_GLOBAL_VALUE_FLAGS = ("--project",)
+
+
+def _consumes_next_token(token: str) -> bool:
+    return any(flag.startswith(token) for flag in _GLOBAL_VALUE_FLAGS)
+
+
+def requested_command(argv: list[str]) -> str | None:
+    """The subcommand `argv` names, or None if it names none (MF-76).
+
+    A cheap pre-scan so `main()` can build one subparser instead of twenty. The
+    subcommand is argparse's first positional, so this skips options (and the one
+    global flag that takes a separate value) and returns the first bare token —
+    but only if it is a name we know. An unknown token returns None, which builds
+    the full parser, so argparse's "invalid choice" message still lists every
+    command.
+    """
+    it = iter(argv)
+    for token in it:
+        if token == "--":
+            # argparse already rejects `crumb -- <command>`; hand it the full
+            # parser so that error still lists every choice.
+            return None
+        if token.startswith("-"):
+            if _consumes_next_token(token):
+                next(it, None)
+            continue
+        return token if token in _SUBCOMMAND_BUILDERS else None
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
+    parser = build_parser(requested_command(sys.argv[1:] if argv is None else list(argv)))
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help()

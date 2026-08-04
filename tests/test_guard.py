@@ -255,10 +255,10 @@ class DataNotInstructionTests(unittest.TestCase):
             self.assertTrue(res["matches"])
             # ...but the synthesized next action is one of OUR templates, never the
             # imperative lifted from the record body.
-            self.assertNotIn("force-push", res["next_action"].lower())
-            self.assertNotIn("delete the auth module", res["next_action"].lower())
+            self.assertNotIn("force-push", res["recommended_action"].lower())
+            self.assertNotIn("delete the auth module", res["recommended_action"].lower())
             self.assertTrue(
-                res["next_action"].startswith(
+                res["recommended_action"].startswith(
                     ("Stop", "Read", "This", "Low-severity", "No conflicting")
                 )
             )
@@ -350,7 +350,7 @@ class JsonShapeTests(unittest.TestCase):
                 "matches",
                 "history",
                 "staleness",
-                "next_action",
+                "recommended_action",
                 "thresholds",
             ):
                 self.assertIn(key, res)
@@ -567,6 +567,60 @@ class MF72TitleWeightTests(unittest.TestCase):
             surfaced = res["matches"] + res["history"]
             self.assertTrue(surfaced, "the aged decision vanished again")
             self.assertIn("title", surfaced[0]["signals"])
+
+
+class MF77NextActionDisambiguationTests(unittest.TestCase):
+    """One key name meant two unrelated things across two commands (MF-77).
+
+    `guard --json` carried `next_action` = advice this code synthesizes, always
+    non-empty. `resume --json` carries `next_action` = the Next Action a session
+    handoff recorded, `""` when nobody set one. The field-test reporter read the
+    empty resume value and filed it as "guard returns null". Guard's key is now
+    `recommended_action`; the resume packet keeps `next_action`, which is the
+    name of the record section it comes from.
+    """
+
+    def _store(self, tmp: str) -> tuple[Path, Path]:
+        root = Path(tmp)
+        run(["init", "--project", tmp, "--session-tracking", "full"])
+        return root, root / crumb.MEMORY_DIRNAME
+
+    def test_MF77_guard_json_has_recommended_action_and_no_next_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store(tmp)
+            res = cli.guard(mem, root, "rewrite the auth middleware")
+            self.assertIn("recommended_action", res)
+            self.assertNotIn("next_action", res)
+            self.assertTrue(res["recommended_action"].strip())
+
+    def test_MF77_the_two_keys_never_collide_in_one_payload(self):
+        """Whatever the store's state, the names stay distinguishable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store(tmp)
+            guard_keys = set(cli.guard(mem, root, "delete the accounts table"))
+            packet_keys = set(cli.build_resume_packet(mem, root))
+            self.assertEqual(guard_keys & {"next_action"}, set())
+            self.assertEqual(packet_keys & {"recommended_action"}, set())
+            self.assertIn("next_action", packet_keys)
+            self.assertIn("recommended_action", guard_keys)
+
+    def test_MF77_guard_advice_is_non_empty_where_the_packet_may_be_blank(self):
+        """The asymmetry that made an unset handoff look like a broken guard."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store(tmp)
+            handoff = mem / "handoff.md"
+            handoff.write_text(
+                "# Handoff\n\n## Current Focus\n\n_(none)_\n\n## Next Action\n\n_(none)_\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(cli.build_resume_packet(mem, root)["next_action"], "")
+            self.assertTrue(cli.guard(mem, root, "anything at all")["recommended_action"])
+
+    def test_MF77_human_render_still_labels_the_recommendation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store(tmp)
+            text = crumb.render_guard_human(cli.guard(mem, root, "rewrite the auth middleware"))
+            self.assertIn("Recommended next action:", text)
 
 
 if __name__ == "__main__":

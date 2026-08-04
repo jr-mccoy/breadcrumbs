@@ -7,10 +7,58 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
-Four fixes from the 2026-08-04 agent field test (run against a real Android
-repo's store plus a 600-record synthetic store): MF-71 … MF-73.
+Everything from the 2026-08-04 agent field test (run against a real Android
+repo's store plus a 600-record synthetic store): the four high-severity findings
+first (MF-71 … MF-73), then the four remaining ones (MF-74 … MF-77).
 
 ### Fixed
+- **A record an agent wrote no longer claims a human wrote it (MF-74).**
+  `derive_fields()` defaulted `agent="human"`, so every write through the CLI
+  without an explicit `--agent` was attributed to a person — while the MCP
+  surface recorded the *same* write as `agent`. Two surfaces, two answers, and
+  in a store whose `confidence` and `review_status` exist to be trust signals,
+  "human · high confidence" on a record an LLM asserted is the one claim a
+  missing flag must never manufacture. `detect_agent()` now reads the
+  environment (`CLAUDECODE`, `CURSOR_AGENT`, `CODEX_SANDBOX`, `GEMINI_CLI`,
+  `OPENCODE`, `AIDER_CHAT`) and records the harness it finds; when it finds
+  none it records **`unknown`**. A person makes the stronger claim explicitly
+  with `--agent human`. The surfaces that already know the writer is a machine —
+  the MCP tools, the Stop hook — share the detection but floor at `agent`
+  instead of `unknown`, so all three surfaces now name the same harness. No
+  fixture or test pinned `agent: human`; committed fixtures are read, not
+  regenerated, so they are untouched.
+- **A long title no longer produces a path that breaks the clone (MF-75).**
+  `slugify()` had no length cap, so the whole title became the filename under
+  `.project-memory/<type>/`. Past roughly 240 characters `remember` failed
+  outright — `[Errno 36] File name too long`, straight out of the writer — and
+  well before that `<checkout>/.project-memory/<type>/<name>` pushed a Windows
+  clone past MAX_PATH (260 characters, absent `core.longpaths`), so a repo that
+  had committed one record could not be cloned. Filenames now cap the slug at
+  **60 characters**, cut on a word boundary, with `-2`/`-3` collision suffixes
+  counted inside the budget. `slugify()` itself stays uncapped — it also names
+  known traps and open-question ids, which are not files — and nothing caps on
+  *read*, so records already on disk with longer names still load, validate and
+  resolve by id. The full text was never in the filename's keeping anyway: it is
+  the record's `title`.
+- **Startup no longer charges every command for work almost none of them do
+  (MF-76).** The field-test report blamed eager `subprocess`/`shutil`/`hashlib`
+  imports; measured, that is less than half of it. `build_parser()` resolved
+  `--version` eagerly, which imports `importlib.metadata` and with it `email`,
+  `zipfile`, `csv` and `socket` (~24 ms), and it constructed all 17 subparsers
+  before argparse had looked at argv (~5 ms). Both were paid by the `hook guard`
+  pre-filter that fires on *every* hooked tool call and usually returns `{}`
+  without reading a record. Three changes: a lazy `--version` action, a
+  compile-on-first-use proxy for the secret-shape and instruction-like pattern
+  tables (~21 of the module's top-level `re.compile` calls, needed only by
+  `audit`/`scan-secrets`), and per-subcommand parser builders selected by a
+  cheap argv pre-scan — with the full parser still built for `--help`, for an
+  unrecognised command (so "invalid choice" keeps listing everything), and for
+  any caller that asks. Min of 25 interleaved runs on Linux, against a 13.3 ms
+  bare-interpreter floor: `import breadcrumbs.cli` 53.3 → 50.3 ms, `crumb --help`
+  86.1 → 58.0 ms, `crumb hook guard` **85.9 → 52.4 ms** (−39%, or −46% of the
+  work above the floor). `crumb --version` is unchanged by design — it is the one
+  command that still has to resolve the version. The report's headline 375 ms was
+  Windows process-spawn dominated and does not transfer.
 - **Staleness de-weights; it no longer erases (MF-71).** Guard's branch-mismatch
   (0.8), age (0.7) and commit-distance (0.7) factors compound to 0.39, which
   pushed prose-only records under the noise floor and dropped them with no
@@ -44,6 +92,24 @@ repo's store plus a 600-record synthetic store): MF-71 … MF-73.
   one decay pushes under the floor. Audit now emits a warn-severity
   `unreachable` finding naming the record, while the author is still around to
   add tags or file evidence. Warn never changes the exit code (§10 ladder).
+
+### Changed
+- **`guard`'s synthesized advice is `recommended_action`, not `next_action`
+  (MF-77).** The key `next_action` meant two unrelated things in two commands.
+  In `guard --json` it was advice *this code composes* from the match kinds
+  behind the verdict (`_recommended_action`, §11.6) — always a non-empty string,
+  and already labelled **"Recommended next action:"** in the human output. In the
+  resume packet it is *recorded state*: the `## Next Action` a session handoff
+  left behind, which is `""` when nobody set one. The field-test reporter read
+  the empty resume value and filed it as "guard returns `null`" — a reasonable
+  reading of one name used for two things. Guard's key is renamed; the resume
+  packet keeps `next_action`, because that is the name of the record section it
+  comes from. **This renames a key in `crumb guard --json` and in the
+  `memory_guard_before_action` MCP result** (the same kind of user-visible rename
+  as 0.1.8's `stale_days` → `stale_after_days`); nothing consumed the old name
+  except this repo's own tests, and `crumb resume --json`, the hook payloads and
+  every other command are untouched. `README.md`, `docs/cli-spec.md` and
+  `docs/mcp-spec.md` now state the distinction where each field is documented.
 
 ## [0.1.8] — 2026-08-02
 
