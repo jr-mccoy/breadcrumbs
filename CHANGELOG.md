@@ -9,9 +9,27 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 Everything from the 2026-08-04 agent field test (run against a real Android
 repo's store plus a 600-record synthetic store): the four high-severity findings
-first (MF-71 … MF-73), then the four remaining ones (MF-74 … MF-77).
+first (MF-71 … MF-73), then the four remaining ones (MF-74 … MF-77), plus a red
+CI matrix leg found while checking that work landed clean (MF-78).
 
 ### Fixed
+- **CI was red on Python 3.14, and had been since before this batch (MF-78).**
+  `test (3.14)` and both `mcp (3.14, …)` legs failed while every other Python
+  passed. **3.14 colorizes argparse output**, so merely *constructing* a parser
+  now reaches `_colorize.can_colorize()` → `os.isatty(sys.stdout.fileno())`.
+  One test patches `sys.stdout` with a bare `mock.Mock()`, whose `fileno()`
+  returns a Mock, so `os.isatty()` raised `TypeError: 'Mock' object cannot be
+  interpreted as an integer` — a defect in the double, not in the CLI: every
+  real stream returns an int or raises. The double now raises
+  `io.UnsupportedOperation`, which is what a real non-file text stream does and
+  which `can_colorize` already catches, falling back to `isatty()`. Three tests
+  pin the contract directly so the next stdout double fails with a name that
+  says why. This matters beyond a red badge: `mode: publish` requires the `ci`
+  workflow to have succeeded on the commit being released, so a red matrix leg
+  blocks a release outright — the same class of breakage as MF-69's unpinned
+  ruff. Also fixed while here: `re.split(r"\s+#", val, 1)` passed `maxsplit`
+  positionally, which 3.13+ deprecates and a later Python will reject; the
+  suite is now clean under `-W error::DeprecationWarning` on 3.14.
 - **A record an agent wrote no longer claims a human wrote it (MF-74).**
   `derive_fields()` defaulted `agent="human"`, so every write through the CLI
   without an explicit `--agent` was attributed to a person — while the MCP

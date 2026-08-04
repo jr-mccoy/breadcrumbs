@@ -1109,7 +1109,7 @@ def load_manifest(memory_dir: Path) -> dict | None:
             # Strip an inline comment only at a whitespace boundary — a bare `#`
             # inside a value (e.g. `project: my#proj`) is content, not a comment
             # (review #3 R24).
-            val = re.split(r"\s+#", val, 1)[0].strip()
+            val = re.split(r"\s+#", val, maxsplit=1)[0].strip()
         out[key.strip()] = val
     return out
 

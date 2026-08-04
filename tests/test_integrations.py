@@ -488,6 +488,24 @@ class IntegrationFlagValidationTests(unittest.TestCase):
 # The gate itself now needs both ends to be a terminal, so the prompt tests
 # mock stdout's isatty alongside stdin's.
 # --------------------------------------------------------------------------- #
+def _fake_tty_stdout() -> mock.Mock:
+    """A stdout stand-in that claims to be a terminal — safely on 3.14 (MF-78).
+
+    Python 3.14 colorizes argparse output, so *constructing* a parser reaches
+    `_colorize.can_colorize()` → `os.isatty(sys.stdout.fileno())`. A bare
+    `mock.Mock()` returns a Mock from `fileno()` and that raises `TypeError:
+    'Mock' object cannot be interpreted as an integer` — which is a defect in the
+    double, not in the CLI: every real stream returns an int or raises. A real
+    non-file text stream raises `io.UnsupportedOperation`, and `can_colorize`
+    catches exactly that and falls back to `isatty()`, so raising it is both the
+    faithful behaviour and the one that leaves this test in control.
+    """
+    out = mock.Mock()
+    out.isatty.return_value = True
+    out.fileno.side_effect = io.UnsupportedOperation("fileno")
+    return out
+
+
 class ConsentPromptTests(unittest.TestCase):
     def test_MF21_ctrl_c_does_not_answer_yes(self):
         with mock.patch("builtins.input", side_effect=KeyboardInterrupt):
@@ -544,8 +562,7 @@ class ConsentPromptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             err = io.StringIO()
-            out = mock.Mock()
-            out.isatty.return_value = True
+            out = _fake_tty_stdout()
             with (
                 mock.patch("sys.stdin") as stdin,
                 mock.patch("sys.stdout", out),
@@ -557,6 +574,35 @@ class ConsentPromptTests(unittest.TestCase):
             self.assertEqual(code, 130)  # shell convention for SIGINT
             self.assertIn("aborted", err.getvalue())
             self.assertFalse((root / crumb.MEMORY_DIRNAME).exists())
+
+
+class MF78ParserUnderAPatchedStdoutTests(unittest.TestCase):
+    """CI was red on Python 3.14 only, on all three 3.14 jobs (MF-78).
+
+    3.14 colorizes argparse output, so building a parser now asks
+    `os.isatty(sys.stdout.fileno())`. Any test that patches `sys.stdout` with a
+    double whose `fileno()` is not an int makes *parser construction* raise —
+    which reads like a CLI regression and is not one. These pin the contract the
+    doubles have to meet, so the next one that patches stdout fails here, with a
+    name that says why, instead of inside an unrelated assertion.
+    """
+
+    def test_MF78_building_the_parser_survives_a_non_file_stdout(self):
+        with mock.patch("sys.stdout", _fake_tty_stdout()):
+            self.assertIsNotNone(crumb.build_parser())
+            self.assertIsNotNone(crumb.build_parser("init"))
+
+    def test_MF78_a_command_runs_under_a_non_file_stdout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("sys.stdout", _fake_tty_stdout()):
+                code = crumb.main(["validate", "--project", tmp])
+            self.assertEqual(code, 2)  # no store here — but it got that far
+
+    def test_MF78_the_stdout_double_answers_fileno_like_a_real_stream(self):
+        out = _fake_tty_stdout()
+        self.assertTrue(out.isatty())
+        with self.assertRaises(io.UnsupportedOperation):
+            out.fileno()
 
 
 if __name__ == "__main__":
