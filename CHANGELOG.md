@@ -7,6 +7,44 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
+Four fixes from the 2026-08-04 agent field test (run against a real Android
+repo's store plus a 600-record synthetic store): MF-71 … MF-73.
+
+### Fixed
+- **Staleness de-weights; it no longer erases (MF-71).** Guard's branch-mismatch
+  (0.8), age (0.7) and commit-distance (0.7) factors compound to 0.39, which
+  pushed prose-only records under the noise floor and dropped them with no
+  trace — the field test's controlled experiment turned an `ASK_HUMAN` into a
+  bare `PROCEED` by re-dating one record 38 days back. A match under the floor
+  on its *raw* signal is still noise and still drops; one pushed under it by
+  decay is now kept, marked `stale-suppressed`, and demoted to guard's
+  `history` list (mention-only, never driving the verdict). Match payloads
+  carry a new `raw_score` and `suppressed` alongside `score`.
+- **`init` can no longer register MCP without consent (MF-73).** `_interactive()`
+  gated on `sys.stdin.isatty()` alone; under an agent harness whose stdin passes
+  `isatty()` while every read hits EOF (and stdout is a pipe), `init` entered the
+  interactive picker and the MCP prompt's `[Y/n]` default counted as a yes —
+  an unasked `.mcp.json` write, contradicting the README. The gate now requires
+  *both* stdin and stdout to be terminals, and EOF at a consent prompt declines
+  instead of taking the default — the same class of fix as the MF-21
+  `KeyboardInterrupt` hardening: a shell that cannot answer answered nothing.
+
+### Added
+- **Title matches outweigh body mentions (MF-72).** A query token that appears
+  in a record's own title now scores `GUARD_W_KEYWORD + GUARD_W_TITLE` (2)
+  instead of 1 — a title names what the record is about; a body mention can be
+  incidental. This is what recovers the field test's GUEST case: the record
+  whose title literally named the proposed action scored like a passing
+  reference and sat one stale factor from silence. Title tokens are a subset of
+  the text bag, so this re-weights existing matches and can never create one
+  the anti-noise gate would have rejected.
+- **`crumb audit` warns on guard-unreachable records (MF-72).** An active
+  decision/attempt/verification with no `tags` and no file references can only
+  surface through generic keyword overlap — the weakest signal, and the first
+  one decay pushes under the floor. Audit now emits a warn-severity
+  `unreachable` finding naming the record, while the author is still around to
+  add tags or file evidence. Warn never changes the exit code (§10 ladder).
+
 ## [0.1.8] — 2026-08-02
 
 The first release since 0.1.7, and the one that puts nine review batches
