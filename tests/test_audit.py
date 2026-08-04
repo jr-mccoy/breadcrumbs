@@ -342,5 +342,72 @@ class FreshnessComplementarityTests(unittest.TestCase):
                 cli.render_packet_markdown = real
 
 
+# --------------------------------------------------------------------------- #
+# MF-72 — guard reachability (field test 2026-08-04): a record with no tags and
+# no file evidence can only surface through generic keyword overlap, which the
+# stale factors readily push under the noise floor. Audit must say so while the
+# author is still around to fix it.
+# --------------------------------------------------------------------------- #
+class MF72UnreachableRecordTests(unittest.TestCase):
+    def _store(self, tmp: str) -> tuple[Path, Path]:
+        root = Path(tmp)
+        self.assertEqual(
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"]), 0
+        )
+        return root, root / crumb.MEMORY_DIRNAME
+
+    def test_MF72_prose_only_record_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store(tmp)
+            path, _meta = crumb.write_record(
+                mem,
+                root,
+                "decision",
+                "Guest handling",
+                {"Decision": "Keep the guest role internal to the enum"},
+            )
+            hits = [f for f in crumb.run_audit(mem, root) if f["check"] == "unreachable"]
+            self.assertEqual(len(hits), 1)
+            self.assertEqual(hits[0]["severity"], crumb.AUDIT_WARN)
+            self.assertIn(path.name, hits[0]["path"])
+
+    def test_MF72_tags_or_file_evidence_silence_the_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store(tmp)
+            crumb.write_record(
+                mem,
+                root,
+                "decision",
+                "Tagged decision",
+                {"Decision": "internal only"},
+                tags=["roles"],
+            )
+            crumb.write_record(
+                mem,
+                root,
+                "attempt",
+                "Filed attempt",
+                {"Tried": "a role refactor", "Outcome": "failed"},
+                evidence=[{"type": "file", "ref": "src/roles.kt"}],
+            )
+            findings = crumb.run_audit(mem, root)
+            self.assertEqual([f for f in findings if f["check"] == "unreachable"], [])
+
+    def test_MF72_non_active_records_are_exempt(self):
+        """A superseded record no longer drives verdicts; do not nag about it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store(tmp)
+            crumb.write_record(
+                mem,
+                root,
+                "decision",
+                "Old prose decision",
+                {"Decision": "gone"},
+                status="superseded",
+            )
+            findings = crumb.run_audit(mem, root)
+            self.assertEqual([f for f in findings if f["check"] == "unreachable"], [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

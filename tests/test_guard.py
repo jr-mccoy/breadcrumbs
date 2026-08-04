@@ -14,11 +14,13 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -434,6 +436,137 @@ class SpeculativeIdeaTests(unittest.TestCase):
         mem = FIXTURES / "fixture-12-speculative-idea" / ".project-memory"
         pre = crumb._build_guard_prefilter(mem)
         self.assertEqual(pre, {"tokens": [], "paths": []})
+
+
+# --------------------------------------------------------------------------- #
+# MF-71 / MF-72 — staleness de-weights; it must never erase (field test 2026-08-04)
+# --------------------------------------------------------------------------- #
+def _age_record(path: Path, *, days: int, branch: str | None = None) -> None:
+    """Rewrite a record's clock (and optionally its branch) to simulate decay."""
+    old = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r"^created_at: .*$", f"created_at: {old}", text, flags=re.M)
+    text = re.sub(r"^updated_at: .*$", f"updated_at: {old}", text, flags=re.M)
+    if branch is not None:
+        text = re.sub(r"^branch: .*$", f"branch: {branch}", text, flags=re.M)
+    path.write_text(text, encoding="utf-8")
+
+
+class MF71StaleSuppressionTests(unittest.TestCase):
+    """The stale/branch factors compound to 0.39, which pushed prose-only real
+    matches under the noise floor and dropped them with no trace — the store was
+    quietest exactly where it was oldest. Decay now demotes to history instead."""
+
+    QUERY = "add nested scrolling viewpager to the settings screen"
+
+    def _store(self, tmp: str, *, status: str | None = None) -> tuple[Path, Path]:
+        root = Path(tmp)
+        run(["init", "--project", tmp, "--session-tracking", "full"])
+        mem = root / crumb.MEMORY_DIRNAME
+        path, _meta = crumb.write_record(
+            mem,
+            root,
+            "decision",
+            "Dialog layout convention",
+            {"Decision": "Never use nested scrolling viewpager inside the member dialog."},
+            status=status,
+        )
+        return mem, path
+
+    def test_MF71_decay_demotes_to_history_instead_of_dropping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, path = self._store(tmp)
+            # raw 4 (3 keywords + active) x age factor 0.7 = 2.8, under floor 3.
+            _age_record(path, days=40)
+            res = cli.guard(mem, Path(tmp), self.QUERY)
+            self.assertEqual(res["matches"], [])  # suppressed never drives the verdict
+            self.assertEqual(res["verdict"], "PROCEED")
+            self.assertEqual(len(res["history"]), 1)
+            h = res["history"][0]
+            self.assertTrue(h["suppressed"])
+            self.assertIn("stale-suppressed", h["signals"])
+            self.assertGreaterEqual(h["raw_score"], crumb.GUARD_NOISE_FLOOR)
+            self.assertLess(h["score"], crumb.GUARD_NOISE_FLOOR)
+            self.assertIn("de-weighted below the noise floor", h["reason"])
+
+    def test_MF71_fresh_match_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, _path = self._store(tmp)
+            res = cli.guard(mem, Path(tmp), self.QUERY)
+            self.assertEqual(len(res["matches"]), 1)
+            self.assertFalse(res["matches"][0]["suppressed"])
+            self.assertEqual(res["history"], [])
+
+    def test_MF71_raw_subfloor_noise_still_drops_silently(self):
+        """Two shared keywords on a superseded record score 2 raw — under the
+        floor before any decay. That is genuine noise, not a decayed match."""
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, path = self._store(tmp, status="superseded")
+            _age_record(path, days=40)
+            res = cli.guard(mem, Path(tmp), "add nested viewpager tabs to the profile screen")
+            self.assertEqual(res["matches"], [])
+            self.assertEqual(res["history"], [])
+
+
+class MF72TitleWeightTests(unittest.TestCase):
+    """A shared token in the record's own *title* is a targeted signal; scoring
+    it like a body mention left title-named decisions one stale factor away from
+    the noise floor."""
+
+    def test_MF72_title_hit_outscores_the_same_overlap_in_a_body(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run(["init", "--project", tmp, "--session-tracking", "full"])
+            mem = root / crumb.MEMORY_DIRNAME
+            crumb.write_record(
+                mem,
+                root,
+                "decision",
+                "GUEST is a sentinel in FamilyRole",
+                {"Decision": "Keep it internal."},
+            )
+            crumb.write_record(
+                mem,
+                root,
+                "decision",
+                "Roles cleanup notes",
+                {"Decision": "The guest sentinel in familyrole stays internal."},
+            )
+            matches, _ = cli.search(
+                mem,
+                root,
+                "remove the GUEST sentinel from FamilyRole",
+                min_keyword=crumb.GUARD_MIN_KEYWORD_OVERLAP,
+                noise_floor=crumb.GUARD_NOISE_FLOOR,
+            )
+            by_title = {m["title"]: m for m in matches}
+            titled = by_title["GUEST is a sentinel in FamilyRole"]
+            body_only = by_title["Roles cleanup notes"]
+            self.assertIn("title", titled["signals"])
+            self.assertNotIn("title", body_only["signals"])
+            self.assertGreater(titled["score"], body_only["score"])
+
+    def test_MF72_the_field_test_guest_case_is_no_longer_silent(self):
+        """The report's controlled experiment: the same decision, aged 38 days
+        onto another branch, returned PROCEED with zero matches and zero
+        history — silence on the exact action its title names."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            run(["init", "--project", tmp, "--session-tracking", "full"])
+            mem = root / crumb.MEMORY_DIRNAME
+            path, _meta = crumb.write_record(
+                mem,
+                root,
+                "decision",
+                "GUEST is a sentinel in FamilyRole, never a user-facing role",
+                {"Decision": "Do not re-add UI that assigns the GUEST role."},
+                confidence="high",
+            )
+            _age_record(path, days=38, branch="feature/other-branch")
+            res = cli.guard(mem, root, "remove the GUEST sentinel from FamilyRole")
+            surfaced = res["matches"] + res["history"]
+            self.assertTrue(surfaced, "the aged decision vanished again")
+            self.assertIn("title", surfaced[0]["signals"])
 
 
 if __name__ == "__main__":

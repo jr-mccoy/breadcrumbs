@@ -484,6 +484,9 @@ class IntegrationFlagValidationTests(unittest.TestCase):
 
 # --------------------------------------------------------------------------- #
 # MF-21 — Ctrl+C at a consent prompt aborts; it is not consent (review #5 Low)
+# MF-73 — EOF is the same class: a shell that cannot answer answered nothing.
+# The gate itself now needs both ends to be a terminal, so the prompt tests
+# mock stdout's isatty alongside stdin's.
 # --------------------------------------------------------------------------- #
 class ConsentPromptTests(unittest.TestCase):
     def test_MF21_ctrl_c_does_not_answer_yes(self):
@@ -491,19 +494,49 @@ class ConsentPromptTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 crumb._prompt_yes("Register the MCP server in .mcp.json?", True)
 
-    def test_MF21_eof_still_takes_the_default(self):
-        """Piped/non-tty input must behave exactly as before."""
+    def test_MF73_eof_declines_even_a_yes_default(self):
+        """EOF used to take the default — under an agent harness whose stdin
+        passes isatty() but reads EOF, that turned the MCP prompt's [Y/n] into
+        an unasked .mcp.json write (field test 2026-08-04)."""
         with mock.patch("builtins.input", side_effect=EOFError):
-            self.assertTrue(crumb._prompt_yes("q", True))
+            self.assertFalse(crumb._prompt_yes("q", True))
             self.assertFalse(crumb._prompt_yes("q", False))
+
+    def test_MF73_stdin_tty_alone_is_not_interactive(self):
+        """The observed harness: stdin claims TTY, stdout is a pipe."""
+        with mock.patch("sys.stdin") as stdin, mock.patch("sys.stdout") as stdout:
+            stdin.isatty.return_value = True
+            stdout.isatty.return_value = False
+            self.assertFalse(crumb._interactive())
+            stdout.isatty.return_value = True
+            self.assertTrue(crumb._interactive())
+
+    def test_MF73_eof_at_the_picker_registers_nothing(self):
+        """End to end: interactive-looking shell, every read EOFs — the resolved
+        plan must not carry mcp=True (it did; the default counted as consent)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with (
+                mock.patch("sys.stdin") as stdin,
+                mock.patch("sys.stdout") as stdout,
+                mock.patch("builtins.input", side_effect=EOFError),
+            ):
+                stdin.isatty.return_value = True
+                stdout.isatty.return_value = True
+                args = argparse.Namespace(adapter=None, hooks=None, mcp=None)
+                plan = crumb.resolve_integration_plan(Path(tmp), args)
+            self.assertFalse(plan["mcp"])
+            self.assertEqual(plan["adapters"], [])
+            self.assertEqual(plan["hooks"], [])
 
     def test_MF21_ctrl_c_at_the_policy_prompt_aborts_init(self):
         """It used to pick `full` silently and scaffold a store anyway."""
         with (
             mock.patch("sys.stdin") as stdin,
+            mock.patch("sys.stdout") as stdout,
             mock.patch("builtins.input", side_effect=KeyboardInterrupt),
         ):
             stdin.isatty.return_value = True
+            stdout.isatty.return_value = True
             with self.assertRaises(KeyboardInterrupt):
                 crumb.prompt_session_tracking()
 
@@ -511,11 +544,13 @@ class ConsentPromptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             err = io.StringIO()
+            out = mock.Mock()
+            out.isatty.return_value = True
             with (
                 mock.patch("sys.stdin") as stdin,
+                mock.patch("sys.stdout", out),
                 mock.patch("builtins.input", side_effect=KeyboardInterrupt),
                 contextlib.redirect_stderr(err),
-                contextlib.redirect_stdout(io.StringIO()),
             ):
                 stdin.isatty.return_value = True
                 code = crumb.main(["init", "--project", tmp])

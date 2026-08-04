@@ -358,7 +358,8 @@ def copy_template_tree(dest: Path) -> None:
 
 def prompt_session_tracking(non_interactive_default: str = "full") -> str:
     """Ask the human for the session-tracking policy; default for non-tty."""
-    if not sys.stdin.isatty():
+    # Same gate as every other prompt (MF-73): both ends must be a terminal.
+    if not _interactive():
         return non_interactive_default
     prompt = (
         "Session-tracking policy:\n"
@@ -1836,7 +1837,12 @@ def set_record_status(
 
 
 def _interactive() -> bool:
-    return sys.stdin.isatty()
+    # Both ends must be a terminal (MF-73). Agent harnesses exist where stdin
+    # passes isatty() while every read hits EOF and stdout is a pipe; gating on
+    # stdin alone sent `init` down the interactive branch there, where the MCP
+    # consent prompt's yes-default turned "nobody answered" into a .mcp.json
+    # write. stdout was correctly not a TTY in the observed harness.
+    return sys.stdin.isatty() and sys.stdout.isatty()
 
 
 def _split_tags(raw: str | None) -> list[str]:
@@ -3957,6 +3963,12 @@ GUARD_MIN_KEYWORD_OVERLAP = 2  # specific shared tokens for a pure-text match
 GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
 GUARD_W_TAG = 4  # per overlapping tag/component
 GUARD_W_KEYWORD = 1  # per specific shared keyword
+# Bonus per shared keyword that appears in the record's own *title* (MF-72). A
+# title names what the record is about; a body mention can be incidental. Scoring
+# both at GUARD_W_KEYWORD made a decision whose title literally named the proposed
+# action score like a passing reference — one stale-factor away from the noise
+# floor. Additive: a title hit scores GUARD_W_KEYWORD + GUARD_W_TITLE.
+GUARD_W_TITLE = 1
 GUARD_W_STATUS_ACTIVE = 1
 GUARD_W_CONFIDENCE_HIGH = 1
 GUARD_W_REVIEWED = 1
@@ -4178,6 +4190,10 @@ def _item_from_record(rec: Record) -> dict:
         "tags": tags,
         "files": files,
         "specific": _specific(text),
+        # The title's own tokens, kept separate so `_score_item` can weight a
+        # title hit above a body mention (MF-72). The stem is the slug — same
+        # words, so a filename hit counts as a title hit.
+        "title_specific": _specific(str(rec.meta.get("title") or rec.stem)),
         "branch": rec.meta.get("branch"),
         "record": rec,
         "do_not_retry": rec.rtype == "attempt" and _attempt_has_do_not_retry(rec),
@@ -4195,6 +4211,7 @@ def _item_from_trap(trap: dict) -> dict:
         "tags": set(),
         "files": _norm_files(_paths_from_text(body)),
         "specific": _specific(text),
+        "title_specific": _specific(heading),
         "branch": None,
         "record": None,
         "do_not_retry": False,
@@ -4231,6 +4248,7 @@ def _item_from_question(q: dict) -> dict:
         "tags": set(),
         "files": _norm_files(_paths_from_text(q.get("body", ""))),
         "specific": _specific(text),
+        "title_specific": _specific(q["question"]),
         "branch": None,
         "record": None,
         "do_not_retry": False,
@@ -4328,6 +4346,10 @@ def _score_item(
     matched_tags = item["tags"] & q_specific
     kw_overlap = item["specific"] & q_specific
     kw_count = len(kw_overlap)
+    # Title tokens are a subset of `specific` (the text bag includes the title),
+    # so this can only re-weight an existing keyword hit, never create a match
+    # the candidate gate below would have rejected (MF-72).
+    title_overlap = item.get("title_specific", set()) & q_specific
 
     # Candidate gate (anti-noise, Fixture 3): a file or tag hit always qualifies;
     # a pure-text match needs >= min_keyword specific shared tokens.
@@ -4346,6 +4368,9 @@ def _score_item(
         score += GUARD_W_KEYWORD * kw_count
         if kw_count >= min_keyword:
             signals.append("keyword")
+    if title_overlap:
+        score += GUARD_W_TITLE * len(title_overlap)
+        signals.append("title")
 
     rec = item.get("record")
     if item["status"] == "active":
@@ -4362,7 +4387,11 @@ def _score_item(
         score += GUARD_W_OPEN_BLOCKER
         signals.append("open-blocker")
 
-    # Recency + commit-distance de-weighting (reuse Phase 4 signals).
+    # Recency + commit-distance de-weighting (reuse Phase 4 signals). The
+    # pre-decay score is kept on the match: `search` needs it to tell "under the
+    # noise floor on raw signal" (noise — drop) from "pushed under it by the
+    # stale factors" (a real match — surface as history, MF-71).
+    undecayed = score
     factor = 1.0
     if rec is not None:
         age = _age_days(rec.meta.get("updated_at") or rec.meta.get("created_at"))
@@ -4393,6 +4422,8 @@ def _score_item(
         "lifecycle": item.get("lifecycle", item["status"]),
         "title": item["title"],
         "score": score,
+        "raw_score": round(undecayed, 2),
+        "suppressed": False,  # set by `search` when decay pushed it under the floor
         "signals": signals,
         "matched_files": sorted(matched_files),
         "matched_tags": sorted(matched_tags),
@@ -4414,6 +4445,8 @@ def _match_reason(kind, signals, matched_files, matched_tags, kw_count) -> str:
         parts.append(f"{kw_count} shared keyword(s)")
     elif kw_count:
         parts.append(f"+{kw_count} shared keyword(s)")
+    if "title" in signals:
+        parts.append("named in the record's title")
     if "do-not-retry" in signals:
         parts.append("has an explicit do-not-retry condition")
     if "open-blocker" in signals:
@@ -4469,6 +4502,8 @@ def search(
                     "lifecycle": it.get("lifecycle", it["status"]),
                     "title": it["title"],
                     "score": float(noise_floor),
+                    "raw_score": float(noise_floor),
+                    "suppressed": False,
                     "signals": ["filter"],
                     "matched_files": [],
                     "matched_tags": [],
@@ -4479,7 +4514,18 @@ def search(
             else:
                 continue
         if m["score"] < noise_floor:
-            continue
+            # De-weighting must never erase (MF-71, field test 2026-08-04). The
+            # stale/branch factors compound to 0.39, which pushed real matches —
+            # a decision whose title named the proposed action — under the floor
+            # with no trace, so the store went quietest exactly where it was
+            # oldest. A match under the floor on its *raw* signal is genuine
+            # noise and still drops; one pushed under it by decay is kept,
+            # marked, for guard to demote to history (mention-only).
+            if m["raw_score"] < noise_floor:
+                continue
+            m["suppressed"] = True
+            m["signals"].append("stale-suppressed")
+            m["reason"] += "; de-weighted below the noise floor by age/branch"
         matches.append(m)
 
     matches.sort(key=lambda m: (-m["score"], m["id"]))
@@ -4618,6 +4664,13 @@ def guard(
 
     active, history = [], []
     for m in matches:
+        # A match the stale/branch factors pushed under the noise floor is
+        # mention-only (MF-71): decay still de-weights the verdict, but the
+        # record is named instead of silently dropped — "38 days old" is a
+        # reason to re-verify a decision, not to forget it exists.
+        if m.get("suppressed"):
+            history.append(m)
+            continue
         # A record is live when active; an open question is live too — it must be
         # able to drive the verdict (open-blocker floor). Resolved questions and
         # superseded/rejected/stale records fall through to history (mention-only).
@@ -4697,7 +4750,7 @@ def render_guard_human(result: dict) -> str:
     out.append("")
 
     if result["history"]:
-        out.append("History (not active — context only):")
+        out.append("History (context only — not driving the verdict):")
         for m in result["history"]:
             out.append(f"- {m['id']} — {m['status']}; {m['reason']}.")
         out.append("")
@@ -5337,6 +5390,29 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         sev = AUDIT_INFO if b["kind"] == "sessions-growth" else AUDIT_WARN
         findings.append(_audit_finding("bloat", sev, b["path"], b["message"], kind=b["kind"]))
 
+    # F. Guard reachability (MF-72, field test 2026-08-04). Guard's strong signals
+    # are file and tag overlap; a record carrying neither can only surface through
+    # generic keyword overlap, which the stale/branch factors readily push under
+    # the noise floor. That is an authoring rule nothing stated: a prose-only
+    # record is quietly on its way to unreachable, so say so while the author is
+    # still around to add tags or file evidence.
+    for rec in load_records(memory_dir, types=JUDGING_ITEM_TYPES):
+        if rec.error or str(rec.meta.get("status") or "active") != "active":
+            continue  # unparseable is its own finding; non-active never drives verdicts
+        item = _item_from_record(rec)
+        if item["tags"] or item["files"]:
+            continue
+        findings.append(
+            _audit_finding(
+                "unreachable",
+                AUDIT_WARN,
+                str(rec.path.relative_to(memory_dir)),
+                "no tags and no file references — guard can reach this record "
+                "only through generic keyword overlap; add tags or file/path "
+                "evidence so it can drive a verdict",
+            )
+        )
+
     return findings
 
 
@@ -5778,18 +5854,21 @@ def _adapter_request_note(args: argparse.Namespace, adapters: list[str]) -> str 
 
 
 def _prompt_yes(question: str, default: bool) -> bool:
-    """Ask a yes/no question. EOF takes the default; Ctrl+C aborts the command.
+    """Ask a yes/no question. EOF declines; Ctrl+C aborts the command.
 
     Mapping `KeyboardInterrupt` to the default meant Ctrl+C at "Register the MCP
     server in .mcp.json?" (default yes) was recorded as consent and went on to edit
     `.mcp.json` — the one input that unambiguously means "stop" (review #5 Low).
-    EOF still takes the default, so piped/non-tty input behaves as before.
+    EOF is the same class (MF-73): it means the shell *cannot* answer, not that it
+    answered yes — under an agent harness whose stdin looks like a TTY but reads
+    EOF, taking the yes-default was an unasked `.mcp.json` write. Only an explicit
+    or defaulted *answer from a read that succeeded* counts as consent.
     """
     suffix = " [Y/n] " if default else " [y/N] "
     try:
         ans = input(question + suffix).strip().lower()
     except EOFError:
-        return default
+        return False
     if not ans:
         return default
     return ans in ("y", "yes")
