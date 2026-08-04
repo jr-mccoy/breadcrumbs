@@ -33,6 +33,17 @@ MEMORY_DIRNAME = cli.MEMORY_DIRNAME
 # --------------------------------------------------------------------------- #
 
 
+def _agent_label() -> str:
+    """Author label for an MCP write (MF-74).
+
+    Every write through this surface is an agent write, so the fallback stays
+    `agent` rather than the CLI's `unknown` — but when the environment names the
+    harness (`claude-code`, `cursor`, …) the record says so, which is what the
+    CLI now records too. The two surfaces no longer disagree.
+    """
+    return cli.detect_agent(fallback="agent")
+
+
 def resolve(root: str | Path | None = None) -> tuple[Path, Path]:
     """Return (project_root, memory_dir). `root` defaults to cwd (same as CLI)."""
     project_root = cli.resolve_root(str(root) if root is not None else None)
@@ -341,7 +352,7 @@ def tool_record(
             privacy=payload.get("privacy"),
             scope=payload.get("scope"),
             status=payload.get("status"),
-            agent=payload.get("agent", "agent"),
+            agent=payload.get("agent") or _agent_label(),
         )
     except ValueError as exc:
         # Same envelope every other writer uses (review #5 M8). Bare, any value the
@@ -398,7 +409,7 @@ def tool_verify(
             evidence=evidence,
             tags=tags,
             confidence=confidence,
-            agent="agent",
+            agent=_agent_label(),
         ),
         mem,
     )
@@ -440,7 +451,7 @@ def tool_note(
             text or "",
             fields=fields or {},
             tags=tags or [],
-            agent="agent",
+            agent=_agent_label(),
         ),
         mem,
     )
@@ -452,7 +463,7 @@ def tool_mark_status(
     reason: str,
     superseded_by: str | None = None,
     root: str | Path | None = None,
-    agent: str = "agent",
+    agent: str | None = None,
 ) -> dict:
     """`memory_mark_status` — wraps `cli.set_record_status` (validate-gated).
 
@@ -463,7 +474,9 @@ def tool_mark_status(
     if (missing := _memory_missing(mem)) is not None:
         return missing
     return _relativize(
-        cli.set_record_status(mem, id, status, reason, agent=agent, superseded_by=superseded_by),
+        cli.set_record_status(
+            mem, id, status, reason, agent=agent or _agent_label(), superseded_by=superseded_by
+        ),
         mem,
     )
 

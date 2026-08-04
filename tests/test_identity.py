@@ -111,5 +111,142 @@ class MF23CanonicalityTests(unittest.TestCase):
             self.assertIn("real calendar date", ident[0]["message"])
 
 
+class MF75SlugLengthTests(unittest.TestCase):
+    """A sentence-length title must not become a sentence-length path (MF-75).
+
+    `slugify` had no cap, so the whole title landed in the filename: past ~240
+    characters `remember` failed with ENAMETOOLONG on Linux, and long before that
+    `<repo>/.project-memory/<type>/<name>` pushed a Windows checkout past
+    MAX_PATH, so `git clone` failed on a repo that had committed one.
+    """
+
+    LONG_TITLE = (
+        "Consider whether we should cache the parsed session index inside the "
+        "auth middleware layer instead of recomputing it on every single request"
+    )
+
+    def test_MF75_generated_filename_is_capped(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            mem = root / crumb.MEMORY_DIRNAME
+            code = crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    self.LONG_TITLE,
+                    "--confidence",
+                    "low",
+                ]
+            )
+            self.assertEqual(code, 0)
+            path = next((mem / "decisions").glob("*.md"))
+            slug = path.stem[len("2026-01-02-") :]
+            self.assertLessEqual(len(slug), crumb.SLUG_MAX_CHARS)
+            # The full text is not lost — it lives in `title`.
+            meta, _ = crumb.parse_frontmatter(path.read_text(encoding="utf-8"))
+            self.assertEqual(meta["title"], self.LONG_TITLE)
+            self.assertIsNotNone(crumb.derive_identity(path.stem, "decision"))
+
+    def test_MF75_a_title_too_long_for_the_filesystem_still_writes(self):
+        """The pre-fix failure mode: ENAMETOOLONG straight out of `remember`."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            code = crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    self.LONG_TITLE * 3,
+                    "--confidence",
+                    "low",
+                ]
+            )
+            self.assertEqual(code, 0)
+
+    def test_MF75_collision_suffixes_stay_inside_the_cap(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            mem = root / crumb.MEMORY_DIRNAME
+            for _ in range(3):
+                crumb.main(
+                    [
+                        "remember",
+                        "decision",
+                        "--project",
+                        str(root),
+                        "--title",
+                        self.LONG_TITLE,
+                        "--confidence",
+                        "low",
+                    ]
+                )
+            names = sorted(p.stem for p in (mem / "decisions").glob("*.md"))
+            self.assertEqual(len(names), 3, names)
+            for stem in names:
+                slug = stem[len("2026-01-02-") :]
+                self.assertLessEqual(len(slug), crumb.SLUG_MAX_CHARS, stem)
+                self.assertIsNotNone(crumb.derive_identity(stem, "decision"), stem)
+            self.assertTrue(any(s.endswith("-2") for s in names), names)
+            self.assertTrue(any(s.endswith("-3") for s in names), names)
+
+    def test_MF75_truncation_stays_canonical(self):
+        for title in (
+            self.LONG_TITLE,
+            "a" * 200,
+            "x-" * 100,
+            "short",
+            "—— nothing usable ——",
+        ):
+            slug = crumb.truncate_slug(crumb.slugify(title))
+            with self.subTest(title=title[:24]):
+                self.assertTrue(slug)
+                self.assertLessEqual(len(slug), crumb.SLUG_MAX_CHARS)
+                self.assertIsNotNone(crumb.derive_identity(f"2026-01-02-{slug}", "decision"))
+
+    def test_MF75_records_already_on_disk_with_long_names_still_load(self):
+        """The cap must not orphan anything a pre-cap version already wrote."""
+        import shutil
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            mem = root / crumb.MEMORY_DIRNAME
+            good = REPO_ROOT / "tests" / "data" / "decisions" / "2026-06-25-good-decision.md"
+            long_slug = "-".join(f"word{i}" for i in range(20))
+            self.assertGreater(len(long_slug), crumb.SLUG_MAX_CHARS)
+            legacy = mem / "decisions" / f"2026-06-25-{long_slug}.md"
+            text = good.read_text(encoding="utf-8")
+            meta, body = crumb.parse_frontmatter(text)
+            rid, slug = crumb.derive_identity(legacy.stem, "decision")
+            meta["id"], meta["slug"] = rid, slug
+            legacy.write_text(crumb.render_frontmatter(meta) + "\n" + body, encoding="utf-8")
+            shutil.copy(good, mem / "decisions" / good.name)
+
+            loaded = {r.path.name: r for r in crumb.load_records(mem)}
+            self.assertIn(legacy.name, loaded)
+            self.assertEqual(loaded[legacy.name].meta["id"], rid)
+            ident = [
+                f
+                for f in crumb.run_validate(mem)
+                if f["check"] == "identity" and f["status"] == "fail"
+            ]
+            self.assertEqual(ident, [], "a long legacy name must still validate")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

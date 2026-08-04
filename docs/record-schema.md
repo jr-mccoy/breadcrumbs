@@ -143,7 +143,7 @@ status: active              # active | superseded | stale | disputed | rejected 
 created_at: 2026-06-25T14:30:00-05:00
 updated_at: 2026-06-25T14:30:00-05:00
 created_by: <username>      # human username or agent label, auto-derived
-agent: human               # human | claude-code | codex | cursor | gemini | opencode | other
+agent: unknown             # unknown | agent | human | claude-code | codex | cursor | gemini | opencode | other
 project: <project-name>    # auto-derived from repo/dir name
 scope: project             # project | feature | branch | local | private
 branch: <current-branch>   # auto-derived from git HEAD
@@ -214,6 +214,15 @@ Most fields are machine-filled so a human is asked for almost nothing.
 | **Prompted** | `title`, the record body sections, optionally `tags` and `evidence` | interactive input |
 
 A routine `remember`/`capture` requires only a title and a few body lines.
+
+`agent` is derived, not assumed. With no `--agent` flag the CLI reads the
+environment (`CLAUDECODE`, `CURSOR_AGENT`, `CODEX_SANDBOX`, …) and records the
+harness it finds; when it finds none it records **`unknown`**, never `human`.
+A missing flag is an absence of evidence, and `confidence`/`review_status` are
+only worth reading if "a human stood behind this" is a claim someone actually
+made — assert it with `--agent human`. The MCP tools and the Stop hook know
+their writes are machine writes, so they fall back to `agent` instead of
+`unknown`.
 
 ---
 

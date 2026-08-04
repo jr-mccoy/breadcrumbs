@@ -193,6 +193,22 @@ refuses to write an invalid record. `--json` emits a machine summary.
 (`--problem`, `--tried`, `--result`, `--why`, `--do-not-retry`, `--related`), so
 the contract is visible in `--help` instead of discoverable only by rejection.
 
+Titles can be as long as you like; **filenames can't**. The slug in
+`.project-memory/<type>/<date>-<slug>.md` is capped at 60 characters (cut on a
+word boundary, `-2`/`-3` collision suffixes included in the budget), so a
+sentence-length title never produces a sentence-length path. That keeps a store
+clonable on Windows, where the whole path is capped at 260 characters unless
+`core.longpaths` is on, and stops long titles from tripping Linux's 255-byte
+per-name limit. The full text stays in the record's `title` frontmatter, so
+nothing is lost. Records already on disk with longer names keep working — the
+cap applies when a name is generated, never when one is read.
+
+The record's `agent` frontmatter says who wrote it. Without `--agent`, the CLI
+reads the environment (`CLAUDECODE`, `CURSOR_AGENT`, `CODEX_SANDBOX`, …) and
+records the harness it finds, or **`unknown`** when it finds none — it will not
+claim a human wrote a record just because the flag was missing. Pass
+`--agent human` to make that claim explicitly.
+
 ### `crumb verify`
 
 ```bash
