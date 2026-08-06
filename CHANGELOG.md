@@ -5,7 +5,118 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
-## [Unreleased]
+## [0.1.9] — 2026-08-06
+
+### Fixed — 2026-08-06 field test, round 2 (verification pass on the same Android repo)
+
+- **Uninstall no longer deletes a hook it cannot prove is ours (MF-86).** MF-83
+  made an unmarked entry removable by matching "names crumb, names a hook event".
+  Two problems. First, the event only had to appear on a word boundary, and `-`
+  is one — so `.claude/hooks/crumb-session-setup.sh`, a neighbouring script that
+  was never breadcrumbs', matched `session` inside its own filename. The event
+  must now appear as a whitespace-delimited **argument**, which keeps every real
+  launcher (`crumb hook session`, `./crumb-hook.sh guard`) and drops the
+  lookalikes. Second, and regardless of how good the heuristic is: deletion is
+  irreversible, so `--remove-integrations` now keys on the `breadcrumbsHook`
+  marker **alone**. Detection stays heuristic — over-reporting a hook as
+  installed costs nothing — but a heuristic match is reported, not destroyed.
+  Crucially it is not *ignored* either, which would be the MF-83 failure mode
+  again: removal names each entry it left behind and says how to finish the job
+  (`crumb init --with-hooks` adopts an entry, stamping the marker without
+  touching your command, after which removal takes it). `remove_claude_hooks`
+  now returns `{"removed": [...], "left": [...]}` instead of a bool; it is always
+  truthy, so test `["removed"]`.
+
+- **The guard stopped getting slower every session (MF-84).** `_score_item` called
+  `git_commit_distance` per scored record, and that is three subprocess spawns
+  each (`is_git_repo`, `rev-parse --verify`, `rev-list --count`). So the
+  `PreToolUse` guard cost ~3 process spawns *per record* and grew monotonically
+  with the store — while the `Stop` hook adds a record per qualifying turn. The
+  tool was degrading the hot path it had installed: measured at 6.4 ms/record on
+  Linux in-process and ~17 ms/record on Windows, with 87% of runtime in
+  `fork_exec`/`poll` rather than record I/O. One `rev-list --topo-order` now
+  indexes HEAD's ancestry for the whole scoring pass. Topo order shows no parent
+  before all its children, so a commit's position in that list is a *guaranteed
+  lower bound* on `rev-list --count <sha>..HEAD` — which makes `position >=
+  GUARD_STALE_DIST_COMMITS` a sound proof that the record is distance-stale, with
+  no git call at all. Only commits positioned *under* the threshold are ambiguous,
+  and there are at most `GUARD_STALE_DIST_COMMITS` of those however large the
+  store; they still take the exact query. Verdicts are unchanged by construction
+  and a test checks the equivalence exhaustively, including across a merge.
+  `is_git_repo` is also memoized, keyed on whether `.git` exists so a later `git
+  init` re-probes instead of returning a stale answer. Net at 120 records:
+  **784 ms → 38 ms, and 360+ git spawns → 6**, with the per-record slope down from
+  6.4 ms to 0.29 ms. The remaining cost no longer scales with the store.
+- **A session record no longer contradicts its own frontmatter (MF-85).** The
+  diffstat summary describes the *commit range*, so a session whose work was still
+  uncommitted — the normal state when a `Stop` hook fires — recorded
+  `_(no file changes detected)_` in the body while `dirty_files` listed 25 paths.
+  The next agent reads that as "the session did nothing". Files Touched now names
+  its scope (`_(no committed changes in this window)_`) and appends the count of
+  uncommitted files pointing at `dirty_files`. Count only, never paths: inlining
+  them is what §6.1 keeps out of committed records.
+
+### Fixed — 2026-08-06 field test (first real install: an Android repo, 73KB CLAUDE.md, Windows + web containers)
+
+- **Hook identity no longer lives in the command string (MF-83).** `doctor`,
+  `--remove-integrations` and `install_claude_hooks` all recognized our hooks by
+  `command.startswith("crumb hook")`, so a hook installed through *any*
+  indirection — a wrapper script, a venv path, `python -m breadcrumbs` — was
+  invisible to breadcrumbs, and all three failed at once: `doctor` reported "no
+  hooks installed" while all three hooks were demonstrably firing; the documented
+  clean uninstall silently left them behind, which is the worst of the three
+  because the user believes they have reverted; and a later `init --with-hooks`
+  appended a **duplicate** that fired alongside the original. Entries are now
+  stamped with a `"breadcrumbsHook": "<event>"` key that `doctor` and removal
+  match on, so a custom launcher is a supported install path — which matters,
+  because MF-82 makes one necessary. Unstamped entries are still recognized when
+  the command names both `crumb` and a hook event, deliberately narrow because a
+  false positive here deletes someone else's hook. Removal is now per *entry*:
+  a group shared with a foreign hook keeps it and loses only ours.
+- **The installed hook command resolves the CLI instead of assuming it (MF-82).**
+  `init --with-hooks` emitted a bare `crumb hook <event>`. In a Claude Code web
+  container the CLI is installed into a venv at SessionStart and exported through
+  `CLAUDE_ENV_FILE`, which reaches later *tool* calls but not necessarily a
+  sibling hook in the same batch; on Windows, a bash spawned from PowerShell
+  inherits a PATH without the `pip install --user` Scripts directory. Both print
+  `crumb: command not found`, silently, every session. The emitted command now
+  tries `$PATH`, the POSIX and Windows `./.venv` layouts, then any interpreter
+  that can `import breadcrumbs`. If nothing resolves it exits 0 — but
+  `SessionStart` does **not** emit a bare `{}`: an empty object is a valid "no
+  opinion" for every event, so a dead install would look healthy forever while
+  loading nothing. It returns `additionalContext` saying memory is inactive, where
+  to read the packet by hand, and how to fix it. Re-running `init --with-hooks`
+  upgrades a bare legacy entry in place; a launcher *you* wrote is never rewritten.
+- **The adapter bloat check measures our block, not your instruction file
+  (MF-79).** Both `doctor` and `audit` sized the *entire* adapter file against
+  `ADAPTER_BLOAT_CHARS` (4000). `CLAUDE.md` and `AGENTS.md` are the project's own
+  agent-instruction files — the reporting repo's is 73,326 chars — so `doctor`
+  reported `✗ [adapter] BLOATED` permanently from the moment the signpost was
+  installed *correctly*. The check punished the thing it asks for. Both now
+  measure only the text between `ADAPTER_BEGIN` and `ADAPTER_END`, which is what
+  `adapter_block()`'s docstring always claimed was being checked. A file with no
+  managed block is not a signpost and is no longer sized at all; `audit`'s
+  `adapter-duplication` check still catches records pasted into one.
+- **The signpost no longer tells agents to run an interactive command (MF-80).**
+  The block injected into `CLAUDE.md`/`AGENTS.md` ended with "**Session end:**
+  `crumb capture session`" — which prompts for five sections. Under an agent it
+  died with `EOFError` *after* printing its full git summary, so it looked like it
+  had half-worked; this happened verbatim on first use. The line now names the
+  unattended form (`--next` plus `--set "<heading>" "<text>"`, which keeps the git
+  prefill that `--fast` discards) and says the `Stop` hook already snapshots
+  automatically. The prompts themselves now treat EOF as "no answer" and fall
+  through to the normal "a session needs a Next Action" error instead of a
+  traceback — `_interactive()` is a heuristic over two `isatty()` calls, and when
+  it guesses wrong the command must degrade, not die.
+- **Capture no longer attributes months of history to one session (MF-81).** The
+  prefill diffed from the newest session record's commit with no bound, so on a
+  store idle for six weeks the first capture claimed ~50 commits and "807 files
+  changed, +90962/-14441" as one sitting's work. It self-corrected once
+  auto-capture ran — but the wrong number lands on the *first* capture after any
+  gap, exactly when someone is deciding whether to trust the tool. The window is
+  now capped at 20 commits (falling back to the same bounded recent-history window
+  used when there is no prior record), and every prefill states the window and
+  diff base it used, so a large number is interpretable rather than merely wrong.
 
 Everything from the 2026-08-04 agent field test (run against a real Android
 repo's store plus a 600-record synthetic store): the four high-severity findings

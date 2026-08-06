@@ -250,6 +250,34 @@ class BloatTests(unittest.TestCase):
             kinds = {f.get("kind") for f in findings if f["check"] == "bloat"}
             self.assertIn("adapter-duplication", kinds)
 
+    def test_MF79_a_large_host_file_with_a_small_signpost_is_not_bloat(self):
+        """The signpost is ours to keep small; the instruction file is not ours."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mem = fresh_store(tmp)
+            (root / "CLAUDE.md").write_text(
+                "# FamilyHub\n\n" + ("project guidance\n" * 4000), encoding="utf-8"
+            )
+            crumb.write_adapter_block(root, "CLAUDE.md")
+            self.assertGreater(
+                len((root / "CLAUDE.md").read_text(encoding="utf-8")),
+                10 * crumb.ADAPTER_BLOAT_CHARS,
+            )
+            kinds = {f.get("kind") for f in crumb.run_audit(mem, root) if f["check"] == "bloat"}
+            self.assertNotIn("adapter-bloat", kinds)
+
+    def test_MF79_a_bloated_managed_block_is_still_flagged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mem = fresh_store(tmp)
+            (root / "CLAUDE.md").write_text(
+                crumb.ADAPTER_BEGIN + "\n" + ("x" * (crumb.ADAPTER_BLOAT_CHARS + 1)) + "\n"
+                "" + crumb.ADAPTER_END + "\n",
+                encoding="utf-8",
+            )
+            kinds = {f.get("kind") for f in crumb.run_audit(mem, root) if f["check"] == "bloat"}
+            self.assertIn("adapter-bloat", kinds)
+
 
 # --------------------------------------------------------------------------- #
 # CLI surface

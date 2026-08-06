@@ -228,8 +228,20 @@ def now_iso() -> str:
     return datetime.now().astimezone().replace(microsecond=0).isoformat()
 
 
+# Memo for `is_git_repo`, keyed by (path, does `.git` exist there) so the answer is
+# re-probed the moment that changes — `git init` after a negative probe re-keys the
+# entry instead of returning a stale False. Five of one guard call's ten remaining
+# subprocess spawns were this same question asked five times (MF-84); a stat is
+# ~1000x cheaper than a process, and much more so on Windows.
+_IS_GIT_REPO_CACHE: dict[tuple[str, bool], bool] = {}
+
+
 def is_git_repo(root: Path) -> bool:
     """True if `root` is inside a git work tree."""
+    key = (str(root), (Path(root) / ".git").exists())
+    cached = _IS_GIT_REPO_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
@@ -238,9 +250,11 @@ def is_git_repo(root: Path) -> bool:
             text=True,
             check=False,
         )
+        answer = result.returncode == 0 and result.stdout.strip() == "true"
     except (FileNotFoundError, OSError):
-        return False
-    return result.returncode == 0 and result.stdout.strip() == "true"
+        answer = False
+    _IS_GIT_REPO_CACHE[key] = answer
+    return answer
 
 
 def derive_project_name(root: Path) -> str:
@@ -437,14 +451,30 @@ def cmd_init(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps({"removed": removed}, indent=2))
         else:
-            touched = removed["adapters"] or removed["mcp"] or removed["hooks"]
+            hooks = removed["hooks"]
+            touched = removed["adapters"] or removed["mcp"] or hooks["removed"]
             print("Removed breadcrumbs integrations:" if touched else "No integrations to remove.")
             if removed["adapters"]:
                 print(f"  adapter blocks: {', '.join(removed['adapters'])}")
             if removed["mcp"]:
                 print("  .mcp.json: breadcrumbs server entry removed")
-            if removed["hooks"]:
-                print("  .claude/settings.json: crumb hooks removed")
+            if hooks["removed"]:
+                print(f"  .claude/settings.json: {len(hooks['removed'])} crumb hook(s) removed")
+            # Never let a partial uninstall read as a clean one (MF-83). An
+            # unmarked entry is left in place on purpose (MF-86) — say so, and say
+            # how to finish, rather than deleting a hook we cannot prove is ours.
+            if hooks["left"]:
+                print(
+                    f"  .claude/settings.json: {len(hooks['left'])} hook(s) LEFT IN PLACE — they "
+                    f"look like crumb hooks but carry no `{HOOK_MARKER}` marker, so breadcrumbs "
+                    "cannot prove it wrote them:"
+                )
+                for command in hooks["left"]:
+                    print(f"      {command}")
+                print(
+                    "    Remove them by hand, or run `crumb init --with-hooks` to adopt them "
+                    "(stamps the marker) and re-run this command."
+                )
         return 0
 
     if getattr(args, "print_integrations", False):
@@ -1957,6 +1987,20 @@ def _interactive() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
+def _prompt_line(question: str) -> str:
+    """Read one answer, treating EOF as "no answer given" instead of a traceback.
+
+    `_interactive()` keeps agents off the prompting path in the harnesses we know
+    about, but it is a heuristic over two isatty() calls — when it guesses wrong
+    the prompts must degrade to "unanswered", not kill the command halfway through
+    with an `EOFError` after it has already printed its git summary (MF-80).
+    """
+    try:
+        return input(question).strip()
+    except EOFError:
+        return ""
+
+
 def _split_tags(raw: str | None) -> list[str]:
     if not raw:
         return []
@@ -2684,6 +2728,24 @@ def _last_session_commit(memory_dir: Path) -> str | None:
 # git's canonical empty-tree object — diff base when the window reaches the root commit.
 _GIT_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
+# How far back a git prefill will look, in commits. The diff base is the commit of
+# the newest session record, which can be weeks old on a store that has been idle —
+# and then one session record claims every commit since it (MF-81: 50 commits and
+# "807 files changed, +90962/-14441" attributed to a single sitting). That is the
+# *first* capture after any gap, which is exactly when someone is deciding whether
+# to trust the tool. Past this cap the prefill falls back to the same bounded
+# recent-history window it uses when there is no prior record at all, and says so.
+GIT_PREFILL_MAX_COMMITS = 20
+
+
+def _short_ref(ref: str | None) -> str:
+    """Render a diff base for humans: short sha, or a name for the empty tree."""
+    if not ref:
+        return "(unknown)"
+    if ref == _GIT_EMPTY_TREE:
+        return "the empty tree (repo root)"
+    return ref[:7] if re.fullmatch(r"[0-9a-f]{7,40}", ref) else ref
+
 
 def _summarize_diffstat(shortstat: str | None) -> str:
     """Condense `git diff --shortstat` into one line: 'N files changed, +X/-Y'.
@@ -2710,9 +2772,13 @@ def _summarize_diffstat(shortstat: str | None) -> str:
 def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     """Pre-fill Work Completed / Files Touched / Commands from git (plan §8).
 
-    With a prior-session `since` commit, the window is `since..HEAD`. Without one,
-    the window is the last 20 commits (Files Touched diffs from the parent of the
+    With a prior-session `since` commit no more than `GIT_PREFILL_MAX_COMMITS`
+    back, the window is `since..HEAD`. Otherwise — no prior record, an unreachable
+    one, or one too far back to be one session's work — the window is the last
+    `GIT_PREFILL_MAX_COMMITS` commits (Files Touched diffs from the parent of the
     oldest commit in that window, or the empty tree if that reaches the root).
+    Either way the prefill states the window it used, so a big number can be read
+    for what it is instead of taken as a claim about one sitting (MF-81).
     """
     if not is_git_repo(root):
         return {
@@ -2721,15 +2787,27 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
             "Commands / Verification": _EMPTY_SECTION,
         }
     # Validate the since-ref; if bad, fall back to recent history.
+    recorded = since
     if since and _git_out(root, "rev-parse", "--verify", f"{since}^{{commit}}") is None:
-        since = None
+        since = recorded = None
+
+    # Cap the lookback (MF-81). Dropping `since` here re-uses the bounded
+    # recent-history window below rather than inventing a second one.
+    ahead = 0
+    if since:
+        raw = _git_out(root, "rev-list", "--count", f"{since}..HEAD")
+        ahead = int(raw) if (raw or "").strip().isdigit() else 0
+        if ahead > GIT_PREFILL_MAX_COMMITS:
+            since = None
 
     if since:
         log = _git_out(root, "log", "--oneline", "--no-decorate", f"{since}..HEAD")
         base: str | None = since
     else:
-        log = _git_out(root, "log", "--oneline", "--no-decorate", "-n", "20")
-        rev_list = _git_out(root, "rev-list", "--max-count=20", "HEAD")
+        log = _git_out(
+            root, "log", "--oneline", "--no-decorate", "-n", str(GIT_PREFILL_MAX_COMMITS)
+        )
+        rev_list = _git_out(root, "rev-list", f"--max-count={GIT_PREFILL_MAX_COMMITS}", "HEAD")
         base = None
         if rev_list:
             oldest = rev_list.splitlines()[-1]
@@ -2750,9 +2828,45 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     shortstat = _git_out(root, "diff", "--shortstat", base, "HEAD") if base else None
 
     work = "\n".join(f"- {line}" for line in log.splitlines()) if log else "_(no new commits)_"
+
+    # The diffstat describes the *commit range* only, so a session whose work is
+    # still uncommitted recorded "no file changes detected" in the same record
+    # whose `dirty_files` frontmatter listed 25 paths — a record contradicting
+    # itself, read by the next agent as "that session did nothing" (MF-85). Name
+    # the scope, and count the uncommitted files (count only: inlining the paths
+    # is what §6.1 keeps out of committed records).
+    dirty = git_dirty_files(root)
     files = _summarize_diffstat(shortstat)
+    if base and shortstat and shortstat.strip():
+        files = f"{files} (vs `{_short_ref(base)}`)"
+    elif dirty:
+        files = "_(no committed changes in this window)_"
+    if dirty:
+        files += f" — {len(dirty)} uncommitted file(s), see `dirty_files`"
+
+    # Name the window in the record itself. A prefill is a machine's guess at what
+    # a session did; without its diff base the counts read as a claim about this
+    # sitting, which is how "807 files changed" ended up in a record for an
+    # afternoon's work (MF-81).
+    if since:
+        window = (
+            f"_Prefill window: `{_short_ref(since)}`..HEAD — "
+            f"{ahead} commit(s) since the last session record._"
+        )
+    elif recorded:
+        window = (
+            f"_Prefill window: last {GIT_PREFILL_MAX_COMMITS} commits "
+            f"(`{_short_ref(base)}`..HEAD). The last session record is at "
+            f"`{_short_ref(recorded)}`, {ahead} commits back — too far to attribute "
+            "to one session, so the older commits are not counted here._"
+        )
+    else:
+        window = (
+            f"_Prefill window: last {GIT_PREFILL_MAX_COMMITS} commits "
+            f"(`{_short_ref(base)}`..HEAD) — no prior session record to diff from._"
+        )
     return {
-        "Work Completed": work,
+        "Work Completed": f"{work}\n\n{window}",
         "Files Touched": files,
         "Commands / Verification": _EMPTY_SECTION,
     }
@@ -2796,11 +2910,11 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
                 "Open Questions",
             ):
                 if heading not in overrides:
-                    val = input(f"{heading} (enter to skip): ").strip()
+                    val = _prompt_line(f"{heading} (enter to skip): ")
                     if val:
                         sections[heading] = val
             if next_action is None:
-                next_action = input("Next Action (required): ").strip()
+                next_action = _prompt_line("Next Action (required): ")
 
     if next_action:
         sections["Next Action"] = next_action
@@ -3173,6 +3287,81 @@ def git_commit_distance(root: Path, commit: str | None) -> int | None:
         return int(out) if out is not None else None
     except ValueError:
         return None
+
+
+# How far back to index HEAD's ancestry in one pass. Beyond this a commit falls
+# back to the exact per-commit query; a store with records older than this many
+# commits pays one git call for each such distinct sha, which is the old cost.
+_REVLIST_INDEX_CAP = 5000
+
+
+class CommitDistanceIndex:
+    """Commit-distance for a whole scoring pass, in one git call instead of N (MF-84).
+
+    `_score_item` called `git_commit_distance` per scored record, and that is three
+    subprocess spawns each (`is_git_repo`, `rev-parse --verify`, `rev-list --count`).
+    Guard therefore cost ~3 process spawns per record and got monotonically slower
+    as the store grew — while the Stop hook adds a record per qualifying turn, so
+    the tool degraded the hot path it had installed. Measured before this: 6.4
+    ms/record on Linux in-process, ~17 ms/record on Windows; 87% of guard's runtime
+    was `fork_exec` + `poll`, not record I/O.
+
+    One `rev-list --topo-order` builds {sha: position}. Topo order shows no parent
+    before all its children, so every commit *before* `sha` in the list is not an
+    ancestor of `sha` and is therefore counted by `rev-list --count sha..HEAD`:
+    **position is a guaranteed lower bound on the true distance.** That makes
+    `position >= GUARD_STALE_DIST_COMMITS` a sound proof of `distance >= threshold`
+    with no git call at all. Only a commit whose position is *under* the threshold —
+    at most `GUARD_STALE_DIST_COMMITS` records, whatever the store's size — is
+    ambiguous and falls through to the exact query. Verdicts are unchanged by
+    construction, and the cost stops scaling with the record count.
+    """
+
+    def __init__(self, root: Path, threshold: int) -> None:
+        self._root = root
+        self._threshold = threshold
+        self._pos: dict[str, int] | None = None
+        self._by_len: dict[int, dict[str, int]] = {}
+        self._exact: dict[str, int | None] = {}
+
+    def _index(self) -> dict[str, int]:
+        if self._pos is None:
+            out = _git_out(
+                self._root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD"
+            )
+            self._pos = {sha: i for i, sha in enumerate((out or "").split())}
+        return self._pos
+
+    def _position(self, commit: str) -> int | None:
+        """Position of a full-or-abbreviated sha in HEAD's topo-ordered ancestry."""
+        full = self._index()
+        if commit in full:
+            return full[commit]
+        # Records store `rev-parse --short` shas, so index by the length actually
+        # seen. Nearest-HEAD wins an ambiguous prefix — git would refuse, and a
+        # collision at abbreviation length is not a case worth a second git call.
+        n = len(commit)
+        if n >= 40:
+            return None
+        by_n = self._by_len.get(n)
+        if by_n is None:
+            by_n = {}
+            for sha, pos in full.items():
+                by_n.setdefault(sha[:n], pos)
+            self._by_len[n] = by_n
+        return by_n.get(commit)
+
+    def distance_reaches(self, commit: str | None) -> bool:
+        """Is `commit` at least `threshold` commits behind HEAD? (False when unknown.)"""
+        if commit in (None, "", NO_GIT_COMMIT):
+            return False
+        pos = self._position(str(commit))
+        if pos is not None and pos >= self._threshold:
+            return True  # proven by the lower bound — no git call
+        if commit not in self._exact:
+            self._exact[str(commit)] = git_commit_distance(self._root, str(commit))
+        dist = self._exact[str(commit)]
+        return dist is not None and dist >= self._threshold
 
 
 # ---- section accessors (reused by Phase 5 guard) --------------------------- #
@@ -4441,6 +4630,7 @@ def _score_item(
     stale_days: int,
     *,
     min_keyword: int,
+    distances: CommitDistanceIndex,
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
     # _norm_files stores each file as both its full path and its bare basename,
@@ -4509,8 +4699,9 @@ def _score_item(
         age = _age_days(rec.meta.get("updated_at") or rec.meta.get("created_at"))
         if age is not None and age > stale_days:
             factor *= GUARD_STALE_AGE_FACTOR
-        dist = git_commit_distance(root, rec.meta.get("commit"))
-        if dist is not None and dist >= GUARD_STALE_DIST_COMMITS:
+        # Via the shared index (MF-84), not a per-record `git_commit_distance`:
+        # same answer, but the git calls stop scaling with the store's size.
+        if distances.distance_reaches(rec.meta.get("commit")):
             factor *= GUARD_STALE_DIST_FACTOR
 
     # Branch match: a mismatch is surfaced (§15), not hidden — de-weight + flag.
@@ -4596,13 +4787,22 @@ def search(
     q_specific = _specific(query)
     q_files = _norm_files(_paths_from_text(query) | set(files or []))
     cur_branch = git_branch(root)
+    # One commit-distance index for the whole pass (MF-84) — see the class.
+    distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
 
     matches: list[dict] = []
     for it in items:
         if not _passes_filters(it, filters):
             continue
         m = _score_item(
-            it, q_specific, q_files, root, cur_branch, stale_days, min_keyword=min_keyword
+            it,
+            q_specific,
+            q_files,
+            root,
+            cur_branch,
+            stale_days,
+            min_keyword=min_keyword,
+            distances=distances,
         )
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.
@@ -5356,14 +5556,22 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                     ),
                 }
             )
-        elif len(text) > ADAPTER_BLOAT_CHARS:
+            continue
+        # Measure the managed block, not the host file (MF-79). A repo's own
+        # CLAUDE.md/AGENTS.md is legitimately large and is not ours to judge; what
+        # §16.13 asks is that *our* signpost stay a small pointer. A file with no
+        # managed block is not a signpost at all, so there is nothing to size —
+        # `adapter-duplication` above still catches records copied into it.
+        block = managed_block_text(text)
+        if block is not None and len(block) > ADAPTER_BLOAT_CHARS:
             findings.append(
                 {
                     "kind": "adapter-bloat",
                     "path": name,
                     "message": (
-                        f"adapter '{name}' is {len(text)} chars; signpost files should be small "
-                        "pointers into memory, not large copies (§16.13)"
+                        f"the breadcrumbs managed block in '{name}' is {len(block)} chars; "
+                        "the signpost should be a small pointer into memory, not a large "
+                        "copy (§16.13)"
                     ),
                 }
             )
@@ -5775,6 +5983,26 @@ ADAPTER_BEGIN = (
 ADAPTER_END = "<!-- <<< breadcrumbs managed block <<< -->"
 
 
+def managed_block_text(text: str) -> str | None:
+    """The breadcrumbs-managed region of an adapter file, or None if absent.
+
+    Every size check must measure *this*, never the host file (MF-79). `CLAUDE.md`
+    and `AGENTS.md` are the project's own agent-instruction files and are routinely
+    tens of KB in a mature repo; measuring the whole file meant `doctor` reported
+    the adapter row as bloated the moment the signpost was installed *correctly*,
+    and never stopped. The size of a project's instruction file is not breadcrumbs'
+    business — the size of the block breadcrumbs writes into it is.
+
+    An unterminated block (someone hand-deleted the END marker) counts as ours
+    through end-of-file: we can no longer tell where our region stops.
+    """
+    if ADAPTER_BEGIN not in text:
+        return None
+    _, _, rest = text.partition(ADAPTER_BEGIN)
+    inner, sep, _ = rest.partition(ADAPTER_END)
+    return ADAPTER_BEGIN + inner + (ADAPTER_END if sep else "")
+
+
 def adapter_block() -> str:
     """The signpost injected into agent-guidance files: a small pointer, not a copy.
 
@@ -5800,7 +6028,10 @@ def adapter_block() -> str:
                 "- **After checking whether something is still true / fixed:**",
                 '  `crumb verify "<subject>" --status fixed|open|regressed|… --evidence …`.',
                 "- **Leaving a note for the next agent:** `crumb note question|trap|idea …`.",
-                "- **Session end:** `crumb capture session`.",
+                '- **Session end:** `crumb capture session --next "<what to do next>"`',
+                '  (add `--set "Decisions Made" "…"` for narrative). Pass `--next`: the bare',
+                "  form prompts for each section and cannot be answered without a terminal.",
+                "  If the `Stop` hook is installed, a snapshot is already taken for you.",
                 "",
                 "Memory must never contain secrets; `crumb scan-secrets` gates commits.",
                 ADAPTER_END,
@@ -5839,43 +6070,176 @@ def remove_adapter_block(root: Path, name: str) -> bool:
 # ---- Claude Code hooks (review §7.3 / Appendix A.6) ------------------------ #
 
 HOOK_EVENTS = ("session", "guard", "capture")
-# breadcrumbs event -> (Claude Code event name, PreToolUse matcher or None, command)
-_HOOK_SPECS: dict[str, tuple[str, str | None, str]] = {
-    "session": ("SessionStart", None, "crumb hook session"),
-    "guard": ("PreToolUse", "Bash|Edit|Write|MultiEdit", "crumb hook guard"),
-    "capture": ("Stop", None, "crumb hook capture"),
+# breadcrumbs event -> (Claude Code event name, PreToolUse matcher or None)
+_HOOK_SPECS: dict[str, tuple[str, str | None]] = {
+    "session": ("SessionStart", None),
+    "guard": ("PreToolUse", "Bash|Edit|Write|MultiEdit"),
+    "capture": ("Stop", None),
 }
 
+# The key `init` stamps into each hook entry it owns, valued with the breadcrumbs
+# event name. Identity must not live in the command text (MF-83): a hook installed
+# through any launcher — a wrapper script, a venv path, `python -m breadcrumbs` —
+# was invisible to us, so `doctor` said "no hooks installed" while all three fired,
+# `--remove-integrations` silently left them behind, and the next `init
+# --with-hooks` appended a second copy that fired alongside the first. Installing
+# through a wrapper has to stay a supported path, because MF-82 makes it necessary.
+HOOK_MARKER = "breadcrumbsHook"
 
-def _group_has_command(group: object, command: str) -> bool:
-    return isinstance(group, dict) and any(
-        isinstance(h, dict) and h.get("command") == command for h in group.get("hooks", [])
+# Where to look for the CLI, in order, before giving up. `command -v` answers for
+# both a bare name (searched on $PATH) and a path (executable or not).
+_HOOK_CRUMB_PATHS = (
+    "crumb",
+    '"${CLAUDE_PROJECT_DIR:-.}/.venv/bin/crumb"',
+    '".venv/bin/crumb"',
+    '"${CLAUDE_PROJECT_DIR:-.}/.venv/Scripts/crumb.exe"',
+    '".venv/Scripts/crumb.exe"',
+)
+# Last resort: any interpreter that can import the package runs the same CLI. This
+# is what rescues a Windows `pip install --user`, where the console script lands in
+# %APPDATA%\Python\PythonXY\Scripts — on the Windows PATH, but not on the PATH a
+# bash spawned from PowerShell inherits.
+_HOOK_PYTHONS = ("python3", "python", "py")
+
+# What a SessionStart hook says when it could not find the CLI. Emphatically not
+# `{}` (MF-82): an empty object is a valid "no opinion" for every event, so a
+# breadcrumbs install that silently resolved to nothing would look healthy forever
+# while loading no memory at all. Single quotes are impossible here — the JSON is
+# carried inside a single-quoted shell word.
+HOOK_INACTIVE_CONTEXT = (
+    "Project memory (breadcrumbs) is INACTIVE this session: the crumb CLI was not "
+    "found on PATH, in ./.venv, or via `python -m breadcrumbs`, so no resume packet "
+    "was loaded. Read .project-memory/generated/resume-packet.md directly if it "
+    "exists; `pip install crumb-kit` restores automatic loading."
+)
+
+
+def _hook_fallback_json(event: str) -> str:
+    """The hook payload to print when the CLI cannot be found."""
+    if event != "session":
+        return "{}"  # PreToolUse/Stop: no opinion is the correct silent answer
+    return json.dumps(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": HOOK_INACTIVE_CONTEXT,
+            }
+        }
     )
 
 
-def _group_is_breadcrumbs(group: object) -> bool:
-    return isinstance(group, dict) and any(
-        isinstance(h, dict) and str(h.get("command", "")).startswith("crumb hook")
-        for h in group.get("hooks", [])
-    )
+def hook_command(event: str) -> str:
+    """The shell command `init --with-hooks` installs for one hook event.
+
+    Not a bare `crumb hook <event>` (MF-82). In a containerized session the CLI is
+    installed into a project venv at SessionStart and exported through
+    `CLAUDE_ENV_FILE`, which reaches later *tool* calls but not necessarily a
+    sibling hook in the same batch; on Windows a bash spawned from PowerShell
+    inherits a PATH without the `--user` Scripts directory. Both greet the user
+    with `crumb: command not found`, silently, every session. So: try $PATH, then
+    the usual venv layouts (POSIX and Windows), then any interpreter that can
+    import the package — and if all of that fails, say so instead of exiting mute.
+
+    POSIX `sh` syntax. A launcher of your own is a supported alternative: point the
+    command at whatever you like and keep the `HOOK_MARKER` key on the entry, and
+    `doctor` and `--remove-integrations` will still recognize it.
+
+    Cost matters here — `PreToolUse` fires on every Bash/Edit/Write and is already
+    dominated by interpreter startup. Resolution is shell builtins until something
+    matches, the hit path is a single `exec`, and the interpreter fallback runs the
+    module *once* (a separate `import breadcrumbs` probe would have doubled the
+    startup cost for exactly the users who need that fallback).
+    """
+    fallback = _hook_fallback_json(event)
+    parts = [
+        "for c in " + " ".join(_HOOK_CRUMB_PATHS) + "; do "
+        f'command -v "$c" >/dev/null 2>&1 && exec "$c" hook {event}; done',
+        "for p in " + " ".join(_HOOK_PYTHONS) + "; do "
+        'command -v "$p" >/dev/null 2>&1 || continue; '
+        f'o=$("$p" -m breadcrumbs hook {event} 2>/dev/null) '
+        "&& { printf '%s\\n' \"$o\"; exit 0; }; done",
+        f"printf '%s\\n' '{fallback}'",
+        "exit 0",
+    ]
+    return "; ".join(parts)
+
+
+def _generated_hook_commands(event: str) -> set[str]:
+    """Every command breadcrumbs has itself emitted for `event`.
+
+    Re-running `init --with-hooks` upgrades one of these in place; anything else in
+    the slot is the user's own launcher and is left exactly as they wrote it. When
+    the emitted form changes, add the old one here rather than widening the match —
+    guessing that a command "looks like ours" is how we would overwrite a wrapper
+    someone wrote on purpose.
+    """
+    return {f"crumb hook {event}", hook_command(event)}
+
+
+def _hook_command_event(command: object) -> str | None:
+    """Best-effort read of an unmarked entry: does this command run a crumb hook?
+
+    Only a fallback — `HOOK_MARKER` is the real answer. It exists for entries
+    written before the marker and for launchers a user wired up by hand, which is
+    the case that made `--remove-integrations` a lie.
+
+    The event must appear as a whitespace-delimited *argument*, not merely
+    somewhere in the text (MF-86). `\\bsession\\b` also matches inside
+    `.../crumb-hook-session-setup.sh`, because `-` is a word boundary — so a
+    neighbouring script that happens to be named after a hook event was read as
+    ours. Requiring an argument keeps every real launcher (`crumb hook session`,
+    `./crumb-hook.sh session`) and drops the lookalikes.
+    """
+    text = str(command or "")
+    if "crumb" not in text.lower():
+        return None
+    tokens = {t.strip("\"';,()`") for t in text.split()}
+    return next((ev for ev in _HOOK_SPECS if ev in tokens), None)
+
+
+def _hook_entry_event(hook: object) -> str | None:
+    """Which breadcrumbs event a settings.json hook entry implements, if any."""
+    if not isinstance(hook, dict):
+        return None
+    marked = hook.get(HOOK_MARKER)
+    if isinstance(marked, str) and marked in _HOOK_SPECS:
+        return marked
+    return _hook_command_event(hook.get("command"))
+
+
+def _group_entries(group: object) -> list[dict]:
+    """The hook entries of one settings.json matcher group."""
+    if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
+        return []
+    return [h for h in group["hooks"] if isinstance(h, dict)]
 
 
 def install_claude_hooks(root: Path, events: list[str]) -> Path:
     """Merge SessionStart/PreToolUse/Stop hooks into .claude/settings.json.
 
     Appends to existing hook arrays (never clobbers other hooks) and is idempotent —
-    re-running does not duplicate the breadcrumbs entries.
+    re-running does not duplicate the breadcrumbs entries, whatever launcher those
+    entries use. An entry already in the slot is adopted: it gets the marker so the
+    rest of the tool can see it, and its command is rewritten only when breadcrumbs
+    is the one that wrote it (MF-82/MF-83).
     """
     path = root / ".claude" / "settings.json"
 
     def _mut(data: dict) -> None:
         hooks = data.setdefault("hooks", {})
         for ev in events:
-            cc_event, matcher, command = _HOOK_SPECS[ev]
+            cc_event, matcher = _HOOK_SPECS[ev]
             arr = hooks.setdefault(cc_event, [])
-            if any(_group_has_command(g, command) for g in arr):
-                continue  # idempotent
-            entry: dict = {"hooks": [{"type": "command", "command": command}]}
+            existing = [h for g in arr for h in _group_entries(g) if _hook_entry_event(h) == ev]
+            if existing:
+                for h in existing:
+                    if h.get("command") in _generated_hook_commands(ev):
+                        h["command"] = hook_command(ev)
+                    h[HOOK_MARKER] = ev
+                continue
+            entry: dict = {
+                "hooks": [{"type": "command", "command": hook_command(ev), HOOK_MARKER: ev}]
+            }
             if matcher:
                 entry = {"matcher": matcher, **entry}
             arr.append(entry)
@@ -5884,12 +6248,30 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
     return path
 
 
-def remove_claude_hooks(root: Path) -> bool:
-    """Remove only the `crumb hook …` entries from .claude/settings.json. True iff any."""
+def remove_claude_hooks(root: Path) -> dict:
+    """Remove breadcrumbs' hook entries from .claude/settings.json.
+
+    Returns `{"removed": [commands…], "left": [commands…]}` — JSON-serializable,
+    because `--remove-integrations --json` reports it. Note it is always truthy;
+    test `["removed"]`, not the dict.
+
+    **The marker is authoritative here, and only here (MF-86).** Detection may
+    guess — over-reporting a hook as installed costs nothing — but deletion is
+    irreversible, and `_hook_command_event` matches any command naming crumb plus
+    an event word, so a `crumb-session-setup.sh` that was never ours would be
+    matched and destroyed. Adoption is the safe direction: `init --with-hooks`
+    stamps an entry it recognizes, and stamped entries are removable forever
+    after. What is *not* acceptable is the MF-83 failure mode — leaving a hook
+    behind while reporting a clean uninstall — so anything recognized but unmarked
+    is reported in `left` and the caller must say so out loud.
+
+    Per *entry*, not per group: a group we share with someone else's hook keeps
+    theirs and loses ours, and only a group left empty is dropped.
+    """
     path = root / ".claude" / "settings.json"
+    out: dict = {"removed": [], "left": []}
     if not path.exists():
-        return False
-    state = {"removed": False}
+        return out
 
     def _mut(data: dict) -> None:
         hooks = data.get("hooks")
@@ -5899,18 +6281,32 @@ def remove_claude_hooks(root: Path) -> bool:
             arr = hooks.get(cc_event)
             if not isinstance(arr, list):
                 continue
-            kept = [g for g in arr if not _group_is_breadcrumbs(g)]
-            if len(kept) != len(arr):
-                state["removed"] = True
-            if kept:
-                hooks[cc_event] = kept
+            groups: list = []
+            for group in arr:
+                entries = _group_entries(group)
+                kept = []
+                for h in entries:
+                    if isinstance(h.get(HOOK_MARKER), str) and h[HOOK_MARKER] in _HOOK_SPECS:
+                        out["removed"].append(str(h.get("command", "")))
+                        continue
+                    if _hook_command_event(h.get("command")):
+                        out["left"].append(str(h.get("command", "")))
+                    kept.append(h)
+                if len(kept) == len(entries):
+                    groups.append(group)
+                    continue
+                if kept:
+                    group["hooks"] = kept
+                    groups.append(group)
+            if groups:
+                hooks[cc_event] = groups
             else:
                 del hooks[cc_event]
         if not hooks:
             data.pop("hooks", None)
 
     merge_json_file(path, _mut)
-    return state["removed"]
+    return out
 
 
 # ---- integration plan: resolve flags / prompt, apply, remove, describe ----- #
@@ -6129,8 +6525,13 @@ def discover_adapter_blocks(root: Path) -> list[str]:
 
 
 def remove_integrations(root: Path) -> dict:
-    """Reverse every integration breadcrumbs added; leave all other content intact."""
-    removed: dict = {"adapters": [], "mcp": False, "hooks": False}
+    """Reverse every integration breadcrumbs added; leave all other content intact.
+
+    `hooks` is `remove_claude_hooks`'s report, not a bool: hook entries that look
+    like ours but carry no marker are deliberately left in place, and the caller
+    has to surface them (MF-86).
+    """
+    removed: dict = {"adapters": [], "mcp": False, "hooks": {"removed": [], "left": []}}
     for name in discover_adapter_blocks(root):
         if remove_adapter_block(root, name):
             removed["adapters"].append(name)
@@ -6168,7 +6569,12 @@ def doctor_report(root: Path) -> dict:
         if problem:
             unreadable.append(f"{n} ({problem})")
     blocked = [n for n in present if ADAPTER_BEGIN in adapter_text[n]]
-    bloated = [n for n in blocked if len(adapter_text[n]) > ADAPTER_BLOAT_CHARS]
+    # Size the managed block, not the host file (MF-79). Measuring the file made a
+    # correct install fail permanently in any repo whose CLAUDE.md is a real
+    # instruction file — the check punished the very thing it asks for.
+    bloated = [
+        n for n in blocked if len(managed_block_text(adapter_text[n]) or "") > ADAPTER_BLOAT_CHARS
+    ]
     add(
         "adapter",
         bool(blocked) and not bloated and not unreadable,
@@ -6236,6 +6642,12 @@ def doctor_report(root: Path) -> dict:
 
 
 def _installed_hook_commands(root: Path) -> list[str]:
+    """The breadcrumbs hook commands present in .claude/settings.json.
+
+    Recognized by `_hook_entry_event`, not by command text (MF-83), so a hook run
+    through a wrapper counts as installed — it *is* installed, and reporting "no
+    hooks installed" while all three fire is worse than reporting nothing.
+    """
     path = root / ".claude" / "settings.json"
     if not path.is_file():
         return []
@@ -6248,11 +6660,9 @@ def _installed_hook_commands(root: Path) -> list[str]:
         if not isinstance(arr, list):
             continue
         for group in arr:
-            if isinstance(group, dict):
-                for h in group.get("hooks", []):
-                    c = isinstance(h, dict) and str(h.get("command", ""))
-                    if c and c.startswith("crumb hook"):
-                        cmds.append(c)
+            for h in _group_entries(group):
+                if _hook_entry_event(h):
+                    cmds.append(str(h.get("command", "")))
     return cmds
 
 

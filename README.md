@@ -271,6 +271,21 @@ small and the secret scanner never trips on path-shaped tokens), then asks only
 for narrative confirmation + a required **Next Action**. It writes the session record
 and refreshes `handoff.md` and `current.md`. `--fast` skips all prompts and any
 LLM, writing a git snapshot + the one-line `--next`. No path requires an LLM.
+
+The bare form prompts, so it needs a terminal. **To run it unattended**, supply
+every section you want on the command line — `--next` plus `--set "<heading>"
+"<text>"` for each narrative heading. That keeps the git prefill, unlike `--fast`,
+which drops narrative entirely:
+
+```bash
+crumb capture session --next "wire the parser" \
+  --set "Decisions Made" "kept the projection rebuild on the write path"
+```
+
+The prefill window is bounded: `since..HEAD` from the newest session record's
+commit, or — when that is more than 20 commits back, or there is no prior record —
+the last 20 commits. Either way the record names the window it used, so a large
+diff can be read for what it is instead of taken as one sitting's work.
 With `session_tracking: distillate`, the session file is written locally but stays
 gitignored — promote durable items with `remember` to commit them.
 
@@ -417,6 +432,27 @@ piece is independent:
     once per unit of work, not once per turn: a firing is skipped when the HEAD
     commit and dirty-file set are unchanged since the newest session record, and
     its stand-in Next Action never overwrites one you set.
+
+  The installed command is a small POSIX-`sh` resolver, not a bare `crumb`: it
+  tries `$PATH`, then `./.venv` (POSIX and Windows layouts), then any interpreter
+  that can `import breadcrumbs`. That covers a container that provisions the CLI
+  after the hooks are wired, and a Windows `pip install --user` whose Scripts
+  directory is not on the PATH bash inherited. If none of them resolve, the hooks
+  stay silent except `SessionStart`, which reports that **memory is inactive**
+  rather than returning an empty result that looks like a healthy no-op.
+
+  **Using your own launcher is supported.** Point the command at any wrapper you
+  like and keep the `"breadcrumbsHook": "<event>"` key on the hook entry — that
+  key is what `crumb doctor` and `--remove-integrations` match on, whatever the
+  command looks like.
+
+  An entry *without* the key is still recognized when its command names `crumb`
+  and passes a hook event as an argument (`./crumb-hook.sh guard`), so `doctor`
+  reports it as installed. But **`--remove-integrations` never deletes an unmarked
+  entry** — it lists it and leaves it alone, because a heuristic match is not
+  proof breadcrumbs wrote it. To get a clean uninstall for a launcher you wrote
+  by hand, run `crumb init --with-hooks` first: that adopts the entry, stamping
+  the marker without touching your command, and removal then takes it.
 
 `crumb doctor` reports whether each piece is in place (and whether the resume
 packet is stale), exiting non-zero when a store exists but nothing is wired up.

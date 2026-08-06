@@ -177,7 +177,16 @@ class GuardSearchTests(unittest.TestCase):
     def test_M10_distinct_files_same_basename_count_separately(self):
         item = self._file_item(["src/a/config.ts", "src/b/config.ts"])
         q_files = crumb._norm_files(["src/a/config.ts", "src/b/config.ts"])
-        res = crumb._score_item(item, set(), q_files, Path("."), "main", 9999, min_keyword=2)
+        res = crumb._score_item(
+            item,
+            set(),
+            q_files,
+            Path("."),
+            "main",
+            9999,
+            min_keyword=2,
+            distances=crumb.CommitDistanceIndex(Path("."), crumb.GUARD_STALE_DIST_COMMITS),
+        )
         self.assertIsNotNone(res)
         # both distinct files must be cited and scored, not collapsed to one
         self.assertEqual(len(res["matched_files"]), 2)
@@ -186,7 +195,16 @@ class GuardSearchTests(unittest.TestCase):
     def test_M10_basename_variant_of_same_file_not_double_counted(self):
         item = self._file_item(["src/a/config.ts"])
         q_files = crumb._norm_files(["src/a/config.ts"])
-        res = crumb._score_item(item, set(), q_files, Path("."), "main", 9999, min_keyword=2)
+        res = crumb._score_item(
+            item,
+            set(),
+            q_files,
+            Path("."),
+            "main",
+            9999,
+            min_keyword=2,
+            distances=crumb.CommitDistanceIndex(Path("."), crumb.GUARD_STALE_DIST_COMMITS),
+        )
         self.assertEqual(len(res["matched_files"]), 1)
 
     def test_H5_open_question_drives_guard_verdict(self):
