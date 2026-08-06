@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
-## [Unreleased]
+## [0.1.9] — 2026-08-06
 
 ### Fixed — 2026-08-06 field test, round 2 (verification pass on the same Android repo)
 
