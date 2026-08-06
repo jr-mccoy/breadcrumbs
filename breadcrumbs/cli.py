@@ -228,8 +228,20 @@ def now_iso() -> str:
     return datetime.now().astimezone().replace(microsecond=0).isoformat()
 
 
+# Memo for `is_git_repo`, keyed by (path, does `.git` exist there) so the answer is
+# re-probed the moment that changes — `git init` after a negative probe re-keys the
+# entry instead of returning a stale False. Five of one guard call's ten remaining
+# subprocess spawns were this same question asked five times (MF-84); a stat is
+# ~1000x cheaper than a process, and much more so on Windows.
+_IS_GIT_REPO_CACHE: dict[tuple[str, bool], bool] = {}
+
+
 def is_git_repo(root: Path) -> bool:
     """True if `root` is inside a git work tree."""
+    key = (str(root), (Path(root) / ".git").exists())
+    cached = _IS_GIT_REPO_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
@@ -238,9 +250,11 @@ def is_git_repo(root: Path) -> bool:
             text=True,
             check=False,
         )
+        answer = result.returncode == 0 and result.stdout.strip() == "true"
     except (FileNotFoundError, OSError):
-        return False
-    return result.returncode == 0 and result.stdout.strip() == "true"
+        answer = False
+    _IS_GIT_REPO_CACHE[key] = answer
+    return answer
 
 
 def derive_project_name(root: Path) -> str:
@@ -2798,9 +2812,21 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     shortstat = _git_out(root, "diff", "--shortstat", base, "HEAD") if base else None
 
     work = "\n".join(f"- {line}" for line in log.splitlines()) if log else "_(no new commits)_"
+
+    # The diffstat describes the *commit range* only, so a session whose work is
+    # still uncommitted recorded "no file changes detected" in the same record
+    # whose `dirty_files` frontmatter listed 25 paths — a record contradicting
+    # itself, read by the next agent as "that session did nothing" (MF-85). Name
+    # the scope, and count the uncommitted files (count only: inlining the paths
+    # is what §6.1 keeps out of committed records).
+    dirty = git_dirty_files(root)
     files = _summarize_diffstat(shortstat)
     if base and shortstat and shortstat.strip():
         files = f"{files} (vs `{_short_ref(base)}`)"
+    elif dirty:
+        files = "_(no committed changes in this window)_"
+    if dirty:
+        files += f" — {len(dirty)} uncommitted file(s), see `dirty_files`"
 
     # Name the window in the record itself. A prefill is a machine's guess at what
     # a session did; without its diff base the counts read as a claim about this
@@ -3245,6 +3271,81 @@ def git_commit_distance(root: Path, commit: str | None) -> int | None:
         return int(out) if out is not None else None
     except ValueError:
         return None
+
+
+# How far back to index HEAD's ancestry in one pass. Beyond this a commit falls
+# back to the exact per-commit query; a store with records older than this many
+# commits pays one git call for each such distinct sha, which is the old cost.
+_REVLIST_INDEX_CAP = 5000
+
+
+class CommitDistanceIndex:
+    """Commit-distance for a whole scoring pass, in one git call instead of N (MF-84).
+
+    `_score_item` called `git_commit_distance` per scored record, and that is three
+    subprocess spawns each (`is_git_repo`, `rev-parse --verify`, `rev-list --count`).
+    Guard therefore cost ~3 process spawns per record and got monotonically slower
+    as the store grew — while the Stop hook adds a record per qualifying turn, so
+    the tool degraded the hot path it had installed. Measured before this: 6.4
+    ms/record on Linux in-process, ~17 ms/record on Windows; 87% of guard's runtime
+    was `fork_exec` + `poll`, not record I/O.
+
+    One `rev-list --topo-order` builds {sha: position}. Topo order shows no parent
+    before all its children, so every commit *before* `sha` in the list is not an
+    ancestor of `sha` and is therefore counted by `rev-list --count sha..HEAD`:
+    **position is a guaranteed lower bound on the true distance.** That makes
+    `position >= GUARD_STALE_DIST_COMMITS` a sound proof of `distance >= threshold`
+    with no git call at all. Only a commit whose position is *under* the threshold —
+    at most `GUARD_STALE_DIST_COMMITS` records, whatever the store's size — is
+    ambiguous and falls through to the exact query. Verdicts are unchanged by
+    construction, and the cost stops scaling with the record count.
+    """
+
+    def __init__(self, root: Path, threshold: int) -> None:
+        self._root = root
+        self._threshold = threshold
+        self._pos: dict[str, int] | None = None
+        self._by_len: dict[int, dict[str, int]] = {}
+        self._exact: dict[str, int | None] = {}
+
+    def _index(self) -> dict[str, int]:
+        if self._pos is None:
+            out = _git_out(
+                self._root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD"
+            )
+            self._pos = {sha: i for i, sha in enumerate((out or "").split())}
+        return self._pos
+
+    def _position(self, commit: str) -> int | None:
+        """Position of a full-or-abbreviated sha in HEAD's topo-ordered ancestry."""
+        full = self._index()
+        if commit in full:
+            return full[commit]
+        # Records store `rev-parse --short` shas, so index by the length actually
+        # seen. Nearest-HEAD wins an ambiguous prefix — git would refuse, and a
+        # collision at abbreviation length is not a case worth a second git call.
+        n = len(commit)
+        if n >= 40:
+            return None
+        by_n = self._by_len.get(n)
+        if by_n is None:
+            by_n = {}
+            for sha, pos in full.items():
+                by_n.setdefault(sha[:n], pos)
+            self._by_len[n] = by_n
+        return by_n.get(commit)
+
+    def distance_reaches(self, commit: str | None) -> bool:
+        """Is `commit` at least `threshold` commits behind HEAD? (False when unknown.)"""
+        if commit in (None, "", NO_GIT_COMMIT):
+            return False
+        pos = self._position(str(commit))
+        if pos is not None and pos >= self._threshold:
+            return True  # proven by the lower bound — no git call
+        if commit not in self._exact:
+            self._exact[str(commit)] = git_commit_distance(self._root, str(commit))
+        dist = self._exact[str(commit)]
+        return dist is not None and dist >= self._threshold
 
 
 # ---- section accessors (reused by Phase 5 guard) --------------------------- #
@@ -4513,6 +4614,7 @@ def _score_item(
     stale_days: int,
     *,
     min_keyword: int,
+    distances: CommitDistanceIndex,
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
     # _norm_files stores each file as both its full path and its bare basename,
@@ -4581,8 +4683,9 @@ def _score_item(
         age = _age_days(rec.meta.get("updated_at") or rec.meta.get("created_at"))
         if age is not None and age > stale_days:
             factor *= GUARD_STALE_AGE_FACTOR
-        dist = git_commit_distance(root, rec.meta.get("commit"))
-        if dist is not None and dist >= GUARD_STALE_DIST_COMMITS:
+        # Via the shared index (MF-84), not a per-record `git_commit_distance`:
+        # same answer, but the git calls stop scaling with the store's size.
+        if distances.distance_reaches(rec.meta.get("commit")):
             factor *= GUARD_STALE_DIST_FACTOR
 
     # Branch match: a mismatch is surfaced (§15), not hidden — de-weight + flag.
@@ -4668,13 +4771,22 @@ def search(
     q_specific = _specific(query)
     q_files = _norm_files(_paths_from_text(query) | set(files or []))
     cur_branch = git_branch(root)
+    # One commit-distance index for the whole pass (MF-84) — see the class.
+    distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
 
     matches: list[dict] = []
     for it in items:
         if not _passes_filters(it, filters):
             continue
         m = _score_item(
-            it, q_specific, q_files, root, cur_branch, stale_days, min_keyword=min_keyword
+            it,
+            q_specific,
+            q_files,
+            root,
+            cur_branch,
+            stale_days,
+            min_keyword=min_keyword,
+            distances=distances,
         )
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.

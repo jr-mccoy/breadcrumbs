@@ -7,6 +7,37 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
+### Fixed — 2026-08-06 field test, round 2 (verification pass on the same Android repo)
+
+- **The guard stopped getting slower every session (MF-84).** `_score_item` called
+  `git_commit_distance` per scored record, and that is three subprocess spawns
+  each (`is_git_repo`, `rev-parse --verify`, `rev-list --count`). So the
+  `PreToolUse` guard cost ~3 process spawns *per record* and grew monotonically
+  with the store — while the `Stop` hook adds a record per qualifying turn. The
+  tool was degrading the hot path it had installed: measured at 6.4 ms/record on
+  Linux in-process and ~17 ms/record on Windows, with 87% of runtime in
+  `fork_exec`/`poll` rather than record I/O. One `rev-list --topo-order` now
+  indexes HEAD's ancestry for the whole scoring pass. Topo order shows no parent
+  before all its children, so a commit's position in that list is a *guaranteed
+  lower bound* on `rev-list --count <sha>..HEAD` — which makes `position >=
+  GUARD_STALE_DIST_COMMITS` a sound proof that the record is distance-stale, with
+  no git call at all. Only commits positioned *under* the threshold are ambiguous,
+  and there are at most `GUARD_STALE_DIST_COMMITS` of those however large the
+  store; they still take the exact query. Verdicts are unchanged by construction
+  and a test checks the equivalence exhaustively, including across a merge.
+  `is_git_repo` is also memoized, keyed on whether `.git` exists so a later `git
+  init` re-probes instead of returning a stale answer. Net at 120 records:
+  **784 ms → 38 ms, and 360+ git spawns → 6**, with the per-record slope down from
+  6.4 ms to 0.29 ms. The remaining cost no longer scales with the store.
+- **A session record no longer contradicts its own frontmatter (MF-85).** The
+  diffstat summary describes the *commit range*, so a session whose work was still
+  uncommitted — the normal state when a `Stop` hook fires — recorded
+  `_(no file changes detected)_` in the body while `dirty_files` listed 25 paths.
+  The next agent reads that as "the session did nothing". Files Touched now names
+  its scope (`_(no committed changes in this window)_`) and appends the count of
+  uncommitted files pointing at `dirty_files`. Count only, never paths: inlining
+  them is what §6.1 keeps out of committed records.
+
 ### Fixed — 2026-08-06 field test (first real install: an Android repo, 73KB CLAUDE.md, Windows + web containers)
 
 - **Hook identity no longer lives in the command string (MF-83).** `doctor`,

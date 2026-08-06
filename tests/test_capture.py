@@ -264,6 +264,29 @@ class LookbackCapTests(unittest.TestCase):
             self.assertIn("commit 0", work)
             self.assertIn("3 commit(s) since the last session record", work)
 
+    def test_MF85_uncommitted_work_is_not_reported_as_no_changes(self):
+        """The record used to contradict its own frontmatter: "no file changes
+        detected" in the body, 25 paths in `dirty_files`. A reader concludes the
+        session did nothing."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            # Work in progress: written, not committed — the normal state at the
+            # moment a Stop hook fires.
+            for name in ("a.kt", "b.kt", "c.kt"):
+                (root / name).write_text("x\n", encoding="utf-8")
+            run(["capture", "session", "--project", tmp, "--fast", "--next", "n", "--title", "wip"])
+            path = next((mem / "sessions").glob("*wip*.md"))
+            meta, body = crumb.parse_frontmatter(path.read_text(encoding="utf-8"))
+            files = crumb.Record(path, "session", {}, body).sections["Files Touched"]
+            self.assertNotIn("no file changes detected", files)
+            self.assertIn("uncommitted", files)
+            self.assertTrue(meta.get("dirty_files"), "frontmatter records the dirty files")
+            # the count agrees with the frontmatter, and no path leaks into the body
+            self.assertIn(str(len(meta["dirty_files"])), files)
+            for name in ("a.kt", "b.kt", "c.kt"):
+                self.assertNotIn(name, files)
+
     def test_files_touched_names_its_diff_base(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)

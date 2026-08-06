@@ -623,5 +623,136 @@ class MF77NextActionDisambiguationTests(unittest.TestCase):
             self.assertIn("Recommended next action:", text)
 
 
+# --------------------------------------------------------------------------- #
+# MF-84 — guard's cost must not scale with the store
+# --------------------------------------------------------------------------- #
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=str(root), capture_output=True, text=True, check=True
+    ).stdout
+
+
+class CommitDistanceIndexTests(unittest.TestCase):
+    """`_score_item` shelled out to git 3x per scored record, so the PreToolUse
+    guard got monotonically slower as the store grew — and the Stop hook grows it.
+    The index answers the same question in one call; these pin *same answer* and
+    *not per record*, in that order of importance."""
+
+    def _repo(self, tmp: str, commits: int = 25) -> Path:
+        root = Path(tmp)
+        _git(root, "init", "-q")
+        _git(root, "config", "user.email", "t@t")
+        _git(root, "config", "user.name", "t")
+        for i in range(commits):
+            (root / f"f{i}.txt").write_text(f"{i}\n", encoding="utf-8")
+            _git(root, "add", "-A")
+            _git(root, "commit", "-qm", f"c{i}")
+        return root
+
+    def test_index_agrees_with_the_exact_query_for_every_commit(self):
+        """The equivalence the optimization rests on, checked exhaustively."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            threshold = crumb.GUARD_STALE_DIST_COMMITS
+            idx = crumb.CommitDistanceIndex(root, threshold)
+            shas = _git(root, "rev-list", "HEAD").split()
+            for sha in shas:
+                exact = crumb.git_commit_distance(root, sha)
+                expected = exact is not None and exact >= threshold
+                self.assertEqual(idx.distance_reaches(sha), expected, f"full sha {sha}")
+                short = _git(root, "rev-parse", "--short", sha).strip()
+                self.assertEqual(idx.distance_reaches(short), expected, f"short sha {short}")
+
+    def test_unknown_and_sentinel_commits_do_not_decay(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, commits=3)
+            idx = crumb.CommitDistanceIndex(root, crumb.GUARD_STALE_DIST_COMMITS)
+            for value in (None, "", crumb.NO_GIT_COMMIT, "deadbee", "0" * 40):
+                self.assertFalse(idx.distance_reaches(value), repr(value))
+
+    def test_topo_position_is_a_lower_bound_on_the_true_distance(self):
+        """The property that makes `position >= threshold` a sound proof.
+
+        Topo order shows no parent before all its children, so every commit
+        listed before X is not an ancestor of X and is therefore counted by
+        `rev-list --count X..HEAD`. Verified against a history with a merge.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp, commits=6)
+            _git(root, "checkout", "-q", "-b", "side", "HEAD~3")
+            for i in range(3):
+                (root / f"s{i}.txt").write_text(f"{i}\n", encoding="utf-8")
+                _git(root, "add", "-A")
+                _git(root, "commit", "-qm", f"side{i}")
+            _git(root, "checkout", "-q", "-")
+            _git(root, "merge", "-q", "--no-ff", "-m", "merge side", "side")
+            self.assertTrue(_git(root, "rev-list", "--merges", "HEAD").split())
+            ordered = _git(root, "rev-list", "--topo-order", "HEAD").split()
+            for position, sha in enumerate(ordered):
+                exact = crumb.git_commit_distance(root, sha)
+                self.assertIsNotNone(exact)
+                self.assertGreaterEqual(exact, position, f"{sha} at position {position}")
+
+    def test_git_calls_do_not_grow_with_the_record_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._repo(tmp)
+            run(["init", "--project", str(root), "--session-tracking", "full"])
+            mem = root / crumb.MEMORY_DIRNAME
+            action = "rm -rf app/build && git push --force origin main"
+
+            def spawns() -> int:
+                calls = [0]
+                real = subprocess.run
+
+                def counting(*a, **k):
+                    calls[0] += 1
+                    return real(*a, **k)
+
+                cli.subprocess.run = counting
+                try:
+                    crumb.guard(mem, root, action)
+                finally:
+                    cli.subprocess.run = real
+                return calls[0]
+
+            def add(n: int, start: int) -> None:
+                for i in range(start, start + n):
+                    run(
+                        [
+                            "remember",
+                            "attempt",
+                            "--project",
+                            str(root),
+                            "--title",
+                            f"gradle daemon experiment {i}",
+                            "--problem",
+                            f"build failed on app/build.gradle.kts run {i}",
+                            "--tried",
+                            f"ran ./gradlew --stop then rm -rf app/build v{i}",
+                            "--result",
+                            "failed",
+                            "--why",
+                            f"killed live test daemons, run {i}",
+                            "--do-not-retry",
+                            "the daemon owner changes",
+                            "--evidence",
+                            "commit",
+                            "abc1234",
+                        ]
+                    )
+
+            add(3, 0)
+            few = spawns()
+            add(37, 3)
+            many = spawns()
+            self.assertGreaterEqual(
+                len(list((mem / "attempts").glob("*.md"))), 40, "records were written"
+            )
+            # Every one of those records scores (they all name the same files), so
+            # a per-record git call would show up here as ~3x the record count.
+            self.assertEqual(few, many, f"git calls grew with the store: {few} -> {many}")
+            self.assertLess(many, 20, f"{many} git calls for one guard call")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
