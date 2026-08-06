@@ -442,10 +442,17 @@ piece is independent:
   rather than returning an empty result that looks like a healthy no-op.
 
   **Using your own launcher is supported.** Point the command at any wrapper you
-  like; keep the `"breadcrumbsHook": "<event>"` key on the hook entry and `crumb
-  doctor` will still see it and `--remove-integrations` will still remove it.
-  (Entries without the key are still recognized when the command names both
-  `crumb` and the event — but the key is the reliable signal.)
+  like and keep the `"breadcrumbsHook": "<event>"` key on the hook entry — that
+  key is what `crumb doctor` and `--remove-integrations` match on, whatever the
+  command looks like.
+
+  An entry *without* the key is still recognized when its command names `crumb`
+  and passes a hook event as an argument (`./crumb-hook.sh guard`), so `doctor`
+  reports it as installed. But **`--remove-integrations` never deletes an unmarked
+  entry** — it lists it and leaves it alone, because a heuristic match is not
+  proof breadcrumbs wrote it. To get a clean uninstall for a launcher you wrote
+  by hand, run `crumb init --with-hooks` first: that adopts the entry, stamping
+  the marker without touching your command, and removal then takes it.
 
 `crumb doctor` reports whether each piece is in place (and whether the resume
 packet is stale), exiting non-zero when a store exists but nothing is wired up.

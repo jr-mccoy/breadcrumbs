@@ -212,8 +212,8 @@ class HookMergeTests(unittest.TestCase):
             data = json.loads((root / ".claude" / "settings.json").read_text())
             cmds = [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
             self.assertEqual(cmds, [crumb.hook_command("session")])
-            # and it is still ours to remove
-            self.assertTrue(crumb.remove_claude_hooks(root))
+            # and it is still ours to remove — install stamped the marker
+            self.assertEqual(len(crumb.remove_claude_hooks(root)["removed"]), 1)
 
 
 # --------------------------------------------------------------------------- #
@@ -265,7 +265,8 @@ class WrappedHookIdentityTests(unittest.TestCase):
             self.assertTrue(hooks["ok"], hooks["detail"])
             self.assertIn("3 crumb hook(s)", hooks["detail"])
 
-    def test_remove_integrations_removes_wrapped_hooks_and_nothing_else(self):
+    def test_adopting_a_wrapper_then_removing_takes_it_and_nothing_else(self):
+        """The supported clean uninstall for a launcher you wrote: adopt, then remove."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run(["init", "--project", tmp, "--session-tracking", "full"])
@@ -278,9 +279,11 @@ class WrappedHookIdentityTests(unittest.TestCase):
                     "Notification": [{"hooks": [{"type": "command", "command": "notify-send hi"}]}],
                 },
             )
+            crumb.install_claude_hooks(root, list(crumb.HOOK_EVENTS))  # adopt: stamps the marker
             code, out = run(["init", "--project", tmp, "--remove-integrations"])
             self.assertEqual(code, 0)
-            self.assertIn("hooks removed", out)
+            self.assertIn("3 crumb hook(s) removed", out)
+            self.assertNotIn("LEFT IN PLACE", out)
             hooks = _read_settings(root)["hooks"]
             self.assertNotIn("SessionStart", hooks)
             self.assertNotIn("Stop", hooks)
@@ -331,7 +334,7 @@ class WrappedHookIdentityTests(unittest.TestCase):
             entries = [h for g in _read_settings(root)["hooks"]["Stop"] for h in g["hooks"]]
             self.assertEqual(len(entries), 1)
             self.assertEqual(entries[0]["command"], "uv run --project . memory-snapshot")
-            self.assertTrue(crumb.remove_claude_hooks(root))
+            self.assertEqual(len(crumb.remove_claude_hooks(root)["removed"]), 1)
             self.assertEqual(_read_settings(root).get("hooks", {}), {})
 
     def test_an_unrelated_hook_is_never_mistaken_for_ours(self):
@@ -347,7 +350,9 @@ class WrappedHookIdentityTests(unittest.TestCase):
                     }
                 },
             )
-            self.assertFalse(crumb.remove_claude_hooks(root))
+            report = crumb.remove_claude_hooks(root)
+            self.assertEqual(report["removed"], [])
+            self.assertEqual(report["left"], [])  # not even a heuristic match
             self.assertEqual(len(_read_settings(root)["hooks"]["Stop"]), 1)
 
     def test_remove_only_strips_breadcrumbs(self):
@@ -370,11 +375,124 @@ class WrappedHookIdentityTests(unittest.TestCase):
                 encoding="utf-8",
             )
             crumb.install_claude_hooks(root, list(crumb.HOOK_EVENTS))
-            self.assertTrue(crumb.remove_claude_hooks(root))
+            self.assertEqual(len(crumb.remove_claude_hooks(root)["removed"]), 3)
             data = json.loads((root / ".claude" / "settings.json").read_text())
             cmds = [h["command"] for g in data["hooks"].get("PreToolUse", []) for h in g["hooks"]]
             self.assertEqual(cmds, ["mine"])
             self.assertNotIn("SessionStart", data["hooks"])
+
+
+class MarkerAuthoritativeRemovalTests(unittest.TestCase):
+    """MF-86 — detection may guess; deletion may not.
+
+    Removal keys on `HOOK_MARKER` alone. Detection stays heuristic (over-reporting
+    a hook as installed costs nothing), but a heuristic match is never deleted —
+    it is reported, because silently leaving a hook behind while claiming a clean
+    uninstall is the MF-83 failure mode this whole batch exists to fix.
+    """
+
+    # A real launcher of ours, but hand-written, so it carries no marker.
+    WRAPPER = "$CLAUDE_PROJECT_DIR/.claude/hooks/crumb-hook.sh session"
+    # A neighbouring script that is NOT ours: the event name appears only inside a
+    # hyphenated filename, never as an argument.
+    DECOY = "$CLAUDE_PROJECT_DIR/.claude/hooks/crumb-session-setup.sh"
+
+    def _with_hook(self, root: Path, command: str) -> None:
+        _write_settings(
+            root,
+            {"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command": command}]}]}},
+        )
+
+    def _commands(self, root: Path) -> list[str]:
+        hooks = _read_settings(root).get("hooks", {}).get("SessionStart", [])
+        return [h["command"] for g in hooks for h in g["hooks"]]
+
+    def test_an_unmarked_launcher_is_left_in_place_not_deleted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._with_hook(root, self.WRAPPER)
+            report = crumb.remove_claude_hooks(root)
+            self.assertEqual(report["removed"], [])
+            self.assertEqual(report["left"], [self.WRAPPER])
+            self.assertEqual(self._commands(root), [self.WRAPPER])
+
+    def test_the_user_is_told_rather_than_left_believing_it_reverted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run(["init", "--project", tmp, "--session-tracking", "full"])
+            self._with_hook(root, self.WRAPPER)
+            code, out = run(["init", "--project", tmp, "--remove-integrations"])
+            self.assertEqual(code, 0)
+            self.assertIn("LEFT IN PLACE", out)
+            self.assertIn(self.WRAPPER, out)
+            self.assertIn(crumb.HOOK_MARKER, out)
+            self.assertIn("--with-hooks", out)  # names the way to finish the job
+
+    def test_an_event_name_inside_a_filename_is_not_a_match(self):
+        """`\\bsession\\b` hits inside `crumb-session-setup.sh` — `-` is a word
+        boundary — so a neighbour was read as ours. The event must be an argument."""
+        self.assertIsNone(crumb._hook_command_event(self.DECOY))
+        self.assertIsNone(crumb._hook_command_event("./scripts/crumb-guard-helper.sh"))
+        self.assertEqual(crumb._hook_command_event(self.WRAPPER), "session")
+        self.assertEqual(crumb._hook_command_event("crumb hook capture"), "capture")
+
+    def test_the_decoy_survives_a_full_adopt_then_remove_cycle(self):
+        """The end-to-end shape of the hazard: adopt must not stamp a neighbour,
+        because a stamped entry is deletable on the very next command."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run(["init", "--project", tmp, "--session-tracking", "full"])
+            _write_settings(
+                root,
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {"hooks": [{"type": "command", "command": self.WRAPPER}]},
+                            {"hooks": [{"type": "command", "command": self.DECOY}]},
+                        ]
+                    }
+                },
+            )
+            run(["init", "--project", tmp, "--with-hooks"])
+            code, out = run(["init", "--project", tmp, "--remove-integrations"])
+            self.assertEqual(code, 0)
+            self.assertNotIn("LEFT IN PLACE", out)
+            self.assertEqual(self._commands(root), [self.DECOY])
+
+    def test_a_marked_entry_is_removed_however_odd_its_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_settings(
+                root,
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "uv run memory-snapshot",
+                                        crumb.HOOK_MARKER: "session",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                },
+            )
+            report = crumb.remove_claude_hooks(root)
+            self.assertEqual(report["removed"], ["uv run memory-snapshot"])
+            self.assertEqual(report["left"], [])
+            self.assertEqual(_read_settings(root).get("hooks", {}), {})
+
+    def test_json_output_stays_serializable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run(["init", "--project", tmp, "--session-tracking", "full", "--with-hooks"])
+            code, out = run(["init", "--project", tmp, "--remove-integrations", "--json"])
+            self.assertEqual(code, 0)
+            hooks = json.loads(out)["removed"]["hooks"]
+            self.assertEqual(len(hooks["removed"]), 3)
+            self.assertEqual(hooks["left"], [])
 
 
 class InitFlagTests(unittest.TestCase):

@@ -451,14 +451,30 @@ def cmd_init(args: argparse.Namespace) -> int:
         if args.json:
             print(json.dumps({"removed": removed}, indent=2))
         else:
-            touched = removed["adapters"] or removed["mcp"] or removed["hooks"]
+            hooks = removed["hooks"]
+            touched = removed["adapters"] or removed["mcp"] or hooks["removed"]
             print("Removed breadcrumbs integrations:" if touched else "No integrations to remove.")
             if removed["adapters"]:
                 print(f"  adapter blocks: {', '.join(removed['adapters'])}")
             if removed["mcp"]:
                 print("  .mcp.json: breadcrumbs server entry removed")
-            if removed["hooks"]:
-                print("  .claude/settings.json: crumb hooks removed")
+            if hooks["removed"]:
+                print(f"  .claude/settings.json: {len(hooks['removed'])} crumb hook(s) removed")
+            # Never let a partial uninstall read as a clean one (MF-83). An
+            # unmarked entry is left in place on purpose (MF-86) — say so, and say
+            # how to finish, rather than deleting a hook we cannot prove is ours.
+            if hooks["left"]:
+                print(
+                    f"  .claude/settings.json: {len(hooks['left'])} hook(s) LEFT IN PLACE — they "
+                    f"look like crumb hooks but carry no `{HOOK_MARKER}` marker, so breadcrumbs "
+                    "cannot prove it wrote them:"
+                )
+                for command in hooks["left"]:
+                    print(f"      {command}")
+                print(
+                    "    Remove them by hand, or run `crumb init --with-hooks` to adopt them "
+                    "(stamps the marker) and re-run this command."
+                )
         return 0
 
     if getattr(args, "print_integrations", False):
@@ -6165,14 +6181,20 @@ def _hook_command_event(command: object) -> str | None:
 
     Only a fallback — `HOOK_MARKER` is the real answer. It exists for entries
     written before the marker and for launchers a user wired up by hand, which is
-    the case that made `--remove-integrations` a lie. Deliberately narrow: the
-    command must name crumb *and* a hook event, because a false positive here
-    deletes somebody else's hook.
+    the case that made `--remove-integrations` a lie.
+
+    The event must appear as a whitespace-delimited *argument*, not merely
+    somewhere in the text (MF-86). `\\bsession\\b` also matches inside
+    `.../crumb-hook-session-setup.sh`, because `-` is a word boundary — so a
+    neighbouring script that happens to be named after a hook event was read as
+    ours. Requiring an argument keeps every real launcher (`crumb hook session`,
+    `./crumb-hook.sh session`) and drops the lookalikes.
     """
     text = str(command or "")
-    if not re.search(r"crumb", text, re.IGNORECASE):
+    if "crumb" not in text.lower():
         return None
-    return next((ev for ev in _HOOK_SPECS if re.search(rf"\b{ev}\b", text)), None)
+    tokens = {t.strip("\"';,()`") for t in text.split()}
+    return next((ev for ev in _HOOK_SPECS if ev in tokens), None)
 
 
 def _hook_entry_event(hook: object) -> str | None:
@@ -6226,16 +6248,30 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
     return path
 
 
-def remove_claude_hooks(root: Path) -> bool:
-    """Remove breadcrumbs' hook entries from .claude/settings.json. True iff any.
+def remove_claude_hooks(root: Path) -> dict:
+    """Remove breadcrumbs' hook entries from .claude/settings.json.
+
+    Returns `{"removed": [commands…], "left": [commands…]}` — JSON-serializable,
+    because `--remove-integrations --json` reports it. Note it is always truthy;
+    test `["removed"]`, not the dict.
+
+    **The marker is authoritative here, and only here (MF-86).** Detection may
+    guess — over-reporting a hook as installed costs nothing — but deletion is
+    irreversible, and `_hook_command_event` matches any command naming crumb plus
+    an event word, so a `crumb-session-setup.sh` that was never ours would be
+    matched and destroyed. Adoption is the safe direction: `init --with-hooks`
+    stamps an entry it recognizes, and stamped entries are removable forever
+    after. What is *not* acceptable is the MF-83 failure mode — leaving a hook
+    behind while reporting a clean uninstall — so anything recognized but unmarked
+    is reported in `left` and the caller must say so out loud.
 
     Per *entry*, not per group: a group we share with someone else's hook keeps
     theirs and loses ours, and only a group left empty is dropped.
     """
     path = root / ".claude" / "settings.json"
+    out: dict = {"removed": [], "left": []}
     if not path.exists():
-        return False
-    state = {"removed": False}
+        return out
 
     def _mut(data: dict) -> None:
         hooks = data.get("hooks")
@@ -6248,11 +6284,17 @@ def remove_claude_hooks(root: Path) -> bool:
             groups: list = []
             for group in arr:
                 entries = _group_entries(group)
-                kept = [h for h in entries if not _hook_entry_event(h)]
+                kept = []
+                for h in entries:
+                    if isinstance(h.get(HOOK_MARKER), str) and h[HOOK_MARKER] in _HOOK_SPECS:
+                        out["removed"].append(str(h.get("command", "")))
+                        continue
+                    if _hook_command_event(h.get("command")):
+                        out["left"].append(str(h.get("command", "")))
+                    kept.append(h)
                 if len(kept) == len(entries):
                     groups.append(group)
                     continue
-                state["removed"] = True
                 if kept:
                     group["hooks"] = kept
                     groups.append(group)
@@ -6264,7 +6306,7 @@ def remove_claude_hooks(root: Path) -> bool:
             data.pop("hooks", None)
 
     merge_json_file(path, _mut)
-    return state["removed"]
+    return out
 
 
 # ---- integration plan: resolve flags / prompt, apply, remove, describe ----- #
@@ -6483,8 +6525,13 @@ def discover_adapter_blocks(root: Path) -> list[str]:
 
 
 def remove_integrations(root: Path) -> dict:
-    """Reverse every integration breadcrumbs added; leave all other content intact."""
-    removed: dict = {"adapters": [], "mcp": False, "hooks": False}
+    """Reverse every integration breadcrumbs added; leave all other content intact.
+
+    `hooks` is `remove_claude_hooks`'s report, not a bool: hook entries that look
+    like ours but carry no marker are deliberately left in place, and the caller
+    has to surface them (MF-86).
+    """
+    removed: dict = {"adapters": [], "mcp": False, "hooks": {"removed": [], "left": []}}
     for name in discover_adapter_blocks(root):
         if remove_adapter_block(root, name):
             removed["adapters"].append(name)

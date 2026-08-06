@@ -9,6 +9,24 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ### Fixed — 2026-08-06 field test, round 2 (verification pass on the same Android repo)
 
+- **Uninstall no longer deletes a hook it cannot prove is ours (MF-86).** MF-83
+  made an unmarked entry removable by matching "names crumb, names a hook event".
+  Two problems. First, the event only had to appear on a word boundary, and `-`
+  is one — so `.claude/hooks/crumb-session-setup.sh`, a neighbouring script that
+  was never breadcrumbs', matched `session` inside its own filename. The event
+  must now appear as a whitespace-delimited **argument**, which keeps every real
+  launcher (`crumb hook session`, `./crumb-hook.sh guard`) and drops the
+  lookalikes. Second, and regardless of how good the heuristic is: deletion is
+  irreversible, so `--remove-integrations` now keys on the `breadcrumbsHook`
+  marker **alone**. Detection stays heuristic — over-reporting a hook as
+  installed costs nothing — but a heuristic match is reported, not destroyed.
+  Crucially it is not *ignored* either, which would be the MF-83 failure mode
+  again: removal names each entry it left behind and says how to finish the job
+  (`crumb init --with-hooks` adopts an entry, stamping the marker without
+  touching your command, after which removal takes it). `remove_claude_hooks`
+  now returns `{"removed": [...], "left": [...]}` instead of a bool; it is always
+  truthy, so test `["removed"]`.
+
 - **The guard stopped getting slower every session (MF-84).** `_score_item` called
   `git_commit_distance` per scored record, and that is three subprocess spawns
   each (`is_git_repo`, `rev-parse --verify`, `rev-list --count`). So the
