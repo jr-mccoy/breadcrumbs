@@ -11,6 +11,8 @@ import argparse
 import contextlib
 import io
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -48,6 +50,18 @@ class ManagedBlockTests(unittest.TestCase):
 
     def test_adapter_block_under_bloat_threshold(self):
         self.assertLess(len(crumb.adapter_block()), crumb.ADAPTER_BLOAT_CHARS)
+
+    def test_MF80_signpost_does_not_tell_an_agent_to_run_the_interactive_form(self):
+        """The session-end line named a command that cannot run unattended.
+
+        Bare `crumb capture session` prompts for five sections; under an agent it
+        died on the first read, after printing its git summary. Every command the
+        signpost names must be runnable by the reader it is written for.
+        """
+        block = crumb.adapter_block()
+        self.assertIn("crumb capture session --next", block)
+        self.assertNotIn("`crumb capture session`", block)
+        self.assertIn("Stop", block)  # says the hook already does this for you
 
 
 class MergeJsonTests(unittest.TestCase):
@@ -110,7 +124,7 @@ class HookMergeTests(unittest.TestCase):
             data = json.loads((root / ".claude" / "settings.json").read_text())
             cmds = [h["command"] for g in data["hooks"]["PreToolUse"] for h in g["hooks"]]
             self.assertIn("mine", cmds)
-            self.assertIn("crumb hook guard", cmds)
+            self.assertIn(crumb.hook_command("guard"), cmds)
             self.assertIn("SessionStart", data["hooks"])
             self.assertIn("Stop", data["hooks"])
 
@@ -121,6 +135,220 @@ class HookMergeTests(unittest.TestCase):
             crumb.install_claude_hooks(root, list(crumb.HOOK_EVENTS))
             data = json.loads((root / ".claude" / "settings.json").read_text())
             self.assertEqual(len(data["hooks"]["PreToolUse"]), 1)
+
+    @staticmethod
+    def _sh(command: str, cwd: str, **env: str) -> subprocess.CompletedProcess:
+        """Run an installed hook command through /bin/sh, as Claude Code would."""
+        sh = shutil.which("sh") or "/bin/sh"
+        if not Path(sh).exists():  # pragma: no cover - POSIX-only assertion
+            raise unittest.SkipTest("no POSIX shell available")
+        return subprocess.run([sh, "-c", command], cwd=cwd, env=env, capture_output=True, text=True)
+
+    def test_MF82_missing_binary_degrades_instead_of_erroring(self):
+        """A hook that fires before crumb is on PATH must not error the session.
+
+        In a containerized session crumb is provisioned into a venv at SessionStart
+        and exported via CLAUDE_ENV_FILE, which sibling hooks in the same batch may
+        not see. The bare command printed `crumb: command not found` every session.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            for event in crumb.HOOK_EVENTS:
+                proc = self._sh(crumb.hook_command(event), tmp, PATH="/nonexistent")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(proc.stderr.strip(), "")
+                json.loads(proc.stdout)  # always a valid hook payload
+
+    def test_MF82_session_fallback_says_memory_is_inactive(self):
+        """`{}` is a valid "no opinion" for every event, so an unresolvable install
+        would look healthy forever while loading nothing. Say so instead."""
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = self._sh(crumb.hook_command("session"), tmp, PATH="/nonexistent")
+            payload = json.loads(proc.stdout)["hookSpecificOutput"]
+            self.assertEqual(payload["hookEventName"], "SessionStart")
+            self.assertIn("INACTIVE", payload["additionalContext"])
+            self.assertIn("pip install crumb-kit", payload["additionalContext"])
+            # the quiet events stay quiet
+            for event in ("guard", "capture"):
+                quiet = self._sh(crumb.hook_command(event), tmp, PATH="/nonexistent")
+                self.assertEqual(json.loads(quiet.stdout), {})
+
+    def test_MF82_venv_fallback_is_used_when_path_has_no_crumb(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shim = Path(tmp) / ".venv" / "bin" / "crumb"
+            shim.parent.mkdir(parents=True)
+            shim.write_text('#!/bin/sh\necho "ran $*"\n', encoding="utf-8")
+            shim.chmod(0o755)
+            proc = self._sh(
+                crumb.hook_command("guard"), tmp, PATH="/nonexistent", CLAUDE_PROJECT_DIR=tmp
+            )
+            self.assertEqual(proc.stdout.strip(), "ran hook guard")
+
+    def test_MF82_interpreter_fallback_runs_the_module(self):
+        """The Windows `pip install --user` case: the console script is not on the
+        PATH bash inherited, but the package is importable by python on it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            bin_dir.mkdir()
+            shim = bin_dir / "python3"
+            shim.write_text('#!/bin/sh\necho "python $*"\n', encoding="utf-8")
+            shim.chmod(0o755)
+            proc = self._sh(crumb.hook_command("capture"), tmp, PATH=str(bin_dir))
+            self.assertIn("-m breadcrumbs hook capture", proc.stdout)
+
+    def test_MF82_a_legacy_bare_hook_entry_is_upgraded_not_duplicated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_settings(
+                root,
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {"hooks": [{"type": "command", "command": "crumb hook session"}]}
+                        ]
+                    }
+                },
+            )
+            crumb.install_claude_hooks(root, ["session"])
+            data = json.loads((root / ".claude" / "settings.json").read_text())
+            cmds = [h["command"] for g in data["hooks"]["SessionStart"] for h in g["hooks"]]
+            self.assertEqual(cmds, [crumb.hook_command("session")])
+            # and it is still ours to remove
+            self.assertTrue(crumb.remove_claude_hooks(root))
+
+
+# --------------------------------------------------------------------------- #
+# MF-83 — hooks installed through a wrapper are still breadcrumbs' hooks
+# --------------------------------------------------------------------------- #
+WRAPPER = "$CLAUDE_PROJECT_DIR/.claude/hooks/crumb-hook.sh"
+
+
+def _write_settings(root: Path, data: dict) -> None:
+    (root / ".claude").mkdir(exist_ok=True)
+    (root / ".claude" / "settings.json").write_text(json.dumps(data), encoding="utf-8")
+
+
+def _read_settings(root: Path) -> dict:
+    return json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))
+
+
+class WrappedHookIdentityTests(unittest.TestCase):
+    """Identifying our hooks by command text made any indirection invisible.
+
+    Reproduced live against a wrapper script: `doctor` reported "no hooks
+    installed" while all three fired (the PreToolUse guard was returning READ_FIRST
+    verdicts on real records at the time), `--remove-integrations` left them in
+    place while reporting a clean uninstall, and a re-`init` stacked a second copy
+    that fired alongside the first.
+    """
+
+    def _wrapped(self, root: Path, extra: dict | None = None) -> None:
+        hooks = {
+            "SessionStart": [{"hooks": [{"type": "command", "command": f"{WRAPPER} session"}]}],
+            "PreToolUse": [
+                {
+                    "matcher": "Bash|Edit|Write|MultiEdit",
+                    "hooks": [{"type": "command", "command": f"{WRAPPER} guard"}],
+                }
+            ],
+            "Stop": [{"hooks": [{"type": "command", "command": f"{WRAPPER} capture"}]}],
+        }
+        for event, groups in (extra or {}).items():
+            hooks.setdefault(event, []).extend(groups)
+        _write_settings(root, {"hooks": hooks})
+
+    def test_doctor_sees_hooks_installed_through_a_wrapper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run(["init", "--project", tmp, "--session-tracking", "full"])
+            self._wrapped(Path(tmp))
+            _, out = run(["doctor", "--project", tmp, "--json"])
+            hooks = {c["check"]: c for c in json.loads(out)["checks"]}["hooks"]
+            self.assertTrue(hooks["ok"], hooks["detail"])
+            self.assertIn("3 crumb hook(s)", hooks["detail"])
+
+    def test_remove_integrations_removes_wrapped_hooks_and_nothing_else(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run(["init", "--project", tmp, "--session-tracking", "full"])
+            self._wrapped(
+                root,
+                extra={
+                    "PreToolUse": [
+                        {"matcher": "Bash", "hooks": [{"type": "command", "command": "mine"}]}
+                    ],
+                    "Notification": [{"hooks": [{"type": "command", "command": "notify-send hi"}]}],
+                },
+            )
+            code, out = run(["init", "--project", tmp, "--remove-integrations"])
+            self.assertEqual(code, 0)
+            self.assertIn("hooks removed", out)
+            hooks = _read_settings(root)["hooks"]
+            self.assertNotIn("SessionStart", hooks)
+            self.assertNotIn("Stop", hooks)
+            pre = [h["command"] for g in hooks["PreToolUse"] for h in g["hooks"]]
+            self.assertEqual(pre, ["mine"])
+            self.assertEqual(len(hooks["Notification"]), 1)
+
+    def test_reinstalling_over_a_wrapper_does_not_duplicate_or_clobber_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._wrapped(root)
+            crumb.install_claude_hooks(root, list(crumb.HOOK_EVENTS))
+            hooks = _read_settings(root)["hooks"]
+            for cc_event, event in (
+                ("SessionStart", "session"),
+                ("PreToolUse", "guard"),
+                ("Stop", "capture"),
+            ):
+                entries = [h for g in hooks[cc_event] for h in g["hooks"]]
+                self.assertEqual(len(entries), 1, cc_event)  # no second copy firing
+                # the user's launcher is theirs; we only stamp it as ours
+                self.assertEqual(entries[0]["command"], f"{WRAPPER} {event}")
+                self.assertEqual(entries[0][crumb.HOOK_MARKER], event)
+
+    def test_a_marked_entry_is_recognized_whatever_the_command_says(self):
+        """The marker is the real identity; the text heuristic is only a fallback."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_settings(
+                root,
+                {
+                    "hooks": {
+                        "Stop": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": "uv run --project . memory-snapshot",
+                                        crumb.HOOK_MARKER: "capture",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                },
+            )
+            crumb.install_claude_hooks(root, ["capture"])
+            entries = [h for g in _read_settings(root)["hooks"]["Stop"] for h in g["hooks"]]
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["command"], "uv run --project . memory-snapshot")
+            self.assertTrue(crumb.remove_claude_hooks(root))
+            self.assertEqual(_read_settings(root).get("hooks", {}), {})
+
+    def test_an_unrelated_hook_is_never_mistaken_for_ours(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_settings(
+                root,
+                {
+                    "hooks": {
+                        "Stop": [
+                            {"hooks": [{"type": "command", "command": "./scripts/session-end.sh"}]}
+                        ]
+                    }
+                },
+            )
+            self.assertFalse(crumb.remove_claude_hooks(root))
+            self.assertEqual(len(_read_settings(root)["hooks"]["Stop"]), 1)
 
     def test_remove_only_strips_breadcrumbs(self):
         with tempfile.TemporaryDirectory() as tmp:

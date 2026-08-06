@@ -13,12 +13,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
+from breadcrumbs import cli  # noqa: E402  (`crumb` is a flat re-export; patching needs the module)
 
 
 def git(root: Path, *args: str) -> None:
@@ -195,6 +197,107 @@ class CaptureTrackingPolicyTests(unittest.TestCase):
             path = next((mem / "sessions").glob("*.md"))
             rel = str(path.relative_to(root))
             self.assertFalse(self._ignored(root, rel), "full sessions/ should be tracked")
+
+
+class LookbackCapTests(unittest.TestCase):
+    """MF-81 — the first capture after a gap must not claim every commit since.
+
+    The diff base is the newest session record's commit. On a store idle for six
+    weeks that handed one session ~50 commits and "807 files changed" — wrong in
+    exactly the run where someone is deciding whether the tool is trustworthy.
+    """
+
+    def _work(self, tmp: str) -> str:
+        mem = Path(tmp) / crumb.MEMORY_DIRNAME
+        path = next(p for p in (mem / "sessions").glob("*.md") if "gapped" in p.name)
+        _, body = crumb.parse_frontmatter(path.read_text(encoding="utf-8"))
+        return crumb.Record(path, "session", {}, body).sections["Work Completed"]
+
+    def test_window_is_capped_and_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            run(["capture", "session", "--project", tmp, "--fast", "--next", "n", "--title", "old"])
+            for i in range(crumb.GIT_PREFILL_MAX_COMMITS + 5):
+                commit(root, f"c{i}.txt", f"commit {i}")
+            run(
+                [
+                    "capture",
+                    "session",
+                    "--project",
+                    tmp,
+                    "--fast",
+                    "--next",
+                    "n",
+                    "--title",
+                    "gapped",
+                ]
+            )
+            work = self._work(tmp)
+            bullets = [ln for ln in work.splitlines() if ln.startswith("- ")]
+            self.assertEqual(len(bullets), crumb.GIT_PREFILL_MAX_COMMITS)
+            self.assertNotIn("commit 0", work)  # older than the window
+            self.assertIn("Prefill window", work)
+            self.assertIn("too far to attribute", work)
+
+    def test_a_normal_gap_keeps_the_full_since_window(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            run(["capture", "session", "--project", tmp, "--fast", "--next", "n", "--title", "old"])
+            for i in range(3):
+                commit(root, f"c{i}.txt", f"commit {i}")
+            run(
+                [
+                    "capture",
+                    "session",
+                    "--project",
+                    tmp,
+                    "--fast",
+                    "--next",
+                    "n",
+                    "--title",
+                    "gapped",
+                ]
+            )
+            work = self._work(tmp)
+            self.assertIn("commit 0", work)
+            self.assertIn("3 commit(s) since the last session record", work)
+
+    def test_files_touched_names_its_diff_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            commit(root, "g.txt", "add g")
+            run(["capture", "session", "--project", tmp, "--fast", "--next", "n", "--title", "s"])
+            path = next((Path(tmp) / crumb.MEMORY_DIRNAME / "sessions").glob("*.md"))
+            _, body = crumb.parse_frontmatter(path.read_text(encoding="utf-8"))
+            files = crumb.Record(path, "session", {}, body).sections["Files Touched"]
+            self.assertIn("files changed", files)
+            self.assertIn("vs `", files)
+
+
+class NonInteractiveCaptureTests(unittest.TestCase):
+    """MF-80 — an unanswerable prompt is "no answer", not a traceback."""
+
+    def test_eof_on_stdin_reports_the_missing_next_action(self):
+        """A harness whose stdin passes isatty() but reads EOF took the whole
+        command down with an EOFError, after it had printed its git summary."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            stdin = sys.stdin
+            with unittest.mock.patch.object(cli, "_interactive", lambda: True):
+                sys.stdin = io.StringIO("")  # every read is EOF
+                try:
+                    with (
+                        contextlib.redirect_stdout(io.StringIO()),
+                        contextlib.redirect_stderr(io.StringIO()),
+                    ):
+                        code = crumb.main(["capture", "session", "--project", tmp, "--title", "s"])
+                finally:
+                    sys.stdin = stdin
+            self.assertEqual(code, 2)  # a clean "needs --next", not an EOFError
 
 
 if __name__ == "__main__":

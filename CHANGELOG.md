@@ -7,6 +7,68 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
+### Fixed — 2026-08-06 field test (first real install: an Android repo, 73KB CLAUDE.md, Windows + web containers)
+
+- **Hook identity no longer lives in the command string (MF-83).** `doctor`,
+  `--remove-integrations` and `install_claude_hooks` all recognized our hooks by
+  `command.startswith("crumb hook")`, so a hook installed through *any*
+  indirection — a wrapper script, a venv path, `python -m breadcrumbs` — was
+  invisible to breadcrumbs, and all three failed at once: `doctor` reported "no
+  hooks installed" while all three hooks were demonstrably firing; the documented
+  clean uninstall silently left them behind, which is the worst of the three
+  because the user believes they have reverted; and a later `init --with-hooks`
+  appended a **duplicate** that fired alongside the original. Entries are now
+  stamped with a `"breadcrumbsHook": "<event>"` key that `doctor` and removal
+  match on, so a custom launcher is a supported install path — which matters,
+  because MF-82 makes one necessary. Unstamped entries are still recognized when
+  the command names both `crumb` and a hook event, deliberately narrow because a
+  false positive here deletes someone else's hook. Removal is now per *entry*:
+  a group shared with a foreign hook keeps it and loses only ours.
+- **The installed hook command resolves the CLI instead of assuming it (MF-82).**
+  `init --with-hooks` emitted a bare `crumb hook <event>`. In a Claude Code web
+  container the CLI is installed into a venv at SessionStart and exported through
+  `CLAUDE_ENV_FILE`, which reaches later *tool* calls but not necessarily a
+  sibling hook in the same batch; on Windows, a bash spawned from PowerShell
+  inherits a PATH without the `pip install --user` Scripts directory. Both print
+  `crumb: command not found`, silently, every session. The emitted command now
+  tries `$PATH`, the POSIX and Windows `./.venv` layouts, then any interpreter
+  that can `import breadcrumbs`. If nothing resolves it exits 0 — but
+  `SessionStart` does **not** emit a bare `{}`: an empty object is a valid "no
+  opinion" for every event, so a dead install would look healthy forever while
+  loading nothing. It returns `additionalContext` saying memory is inactive, where
+  to read the packet by hand, and how to fix it. Re-running `init --with-hooks`
+  upgrades a bare legacy entry in place; a launcher *you* wrote is never rewritten.
+- **The adapter bloat check measures our block, not your instruction file
+  (MF-79).** Both `doctor` and `audit` sized the *entire* adapter file against
+  `ADAPTER_BLOAT_CHARS` (4000). `CLAUDE.md` and `AGENTS.md` are the project's own
+  agent-instruction files — the reporting repo's is 73,326 chars — so `doctor`
+  reported `✗ [adapter] BLOATED` permanently from the moment the signpost was
+  installed *correctly*. The check punished the thing it asks for. Both now
+  measure only the text between `ADAPTER_BEGIN` and `ADAPTER_END`, which is what
+  `adapter_block()`'s docstring always claimed was being checked. A file with no
+  managed block is not a signpost and is no longer sized at all; `audit`'s
+  `adapter-duplication` check still catches records pasted into one.
+- **The signpost no longer tells agents to run an interactive command (MF-80).**
+  The block injected into `CLAUDE.md`/`AGENTS.md` ended with "**Session end:**
+  `crumb capture session`" — which prompts for five sections. Under an agent it
+  died with `EOFError` *after* printing its full git summary, so it looked like it
+  had half-worked; this happened verbatim on first use. The line now names the
+  unattended form (`--next` plus `--set "<heading>" "<text>"`, which keeps the git
+  prefill that `--fast` discards) and says the `Stop` hook already snapshots
+  automatically. The prompts themselves now treat EOF as "no answer" and fall
+  through to the normal "a session needs a Next Action" error instead of a
+  traceback — `_interactive()` is a heuristic over two `isatty()` calls, and when
+  it guesses wrong the command must degrade, not die.
+- **Capture no longer attributes months of history to one session (MF-81).** The
+  prefill diffed from the newest session record's commit with no bound, so on a
+  store idle for six weeks the first capture claimed ~50 commits and "807 files
+  changed, +90962/-14441" as one sitting's work. It self-corrected once
+  auto-capture ran — but the wrong number lands on the *first* capture after any
+  gap, exactly when someone is deciding whether to trust the tool. The window is
+  now capped at 20 commits (falling back to the same bounded recent-history window
+  used when there is no prior record), and every prefill states the window and
+  diff base it used, so a large number is interpretable rather than merely wrong.
+
 Everything from the 2026-08-04 agent field test (run against a real Android
 repo's store plus a 600-record synthetic store): the four high-severity findings
 first (MF-71 … MF-73), then the four remaining ones (MF-74 … MF-77), plus a red
