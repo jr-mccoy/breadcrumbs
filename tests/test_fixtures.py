@@ -1,4 +1,4 @@
-"""End-to-end fixture suite (Phase 6, plan §17 / §19b.11).
+"""End-to-end fixture suite (.11).
 
 Runs all twelve evaluation fixtures through `validate` and `audit`, and pins the
 fixtures that assert a whole-system property rather than a single check:
@@ -50,7 +50,7 @@ ALL_FIXTURES = [
 AUDIT_SHOULD_FAIL = {"fixture-06-secret-leak"}
 
 # fixture-08 ships a deliberately stale generated projection. The projection-
-# freshness check (review F3) makes `validate` flag it, so it is excluded from the
+# freshness check makes `validate` flag it, so it is excluded from the
 # "validates clean" set and pinned by its own freshness test below.
 VALIDATE_SHOULD_FLAG_FRESHNESS = {"fixture-08-packet-stale"}
 
@@ -71,7 +71,7 @@ def mem_of(name: str) -> Path:
 # --------------------------------------------------------------------------- #
 class ValidateAllTests(unittest.TestCase):
     def test_all_fixtures_are_registered(self):
-        """MF-63 — a fixture on disk that nothing runs is worse than no fixture.
+        """A fixture on disk that nothing runs is worse than no fixture.
 
         `ALL_FIXTURES` drives every loop in this file, and CI's own loops now glob
         the directory rather than a numeric range. This is the check that stops the
@@ -89,7 +89,7 @@ class ValidateAllTests(unittest.TestCase):
                 self.assertEqual(fails, [], f"{name}: {fails}")
 
     def test_stale_projection_fails_validate_freshness(self):
-        # review F3: validate must not stay green while a projection is stale.
+        # Validate must not stay green while a projection is stale.
         for name in VALIDATE_SHOULD_FLAG_FRESHNESS:
             with self.subTest(fixture=name):
                 fails = [f for f in crumb.run_validate(mem_of(name)) if f["status"] == "fail"]

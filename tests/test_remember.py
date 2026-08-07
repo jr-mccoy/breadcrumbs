@@ -1,4 +1,4 @@
-"""Tests for `crumb remember decision|attempt` (Phase 3).
+"""Tests for `crumb remember decision|attempt`.
 
 Run with:  python -m pytest tests/
        or:  python tests/test_remember.py
@@ -306,11 +306,11 @@ class RememberMisuseTests(unittest.TestCase):
             self.assertEqual(code, 2)
 
 
-class MF19InteractiveSectionPromptTests(unittest.TestCase):
+class InteractiveSectionPromptTests(unittest.TestCase):
     """`sections.setdefault(h, input(...))` evaluated the prompt eagerly.
 
     A heading already supplied via `--set` was still asked for, and the answer
-    thrown away by `setdefault` — the worst of both (review #5 Low).
+    thrown away by `setdefault` — the worst of both.
     """
 
     def _run_interactive(self, argv, answers):
@@ -328,7 +328,7 @@ class MF19InteractiveSectionPromptTests(unittest.TestCase):
             code = crumb.main(argv)
         return code, asked
 
-    def test_MF19_a_section_given_via_set_is_not_prompted_for(self):
+    def test_a_section_given_via_set_is_not_prompted_for(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             code, asked = self._run_interactive(
@@ -353,7 +353,7 @@ class MF19InteractiveSectionPromptTests(unittest.TestCase):
             rec = crumb.Record.from_file(next((mem / "decisions").glob("*.md")), "decision")
             self.assertEqual(rec.sections["Context"], "already supplied")
 
-    def test_MF19_sections_not_given_are_still_prompted_for(self):
+    def test_sections_not_given_are_still_prompted_for(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             code, asked = self._run_interactive(
@@ -366,8 +366,8 @@ class MF19InteractiveSectionPromptTests(unittest.TestCase):
             self.assertEqual(rec.sections["Context"], "ctx")
 
 
-class MF74AgentProvenanceTests(unittest.TestCase):
-    """A record an agent wrote must not claim a human wrote it (MF-74).
+class AgentProvenanceTests(unittest.TestCase):
+    """A record an agent wrote must not claim a human wrote it.
 
     `derive_fields` defaulted `agent="human"`, so every CLI write without
     `--agent` was attributed to a person — while the MCP surface recorded the
@@ -382,7 +382,7 @@ class MF74AgentProvenanceTests(unittest.TestCase):
         env.update(overrides)
         return mock.patch.dict("os.environ", env, clear=False)
 
-    def test_MF74_no_flag_and_no_agent_env_records_unknown_not_human(self):
+    def test_no_flag_and_no_agent_env_records_unknown_not_human(self):
         with self._clean_env():
             self.assertEqual(crumb.detect_agent(), "unknown")
         with tempfile.TemporaryDirectory() as tmp, self._clean_env():
@@ -406,7 +406,7 @@ class MF74AgentProvenanceTests(unittest.TestCase):
             rec = crumb.Record.from_file(next((mem / "decisions").glob("*.md")), "decision")
             self.assertEqual(rec.meta["agent"], "unknown")
 
-    def test_MF74_agent_harness_is_detected_from_the_environment(self):
+    def test_agent_harness_is_detected_from_the_environment(self):
         for var, expected in (
             ("CLAUDECODE", "claude-code"),
             ("CURSOR_AGENT", "cursor"),
@@ -417,7 +417,7 @@ class MF74AgentProvenanceTests(unittest.TestCase):
             with self.subTest(var=var), self._clean_env(**{var: "1"}):
                 self.assertEqual(crumb.detect_agent(), expected)
 
-    def test_MF74_explicit_flag_still_wins(self):
+    def test_explicit_flag_still_wins(self):
         with tempfile.TemporaryDirectory() as tmp, self._clean_env(CLAUDECODE="1"):
             mem = init_store(tmp)
             code, _ = run(
@@ -441,14 +441,14 @@ class MF74AgentProvenanceTests(unittest.TestCase):
             rec = crumb.Record.from_file(next((mem / "decisions").glob("*.md")), "decision")
             self.assertEqual(rec.meta["agent"], "human")
 
-    def test_MF74_known_agent_surfaces_floor_at_agent_not_unknown(self):
+    def test_known_agent_surfaces_floor_at_agent_not_unknown(self):
         """MCP tools and the Stop hook know the writer is a machine."""
         with self._clean_env():
             self.assertEqual(crumb.detect_agent(fallback="agent"), "agent")
         with self._clean_env(CLAUDECODE="1"):
             self.assertEqual(crumb.detect_agent(fallback="agent"), "claude-code")
 
-    def test_MF74_no_argparse_default_reintroduces_human(self):
+    def test_no_argparse_default_reintroduces_human(self):
         """The flag defaults must stay None so `derive_fields` gets to decide."""
         parser = crumb.build_parser()
         defaults = parser.parse_args(

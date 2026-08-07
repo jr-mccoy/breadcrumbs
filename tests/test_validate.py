@@ -1,4 +1,4 @@
-"""Tests for `crumb validate` (Phase 2, plan §16.1-14).
+"""Tests for `crumb validate`.
 
 One pass-direction test (a fresh init validates clean) plus one fail-direction
 test per deterministic check 3-11, driven by the hand-authored fixtures in
@@ -124,7 +124,7 @@ class ValidateFailTests(unittest.TestCase):
 class ValidateDeterminismTests(unittest.TestCase):
     def test_no_heuristic_content_scanning(self):
         """An override-phrased trap ('skip the tests', 'ignore') must NOT fail validate
-        (that lives in audit, plan §16.14)."""
+        (that lives in audit)."""
         with tempfile.TemporaryDirectory() as tmp:
             mem = fresh_store(tmp)
             (mem / "known-traps.md").write_text(

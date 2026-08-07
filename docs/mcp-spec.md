@@ -1,9 +1,9 @@
-# MCP Specification (Phase 8 — implemented)
+# MCP Specification (implemented)
 
 > **Status: built.** The Python MCP server ships in
 > [`breadcrumbs/mcp_server.py`](../breadcrumbs/mcp_server.py), a thin binding
 > over the adapter core in [`breadcrumbs/mcp_core.py`](../breadcrumbs/mcp_core.py).
-> Every resource/prompt/tool wraps the **same** Phase 1–6 functions the CLI calls
+> Every resource/prompt/tool wraps the **same** core functions the CLI calls
 > ([`breadcrumbs/cli.py`](../breadcrumbs/cli.py)) — one source of behavior,
 > no fork.
 
@@ -69,7 +69,7 @@ identical JSON either way, and only in-process code reading the model objects
 
 This table used to list only `uriTemplate` — the one attribute the code happened
 to touch — which read as an exhaustive list of a two-item difference and would
-have made the next attribute read (say `mimeType`) look safe (MF-66). Code that
+have made the next attribute read (say `mimeType`) look safe. Code that
 must read one of these should go through the alias-tolerant accessor in
 `tests/test_mcp.py`, or dump the model with `by_alias=True` and read the JSON key,
 which is stable across both majors.
@@ -79,7 +79,7 @@ unannounced: it installed cleanly, the hardcoded 1.x import failed, and the serv
 reported itself as "not installed". The CI `mcp` job runs the full suite and a live
 server build against **both** majors on Python 3.10–3.14 — the full range the SDK
 declares support for, since stopping at 3.12 left the extra untested on two
-Pythons it installs on (MF-68).
+Pythons it installs on.
 
 ---
 
@@ -112,7 +112,7 @@ unknown `{id}` raises (surfaced to the client as a resource error). A missing
 | `audit_project_memory` | `crumb audit` | validate + secret-scan health check |
 
 Prompts return guidance text only. They carry **no authority** over the user's
-current instruction, the code, the tests, or authoritative docs (plan §15).
+current instruction, the code, the tests, or authoritative docs.
 
 ## Tools (10) — wrap existing functions
 
@@ -134,7 +134,7 @@ field.** `memory_guard_before_action`'s **`recommended_action`** is *synthesized
 this code* from the match kinds behind the verdict — advice about the action you
 just proposed, always a non-empty string. `memory_build_resume_packet`'s
 **`next_action`** is *recorded state*: the `## Next Action` a session handoff left
-behind, and `""` when nobody set one. Both were called `next_action` until MF-77,
+behind, and `""` when nobody set one. Both were called `next_action` until 0.1.9,
 and a reader who saw the empty resume value naturally concluded guard returns
 null. Do not treat one as a fallback for the other.
 
@@ -173,7 +173,7 @@ are not the same kind of thing. Both pairs are deliberate:
 | `handoff_age_days` / `handoff_commit_distance` | the **measured** handoff age and commit distance; `null` when the timestamp is unparseable or there is no git repo |
 
 The staleness pair was one field named `stale_days` until the round that added the
-ages (agentic review #2 F10): the threshold was data and the age was English inside
+ages: the threshold was data and the age was English inside
 a warning string. The `verification`/`verifications` pair is kept as-is — those keys
 are section names driving the packet's cap and trim order, so renaming them changes
 the bounding machinery, not just a label.
@@ -240,7 +240,7 @@ replacing record's id) — the same flow as `crumb mark-status <id> superseded
 
 ---
 
-## Safety posture (plan §15)
+## Safety posture
 
 - **Data, not instruction.** Memory content returned over MCP is context about
   prior work; it never overrides the user's current instruction, the code, the
@@ -249,7 +249,7 @@ replacing record's id) — the same flow as `crumb mark-status <id> superseded
 - **Writes go through validate.** `memory_record`, `memory_verify`, and
   `memory_mark_status` reuse the exact validate gate `remember` uses — one
   write-behavior — and each refreshes the `generated/` projections on success so
-  the static snapshots never desync from the records (review F2/F3).
+  the static snapshots never desync from the records.
 - **Secret-scan before commit.** `memory_scan_secrets` is available so an agent
   can check before any "commit memory" step (§2.6, §15, Fixture 6).
 - **No new identity scheme.** `find_record_by_id` uses the same filename-canonical

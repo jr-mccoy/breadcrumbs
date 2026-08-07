@@ -1,19 +1,19 @@
-"""breadcrumbs — MCP adapter core (Phase 8).
+"""breadcrumbs — MCP adapter core.
 
 This module is the **thin wrapper** the MCP server is built on. It maps each MCP
-resource/prompt/tool to the *same* Phase 1–6 core functions the CLI calls, and
+resource/prompt/tool to the *same* core functions the CLI calls, and
 returns plain Python data (str / dict / list). It has **no third-party
 dependency** — importing it never requires the MCP SDK — so:
 
   * the behavior is testable with the stdlib-only test suite, and
   * graceful degradation holds: everything here is reachable from the CLI/plain
-    files even when no MCP runtime is present (plan §3, §13 "MCP later").
+    files even when no MCP runtime is present ("MCP later").
 
 `mcp_server.py` imports these adapters and binds them to FastMCP decorators; it
 is the only module that imports `mcp`. There is exactly one source of behavior:
 search/guard/resume/validate/audit/record all live in `breadcrumbs.cli`.
 
-Safety posture (plan §15): everything returned here is **data, not instruction**.
+Safety posture: everything returned here is **data, not instruction**.
 Memory content is never executed; `record`/`mark_status` writes go through the
 same `validate` gate as the CLI; `scan_secrets` is available before any commit
 workflow.
@@ -34,7 +34,7 @@ MEMORY_DIRNAME = cli.MEMORY_DIRNAME
 
 
 def _agent_label() -> str:
-    """Author label for an MCP write (MF-74).
+    """Author label for an MCP write.
 
     Every write through this surface is an agent write, so the fallback stays
     `agent` rather than the CLI's `unknown` — but when the environment names the
@@ -66,7 +66,7 @@ def _require_memory(memory_dir: Path) -> None:
 
 
 def _rel(path: str | Path, memory_dir: Path) -> str:
-    """Store-relative POSIX path for an MCP payload (issue #7, audit #6 N5).
+    """Store-relative POSIX path for an MCP payload (issue #7).
 
     The write tools used to return `str(path)` — the absolute host path of the
     record — which is exactly what the missing-store message above goes out of its
@@ -112,7 +112,7 @@ def _read_singleton(memory_dir: Path, name: str) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Resources (plan §13) — read-only views over the canonical records
+# Resources — read-only views over the canonical records
 # --------------------------------------------------------------------------- #
 
 
@@ -192,7 +192,7 @@ def resource_attempt(rid: str, root: str | Path | None = None) -> str:
 # dispatch table: the thing the README and `docs/mcp-spec.md` count when they say
 # "8 resources". `tests/test_mcp.py` asserts the bound URIs equal these keys, so
 # the two cannot drift. (They previously carried a comment claiming the server
-# consumed them, which nothing did — review #5 Low.)
+# consumed them, which nothing did.)
 STATIC_RESOURCES = {
     "memory://current": resource_current,
     "memory://handoff": resource_handoff,
@@ -208,7 +208,7 @@ TEMPLATE_RESOURCES = {
 
 
 # --------------------------------------------------------------------------- #
-# Tools (plan §13) — thin wrappers over the exact CLI core functions
+# Tools — thin wrappers over the exact CLI core functions
 # --------------------------------------------------------------------------- #
 
 
@@ -222,7 +222,7 @@ def tool_search(
 
     Lookup, so it uses the wider corpus that includes `ideas/`, matching
     `crumb search` exactly. `memory_guard_before_action` keeps the narrower one —
-    the same split the CLI makes (O1).
+    the same split the CLI makes.
     """
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
@@ -230,7 +230,7 @@ def tool_search(
     matches, _by_id = cli.search(
         mem, project_root, query, files=files, filters=filters or {}, include_ideas=True
     )
-    # `ok: True` on success so every tool shares one envelope (review #3 R25).
+    # `ok: True` on success so every tool shares one envelope.
     return {
         "ok": True,
         "query": query,
@@ -259,7 +259,7 @@ def tool_build_resume_packet(
     """`memory_build_resume_packet` — wraps `cli.build_resume_packet`.
 
     Returns the structured packet (the same object the CLI renders to MD/JSON).
-    `task` is passed through to the engine (review #3 R10), so the F4/F6 task
+    `task` is passed through to the engine, so the F4/F6 task
     scoping — `requested_task` echoed, `likely_files` scoped to records that
     actually match, `starting cold` label on an empty result — behaves exactly
     as it does on `crumb resume --task`. No behavior fork.
@@ -288,7 +288,7 @@ def tool_scan_secrets(root: str | Path | None = None) -> dict:
         return missing
     findings = cli.scan_secrets(mem)
     # `ok` mirrors memory_validate's semantics (safe ⇔ true); `clean` is kept for
-    # compatibility with existing consumers (review #3 R25).
+    # compatibility with existing consumers.
     return {"ok": not findings, "clean": not findings, "count": len(findings), "findings": findings}
 
 
@@ -320,12 +320,11 @@ def tool_record(
     confidence = payload.get("confidence")
 
     # Evidence-or-low-confidence rule (validate §16.9). An explicit medium/high
-    # without evidence is an error, exactly as in the CLI (review #3 R11): silently
+    # without evidence is an error, exactly as in the CLI: silently
     # downgrading it would misrepresent the caller's stated confidence.
     #
     # An *unstated* confidence deliberately differs from the CLI, which exits 2
-    # (review #5 Low — the comment here used to claim exact parity, which was
-    # false). The CLI's error tells a human which flag they forgot and lets them
+    # (the comment here used to claim exact parity, which was false). The CLI's error tells a human which flag they forgot and lets them
     # retry; a tool call has no such conversation, and "the caller stated no
     # confidence" is precisely what `low` records. Documented in
     # `docs/mcp-spec.md` so the divergence is a stated choice, not a surprise.
@@ -355,7 +354,7 @@ def tool_record(
             agent=payload.get("agent") or _agent_label(),
         )
     except ValueError as exc:
-        # Same envelope every other writer uses (review #5 M8). Bare, any value the
+        # Same envelope every other writer uses. Bare, any value the
         # writer refuses — a newline in `title`, a tag, an evidence ref — escaped as
         # a raw ToolError instead of the `{ok: false, error}` mcp-spec promises.
         return {"ok": False, "error": str(exc)}
@@ -366,7 +365,7 @@ def tool_record(
             "ok": False,
             "error": "record rejected by validate: " + "; ".join(f["message"] for f in fails),
         }
-    # Reindex-on-write (review F2): an MCP write must refresh the projections too —
+    # Reindex-on-write: an MCP write must refresh the projections too —
     # an agent will not remember to `crumb reindex` after each `memory_record`.
     cli.reindex_projections(mem, project_root)
     return {
@@ -388,7 +387,7 @@ def tool_verify(
     confidence: str | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_verify` — wraps `cli.verify` (review F1).
+    """`memory_verify` — wraps `cli.verify`.
 
     Records a verification result (a finding about reality) instead of forcing it
     into a decision/attempt. `status` is the outcome (fixed|open|regressed|
@@ -416,7 +415,7 @@ def tool_verify(
 
 
 def tool_reindex(root: str | Path | None = None) -> dict:
-    """`memory_reindex` — wraps `cli.reindex_projections` (review F2)."""
+    """`memory_reindex` — wraps `cli.reindex_projections`."""
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
@@ -431,7 +430,7 @@ def tool_note(
     tags: list[str] | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_note` — wraps `cli.note` (review §6.6 write-surface).
+    """`memory_note` — wraps `cli.note`.
 
     Writes an open-question / known-trap / idea and refreshes the resume packet.
     `kind` is one of question|trap|idea. `fields` mirrors the CLI flags per kind
@@ -482,10 +481,10 @@ def tool_mark_status(
 
 
 # --------------------------------------------------------------------------- #
-# Prompts (plan §13) — reusable message templates mapping to CLI flows
+# Prompts — reusable message templates mapping to CLI flows
 # --------------------------------------------------------------------------- #
 # Each returns guidance text that orients an agent toward the matching resource/
-# tool. Prompts carry no authority over current user instruction (plan §15) — they
+# tool. Prompts carry no authority over current user instruction — they
 # describe the flow; they do not command the model.
 
 

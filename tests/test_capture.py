@@ -1,4 +1,4 @@
-"""Tests for `crumb capture session` (Phase 3).
+"""Tests for `crumb capture session`.
 
 Run with:  python -m pytest tests/
        or:  python tests/test_capture.py
@@ -71,7 +71,7 @@ class CapturePrefillTests(unittest.TestCase):
             rec = crumb.Record(path, "session", {}, body)
             self.assertIn("add g.txt feature", rec.sections["Work Completed"])
             # Files Touched is a counts-only summary, not an inlined per-file --stat
-            # (review §6.1): the path itself must not appear in the committed record.
+            #: the path itself must not appear in the committed record.
             self.assertIn("files changed", rec.sections["Files Touched"])
             self.assertNotIn("g.txt", rec.sections["Files Touched"])
             self.assertEqual(rec.sections["Next Action"], "wire resume")
@@ -200,7 +200,7 @@ class CaptureTrackingPolicyTests(unittest.TestCase):
 
 
 class LookbackCapTests(unittest.TestCase):
-    """MF-81 — the first capture after a gap must not claim every commit since.
+    """The first capture after a gap must not claim every commit since.
 
     The diff base is the newest session record's commit. On a store idle for six
     weeks that handed one session ~50 commits and "807 files changed" — wrong in
@@ -264,7 +264,7 @@ class LookbackCapTests(unittest.TestCase):
             self.assertIn("commit 0", work)
             self.assertIn("3 commit(s) since the last session record", work)
 
-    def test_MF85_uncommitted_work_is_not_reported_as_no_changes(self):
+    def test_uncommitted_work_is_not_reported_as_no_changes(self):
         """The record used to contradict its own frontmatter: "no file changes
         detected" in the body, 25 paths in `dirty_files`. A reader concludes the
         session did nothing."""
@@ -301,7 +301,7 @@ class LookbackCapTests(unittest.TestCase):
 
 
 class NonInteractiveCaptureTests(unittest.TestCase):
-    """MF-80 — an unanswerable prompt is "no answer", not a traceback."""
+    """An unanswerable prompt is "no answer", not a traceback."""
 
     def test_eof_on_stdin_reports_the_missing_next_action(self):
         """A harness whose stdin passes isatty() but reads EOF took the whole

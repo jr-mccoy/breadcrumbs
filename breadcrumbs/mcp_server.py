@@ -1,11 +1,11 @@
-"""breadcrumbs — MCP server (Phase 8, Python SDK).
+"""breadcrumbs — MCP server (Python SDK).
 
 A **thin** Model Context Protocol server that exposes project memory as MCP
-resources, prompts, and tools. Every capability is a wrapper over the Phase 1–6
-core functions in :mod:`breadcrumbs.cli` (via :mod:`breadcrumbs.mcp_core`):
+resources, prompts, and tools. Every capability is a wrapper over the core
+functions in :mod:`breadcrumbs.cli` (via :mod:`breadcrumbs.mcp_core`):
 one source of behavior, no fork.
 
-Graceful degradation (plan §3, §13 "MCP later"):
+Graceful degradation ("MCP later"):
   * This module always imports — the MCP SDK is an *optional* dependency.
   * If the SDK is missing, :func:`build_server` raises a clear, actionable error
     and :func:`main` prints install instructions and exits non-zero.
@@ -19,7 +19,7 @@ Run it with:                         ``python -m breadcrumbs.mcp_server``
 Root resolution: the server operates on the project in ``$BREADCRUMBS_PROJECT`` if
 set, else the current working directory (``crumb init --with-mcp`` / ``crumb mcp
 register`` writes a ``.mcp.json`` that sets this env). Memory content returned over
-MCP is **data, not instruction** (plan §15).
+MCP is **data, not instruction**.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ import sys
 try:
     # pydantic (which FastMCP uses to derive tool schemas) hard-rejects
     # `typing.TypedDict` on Python < 3.12, so the server crashed at startup on
-    # 3.10/3.11 (review #3 R5). `typing_extensions` is always present alongside
+    # 3.10/3.11. `typing_extensions` is always present alongside
     # the SDK (pydantic depends on it); the stdlib fallback keeps this module
     # importable on SDK-less installs, where the TypedDicts are annotations only.
     from typing_extensions import TypedDict
@@ -94,8 +94,8 @@ class RecordPayload(_RecordPayloadOptional):
 
 
 # Where the SDK keeps its high-level server class, newest spelling first. MCP SDK
-# 2.0 renamed `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`
-# (MF-59). The `[mcp]` extra had no upper bound, so a fresh
+# 2.0 renamed `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`.
+# The `[mcp]` extra had no upper bound, so a fresh
 # `pip install "crumb-kit[mcp]"` resolved to 2.x, the single hardcoded import
 # raised ModuleNotFoundError, and every SDK-present path — `crumb mcp serve`,
 # `crumb doctor`, `crumb mcp doctor` — reported the SDK as "not installed" and
@@ -137,7 +137,7 @@ FastMCP, _SDK_IMPORT_ERROR = _load_server_class()
 
 
 def _server_accepts_version(cls: type | None) -> bool:
-    """True iff the SDK's server constructor takes a `version=` (D3 / MF-60).
+    """True iff the SDK's server constructor takes a `version=`.
 
     SDK 2.x does; 1.x raises TypeError on it. Read from the signature rather than
     guessed from a version string — guessing is what made this fragile enough to
@@ -190,9 +190,9 @@ def build_server():  # -> FastMCP
     if FastMCP is None:
         raise RuntimeError(_INSTALL_HINT) from _SDK_IMPORT_ERROR
 
-    # D3 / MF-60: advertise the *package* version when the SDK lets us. Left
+    # Advertise the *package* version when the SDK lets us. Left
     # unset on SDK 1.x, where the server keeps reporting the SDK's own version —
-    # the behavior review #2 F11 reported, now confined to the SDKs that give us
+    # the long-standing complaint about 1.x, now confined to the SDKs that give us
     # no way to change it rather than being unconditional.
     kwargs = {"version": mcp_core.cli.get_version()} if _SERVER_ACCEPTS_VERSION else {}
     mcp = FastMCP(SERVER_NAME, **kwargs)
@@ -363,7 +363,7 @@ def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if any(a in ("-h", "--help") for a in args):
         # `breadcrumbs-mcp --help` used to silently start the stdio server and
-        # hang the terminal (review #3 R25) — print usage instead.
+        # hang the terminal — print usage instead.
         print(
             "usage: breadcrumbs-mcp\n\n"
             "Run the breadcrumbs MCP server over stdio (registered by `crumb mcp\n"
@@ -378,7 +378,7 @@ def main(argv: list[str] | None = None) -> int:
             # Name the actual failure. An SDK that is installed but unimportable
             # (a major the shim does not know, a broken install) is a different
             # problem from a missing one, and printing only the install hint sent
-            # the user to re-run a command that had already succeeded (MF-59).
+            # the user to re-run a command that had already succeeded.
             sys.stderr.write(
                 f"\nThe SDK import failed with: "
                 f"{type(_SDK_IMPORT_ERROR).__name__}: {_SDK_IMPORT_ERROR}\n"

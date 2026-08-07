@@ -1,4 +1,4 @@
-"""Tests for the frontmatter parser and Record model (Phase 2).
+"""Tests for the frontmatter parser and Record model.
 
 Run with:  python -m pytest tests/
        or:  python tests/test_parser.py
@@ -140,8 +140,8 @@ converged
 """
 
 
-class MF15FenceAwareSectionsTests(unittest.TestCase):
-    """`Record.sections` was a second, fence-blind splitter (review #5 M3).
+class FenceAwareSectionsTests(unittest.TestCase):
+    """`Record.sections` was a second, fence-blind splitter.
 
     The R4 fence fix landed in `split_md_ordered`/`split_md_sections` and never
     reached `Record.sections`, so the two disagreed about any body carrying a
@@ -152,11 +152,11 @@ class MF15FenceAwareSectionsTests(unittest.TestCase):
     def _rec(self, body: str, rtype: str = "session") -> "crumb.Record":
         return crumb.Record(Path(f"{rtype}s/2026-01-02-x.md"), rtype, {}, body)
 
-    def test_MF15_a_fenced_heading_is_not_a_section(self):
+    def test_a_fenced_heading_is_not_a_section(self):
         rec = self._rec(FENCED_BODY)
         self.assertEqual(list(rec.sections), ["Tried", "Result"])
 
-    def test_MF15_agrees_with_the_other_splitter(self):
+    def test_agrees_with_the_other_splitter(self):
         for body in (
             FENCED_BODY,
             "## A\n1\n\n## B\n2\n",
@@ -166,18 +166,18 @@ class MF15FenceAwareSectionsTests(unittest.TestCase):
             with self.subTest(body=body[:20]):
                 self.assertEqual(self._rec(body).sections, crumb.split_md_sections(body))
 
-    def test_MF15_content_after_a_fenced_heading_is_not_lost(self):
+    def test_content_after_a_fenced_heading_is_not_lost(self):
         rec = self._rec(FENCED_BODY)
         self.assertIn("Next Action", rec.sections["Tried"])
         self.assertEqual(rec.sections["Result"], "converged")
 
-    def test_MF15_duplicate_headings_are_merged_not_last_wins(self):
-        """The dict view must not silently drop a body (review #3 R14)."""
+    def test_duplicate_headings_are_merged_not_last_wins(self):
+        """The dict view must not silently drop a body."""
         rec = self._rec("## Notes\nfirst\n\n## Notes\nsecond\n")
         self.assertIn("first", rec.sections["Notes"])
         self.assertIn("second", rec.sections["Notes"])
 
-    def test_MF15_validate_sees_no_next_action_in_a_fence(self):
+    def test_validate_sees_no_next_action_in_a_fence(self):
         """§16.10 false-passed a session whose only "Next Action" was fenced."""
         import shutil
         import tempfile
@@ -211,28 +211,28 @@ class MF15FenceAwareSectionsTests(unittest.TestCase):
             )
 
 
-class MF22CommentOnlyValueTests(unittest.TestCase):
+class CommentOnlyValueTests(unittest.TestCase):
     """`superseded_by: # none yet` parsed as the literal string "# none yet".
 
     `_strip_inline_comment` needs a space before the `#`, so a value that is
     *only* a comment survived as truthy garbage that satisfied validate §16.6's
-    "a superseded record needs a superseded_by" check (review #5 Low).
+    "a superseded record needs a superseded_by" check.
     """
 
-    def test_MF22_comment_only_value_is_null(self):
+    def test_comment_only_value_is_null(self):
         meta, _ = crumb.parse_frontmatter("---\nsuperseded_by: # none yet\n---\nbody\n")
         self.assertIsNone(meta["superseded_by"])
 
-    def test_MF22_trailing_comments_still_strip(self):
+    def test_trailing_comments_still_strip(self):
         meta, _ = crumb.parse_frontmatter("---\nstatus: active # for now\n---\nbody\n")
         self.assertEqual(meta["status"], "active")
 
-    def test_MF22_a_quoted_hash_is_still_a_value(self):
+    def test_a_quoted_hash_is_still_a_value(self):
         meta, _ = crumb.parse_frontmatter("---\ntitle: \"#hashtag\"\nother: '#x'\n---\nb\n")
         self.assertEqual(meta["title"], "#hashtag")
         self.assertEqual(meta["other"], "#x")
 
-    def test_MF22_superseded_without_a_target_fails_validate(self):
+    def test_superseded_without_a_target_fails_validate(self):
         import shutil
         import tempfile
 
@@ -321,7 +321,7 @@ class GlobalFlagPositionTests(unittest.TestCase):
             self.assertEqual(rc, 0)
 
 
-class MF76StartupCostTests(unittest.TestCase):
+class StartupCostTests(unittest.TestCase):
     """Startup work that every invocation paid for and almost none of it used.
 
     `build_parser()` constructed all ~20 subparsers before argparse looked at
@@ -344,7 +344,7 @@ class MF76StartupCostTests(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         return out.stdout.strip()
 
-    def test_MF76_requested_command_finds_the_subcommand(self):
+    def test_requested_command_finds_the_subcommand(self):
         cases = {
             (): None,
             ("guard", "rm -rf /"): "guard",
@@ -363,7 +363,7 @@ class MF76StartupCostTests(unittest.TestCase):
             with self.subTest(argv=argv):
                 self.assertEqual(crumb.requested_command(list(argv)), expected)
 
-    def test_MF76_only_builds_one_subparser_but_parses_it_identically(self):
+    def test_only_builds_one_subparser_but_parses_it_identically(self):
         lean = crumb.build_parser("guard")
         full = crumb.build_parser()
         self.assertEqual(
@@ -371,7 +371,7 @@ class MF76StartupCostTests(unittest.TestCase):
             vars(full.parse_args(["guard", "delete the auth module"])),
         )
 
-    def test_MF76_full_parser_still_offers_every_command(self):
+    def test_full_parser_still_offers_every_command(self):
         """`only` is an optimisation — the registry stays the complete set."""
         full = crumb.build_parser()
         sub = next(
@@ -379,7 +379,7 @@ class MF76StartupCostTests(unittest.TestCase):
         )  # the subparsers action
         self.assertEqual(list(sub.choices), list(crumb._SUBCOMMAND_BUILDERS))
 
-    def test_MF76_version_is_not_resolved_while_building_the_parser(self):
+    def test_version_is_not_resolved_while_building_the_parser(self):
         """The eager `--version` string pulled in importlib.metadata + email + zipfile."""
         seen = self._in_subprocess(
             "import sys, breadcrumbs.cli as c\n"
@@ -389,11 +389,11 @@ class MF76StartupCostTests(unittest.TestCase):
         )
         self.assertEqual(seen, "none")
 
-    def test_MF76_version_output_is_unchanged(self):
+    def test_version_output_is_unchanged(self):
         out = self._in_subprocess("import breadcrumbs.cli as c; c.main(['--version'])")
         self.assertRegex(out, r"^breadcrumbs \d+\.\d+\.\d+.* \(record schema_version \d+\)$")
 
-    def test_MF76_secret_and_poison_patterns_compile_on_first_use(self):
+    def test_secret_and_poison_patterns_compile_on_first_use(self):
         """~3.5 ms of module body that only `audit`/`scan-secrets` ever need."""
         state = self._in_subprocess(
             "import breadcrumbs.cli as c\n"

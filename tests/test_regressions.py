@@ -1,7 +1,7 @@
-"""Regression tests for bugs found in the 2026-06-26 full-codebase review.
+"""Regression tests: one test per defect, grouped by the area it was found in.
 
-Each test is named test_<bugid>_... and reproduces a concrete defect that was
-confirmed against the code before the fix. Run with:  python -m pytest tests/
+Every test here reproduces a concrete bug that was confirmed against the code
+before the fix landed, so a reintroduction fails the suite rather than shipping.
 """
 
 from __future__ import annotations
@@ -264,11 +264,11 @@ class CaptureHandoffTests(unittest.TestCase):
             self.assertIn("new.txt", dirty)
             self.assertNotIn("old.txt -> new.txt", dirty)
 
-    def test_MF03_leading_space_porcelain_line_survives_intact(self):
+    def test_leading_space_porcelain_line_survives_intact(self):
         """A worktree-only modification is ` M path` — the leading space is a
         status column, and `_git_out`'s whole-output strip() used to eat it on the
         *first* line, after which line[3:] chopped three characters off the path
-        (review #5 H3: one unstaged edit to tracked.py -> ['racked.py']).
+        (one unstaged edit to tracked.py -> ['racked.py']).
         """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -285,7 +285,7 @@ class CaptureHandoffTests(unittest.TestCase):
             self.assertTrue(crumb._git_out(root, "status", "--porcelain").startswith(" M "))
             self.assertEqual(sorted(crumb.git_dirty_files(root)), ["second.py", "tracked.py"])
 
-    def test_MF03_single_line_git_output_has_no_trailing_newline(self):
+    def test_single_line_git_output_has_no_trailing_newline(self):
         """Relaxing the strip() must not leave `\\n` on the single-line callers."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -444,39 +444,39 @@ from datetime import datetime, timedelta  # noqa: E402
 
 
 class CleanupBatchTests(unittest.TestCase):
-    def test_8_1_tab_indentation_gives_clear_error(self):
+    def test_tab_indentation_gives_clear_error(self):
         """A tab-indented frontmatter line says 'tabs', not a misleading error."""
         with self.assertRaises(crumb.FrontmatterError) as ctx:
             crumb.parse_frontmatter("---\n\tkey: value\n---\nbody\n")
         self.assertIn("tab", str(ctx.exception).lower())
 
-    def test_8_1_tab_indented_list_item_gives_clear_error(self):
+    def test_tab_indented_list_item_gives_clear_error(self):
         with self.assertRaises(crumb.FrontmatterError) as ctx:
             crumb.parse_frontmatter("---\ntags:\n\t- a\n---\nbody\n")
         self.assertIn("tab", str(ctx.exception).lower())
 
-    def test_8_2_audit_render_has_no_trailing_newline(self):
+    def test_audit_render_has_no_trailing_newline(self):
         self.assertFalse(crumb.render_audit_human([]).endswith("\n"))
         findings = [{"severity": crumb.AUDIT_FAIL, "check": "secret", "path": "x", "message": "m"}]
         self.assertFalse(crumb.render_audit_human(findings).endswith("\n"))
 
-    def test_8_3_render_frontmatter_keeps_non_canonical_keys(self):
+    def test_render_frontmatter_keeps_non_canonical_keys(self):
         meta = {"id": "dec_x", "type": "decision", "status": "active", "custom_key": "keep me"}
         out = crumb.render_frontmatter(meta)
         self.assertIn("custom_key: keep me", out)
 
-    def test_8_4_stamped_inputs_hash_only_reads_header(self):
+    def test_stamped_inputs_hash_only_reads_header(self):
         text = (
             "<!-- source_commit: abc | inputs_hash: deadbeef1234 | generated_at: t -->\n"
             "prose that mentions inputs_hash: cafef00d9999 in the body\n"
         )
         self.assertEqual(crumb._stamped_inputs_hash(text), "deadbeef1234")
 
-    def test_8_4_stray_body_inputs_hash_is_not_picked_up(self):
+    def test_stray_body_inputs_hash_is_not_picked_up(self):
         text = "no generated header\nbut a stray inputs_hash: cafef00d9999 in prose\n"
         self.assertIsNone(crumb._stamped_inputs_hash(text))
 
-    def test_8_5_load_manifest_unquotes_values(self):
+    def test_load_manifest_unquotes_values(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = Path(tmp)
             (mem / "manifest.yml").write_text(
@@ -487,7 +487,7 @@ class CleanupBatchTests(unittest.TestCase):
             self.assertEqual(man["project"], "demo")
             self.assertEqual(man["plain"], "bare")
 
-    def test_8_7_future_handoff_age_is_not_negative_days(self):
+    def test_future_handoff_age_is_not_negative_days(self):
         future = (datetime.now().astimezone() + timedelta(days=5)).isoformat()
         with tempfile.TemporaryDirectory() as tmp:
             warnings = crumb.compute_staleness(Path(tmp), {"updated_at": future}, [], [], [], 14)
@@ -495,7 +495,7 @@ class CleanupBatchTests(unittest.TestCase):
         self.assertNotIn("day(s) old", joined)
         self.assertIn("future", joined)
 
-    def test_8_8_omitted_note_reason_is_accurate(self):
+    def test_omitted_note_reason_is_accurate(self):
         cap = {"omitted": {"k": 3}, "omitted_reason": {"k": "the per-section cap"}}
         self.assertIn("per-section cap", crumb._omitted_note(cap, "k")[0])
         budget = {"omitted": {"k": 2}, "omitted_reason": {"k": "the token budget"}}
@@ -507,9 +507,9 @@ class CleanupBatchTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# Group 4 — review #3 (2026-07-01) high-severity fixes R1–R5
+# Group 10 — high-severity frontmatter and lifecycle fixes
 # --------------------------------------------------------------------------- #
-class Review3HighSeverityTests(unittest.TestCase):
+class HighSeverityRegressionTests(unittest.TestCase):
     @staticmethod
     def _run(argv):
         import contextlib
@@ -662,9 +662,9 @@ class Review3HighSeverityTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# Group 11 — review #3 Medium/Low findings (R7–R26)
+# Group 11 — medium and low severity findings
 # --------------------------------------------------------------------------- #
-class Review3MediumLowTests(unittest.TestCase):
+class MediumLowRegressionTests(unittest.TestCase):
     @staticmethod
     def _run(argv):
         import contextlib

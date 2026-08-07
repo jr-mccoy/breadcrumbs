@@ -1,4 +1,4 @@
-"""Tests for `crumb init` (Phase 1).
+"""Tests for `crumb init`.
 
 Run with:  python -m pytest tests/         (if pytest is installed)
        or:  python tests/test_init.py       (stdlib-only fallback runner)
@@ -33,7 +33,7 @@ EXPECTED_TREE = [
     "known-traps.md",
     "decisions/.gitkeep",
     "attempts/.gitkeep",
-    # MF-62: `verifications/` shipped in the template from the day the record type
+    # `verifications/` shipped in the template from the day the record type
     # landed, but this list — the only test of the §1 tree — never learned about it,
     # so deleting it from the scaffold would have gone unnoticed.
     "verifications/.gitkeep",
@@ -45,7 +45,7 @@ EXPECTED_TREE = [
     "index/README.md",
 ]
 
-# MF-58 / O2: `evidence/refs.yml` was scaffolded for the whole life of the package
+# `evidence/refs.yml` was scaffolded for the whole life of the package
 # and never read or written by anything. It is gone; nothing replaces it, because
 # per-record evidence already lives in each record's `evidence:` frontmatter, which
 # `resume`, `guard` and `search` actually consume.
@@ -85,7 +85,7 @@ class InitTreeTests(unittest.TestCase):
                 self.assertTrue((memory / rel).exists(), f"missing {rel}")
 
     def test_tree_matches_the_bundled_template_exactly(self):
-        """MF-62 — pin the *whole* tree, not a hand-kept subset of it.
+        """Pin the *whole* tree, not a hand-kept subset of it.
 
         `EXPECTED_TREE` silently missed `verifications/.gitkeep` for as long as that
         record type has existed, because an inclusion list only catches deletions of
@@ -106,7 +106,7 @@ class InitTreeTests(unittest.TestCase):
             self.assertEqual(set(EXPECTED_TREE) - shipped, set())
 
     def test_removed_scaffold_is_not_recreated(self):
-        """MF-58 / O2 — `evidence/refs.yml` is gone and must stay gone."""
+        """`evidence/refs.yml` is gone and must stay gone."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             self.assertEqual(run_init(root, "--session-tracking", "full"), 0)

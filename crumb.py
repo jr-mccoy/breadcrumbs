@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Source-checkout compatibility shim for the Breadcrumbs CLI.
 
-Phase 7 moved the implementation into the installable ``breadcrumbs``
-package (``breadcrumbs/cli.py``). This thin shim keeps two source-tree
-workflows working with zero changes:
+The implementation lives in the installable ``breadcrumbs`` package
+(``breadcrumbs/cli.py``). This thin shim keeps two source-tree workflows
+working with zero changes:
 
   * ``python crumb.py <command>``  — the form CI and the docs use; and
   * ``import crumb``               — the form the test suite uses

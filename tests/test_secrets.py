@@ -1,4 +1,4 @@
-"""Tests for `scan-secrets` and the audit secret sub-check (Phase 6, plan §15/§17.6).
+"""Tests for `scan-secrets` and the audit secret sub-check.
 
 Covers Fixture 6 (token-like string fails), the individual secret shapes, the
 false-positive controls (git shas, record ids, the `?token=` query-string text that
@@ -192,7 +192,7 @@ class FalsePositiveTests(unittest.TestCase):
             self.assertIn("high-entropy-string", patterns_hit(mem))
 
     def test_camelcase_paths_and_identifiers_are_not_secrets(self):
-        """Path- and dotted-identifier-shaped tokens are allowlisted (review §6.4)."""
+        """Path- and dotted-identifier-shaped tokens are allowlisted."""
         allowlisted = (
             "app/src/main/java/com/MigrationV14ToV15Test",
             "com.example.config.DatabaseMigrationHelperV2Factory",
@@ -237,7 +237,7 @@ class SkipRuleTests(unittest.TestCase):
 
 
 class UndecodableFileTests(unittest.TestCase):
-    """review #5 H4 + M5 + audit #6 N3 — one bad byte used to fail open.
+    """One bad byte used to fail open.
 
     Before the fix, a single `\\xff` in committed memory silently exempted the
     whole file from the secret scan, aborted `audit` with a path-less error, and
@@ -303,7 +303,7 @@ class UndecodableFileTests(unittest.TestCase):
             )
 
     def test_reindex_failure_names_the_cause(self):
-        """`crumb reindex` printed 'Reindex failed' with no cause (review #5 M5)."""
+        """`crumb reindex` printed 'Reindex failed' with no cause."""
         with tempfile.TemporaryDirectory() as tmp:
             mem = fresh_store(tmp)
             real = _cli.build_resume_packet
@@ -322,7 +322,7 @@ class UndecodableFileTests(unittest.TestCase):
 
 
 class UrlEmbeddedCredentialTests(unittest.TestCase):
-    """MF-67 — a password inside a connection string is a secret the scanner missed.
+    """A password inside a connection string is a secret the scanner missed.
 
     Nothing in the keyword list could see these: the password follows a bare `:`
     inside a URL, with no `password=`-style label anywhere, and the standalone

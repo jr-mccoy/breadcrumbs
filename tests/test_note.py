@@ -1,6 +1,6 @@
 """Tests for `crumb note question|trap|idea` and the `memory_note` MCP tool.
 
-Closes the read/write asymmetry (review §6.6): open-questions / known-traps /
+Closes the read/write asymmetry: open-questions / known-traps /
 ideas were readable but had no writer.
 
 Run with:  python -m pytest tests/

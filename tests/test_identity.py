@@ -1,4 +1,4 @@
-"""Tests for filename-canonical record identity (Phase 2, plan §7).
+"""Tests for filename-canonical record identity.
 
 Run with:  python -m pytest tests/
        or:  python tests/test_identity.py
@@ -47,15 +47,15 @@ class IdentityTests(unittest.TestCase):
         self.assertIsNone(crumb.derive_identity("2026-6-5-bad-date", "decision"))
 
 
-class MF23CanonicalityTests(unittest.TestCase):
-    """Canonicality used to be `(\\d{4})-(\\d{2})-(\\d{2})-(.+)` — shape only (review #5 Low).
+class CanonicalityTests(unittest.TestCase):
+    """Canonicality used to be `(\\d{4})-(\\d{2})-(\\d{2})-(.+)` — shape only.
 
     Writers always emit clean names; validate §16.4 exists for hand-created files,
     which is exactly where an id like `dec_99999999_My Slug!` — spaces and
     punctuation inside an exact-match key — came from.
     """
 
-    def test_MF23_impossible_dates_are_not_canonical(self):
+    def test_impossible_dates_are_not_canonical(self):
         for stem in (
             "9999-99-99-slug",
             "2026-13-01-slug",
@@ -66,11 +66,11 @@ class MF23CanonicalityTests(unittest.TestCase):
             with self.subTest(stem=stem):
                 self.assertIsNone(crumb.derive_identity(stem, "decision"))
 
-    def test_MF23_real_dates_including_leap_day_are_canonical(self):
+    def test_real_dates_including_leap_day_are_canonical(self):
         self.assertIsNotNone(crumb.derive_identity("2024-02-29-leap", "decision"))
         self.assertIsNone(crumb.derive_identity("2026-02-29-not-leap", "decision"))
 
-    def test_MF23_slug_is_restricted_to_the_slugify_charset(self):
+    def test_slug_is_restricted_to_the_slugify_charset(self):
         for stem in (
             "2026-01-02-My Slug!",
             "2026-01-02-Weird_Slug",
@@ -81,7 +81,7 @@ class MF23CanonicalityTests(unittest.TestCase):
             with self.subTest(stem=stem):
                 self.assertIsNone(crumb.derive_identity(stem, "decision"))
 
-    def test_MF23_writer_produced_names_stay_canonical(self):
+    def test_writer_produced_names_stay_canonical(self):
         """Whatever `slugify` + `_unique_record_path` can emit must still parse."""
         for title in (
             "A Decision: with punctuation!",
@@ -95,7 +95,7 @@ class MF23CanonicalityTests(unittest.TestCase):
                 # …including the same-day collision suffix.
                 self.assertIsNotNone(crumb.derive_identity(f"2026-01-02-{slug}-2", "decision"))
 
-    def test_MF23_validate_names_the_rule_it_enforces(self):
+    def test_validate_names_the_rule_it_enforces(self):
         import shutil
         import tempfile
 
@@ -111,8 +111,8 @@ class MF23CanonicalityTests(unittest.TestCase):
             self.assertIn("real calendar date", ident[0]["message"])
 
 
-class MF75SlugLengthTests(unittest.TestCase):
-    """A sentence-length title must not become a sentence-length path (MF-75).
+class SlugLengthTests(unittest.TestCase):
+    """A sentence-length title must not become a sentence-length path.
 
     `slugify` had no cap, so the whole title landed in the filename: past ~240
     characters `remember` failed with ENAMETOOLONG on Linux, and long before that
@@ -125,7 +125,7 @@ class MF75SlugLengthTests(unittest.TestCase):
         "auth middleware layer instead of recomputing it on every single request"
     )
 
-    def test_MF75_generated_filename_is_capped(self):
+    def test_generated_filename_is_capped(self):
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -153,7 +153,7 @@ class MF75SlugLengthTests(unittest.TestCase):
             self.assertEqual(meta["title"], self.LONG_TITLE)
             self.assertIsNotNone(crumb.derive_identity(path.stem, "decision"))
 
-    def test_MF75_a_title_too_long_for_the_filesystem_still_writes(self):
+    def test_a_title_too_long_for_the_filesystem_still_writes(self):
         """The pre-fix failure mode: ENAMETOOLONG straight out of `remember`."""
         import tempfile
 
@@ -174,7 +174,7 @@ class MF75SlugLengthTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
 
-    def test_MF75_collision_suffixes_stay_inside_the_cap(self):
+    def test_collision_suffixes_stay_inside_the_cap(self):
         import tempfile
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,7 +203,7 @@ class MF75SlugLengthTests(unittest.TestCase):
             self.assertTrue(any(s.endswith("-2") for s in names), names)
             self.assertTrue(any(s.endswith("-3") for s in names), names)
 
-    def test_MF75_truncation_stays_canonical(self):
+    def test_truncation_stays_canonical(self):
         for title in (
             self.LONG_TITLE,
             "a" * 200,
@@ -217,7 +217,7 @@ class MF75SlugLengthTests(unittest.TestCase):
                 self.assertLessEqual(len(slug), crumb.SLUG_MAX_CHARS)
                 self.assertIsNotNone(crumb.derive_identity(f"2026-01-02-{slug}", "decision"))
 
-    def test_MF75_records_already_on_disk_with_long_names_still_load(self):
+    def test_records_already_on_disk_with_long_names_still_load(self):
         """The cap must not orphan anything a pre-cap version already wrote."""
         import shutil
         import tempfile

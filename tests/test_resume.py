@@ -1,4 +1,4 @@
-"""Tests for `crumb resume` and the resume packet (Phase 4 — MVP-core / 19a).
+"""Tests for `crumb resume` and the resume packet (MVP-core / 19a).
 
 Run with:  python -m pytest tests/
        or:  python -m unittest discover -s tests
@@ -224,7 +224,7 @@ class StalenessAgeDistanceTests(unittest.TestCase):
 
 
 class StalenessFieldNamingTests(unittest.TestCase):
-    """The threshold and the measured ages are separate, distinctly named fields (F10/D2).
+    """The threshold and the measured ages are separate, distinctly named fields.
 
     `stale_days` used to be the only staleness number in the packet — a *threshold*
     named as if it were an age, while the actual age ("handoff is 6 day(s) old") was

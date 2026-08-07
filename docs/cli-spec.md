@@ -1,10 +1,9 @@
 # CLI Specification
 
-The CLI binary is `crumb` (installed via `pipx`/`pip` as of Phase 7; from a
-source checkout the equivalent is `python crumb.py <command>`, a shim over
-`breadcrumbs.cli`). The command surface is stable from Phase 1: every command supports the
-global flags below; capture/resume additionally support `--fast`. As later phases
-land, subcommands are added without changing established flag semantics.
+The CLI binary is `crumb` (installed via `pipx`/`pip`; from a source checkout the
+equivalent is `python crumb.py <command>`, a shim over `breadcrumbs.cli`). Every
+command supports the global flags below; capture/resume additionally support
+`--fast`. New subcommands are added without changing established flag semantics.
 
 ---
 
@@ -159,7 +158,7 @@ Behavior:
   `next_action` is the `## Next Action` a session handoff left behind — `""` when
   nobody set one. `guard --json` has no `next_action`: its synthesized advice is
   **`recommended_action`**, and it is always a non-empty string. The two were one
-  name until MF-77, which made an unset handoff look like a broken guard.
+  name until 0.1.9, which made an unset handoff look like a broken guard.
 - The **committed** projection is always written with the default cutoff, not the
   one a given invocation passed: a shared artifact must not change because one
   developer preferred `--stale-days 7`. `--stale-days` affects what *you* see.

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """crumb — Breadcrumbs CLI.
 
-Phase 1 surface: the `init` command plus the global argparse skeleton that
-later phases (validate, remember, capture, resume, guard, audit) bolt onto.
+This module is the whole command surface — ``init``, ``validate``, ``schema``,
+``remember``, ``verify``, ``mark-status``, ``note``, ``capture``, ``resume``,
+``reindex``, ``search``, ``guard``, ``audit``, ``scan-secrets``, ``doctor``,
+``mcp`` and the ``hook`` entry points — and the package entry point
+(``breadcrumbs.cli``), exposed as the ``crumb`` console script. The ``crumb.py``
+shim at the repo root re-exports it so source-checkout use
+(``python crumb.py ...``) and the test suite keep working unchanged. Templates
+ship as package data under ``breadcrumbs/templates/`` so ``init`` finds them
+post-install without any repo-relative path.
 
-Phase 7 (packaging): this is the package entry point (``breadcrumbs.cli``),
-exposed as the ``crumb`` console script. The ``crumb.py`` shim at the
-repo root re-exports it so source-checkout use (``python crumb.py ...``)
-and the test suite keep working unchanged. Templates ship as package data under
-``breadcrumbs/templates/`` so ``init`` finds them post-install without any
-repo-relative path.
-
-Design constraints (see docs/ and the build plan):
+Design constraints (see docs/):
 - Standard library only.
 - Deterministic by default.
 - Memory is advisory; this tool only manages files, it never overrides
@@ -57,7 +57,7 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "project-memory"
 # imports this module, so `from breadcrumbs import __version__` at module load time
 # could observe a partially-initialized package.
 
-# Non-git fallback sentinels (build plan §22 Q5, resolved this phase).
+# Non-git fallback sentinels.
 # Used everywhere git-derived fields cannot be populated.
 NO_GIT_BRANCH = "(no-git)"
 NO_GIT_COMMIT = "(no-git)"
@@ -69,7 +69,7 @@ GITIGNORE_END = "# <<< breadcrumbs managed block <<<"
 
 VALID_SESSION_TRACKING = ("full", "distillate")
 
-# Record vocabularies (plan §7).
+# Record vocabularies.
 VALID_STATUS = (
     "active",
     "superseded",
@@ -80,7 +80,7 @@ VALID_STATUS = (
 )
 VALID_PRIVACY = ("repo-safe", "local-private", "secret-prohibited")
 
-# Directory name -> record type (plan §6 taxonomy).
+# Directory name -> record type.
 DIR_TYPES = {
     "decisions": "decision",
     "attempts": "attempt",
@@ -89,7 +89,7 @@ DIR_TYPES = {
     "verifications": "verification",
 }
 
-# Record type -> id prefix (plan §7 "Record identity").
+# Record type -> id prefix.
 TYPE_PREFIX = {
     "decision": "dec",
     "attempt": "att",
@@ -100,7 +100,7 @@ TYPE_PREFIX = {
     "verification": "ver",
 }
 
-# Verification outcome vocabulary (review F1). The record-level `status` stays the
+# Verification outcome vocabulary. The record-level `status` stays the
 # lifecycle value (active/superseded/…); the *finding about reality* lives in the
 # `outcome` frontmatter field so it never collides with the lifecycle status.
 VALID_VERIFICATION_OUTCOME = (
@@ -111,16 +111,16 @@ VALID_VERIFICATION_OUTCOME = (
     "inconclusive",
 )
 # Outcomes that still need attention. `active_verifications` sorts these first,
-# and guard treats a verification carrying one as live (review #5 M1) — the rest
+# and guard treats a verification carrying one as live — the rest
 # (fixed, not_applicable) are settled and only ever mentioned as history.
 ACTIONABLE_VERIFICATION_OUTCOMES = ("open", "regressed", "inconclusive")
 # Verification method vocabulary (how the subject was checked).
 VALID_VERIFICATION_METHOD = ("static", "runtime", "test")
 
-# Singleton core files that must exist (plan §16.2).
+# Singleton core files that must exist.
 CORE_FILES = ("current.md", "handoff.md", "open-questions.md", "known-traps.md")
 
-# Frontmatter keys every durable directory record must carry (plan §16.3).
+# Frontmatter keys every durable directory record must carry.
 # id/slug are derived from the filename (§7), so they are not required here.
 REQUIRED_RECORD_KEYS = ("title", "status", "created_at", "privacy")
 
@@ -129,7 +129,7 @@ class _LazyPattern:
     """A `re.Pattern` stand-in that compiles the first time it is actually used.
 
     The secret-shape and instruction-like tables are the bulk of this module's
-    top-level `re.compile` calls — ~3.5 ms of the ~7.5 ms module body (MF-76) —
+    top-level `re.compile` calls — ~3.5 ms of the ~7.5 ms module body —
     and only `audit`/`scan_secrets` ever touch them. Every other invocation,
     including the `hook guard` pre-filter that runs on every tool call, was
     paying for them. Attribute access proxies to the real pattern, so `.search`,
@@ -161,13 +161,13 @@ class _LazyPattern:
 # in `-`-joined runs. It used to be `(.+)`, which accepted `9999-99-99-My Slug!.md`
 # and derived the id `dec_99999999_My Slug!`: spaces and punctuation inside an
 # exact-match key. Writers always emit clean names; validate exists for the
-# hand-created files where this matters (review #5 Low).
+# hand-created files where this matters.
 RECORD_STEM_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)$")
 
-# Marker every generated projection carries (plan §3, §16.12).
+# Marker every generated projection carries.
 GENERATED_MARKER = "GENERATED PROJECTION"
 
-# Session "Next Action or convergence" markers (plan §16.10).
+# Session "Next Action or convergence" markers.
 SESSION_DONE_MARKERS = ("converged", "session complete", "no next action", "done")
 
 
@@ -180,7 +180,7 @@ def write_text_atomic(path: Path, text: str) -> None:
     """Write text via tmp-file + rename in the destination directory.
 
     A plain `write_text` interrupted mid-write leaves a truncated record that
-    validate then reports as corrupt (review #3 R24); `os.replace` is atomic on
+    validate then reports as corrupt; `os.replace` is atomic on
     the same filesystem, so readers see either the old file or the new one.
     """
     path = Path(path)
@@ -203,8 +203,8 @@ def read_text_lenient(path: Path) -> tuple[str, str | None]:
     still returned with the bad bytes replaced so the caller can do its job on
     what is readable. Callers decide whether that reason is a blocking finding, a
     warning, or noise; what none of them may do is die on it or silently skip it
-    (review #5 H4/M5, audit #6 N3 — one bad byte used to abort `audit` entirely
-    and exempt a whole file from the secret scan).
+    (one bad byte used to abort `audit` entirely and exempt a whole file from
+    the secret scan).
 
     Callers are responsible for naming the offending path: `problem` is
     path-free so it can go in a finding that carries `path` separately.
@@ -231,7 +231,7 @@ def now_iso() -> str:
 # Memo for `is_git_repo`, keyed by (path, does `.git` exist there) so the answer is
 # re-probed the moment that changes — `git init` after a negative probe re-keys the
 # entry instead of returning a stale False. Five of one guard call's ten remaining
-# subprocess spawns were this same question asked five times (MF-84); a stat is
+# subprocess spawns were this same question asked five times; a stat is
 # ~1000x cheaper than a process, and much more so on Windows.
 _IS_GIT_REPO_CACHE: dict[tuple[str, bool], bool] = {}
 
@@ -305,8 +305,7 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
         # flip generated projections to local-only, but keep the explainer README.
         # *.json covers guard-prefilter.json, which is a projection like any other
         # (rebuilt on every write) and used to escape this policy entirely — the
-        # user asked for local-only projections and got a tracked, churning one
-        # (review #5 M9).
+        # user asked for local-only projections and got a tracked, churning one.
         lines.append(f"{MEMORY_DIRNAME}/generated/*.md")
         lines.append(f"{MEMORY_DIRNAME}/generated/*.json")
         lines.append(f"!{MEMORY_DIRNAME}/generated/README.md")
@@ -403,7 +402,7 @@ def copy_template_tree(dest: Path) -> None:
 
 def prompt_session_tracking(non_interactive_default: str = "full") -> str:
     """Ask the human for the session-tracking policy; default for non-tty."""
-    # Same gate as every other prompt (MF-73): both ends must be a terminal.
+    # Same gate as every other prompt: both ends must be a terminal.
     if not _interactive():
         return non_interactive_default
     prompt = (
@@ -436,9 +435,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 2
 
     # Integration flags are validated here, before *any* filesystem mutation —
-    # before the scaffold swap, before .gitignore, before a single adapter edit
-    # (review #5 M6/M7, audit #6 N4). Validating inside apply_integrations would
-    # still leave a half-initialized project behind on a typo.
+    # before the scaffold swap, before .gitignore, before a single adapter edit.
+    # Validating inside apply_integrations would still leave a half-initialized
+    # project behind on a typo.
     problem = validate_integration_flags(args)
     if problem:
         _emit_error(args, problem)
@@ -460,8 +459,8 @@ def cmd_init(args: argparse.Namespace) -> int:
                 print("  .mcp.json: breadcrumbs server entry removed")
             if hooks["removed"]:
                 print(f"  .claude/settings.json: {len(hooks['removed'])} crumb hook(s) removed")
-            # Never let a partial uninstall read as a clean one (MF-83). An
-            # unmarked entry is left in place on purpose (MF-86) — say so, and say
+            # Never let a partial uninstall read as a clean one. An
+            # unmarked entry is left in place on purpose — say so, and say
             # how to finish, rather than deleting a hook we cannot prove is ours.
             if hooks["left"]:
                 print(
@@ -492,7 +491,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         return 0
 
     if memory_dir.exists() and not args.force:
-        # Integrations-only mode (review #3 R2): wiring an agent into an
+        # Integrations-only mode: wiring an agent into an
         # *existing* store must never require --force — --force replaces the
         # scaffold and destroys every record. When any integration flag is
         # given explicitly, apply just those and leave the store untouched.
@@ -559,7 +558,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     block = gitignore_block(session_tracking, commit_generated)
     write_gitignore(root, block)
 
-    # Bootstrap agent integrations (review §5/§7). Resolution prompts on a TTY when
+    # Bootstrap agent integrations. Resolution prompts on a TTY when
     # unspecified and is a silent no-op non-interactively, so default `crumb init`
     # behavior is unchanged. Every edit is fenced/reversible (`--remove-integrations`).
     plan = resolve_integration_plan(root, args)
@@ -626,7 +625,7 @@ def _emit_error(args: argparse.Namespace, message: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Frontmatter parser (stdlib-only subset of YAML, plan §7 / §18 Phase 1)
+# Frontmatter parser (stdlib-only subset of YAML)
 # --------------------------------------------------------------------------- #
 #
 # Supports exactly the shapes the record schema uses:
@@ -637,13 +636,13 @@ def _emit_error(args: argparse.Namespace, message: str) -> None:
 #                           block list of maps (`- type: commit` / `  ref: ...`)
 # ISO-8601 datetimes are preserved verbatim as strings (no tz math here).
 #
-# Schema convention vs published JSON Schema (plan §22 Q1): resolved for now as
+# Schema convention vs published JSON Schema: resolved for now as
 # *convention-in-code* — these deterministic checks ARE the schema. A published
 # JSON Schema is deferred until the format stabilizes during dogfood.
 
 
 class FrontmatterError(ValueError):
-    """Raised when a record's frontmatter is malformed (plan §16.3)."""
+    """Raised when a record's frontmatter is malformed."""
 
 
 def _indent(line: str) -> int:
@@ -674,7 +673,7 @@ def _parse_scalar(val: str):
         return None
     if val[0] == "'":
         # Single-quoted scalar: a doubled `''` is an escaped quote (YAML), so a
-        # value containing both quote kinds round-trips (review #3 R3). Content
+        # value containing both quote kinds round-trips. Content
         # runs to the matching close; anything after it (e.g. a ` # comment`) is
         # ignored. An unterminated quote falls through to literal.
         buf: list[str] = []
@@ -822,7 +821,7 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
 
 
 # --------------------------------------------------------------------------- #
-# Record identity (plan §7 "Record identity") — filename-canonical
+# Record identity — filename-canonical
 # --------------------------------------------------------------------------- #
 
 
@@ -832,7 +831,7 @@ def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
     Returns None if the stem doesn't match the canonical pattern (caller flags it).
     The date must be a real calendar date: `2026-02-30` and `9999-99-99` are shaped
     like dates but name no day, and an id built from one sorts and reads as if it
-    did (review #5 Low).
+    did.
     """
     m = RECORD_STEM_RE.match(stem)
     if not m:
@@ -848,7 +847,7 @@ def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
 
 
 # --------------------------------------------------------------------------- #
-# Record model + loader (plan §6, §20.5)
+# Record model + loader
 # --------------------------------------------------------------------------- #
 
 
@@ -894,7 +893,7 @@ class Record:
         """Split the body into {heading: text} on `## ` headings (reused by resume/guard).
 
         Delegates to `split_md_sections` so there is exactly one splitter in the
-        codebase (review #5 M3). This used to be a second, fence-blind copy: a
+        codebase. This used to be a second, fence-blind copy: a
         record body whose fenced code block contained `## Next Action` — routine
         for `--set 'Commands / Verification' …` — reported a section that does not
         exist, so validate §16.10 false-passed a session with no real Next Action,
@@ -923,9 +922,10 @@ def load_records(memory_dir: Path, types: tuple[str, ...] | None = None) -> list
 
 
 # --------------------------------------------------------------------------- #
-# Field population helpers (plan §7 table) — derive + default halves
+# Field population helpers — derive + default halves
 # --------------------------------------------------------------------------- #
-# Phase 3's writers reuse these; Phase 3 adds the prompted half (title/body).
+# Every record writer reuses these; the prompted half (title/body) is collected
+# separately.
 
 
 def _git_out(root: Path, *args: str) -> str | None:
@@ -944,7 +944,7 @@ def _git_out(root: Path, *args: str) -> str | None:
     # Trailing newline only. A whole-output strip() also ate the leading space of
     # the *first* line, which for `status --porcelain` is a status column — a
     # worktree-only modification is " M path", so the caller's line[3:] then
-    # chopped three characters off the path (review #5 H3). Every other caller
+    # chopped three characters off the path. Every other caller
     # reads single-line output or regex-matches, so both forms suit them.
     return r.stdout.rstrip("\n")
 
@@ -957,7 +957,7 @@ def git_branch(root: Path) -> str:
         return out
     # An unborn HEAD (fresh repo, no commits yet) fails rev-parse but still has
     # a real branch name — read it so records don't pair `branch: (no-git)` with
-    # populated dirty_files (review #3 R24).
+    # populated dirty_files.
     out = _git_out(root, "symbolic-ref", "--short", "HEAD")
     return out if out else NO_GIT_BRANCH
 
@@ -985,7 +985,7 @@ _GIT_PATH_ESCAPES = {
 
 
 def _unquote_git_path(path: str) -> str:
-    """Decode git's C-style quoted path form back to the real path (review #3 R21).
+    """Decode git's C-style quoted path form back to the real path.
 
     Unquoted paths pass through unchanged. Storing the quoted form verbatim
     persisted strings like '"caf\\303\\251.txt"' into frontmatter, which could
@@ -1040,8 +1040,8 @@ def current_user() -> str:
     return os.environ.get("USER") or os.environ.get("USERNAME") or "unknown"
 
 
-# Environment markers that identify the agent harness a command is running under
-# (MF-74). Ordered: the first marker whose variable is set (to anything non-empty)
+# Environment markers that identify the agent harness a command is running under.
+# Ordered: the first marker whose variable is set (to anything non-empty)
 # wins. Keep this cheap — it is consulted on every record write and must not
 # import anything.
 AGENT_ENV_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -1061,7 +1061,7 @@ def detect_agent(fallback: str = AGENT_UNKNOWN) -> str:
 
     `human` used to be the default, so anything an agent wrote through the CLI
     without passing `--agent` was attributed to a person — while the MCP surface
-    recorded the same write as `agent` (MF-74). In a store whose `confidence` and
+    recorded the same write as `agent`. In a store whose `confidence` and
     `review_status` are trust signals, "a human stood behind this" is the one
     claim a missing flag must never manufacture.
 
@@ -1081,10 +1081,10 @@ def detect_agent(fallback: str = AGENT_UNKNOWN) -> str:
 
 
 def derive_fields(project_root: Path, agent: str | None = None) -> dict:
-    """Auto-derived frontmatter fields (clock + git + environment, plan §7).
+    """Auto-derived frontmatter fields (clock + git + environment).
 
     `agent=None` means "nobody said" — resolved by `detect_agent()`, never to
-    `human` (MF-74).
+    `human`.
     """
     root = Path(project_root)
     now = now_iso()
@@ -1101,7 +1101,7 @@ def derive_fields(project_root: Path, agent: str | None = None) -> dict:
 
 
 def default_fields() -> dict:
-    """Defaulted, overridable frontmatter fields (constants, plan §7)."""
+    """Defaulted, overridable frontmatter fields (constants)."""
     return {
         "status": "active",
         "confidence": "medium",
@@ -1117,7 +1117,7 @@ def default_fields() -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Manifest loader (reads what Phase 1 wrote)
+# Manifest loader
 # --------------------------------------------------------------------------- #
 
 
@@ -1137,15 +1137,14 @@ def load_manifest(memory_dir: Path) -> dict | None:
             val = val[1:-1]  # unquote so `schema_version: "1"` compares as `1`
         else:
             # Strip an inline comment only at a whitespace boundary — a bare `#`
-            # inside a value (e.g. `project: my#proj`) is content, not a comment
-            # (review #3 R24).
+            # inside a value (e.g. `project: my#proj`) is content, not a comment.
             val = re.split(r"\s+#", val, maxsplit=1)[0].strip()
         out[key.strip()] = val
     return out
 
 
 # --------------------------------------------------------------------------- #
-# validate (plan §16.1–14) — fully deterministic; NO heuristic content scanning
+# validate — fully deterministic; NO heuristic content scanning
 # --------------------------------------------------------------------------- #
 
 
@@ -1158,7 +1157,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
 
     Every finding is {check, status: pass|fail, path, message}. Heuristic content
     scanning (secrets, instruction-like text) is intentionally absent — that lives
-    in `audit` (plan §16.14 note).
+    in `audit`.
     """
     memory_dir = Path(memory_dir)
     findings: list[dict] = []
@@ -1183,7 +1182,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
 
     # 16.2 — required core files exist, and are readable. An undecodable core
     # file used to pass silently here while aborting `audit` and `resume`
-    # elsewhere (review #5 H4) — validate is the trust primitive, so it says so.
+    # elsewhere — validate is the trust primitive, so it says so.
     for name in CORE_FILES:
         if not (memory_dir / name).is_file():
             findings.append(_finding("core-files", "fail", name, "required core file missing"))
@@ -1320,11 +1319,11 @@ def run_validate(memory_dir: Path) -> list[dict]:
                     )
                 )
 
-        # 16.9b — verifications carry a subject and a valid outcome (review F1).
+        # 16.9b — verifications carry a subject and a valid outcome.
         if rec.rtype == "verification":
             subj = rec.meta.get("subject")
             # A non-string subject (e.g. a hand-edited YAML list) is a finding,
-            # not a crash (review #3 R16).
+            # not a crash.
             if not (isinstance(subj, str) and subj.strip()):
                 findings.append(
                     _finding(
@@ -1361,7 +1360,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
         if rec.rtype == "session":
             has_next = any(re.search(r"next action", h, re.I) for h in rec.sections)
             body_l = rec.body.lower()
-            # Word-boundary match (review #3 R17): a raw substring test let
+            # Word-boundary match: a raw substring test let
             # "done" match "abandoned", false-passing the convergence check.
             has_done = any(
                 re.search(rf"\b{re.escape(mark)}\b", body_l) for mark in SESSION_DONE_MARKERS
@@ -1382,7 +1381,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
         try:
             htext = handoff.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:
-            # A finding, not a crash (review #3 R16).
+            # A finding, not a crash.
             findings.append(_finding("handoff", "fail", "handoff.md", f"unreadable file: {exc}"))
             htext = None
     else:
@@ -1414,7 +1413,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
             try:
                 head = "\n".join(p.read_text(encoding="utf-8").splitlines()[:5])
             except (OSError, UnicodeDecodeError) as exc:
-                # A finding, not a crash (review #3 R16).
+                # A finding, not a crash.
                 findings.append(_finding("generated", "fail", rel, f"unreadable file: {exc}"))
                 continue
             if GENERATED_MARKER in head:
@@ -1431,7 +1430,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
                     )
                 )
 
-    # 16.12b — projection freshness (review F3): a generated projection stamped
+    # 16.12b — projection freshness: a generated projection stamped
     # with an inputs_hash that no longer matches the live canonical records is
     # stale. `validate` is the trust primitive, so it must not stay green while a
     # projection silently desyncs — that would *certify* drift. Unstamped/older
@@ -1514,10 +1513,10 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Capture half — record writer, `remember`, `capture session` (Phase 3)
+# Capture half — record writer, `remember`, `capture session`
 # --------------------------------------------------------------------------- #
 #
-# Design constraint: the capture budget (plan §2.7/§7/§23). A routine
+# Design constraint: the capture budget. A routine
 # `capture session` must take <90s of human effort; `--fast` ~15s. Everything not
 # prompted is auto-derived (`derive_fields`) or defaulted (`default_fields`). No
 # LLM is required on any path — git pre-fill + human edit is the MVP.
@@ -1556,7 +1555,7 @@ BODY_SECTIONS = {
         "Commands / Verification",
         "Next Action",
     ],
-    # Ideas are speculative proposals (review §6.6 write-surface). Kept lean so
+    # Ideas are speculative proposals. Kept lean so
     # `crumb note idea` stays low-friction; not subject to the §16.9 evidence rule.
     "idea": [
         "Idea",
@@ -1565,7 +1564,7 @@ BODY_SECTIONS = {
         "Open Questions",
     ],
     # Verifications record a finding about reality — "I checked X; here is its
-    # state" (review F1). subject/outcome/method live in frontmatter (so search
+    # state". subject/outcome/method live in frontmatter (so search
     # and the resume packet can filter on them); the body carries the narrative.
     "verification": [
         "Subject",
@@ -1576,7 +1575,7 @@ BODY_SECTIONS = {
     ],
 }
 
-# Named flags for the fixed attempt section vocabulary (review §6.2/§8): expose the
+# Named flags for the fixed attempt section vocabulary: expose the
 # contract in `--help` so it is no longer discoverable only by rejection. Each maps a
 # Namespace attribute (from `--problem`, `--do-not-retry`, …) to its canonical heading.
 ATTEMPT_FLAG_SECTIONS = (
@@ -1661,8 +1660,8 @@ def _render_scalar(v, in_list: bool = False) -> str:
         if '"' in s:
             # A double quote in the value forces the single-quoted form; interior
             # single quotes are escaped by doubling, which _parse_scalar reverses
-            # (review #3 R3 — the old quote-flip silently truncated on re-read
-            # when a value contained both quote kinds).
+            # (the old quote-flip silently truncated on re-read when a value
+            # contained both quote kinds).
             return "'" + s.replace("'", "''") + "'"
         return f'"{s}"'
     return s
@@ -1673,7 +1672,7 @@ def _render_list_items(key: str, v: list) -> list[str]:
 
     `_parse_list` produces scalars and one-level {key: scalar} maps for *any*
     key, so the renderer must handle both everywhere — not just scalars on
-    generic keys and maps on `evidence` (review #3 R3: the old asymmetry
+    generic keys and maps on `evidence` (the old asymmetry
     persisted Python `repr` strings for maps under generic keys and crashed on
     scalars under `evidence`). Deeper nesting is not representable in this
     frontmatter subset; fail closed rather than corrupt.
@@ -1740,7 +1739,7 @@ def slugify(title: str) -> str:
     return s or "untitled"
 
 
-# How much of a title a *filename* may carry (MF-75). `slugify` itself stays
+# How much of a title a *filename* may carry. `slugify` itself stays
 # uncapped — it also names traps and open questions, which are not files — so the
 # cap lives here, where a path is built. A full-sentence title used to become a
 # full-sentence filename: at ~240 characters `remember` failed outright with
@@ -1823,7 +1822,7 @@ def write_record(
     Frontmatter is auto-derived (§7) + defaulted + the caller's prompted fields.
     `updated_at == created_at`. Identity is recomputed from the final filename so
     id/slug/filename always agree. `extra` carries type-specific frontmatter keys
-    (e.g. a verification's subject/outcome/method, review F1) — rendered in
+    (e.g. a verification's subject/outcome/method) — rendered in
     canonical order when known to FRONTMATTER_ORDER, else appended.
     """
     derived = derive_fields(project_root, agent=agent)
@@ -1912,8 +1911,8 @@ def set_record_status(
     there is one source of write-behavior. Returns a small result dict. The edit
     is reverted if it would leave the record invalid (e.g. `superseded` without
     `superseded_by`), and an error is returned instead. `superseded_by` points
-    a superseding record when marking `superseded` (review #3 R25 — this is the
-    supersede flow the docs reference).
+    a superseding record when marking `superseded` — this is the supersede flow
+    the docs reference.
     """
     memory_dir = Path(memory_dir)
     if status not in VALID_STATUS:
@@ -1935,7 +1934,7 @@ def set_record_status(
         meta["superseded_by"] = superseded_by
     # The reason is recorded as a trailing, non-instruction comment (data, §15).
     # A literal `-->` inside the reason would terminate the comment early and
-    # leak the remainder as content (review #3 R24) — neutralize it.
+    # leak the remainder as content — neutralize it.
     reason = (reason or "").replace("-->", "-- >")
     author = agent or detect_agent()
     note = f"<!-- status: {prev} -> {status} ({reason}) by {author} at {meta['updated_at']} -->"
@@ -1943,7 +1942,7 @@ def set_record_status(
         rendered = render_frontmatter(meta)
     except ValueError as exc:
         return {"ok": False, "id": rid, "error": f"cannot re-render frontmatter: {exc}"}
-    # Fail-closed round-trip check (review #3 R3): the parser accepts a wider
+    # Fail-closed round-trip check: the parser accepts a wider
     # grammar than the renderer can emit, so refuse to write a rendering the
     # parser would read back differently instead of silently corrupting the
     # record (and having validate certify the corruption).
@@ -1969,7 +1968,7 @@ def set_record_status(
             "error": "status change rejected by validate: "
             + "; ".join(f["message"] for f in fails),
         }
-    # Reindex-on-write (review F2): a status flip can drop a record from / add it
+    # Reindex-on-write: a status flip can drop a record from / add it
     # back to the active set, so the projections must follow.
     reindex_projections(memory_dir)
     return {"ok": True, "id": rid, "path": str(rec.path), "from": prev, "to": status}
@@ -1979,7 +1978,7 @@ def set_record_status(
 
 
 def _interactive() -> bool:
-    # Both ends must be a terminal (MF-73). Agent harnesses exist where stdin
+    # Both ends must be a terminal. Agent harnesses exist where stdin
     # passes isatty() while every read hits EOF and stdout is a pipe; gating on
     # stdin alone sent `init` down the interactive branch there, where the MCP
     # consent prompt's yes-default turned "nobody answered" into a .mcp.json
@@ -1993,7 +1992,7 @@ def _prompt_line(question: str) -> str:
     `_interactive()` keeps agents off the prompting path in the harnesses we know
     about, but it is a heuristic over two isatty() calls — when it guesses wrong
     the prompts must degrade to "unanswered", not kill the command halfway through
-    with an `EOFError` after it has already printed its git summary (MF-80).
+    with an `EOFError` after it has already printed its git summary.
     """
     try:
         return input(question).strip()
@@ -2023,7 +2022,7 @@ def _collect_set_sections(rtype: str, set_pairs: list[list[str]] | None) -> dict
     return sections
 
 
-# ---- remember decision / attempt ------------------------------------------ #
+# ---- remember decision / attempt ------------------------------------------- #
 
 
 def cmd_remember(args: argparse.Namespace) -> int:
@@ -2063,7 +2062,7 @@ def cmd_remember(args: argparse.Namespace) -> int:
                 continue  # handled below
             # `setdefault(h, input(...))` evaluated the prompt eagerly, so a heading
             # already supplied via --set was still asked for and the answer thrown
-            # away (review #5 Low).
+            # away.
             if heading not in sections:
                 sections[heading] = input(f"{heading}: ").strip()
 
@@ -2118,7 +2117,7 @@ def cmd_remember(args: argparse.Namespace) -> int:
         _emit_error(args, "new record failed validation: " + "; ".join(f["message"] for f in fails))
         return 1
 
-    # Reindex-on-write (review F2): keep generated/ in step with the new record.
+    # Reindex-on-write: keep generated/ in step with the new record.
     reindex_projections(memory_dir, root)
 
     summary = {
@@ -2138,11 +2137,11 @@ def cmd_remember(args: argparse.Namespace) -> int:
     return 0
 
 
-# ---- schema introspection (review §6.2/§8) --------------------------------- #
+# ---- schema introspection -------------------------------------------------- #
 
 
 def record_schema() -> dict:
-    """The full record-contract as data, so an agent reads it once (review §6.2).
+    """The full record-contract as data, so an agent reads it once.
 
     Pure projection of the existing contract constants — no memory dir required.
     """
@@ -2239,14 +2238,14 @@ def cmd_schema(args: argparse.Namespace) -> int:
     return 0
 
 
-# ---- note (question / trap / idea) — review §6.6 write-surface ------------- #
+# ---- note (question / trap / idea) ----------------------------------------- #
 
 NOTE_KINDS = ("question", "trap", "idea")
 
 
 # The exact placeholder lines the templates seed — anchored so a *user* line that
 # merely resembles them (e.g. "_No fix for the flaky suite yet._") is never
-# silently deleted on append (review #3 R22).
+# silently deleted on append.
 _TEMPLATE_PLACEHOLDER_LINES = frozenset(
     {
         "_No open questions yet._",
@@ -2269,7 +2268,7 @@ def _append_md_block(path: Path, block: str) -> None:
 
 
 def _sanitize_note_text(value) -> str:
-    """Flatten note text/field values to one safe line (review #3 R22).
+    """Flatten note text/field values to one safe line.
 
     Notes render as headings and `- key: value` lines inside singleton files, so
     an embedded newline would forge structure (`\\n## …` injects a heading) and a
@@ -2309,7 +2308,7 @@ def _trap_block(
 
 
 # Machine-readable trap-token index consumed by the PreToolUse hook's cheap risk
-# pre-filter (review #3 R9). Lives under generated/ (rebuilt on every reindex,
+# pre-filter. Lives under generated/ (rebuilt on every reindex,
 # never canonical, skipped by the secret scan like the rest of generated/).
 GUARD_PREFILTER_FILENAME = "guard-prefilter.json"
 
@@ -2320,7 +2319,7 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     This is what lets `crumb hook guard` escalate a trap-shaped but
     routine-looking command (`pytest -n auto`) to full guard scoring without
     hardcoding any particular trap in a regex and without record I/O on the
-    common hook path — the near-miss class that motivated hooks in review #1.
+    common hook path — the near-miss class that motivated hooks in the first place.
     """
     tokens: set[str] = set()
     paths: set[str] = set()
@@ -2344,8 +2343,7 @@ def try_reindex_projections(
     """`reindex_projections` plus the reason it failed, for callers that report it.
 
     The bool-only form swallowed the exception, so `crumb reindex` could only say
-    "Reindex failed" with no cause while projections silently stopped refreshing
-    (review #5 H4 / M5).
+    "Reindex failed" with no cause while projections silently stopped refreshing.
     """
     memory_dir = Path(memory_dir)
     project_root = Path(project_root) if project_root is not None else memory_dir.parent
@@ -2354,7 +2352,7 @@ def try_reindex_projections(
         gen = memory_dir / "generated"
         gen.mkdir(parents=True, exist_ok=True)
         write_text_atomic(gen / "resume-packet.md", render_packet_markdown(packet))
-        # Guard pre-filter index (review #3 R9): a token/path index over traps and
+        # Guard pre-filter index: a token/path index over traps and
         # do-not-retry attempts, so the PreToolUse hook can spot trap-shaped
         # *routine* commands with one small-file read instead of walking records.
         write_text_atomic(
@@ -2367,7 +2365,7 @@ def try_reindex_projections(
 
 
 def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> bool:
-    """Rebuild the generated/ projections from the canonical records (review F2).
+    """Rebuild the generated/ projections from the canonical records.
 
     Called after every canonical mutation (remember/note/verify/mark-status/
     capture session, and their MCP equivalents) so the static projections never
@@ -2398,7 +2396,7 @@ def note(
     tags: list[str] | None = None,
     agent: str | None = None,
 ) -> dict:
-    """Write an open-question / known-trap / idea and refresh projections (review §6.6).
+    """Write an open-question / known-trap / idea and refresh projections.
 
     Closes the read/write asymmetry: these were readable (MCP resources, resume,
     audit) but had no writer. question/trap append a parse-verified block to the
@@ -2412,7 +2410,7 @@ def note(
     if kind in ("question", "trap"):
         # question/trap render as single-line headings + `- key: value` lines in
         # a shared singleton file, so text and field values are flattened and
-        # comment-marker-neutralized before they touch the file (review #3 R22).
+        # comment-marker-neutralized before they touch the file.
         text = _sanitize_note_text(text)
         fields = {
             k: (_sanitize_note_text(v) if isinstance(v, str) else v) for k, v in fields.items()
@@ -2439,7 +2437,7 @@ def note(
         slug = fields.get("slug") or slugify(text)
         marker = f"trap_{slug}:".lower()
         # A duplicate heading would shadow the earlier block in every dict-based
-        # reader, leaving its body unreachable (review #3 R22) — refuse instead.
+        # reader, leaving its body unreachable — refuse instead.
         if any(b["heading"].lower().startswith(marker) for b in load_traps(memory_dir)):
             return {
                 "ok": False,
@@ -2542,7 +2540,7 @@ def cmd_note(args: argparse.Namespace) -> int:
     return 0
 
 
-# ---- verify (review F1) ---------------------------------------------------- #
+# ---- verify ---------------------------------------------------------------- #
 
 
 def verify(
@@ -2558,7 +2556,7 @@ def verify(
     confidence: str | None = None,
     agent: str | None = None,
 ) -> dict:
-    """Record a verification result — a finding about reality (review F1).
+    """Record a verification result — a finding about reality.
 
     The single most common agentic output ("I checked X; here is its state") had
     no home: it was mis-filed as a decision/attempt, polluting those categories.
@@ -2670,7 +2668,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
-# ---- mark-status (review #3 R25) ------------------------------------------- #
+# ---- mark-status ----------------------------------------------------------- #
 
 
 def cmd_mark_status(args: argparse.Namespace) -> int:
@@ -2678,7 +2676,7 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
 
     README/docs described marking records `disputed`/`stale`/`superseded`, but
     the only writer was the MCP tool — closing that gap gives the plain-file
-    workflow the same lifecycle mutation (review #3 R25).
+    workflow the same lifecycle mutation.
     """
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
@@ -2730,7 +2728,7 @@ _GIT_EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 # How far back a git prefill will look, in commits. The diff base is the commit of
 # the newest session record, which can be weeks old on a store that has been idle —
-# and then one session record claims every commit since it (MF-81: 50 commits and
+# and then one session record claims every commit since it (50 commits and
 # "807 files changed, +90962/-14441" attributed to a single sitting). That is the
 # *first* capture after any gap, which is exactly when someone is deciding whether
 # to trust the tool. Past this cap the prefill falls back to the same bounded
@@ -2751,7 +2749,7 @@ def _summarize_diffstat(shortstat: str | None) -> str:
     """Condense `git diff --shortstat` into one line: 'N files changed, +X/-Y'.
 
     Inlining the full per-file `--stat` bloats committed session records and can
-    trip the secret scanner on path-shaped tokens (review §6.1); a counts-only
+    trip the secret scanner on path-shaped tokens; a counts-only
     summary avoids both while preserving the at-a-glance signal.
     """
     if not shortstat or not shortstat.strip():
@@ -2770,7 +2768,7 @@ def _summarize_diffstat(shortstat: str | None) -> str:
 
 
 def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
-    """Pre-fill Work Completed / Files Touched / Commands from git (plan §8).
+    """Pre-fill Work Completed / Files Touched / Commands from git.
 
     With a prior-session `since` commit no more than `GIT_PREFILL_MAX_COMMITS`
     back, the window is `since..HEAD`. Otherwise — no prior record, an unreachable
@@ -2778,7 +2776,7 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     `GIT_PREFILL_MAX_COMMITS` commits (Files Touched diffs from the parent of the
     oldest commit in that window, or the empty tree if that reaches the root).
     Either way the prefill states the window it used, so a big number can be read
-    for what it is instead of taken as a claim about one sitting (MF-81).
+    for what it is instead of taken as a claim about one sitting.
     """
     if not is_git_repo(root):
         return {
@@ -2791,7 +2789,7 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     if since and _git_out(root, "rev-parse", "--verify", f"{since}^{{commit}}") is None:
         since = recorded = None
 
-    # Cap the lookback (MF-81). Dropping `since` here re-uses the bounded
+    # Cap the lookback. Dropping `since` here re-uses the bounded
     # recent-history window below rather than inventing a second one.
     ahead = 0
     if since:
@@ -2817,7 +2815,7 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
             elif _git_out(root, "rev-parse", "--is-shallow-repository") == "true":
                 # In a shallow clone the oldest visible commit is the shallow
                 # boundary, not the root — diffing from the empty tree would
-                # record the entire repo as "Files Touched" (review #3 R15).
+                # record the entire repo as "Files Touched".
                 # Diff from the boundary commit instead: bounded, slightly
                 # under-counting (its own changes are excluded) rather than
                 # wildly over-counting.
@@ -2832,7 +2830,7 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     # The diffstat describes the *commit range* only, so a session whose work is
     # still uncommitted recorded "no file changes detected" in the same record
     # whose `dirty_files` frontmatter listed 25 paths — a record contradicting
-    # itself, read by the next agent as "that session did nothing" (MF-85). Name
+    # itself, read by the next agent as "that session did nothing". Name
     # the scope, and count the uncommitted files (count only: inlining the paths
     # is what §6.1 keeps out of committed records).
     dirty = git_dirty_files(root)
@@ -2847,7 +2845,7 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     # Name the window in the record itself. A prefill is a machine's guess at what
     # a session did; without its diff base the counts read as a claim about this
     # sitting, which is how "807 files changed" ended up in a record for an
-    # afternoon's work (MF-81).
+    # afternoon's work.
     if since:
         window = (
             f"_Prefill window: `{_short_ref(since)}`..HEAD — "
@@ -2938,12 +2936,12 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         )
         return 1
 
-    # Refresh handoff + current (plan §8, §10).
+    # Refresh handoff + current.
     focus = args.focus or sections.get("Next Action", "")
     recently = sections.get("Work Completed", "")
     update_handoff(memory_dir, meta["branch"], meta["commit"], focus, sections["Next Action"])
     update_current(memory_dir, focus, recently)
-    # Reindex-on-write (review #3 R1): capture mutates three packet inputs (the
+    # Reindex-on-write: capture mutates three packet inputs (the
     # session record, handoff.md, current.md), so the projections must follow —
     # otherwise the documented session-end flow leaves `validate` failing on
     # freshness until the next resume/reindex.
@@ -2992,8 +2990,8 @@ def split_md_ordered(text: str) -> tuple[list[str], list[tuple[str, str]]]:
     """Fence-aware split into (preamble_lines, [(heading, content), …]) on `## `.
 
     Preserves everything `split_md_sections`'s dict view cannot: the lines before
-    the first heading (preamble) and duplicate headings as separate entries
-    (review #3 R14). Fence-aware (review #3 R4): a `## ` line inside a ``` / ~~~
+    the first heading (preamble) and duplicate headings as separate entries.
+    Fence-aware: a `## ` line inside a ``` / ~~~
     code fence is content, not a section boundary — otherwise a handoff whose
     Verification Commands section contains fenced expected output is torn apart
     on the next capture (unterminated fence, managed headings injected inside it).
@@ -3030,9 +3028,8 @@ def split_md_ordered(text: str) -> tuple[list[str], list[tuple[str, str]]]:
 def split_md_sections(text: str) -> dict[str, str]:
     """Split a plain-markdown file (no frontmatter) into {heading: content} on `## `.
 
-    Fence-aware (review #3 R4). Duplicate headings are merged (bodies joined)
-    rather than last-wins, so no body silently disappears from the dict view
-    (review #3 R14).
+    Fence-aware. Duplicate headings are merged (bodies joined)
+    rather than last-wins, so no body silently disappears from the dict view.
     """
     sections: dict[str, str] = {}
     for heading, content in split_md_ordered(text)[1]:
@@ -3047,7 +3044,7 @@ def split_md_sections(text: str) -> dict[str, str]:
 # The Next Action the Stop-hook capture records when no human supplied one. The
 # session record states it honestly, but it is a placeholder, not a handoff —
 # `_is_placeholder` knows it so a machine capture can never overwrite a real
-# Next Action / Current Focus in handoff.md or current.md (review #5 H2).
+# Next Action / Current Focus in handoff.md or current.md.
 HOOK_SESSION_NEXT_ACTION = "(session ended; see git log)"
 
 
@@ -3073,7 +3070,7 @@ def _is_placeholder(text: str) -> bool:
 
 
 # Preamble lines the updaters themselves (re)generate — everything else found
-# before the first `## ` is user content and must survive a rewrite (review #3 R14).
+# before the first `## ` is user content and must survive a rewrite.
 _MANAGED_PREAMBLE_RE = re.compile(
     r"^(#\s|_Last updated:|_Branch:|_Commit:|_What matters right now\.)"
 )
@@ -3162,7 +3159,7 @@ def update_current(memory_dir: Path, focus: str, recently: str) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# resume — bounded, paste-anywhere packet + computed staleness (Phase 4)
+# resume — bounded, paste-anywhere packet + computed staleness
 # --------------------------------------------------------------------------- #
 #
 # `resume` turns captured memory into a bounded packet (§12) a human or agent can
@@ -3177,8 +3174,8 @@ def update_current(memory_dir: Path, focus: str, recently: str) -> None:
 #      thought go cold?" signal that a scrapbook cannot give you.
 #
 # The section accessors below (active_decisions / active_attempts / load_traps /
-# load_open_questions / parse_handoff_meta) are the reusable surface Phase 5's
-# `guard` ranks against — keep them deterministic and side-effect-free.
+# load_open_questions / parse_handoff_meta) are the reusable surface `guard`
+# ranks against — keep them deterministic and side-effect-free.
 
 # Hard token ceiling for the packet (§12: "3,000 to 5,000 tokens").
 TOKEN_BUDGET_MAX = 5000
@@ -3188,7 +3185,7 @@ STALE_AGE_DAYS = 21
 
 # One wording for `--stale-days` everywhere it appears. The flag was described as an
 # "aged-unresolved threshold" on resume/audit and a "recency de-weighting threshold"
-# on guard — two names for one cutoff, which is half of the confusion F10 reported.
+# on guard — two names for one cutoff, and half the confusion that caused.
 # It is always the same thing: the age at which a record stops counting as recent.
 # Each command appends what it does with that fact.
 STALE_DAYS_HELP = (
@@ -3204,7 +3201,7 @@ SECTION_CAPS = {
     "likely_files": 20,
     "verification": 12,
     "verifications": 12,
-    # Warnings are capped too (review #3 R8): every aged decision/question emits
+    # Warnings are capped too: every aged decision/question emits
     # a warning, so a neglected store could blow the token bound through the one
     # section the trimmer never touched.
     "warnings": 20,
@@ -3213,7 +3210,7 @@ SECTION_CAPS = {
 # Order in which sections give up items when the packet is over budget
 # (first listed = trimmed first = least load-bearing). Project / Current Focus /
 # Next Action are never trimmed; warnings are trimmed only after every
-# substantive section is empty, so the hard token bound holds (review #3 R8).
+# substantive section is empty, so the hard token bound holds.
 TRIM_ORDER = [
     "verification",
     "likely_files",
@@ -3257,7 +3254,7 @@ def _age_days(value: str | None) -> int | None:
 
 
 def _dt_sort_key(value: str | None) -> float:
-    """Chronologically comparable key for an ISO timestamp string (review #3 R23).
+    """Chronologically comparable key for an ISO timestamp string.
 
     Lexicographic sort breaks on heterogeneous UTC offsets (`now_iso()` embeds
     the *local* offset, so DST or a machine move makes '2026-07-01T01:00+02:00'
@@ -3296,7 +3293,7 @@ _REVLIST_INDEX_CAP = 5000
 
 
 class CommitDistanceIndex:
-    """Commit-distance for a whole scoring pass, in one git call instead of N (MF-84).
+    """Commit-distance for a whole scoring pass, in one git call instead of N.
 
     `_score_item` called `git_commit_distance` per scored record, and that is three
     subprocess spawns each (`is_git_repo`, `rev-parse --verify`, `rev-list --count`).
@@ -3364,7 +3361,7 @@ class CommitDistanceIndex:
         return dist is not None and dist >= self._threshold
 
 
-# ---- section accessors (reused by Phase 5 guard) --------------------------- #
+# ---- section accessors (reused by guard) ----------------------------------- #
 
 
 def _by_recency(records: list[Record]) -> list[Record]:
@@ -3412,7 +3409,7 @@ def _md_blocks(path: Path, head_predicate) -> list[dict]:
     if not path.is_file():
         return []
     # Lenient: a bad byte in known-traps.md must not take down guard/resume/audit
-    # with it (review #5 H4). validate 16.2 reports the file itself.
+    # with it. validate 16.2 reports the file itself.
     text = _strip_html_comments(read_text_lenient(path)[0])
     blocks: list[dict] = []
     for head, body in split_md_sections(text).items():
@@ -3458,7 +3455,7 @@ def parse_handoff_meta(text: str) -> dict:
     """Pull branch / commit / updated_at from the handoff header lines.
 
     Template placeholder values (`<branch>`, `<YYYY-MM-DDTHH:mm:ssZ>`, …) are
-    treated as absent (review #3 R19): a store that has never been captured must
+    treated as absent: a store that has never been captured must
     not warn "branch mismatch: handoff was written on '<branch>'" or "handoff
     timestamp is not parseable" on every resume/guard/audit until first capture.
     """
@@ -3632,7 +3629,7 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
     count. A machine-local exclude (`.git/info/exclude`, `core.excludesFile`)
     must not participate: `_inputs_hash` has to agree byte-for-byte across every
     clone, and folding one developer's personal excludes into it would recreate
-    the very ping-pong this exists to stop (audit #6 N1).
+    the very ping-pong this exists to stop.
 
     `git check-ignore -v` prints `<source>:<line>:<pattern>\\t<path>`; run from
     the project root, the source of a worktree `.gitignore` is a relative path,
@@ -3681,7 +3678,7 @@ def _hashed_input_dirs(memory_dir: Path, project_root: Path, manifest: dict) -> 
     A directory the store's policy keeps *local* is not a shared input: hashing it
     stamps the committed packet with a value no clone can reproduce, and the
     "stale projection — run `crumb reindex`" advice then ping-pongs between
-    machines forever (audit #6 N1). `session_tracking: distillate` gitignores
+    machines forever. `session_tracking: distillate` gitignores
     `sessions/`, and any record directory the committed `.gitignore` excludes is
     local for the same reason.
     """
@@ -3694,7 +3691,7 @@ def _hashed_input_dirs(memory_dir: Path, project_root: Path, manifest: dict) -> 
 
 
 # --------------------------------------------------------------------------- #
-# Projection freshness — three functions, one primitive (map for D4)
+# Projection freshness — three functions, one primitive
 # --------------------------------------------------------------------------- #
 # The fix list calls these "three competing notions of projection freshness". Two
 # of them are complementary and the third is the primitive both are built on;
@@ -3733,7 +3730,7 @@ def _hashed_input_dirs(memory_dir: Path, project_root: Path, manifest: dict) -> 
 
 
 def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
-    """Short content hash of the canonical inputs (so audit/Phase 6 can spot drift)."""
+    """Short content hash of the canonical inputs (so audit can spot drift)."""
     memory_dir = Path(memory_dir)
     project_root = Path(project_root) if project_root is not None else memory_dir.parent
     manifest = load_manifest(memory_dir) or {}
@@ -3748,7 +3745,7 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     h.update(b"\0")
     # manifest.yml is a packet input (project name, policies), so it is part of
     # the hash — otherwise the freshness check certifies a packet built from a
-    # since-edited manifest (review #3 R7).
+    # since-edited manifest.
     paths = [memory_dir / f for f in CORE_FILES]
     paths.append(memory_dir / "manifest.yml")
     for d in dirs:
@@ -3757,7 +3754,7 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
             paths.extend(sorted(dd.glob("*.md")))
     for p in sorted(set(paths)):
         if p.is_file():
-            # Path *and* separators, not bare contents (review #5 M4): record ids
+            # Path *and* separators, not bare contents: record ids
             # are filename-derived, so a rename changes every id in the packet
             # while leaving a contents-only hash untouched — the freshness gate
             # then certifies a projection full of ids that no longer exist.
@@ -3779,7 +3776,7 @@ def build_resume_packet(
 ) -> dict:
     """Assemble the structured resume packet (the source of both MD and JSON output).
 
-    When `task` is given (the "resume for THIS task" path, review F4/F6) the packet
+    When `task` is given (the "resume for THIS task" path) the packet
     is scoped to it: `requested_task` is echoed and `likely_files` is derived from
     the records that actually match the task instead of the store-global default
     that misdirects on off-domain work. With no task, behavior is unchanged.
@@ -3787,7 +3784,7 @@ def build_resume_packet(
     memory_dir = Path(memory_dir)
     manifest = load_manifest(memory_dir) or {}
 
-    # Lenient reads (review #5 H4): one bad byte in handoff.md used to abort the
+    # Lenient reads: one bad byte in handoff.md used to abort the
     # packet build, which took `resume`, `audit` and every reindex down with it —
     # projections silently stopped refreshing. The problem is surfaced as a packet
     # warning instead, naming the file.
@@ -3820,7 +3817,7 @@ def build_resume_packet(
     dirty = git_dirty_files(root)
     project = {
         "name": manifest.get("project") or derive_project_name(root),
-        # Project-relative, never the absolute host path (audit #6 N2). The packet
+        # Project-relative, never the absolute host path. The packet
         # is a committed, shared artifact: an absolute path publishes the author's
         # local directory layout into the repo (the disclosure `mcp_core` already
         # forbids for error messages, issue #7), makes a byte-identical clone at
@@ -3850,8 +3847,8 @@ def build_resume_packet(
             "generated_at": now_iso(),
         },
         "fast": bool(fast),
-        # Two different numbers used to be one confusable word (agentic review #2
-        # F10): `stale_after_days` is the *threshold* the caller chose, while
+        # Two different numbers used to be one confusable word:
+        # `stale_after_days` is the *threshold* the caller chose, while
         # `handoff_age_days`/`handoff_commit_distance` are the measured *age* and
         # distance the warnings are computed from. The ages used to exist only as
         # prose inside a warning string ("handoff is 6 day(s) old"), so a consumer
@@ -3915,7 +3912,7 @@ def build_resume_packet(
         verify_cmds.extend(_evidence_refs(r, ("command", "test")))
     packet["verification"] = _dedup(verify_cmds)
 
-    # Task scoping (review F4/F6): when a task is named, replace the store-global
+    # Task scoping: when a task is named, replace the store-global
     # likely_files with files drawn from the records that actually match the task,
     # and label an empty result so the consumer knows the store is cold here rather
     # than trusting noise.
@@ -3931,7 +3928,7 @@ def build_resume_packet(
 
 
 def active_verifications(memory_dir: Path) -> list[Record]:
-    """Active verification records, actionable outcome first (review F1).
+    """Active verification records, actionable outcome first.
 
     open/regressed/inconclusive (still need attention) sort ahead of
     not_applicable/fixed (resolved), each group newest-first via active_records.
@@ -3946,14 +3943,14 @@ def active_verifications(memory_dir: Path) -> list[Record]:
 def _task_scoped_files(
     memory_dir: Path, root: Path, task: str, *, stale_days: int
 ) -> tuple[list[str], str | None]:
-    """Files relevant to `task`, from records that match it (review F4).
+    """Files relevant to `task`, from records that match it.
 
     Reuses the deterministic `search` scoring rather than inventing a second
     relevance notion. Returns (files, note); note is set only when nothing matched.
 
     Ideas are excluded (the default corpus): this list goes into a packet that
     boots the next session, and a file path is only "likely" because someone did
-    work there — not because someone proposed it (O1).
+    work there — not because someone proposed it.
     """
     matches, by_id = search(memory_dir, root, task, stale_days=stale_days, include_ideas=False)
     files: list[str] = []
@@ -4000,7 +3997,7 @@ def _bound_packet(packet: dict, *, fast: bool) -> None:
         packet["omitted_reason"] = {}
 
     # Per-section caps (record how many we hid, and why). Applied in --fast mode
-    # too: warnings survive the fast prune and must stay bounded (review #3 R8).
+    # too: warnings survive the fast prune and must stay bounded.
     for key, cap in SECTION_CAPS.items():
         if fast and key in _FAST_DROP:
             continue
@@ -4142,7 +4139,7 @@ def render_packet_markdown(packet: dict) -> str:
 
     out += ["## Stale / Risk Warnings"]
     # Name the threshold next to the ages it governs: every age below is measured,
-    # this one number is the cutoff they are compared against (F10).
+    # this one number is the cutoff they are compared against.
     if packet.get("stale_after_days") is not None:
         out.append(
             f"_(ages below are measured; the cutoff is "
@@ -4176,12 +4173,12 @@ def cmd_resume(args: argparse.Namespace) -> int:
     # A task-scoped packet is a focused, ephemeral view, so it likewise does not
     # overwrite the canonical store-global snapshot.
     #
-    # The store-global write goes through the same reindex every mutation uses
-    # (review #5 M2): writing only resume-packet.md left guard-prefilter.json
-    # unrebuilt — so `crumb hook guard` stayed blind to a newly recorded trap —
+    # The store-global write goes through the same reindex every mutation uses:
+    # writing only resume-packet.md left guard-prefilter.json unrebuilt — so
+    # `crumb hook guard` stayed blind to a newly recorded trap —
     # while the fresh `inputs_hash` stamp made `audit` report zero packet drift,
     # hiding the staleness until the next mutation. It is also the only atomic
-    # write path (R24); the direct `write_text` here was the last torn-file risk.
+    # write path; the direct `write_text` here was the last torn-file risk.
     if not args.fast and not task:
         ok, problem = try_reindex_projections(memory_dir, root)
         if not ok:
@@ -4198,11 +4195,11 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 
 def cmd_reindex(args: argparse.Namespace) -> int:
-    """Rebuild the generated/ projections from the canonical records (review F2).
+    """Rebuild the generated/ projections from the canonical records.
 
     Mutations reindex automatically; this is the explicit refresh for after a batch
     of `--no-reindex` writes or a hand-edit, and the actionable target `validate`
-    points at when it detects a stale projection (review F3).
+    points at when it detects a stale projection.
     """
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
@@ -4220,13 +4217,13 @@ def cmd_reindex(args: argparse.Namespace) -> int:
         print(f"Reindexed projections: {summary['path']}")
     else:
         # Naming the cause: "Reindex failed" alone left the user with a store
-        # whose projections had silently stopped refreshing (review #5 H4/M5).
+        # whose projections had silently stopped refreshing.
         print(f"Reindex failed (projections left unchanged): {problem}")
     return 0 if ok else 1
 
 
 # --------------------------------------------------------------------------- #
-# search + guard — deterministic "don't repeat the expensive mistake" (Phase 5)
+# search + guard — deterministic "don't repeat the expensive mistake"
 # --------------------------------------------------------------------------- #
 #
 # This is the capability that separates a continuity engine from a scrapbook
@@ -4235,8 +4232,8 @@ def cmd_reindex(args: argparse.Namespace) -> int:
 #
 #   1. NO EMBEDDINGS (§11). Matching is exact/keyword/tag/file-path/component
 #      overlap over records already loaded in memory — deterministic, dependency
-#      free, same input -> same output. SQLite FTS / vectors are Phase 10. Correct,
-#      not fast-at-scale.
+#      free, same input -> same output. SQLite FTS / vectors are a later,
+#      disposable accelerator. Correct, not fast-at-scale.
 #   2. MATCHED MEMORY IS DATA, NEVER INSTRUCTION (§15, §16 note, Fixture 7).
 #      `guard` reads record text to *rank and cite* it; it never executes phrasing
 #      found in memory. The "next safest action" is synthesized by this code from
@@ -4264,7 +4261,7 @@ GUARD_MIN_KEYWORD_OVERLAP = 2  # specific shared tokens for a pure-text match
 GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
 GUARD_W_TAG = 4  # per overlapping tag/component
 GUARD_W_KEYWORD = 1  # per specific shared keyword
-# Bonus per shared keyword that appears in the record's own *title* (MF-72). A
+# Bonus per shared keyword that appears in the record's own *title*. A
 # title names what the record is about; a body mention can be incidental. Scoring
 # both at GUARD_W_KEYWORD made a decision whose title literally named the proposed
 # action score like a passing reference — one stale-factor away from the noise
@@ -4276,7 +4273,7 @@ GUARD_W_REVIEWED = 1
 GUARD_W_DO_NOT_RETRY = 4  # attempt carries an explicit "Do Not Retry Unless"
 GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
 
-# recency / branch de-weighting (reuse Phase 4 staleness signals)
+# recency / branch de-weighting (reuses the staleness signals above)
 GUARD_BRANCH_MISMATCH_FACTOR = 0.8  # record written on another branch -> possibly stale
 GUARD_STALE_AGE_FACTOR = 0.7  # record older than stale_days
 GUARD_STALE_DIST_FACTOR = 0.7  # record written >= N commits behind HEAD
@@ -4353,7 +4350,7 @@ def _norm_files(paths) -> set[str]:
     return out
 
 
-# ---- action classifier (§11.2) -------------------------------------------- #
+# ---- action classifier (§11.2) --------------------------------------------- #
 
 # Highest-severity class first; classify() returns that as the primary plus the
 # full matched set. Keyword-driven and deterministic.
@@ -4476,10 +4473,9 @@ def _item_from_record(rec: Record) -> dict:
     text = " ".join([str(rec.meta.get("title") or ""), rec.body, " ".join(tags)])
     # For verifications the interesting "status" is the *outcome* (open/fixed/…),
     # not the lifecycle status — so `search type:verification status:open` filters
-    # on what the agent actually cares about (review F1). The lifecycle value is
+    # on what the agent actually cares about. The lifecycle value is
     # kept alongside it: guard's liveness test needs both, and folding them into
-    # one field is what silently excluded every verification from the verdict
-    # (review #5 M1).
+    # one field is what silently excluded every verification from the verdict.
     lifecycle = str(rec.meta.get("status") or "active")
     status = (rec.meta.get("outcome") or "open") if rec.rtype == "verification" else lifecycle
     return {
@@ -4492,7 +4488,7 @@ def _item_from_record(rec: Record) -> dict:
         "files": files,
         "specific": _specific(text),
         # The title's own tokens, kept separate so `_score_item` can weight a
-        # title hit above a body mention (MF-72). The stem is the slug — same
+        # title hit above a body mention. The stem is the slug — same
         # words, so a filename hit counts as a title hit.
         "title_specific": _specific(str(rec.meta.get("title") or rec.stem)),
         "branch": rec.meta.get("branch"),
@@ -4529,7 +4525,7 @@ def question_item_id(question: str) -> str:
     ("… to the new columnar store this quarter" / "… to the new row store next
     quarter" both slugify past the cut with the same prefix), and `search`'s
     by_id map kept only the last — which `guard`'s `_recommended_action` resolves
-    through (audit #6 N6). A short digest of the *full* question restores
+    through. A short digest of the *full* question restores
     uniqueness; ids for questions short enough not to be cut are unchanged.
     """
     slug = slugify(question)
@@ -4567,7 +4563,7 @@ def _candidate_items(memory_dir: Path, *, include_ideas: bool = False) -> list[d
 
     `include_ideas` is the **search-only corpus switch**. `crumb note idea` writes a
     real, validated record, but for most of this package's life nothing loaded it, so
-    an idea could only be found by opening `ideas/` (O1). The reason it stayed out is
+    an idea could only be found by opening `ideas/`. The reason it stayed out is
     that `guard` is built on this same function: an idea is a *proposal*, deliberately
     exempt from the §16.9 evidence rule, and `_decide_verdict`'s score band is
     kind-agnostic — so a speculative note that happened to name the files being edited
@@ -4605,7 +4601,7 @@ def _disambiguate_item_ids(items: list[dict]) -> list[dict]:
     prefix, a question's a slug), so two blocks can still land on one id. `search`
     builds a by_id map that keeps only the last of a colliding pair, and guard
     resolves its next-safest-action through that map — so a collision silently
-    substitutes one item's advice for another's (audit #6 N6).
+    substitutes one item's advice for another's.
     """
     seen: dict[str, int] = {}
     for item in items:
@@ -4650,7 +4646,7 @@ def _score_item(
     kw_count = len(kw_overlap)
     # Title tokens are a subset of `specific` (the text bag includes the title),
     # so this can only re-weight an existing keyword hit, never create a match
-    # the candidate gate below would have rejected (MF-72).
+    # the candidate gate below would have rejected.
     title_overlap = item.get("title_specific", set()) & q_specific
 
     # Candidate gate (anti-noise, Fixture 3): a file or tag hit always qualifies;
@@ -4689,17 +4685,17 @@ def _score_item(
         score += GUARD_W_OPEN_BLOCKER
         signals.append("open-blocker")
 
-    # Recency + commit-distance de-weighting (reuse Phase 4 signals). The
+    # Recency + commit-distance de-weighting. The
     # pre-decay score is kept on the match: `search` needs it to tell "under the
     # noise floor on raw signal" (noise — drop) from "pushed under it by the
-    # stale factors" (a real match — surface as history, MF-71).
+    # stale factors" (a real match — surface as history).
     undecayed = score
     factor = 1.0
     if rec is not None:
         age = _age_days(rec.meta.get("updated_at") or rec.meta.get("created_at"))
         if age is not None and age > stale_days:
             factor *= GUARD_STALE_AGE_FACTOR
-        # Via the shared index (MF-84), not a per-record `git_commit_distance`:
+        # Via the shared index, not a per-record `git_commit_distance`:
         # same answer, but the git calls stop scaling with the store's size.
         if distances.distance_reaches(rec.meta.get("commit")):
             factor *= GUARD_STALE_DIST_FACTOR
@@ -4787,7 +4783,7 @@ def search(
     q_specific = _specific(query)
     q_files = _norm_files(_paths_from_text(query) | set(files or []))
     cur_branch = git_branch(root)
-    # One commit-distance index for the whole pass (MF-84) — see the class.
+    # One commit-distance index for the whole pass — see the class.
     distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
 
     matches: list[dict] = []
@@ -4826,7 +4822,7 @@ def search(
             else:
                 continue
         if m["score"] < noise_floor:
-            # De-weighting must never erase (MF-71, field test 2026-08-04). The
+            # De-weighting must never erase (field test 2026-08-04). The
             # stale/branch factors compound to 0.39, which pushed real matches —
             # a decision whose title named the proposed action — under the floor
             # with no trace, so the store went quietest exactly where it was
@@ -4960,7 +4956,7 @@ def guard(
     Ideas are **not** in this corpus (`include_ideas` stays False). An idea is a
     proposal exempt from the evidence rule; the score band below is kind-agnostic,
     so including them would let a speculative note that names the right files raise
-    a real verdict. `crumb search` sees them; the verdict never does (O1).
+    a real verdict. `crumb search` sees them; the verdict never does.
     """
     primary, classes = classify_action(action)
     matches, by_id = search(
@@ -4977,7 +4973,7 @@ def guard(
     active, history = [], []
     for m in matches:
         # A match the stale/branch factors pushed under the noise floor is
-        # mention-only (MF-71): decay still de-weights the verdict, but the
+        # mention-only: decay still de-weights the verdict, but the
         # record is named instead of silently dropped — "38 days old" is a
         # reason to re-verify a decision, not to forget it exists.
         if m.get("suppressed"):
@@ -4988,7 +4984,7 @@ def guard(
         # superseded/rejected/stale records fall through to history (mention-only).
         # A verification carries its *outcome* in `status` (never "active"), which
         # used to drop every one of them into history — a recorded "regressed" on
-        # the exact files being touched could not raise the verdict (review #5 M1).
+        # the exact files being touched could not raise the verdict.
         # It is live when the record itself is active and the outcome still needs
         # attention, mirroring `active_verifications`.
         live = (
@@ -5005,10 +5001,10 @@ def guard(
     top = active[:GUARD_MAX_WARNINGS]
     verdict = _decide_verdict(top, classes)
 
-    # Staleness is computed (reuse Phase 4) so a stale/wrong-branch handoff surfaces
+    # Staleness is computed so a stale/wrong-branch handoff surfaces
     # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
     # Lenient read: guard runs on the PreToolUse path and must not die on a bad
-    # byte (review #5 H4).
+    # byte.
     handoff_text = (
         read_text_lenient(memory_dir / "handoff.md")[0]
         if (memory_dir / "handoff.md").is_file()
@@ -5032,7 +5028,7 @@ def guard(
         "history": history[:GUARD_MAX_WARNINGS],
         "staleness": staleness,
         # NOT `next_action` — that key is the resume packet's *recorded* Next
-        # Action, and one name for two unrelated things read as one thing (MF-77).
+        # Action, and one name for two unrelated things read as one thing.
         "recommended_action": _recommended_action(verdict, top, by_id, root),
         "thresholds": {
             "noise_floor": GUARD_NOISE_FLOOR,
@@ -5110,7 +5106,7 @@ def cmd_search(args: argparse.Namespace) -> int:
     filters = {k: v for k, v in filters.items() if v}
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
     query = args.query or ""
-    # Lookup, not judging: ideas are in this corpus and out of guard's (O1).
+    # Lookup, not judging: ideas are in this corpus and out of guard's.
     matches, _ = search(
         memory_dir, root, query, filters=filters, stale_days=stale_days, include_ideas=True
     )
@@ -5147,10 +5143,10 @@ def cmd_guard(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# audit + scan-secrets — heuristic safety net (Phase 6; plan §10/§15/§16 note/§17)
+# audit + scan-secrets — heuristic safety net
 # --------------------------------------------------------------------------- #
 #
-# Design split (plan §16.14 note): `validate` is deterministic and GATES; `audit`
+# Design split: `validate` is deterministic and GATES; `audit`
 # is heuristic and ADVISES. The one hard non-zero in audit is a secret leak — a
 # token-like string in committed memory must block any "commit memory" workflow
 # (§2.6, §15). Everything else — stale handoff, aged/expired/low-confidence
@@ -5172,14 +5168,11 @@ AUDIT_INFO = "info"  # health/context note
 # projections rebuilt from canonical records (scanned for drift, not secrets).
 _SECRET_SKIP_DIRS = {"private", "index", "generated"}
 
-# Common secret SHAPES (plan §15, §17.6). Deliberately conservative: better to miss
+# Common secret SHAPES. Deliberately conservative: better to miss
 # an exotic secret than to flag every git sha. The covered set is this tuple; the
 # three deliberate gaps (bare hex only in a labeled context, path/CamelCase tokens
 # allowlisted, URL credentials floored at 6 characters and placeholder-aware) are
-# written up in `docs/security.md` §2 and pinned by
-# `tests/test_secrets.py`. MF-45 replaced the "see the Phase 6 doc" pointers in
-# security.md and cli-spec.md — no phase doc has ever existed — but missed this
-# copy of the same dead reference (MF-61).
+# written up in `docs/security.md` §2 and pinned by `tests/test_secrets.py`.
 SECRET_PATTERNS: tuple[tuple[str, "_LazyPattern"], ...] = (
     ("aws-access-key-id", _LazyPattern(r"\bAKIA[0-9A-Z]{16}\b")),
     ("github-token", _LazyPattern(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
@@ -5201,7 +5194,7 @@ SECRET_PATTERNS: tuple[tuple[str, "_LazyPattern"], ...] = (
             r"refresh[_-]?token|id[_-]?token|session[_-]?token|private[_-]?key|"
             r"signing[_-]?key|client[_-]?secret|password|passwd|pwd)\b"
             # allow a closing quote on the label so JSON keys ("private_key":)
-            # match too — the scan now covers .json files (review #3 R26)
+            # match too — the scan now covers .json files
             r"['\"]?\s*[:=]\s*"
             r"['\"]?([A-Za-z0-9/+_\-]{16,})['\"]?"
         ),
@@ -5217,7 +5210,7 @@ SECRET_PATTERNS: tuple[tuple[str, "_LazyPattern"], ...] = (
     # Credentials embedded in a connection string — `postgres://app:pw@host/db`,
     # `mongodb+srv://…`, `redis://:pw@…`, `https://user:token@host/repo.git`. The
     # keyword list above cannot see these: the password follows a bare `:` inside
-    # a URL, with no `password=` label anywhere (MF-67). Conservative on purpose:
+    # a URL, with no `password=` label anywhere. Conservative on purpose:
     # a username with no password (`https://user@host`) is not a secret and does
     # not match; `$VAR` / `${VAR}` / `%VAR%` / `<placeholder>` interpolations and
     # the obvious doc placeholders are excluded; and the 6-character floor drops
@@ -5246,11 +5239,11 @@ SECRET_PATTERNS: tuple[tuple[str, "_LazyPattern"], ...] = (
 # and the mixed-class + entropy floor below skips lowercase-only ids and hex shas.
 _HIGH_ENTROPY_TOKEN = _LazyPattern(r"\b[A-Za-z0-9+/=]{32,}\b")
 
-# Override-style phrasing audit flags for human review (plan §16 note). A *flag*,
+# Override-style phrasing audit flags for human review. A *flag*,
 # never a gate — same content-as-data posture as guard (Fixture 7).
 # A short run of qualifiers between the verb and its object, so natural phrasings
 # ("ignore failing tests", "ignore all prior instructions", "skip the flaky
-# suite's checks") are caught, not just the bare determiner forms (review #3 R26).
+# suite's checks") are caught, not just the bare determiner forms.
 _IL_QUALIFIERS = r"(?:(?:all|the|any|every|these|those|prior|previous|earlier|existing|above|failing|flaky|broken|remaining|other)\s+){0,3}"
 
 INSTRUCTION_LIKE_PATTERNS: tuple["_LazyPattern", ...] = (
@@ -5329,7 +5322,7 @@ def _looks_like_path_or_identifier(tok: str) -> bool:
 
     Long CamelCase identifiers like ``DatabaseMigrationHelperV2Factory`` and paths
     like ``app/src/MigrationV14ToV15Test`` clear the mixed-class + entropy bar yet
-    are obviously not secrets (review §6.4). The discriminator is deliberately narrow
+    are obviously not secrets. The discriminator is deliberately narrow
     so it cannot launder a real secret: base64 padding/charset (`+`, `=`) disqualifies
     outright; every segment must be alphanumeric; and any segment long enough to be a
     blob (≥12 chars) must read as CamelCase words, with at least one wordy segment
@@ -5356,7 +5349,7 @@ def _looks_high_entropy(tok: str) -> bool:
 
     Requires lower + upper + digit (so hex shas and lowercase ids never qualify) and
     a real entropy floor. Conservative by design — misses some secrets, flags ~no ids.
-    Path- and identifier-shaped tokens are allowlisted (review §6.4) without lowering
+    Path- and identifier-shaped tokens are allowlisted without lowering
     the entropy floor, so real secrets are unaffected.
 
     A bare lowercase-hex token (a 32–64 char hex API key) is intentionally NOT
@@ -5376,7 +5369,7 @@ def _looks_high_entropy(tok: str) -> bool:
 
 
 # Text-file suffixes the secret scan covers. A `.yaml`/`.json`/`.txt` dropped
-# under memory was previously never scanned (review #3 R26).
+# under memory was previously never scanned.
 _SECRET_SCAN_GLOBS = ("*.md", "*.yml", "*.yaml", "*.json", "*.txt")
 
 
@@ -5394,7 +5387,7 @@ def _iter_committed_memory_files(memory_dir: Path):
 
 
 def scan_secrets(memory_dir: Path) -> list[dict]:
-    """Scan committed memory for secret-like strings (plan §15, §17.6).
+    """Scan committed memory for secret-like strings.
 
     Each hit is {pattern, path, line} — the pattern NAME and location, never the
     matched value. Skips private/index/generated. This must run before any
@@ -5402,7 +5395,7 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
 
     A file that cannot be read cleanly yields a blocking `unscannable-file` hit
     rather than being skipped: silently exempting it made the whole "secrets are
-    blocking" posture void for that file (review #5 H4). Undecodable bytes are
+    blocking" posture void for that file. Undecodable bytes are
     replaced and the readable remainder is still scanned, so a real secret next
     to a bad byte is still found.
     """
@@ -5438,7 +5431,7 @@ def scan_instruction_like(memory_dir: Path) -> list[dict]:
     """Lexical scan of known-traps.md + durable record bodies for override phrasing.
 
     Flag-only (warn). Never gates `validate` and never instructs `guard` — the same
-    content-as-data posture as Fixture 7 (plan §16 note).
+    content-as-data posture as Fixture 7.
     """
     memory_dir = Path(memory_dir)
     findings: list[dict] = []
@@ -5456,7 +5449,7 @@ def scan_instruction_like(memory_dir: Path) -> list[dict]:
             continue
         seen.add(p)
         rel = str(p.relative_to(memory_dir))
-        # Lenient (review #5 H4): scan_secrets already reports the unreadable
+        # Lenient: scan_secrets already reports the unreadable
         # file; this pass just must not abort audit on it.
         text = _strip_html_comments(read_text_lenient(p)[0])
         for i, line in enumerate(text.splitlines(), 1):
@@ -5483,7 +5476,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
     """Flag committed generated projections whose stamped inputs_hash is stale.
 
     Compares each generated/*.md source-header `inputs_hash` against the current hash
-    of the canonical inputs (plan §15, §17.8). Mismatch => a source record changed
+    of the canonical inputs. Mismatch => a source record changed
     since the projection was built => regeneration needed. Hash-based, so it is
     robust to git checkouts not preserving mtimes.
     """
@@ -5499,7 +5492,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
         try:
             text = p.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
-            continue  # undecodable projection — validate 16.12 reports it (review #3 R16)
+            continue  # undecodable projection — validate 16.12 reports it
         stamped = _stamped_inputs_hash(text)
         if stamped is None:
             continue  # an un-stamped projection (older format) — nothing to compare
@@ -5514,7 +5507,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
 
 
 def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
-    """Bloat heuristics (plan §16.13, §12): over-budget packet, adapter duplication,
+    """Bloat heuristics: over-budget packet, adapter duplication,
     runaway sessions/ growth."""
     memory_dir = Path(memory_dir)
     findings: list[dict] = []
@@ -5522,7 +5515,7 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
     # Packet over budget.
     pkt = memory_dir / "generated" / "resume-packet.md"
     if pkt.is_file():
-        # Lenient throughout (review #5 H4): audit is the gate command, so an
+        # Lenient throughout: audit is the gate command, so an
         # undecodable file must cost it one heuristic, not every finding it had.
         toks = approx_tokens(read_text_lenient(pkt)[0])
         if toks > TOKEN_BUDGET_MAX:
@@ -5557,7 +5550,7 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 }
             )
             continue
-        # Measure the managed block, not the host file (MF-79). A repo's own
+        # Measure the managed block, not the host file. A repo's own
         # CLAUDE.md/AGENTS.md is legitimately large and is not ours to judge; what
         # §16.13 asks is that *our* signpost stay a small pointer. A file with no
         # managed block is not a signpost at all, so there is nothing to size —
@@ -5609,7 +5602,7 @@ def _audit_finding(check: str, severity: str, path: str | None, message: str, **
 
 
 def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS) -> list[dict]:
-    """Heuristic health + safety audit (plan §10, §15, §16 note).
+    """Heuristic health + safety audit.
 
     Returns findings tagged with a severity. Only `secret` is fail-severity (blocks);
     everything else advises. Policy-aware: reads tracking policy via the manifest /
@@ -5622,7 +5615,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
     for s in scan_secrets(memory_dir):
         if s["pattern"] == "unscannable-file":
             # Blocking, like a secret: the scan could not certify this file, and
-            # "we didn't look" must never read as "nothing there" (review #5 H4).
+            # "we didn't look" must never read as "nothing there".
             findings.append(
                 _audit_finding(
                     "secret",
@@ -5646,10 +5639,10 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
             )
         )
 
-    # A. Staleness / health (reuse Phase 4 compute_staleness): handoff age +
+    # A. Staleness / health (reuse compute_staleness): handoff age +
     # commit-distance, branch mismatch (incl. detached HEAD), aged-unresolved
     # questions/decisions, expired + low-confidence records.
-    # Lenient read (review #5 H4): audit is the gate command, so an undecodable
+    # Lenient read: audit is the gate command, so an undecodable
     # handoff must not abort it. scan_secrets above already emits the blocking
     # `unscannable-file` finding that names the file, so this read stays quiet.
     handoff_text = (
@@ -5668,7 +5661,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         # The handoff age/distance line is emitted unconditionally; it is only a
         # *warning* when compute_staleness marked it cold (⚠). "handoff is 0
         # day(s) old, written 0 commit(s) behind" on a seconds-old store is
-        # health context, not a problem (review #3 R20).
+        # health context, not a problem.
         sev = AUDIT_INFO if (w.startswith("handoff is") and not w.startswith("⚠")) else AUDIT_WARN
         findings.append(_audit_finding("staleness", sev, "handoff.md", w))
 
@@ -5712,7 +5705,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         sev = AUDIT_INFO if b["kind"] == "sessions-growth" else AUDIT_WARN
         findings.append(_audit_finding("bloat", sev, b["path"], b["message"], kind=b["kind"]))
 
-    # F. Guard reachability (MF-72, field test 2026-08-04). Guard's strong signals
+    # F. Guard reachability (field test 2026-08-04). Guard's strong signals
     # are file and tag overlap; a record carrying neither can only surface through
     # generic keyword overlap, which the stale/branch factors readily push under
     # the noise floor. That is an authoring rule nothing stated: a prose-only
@@ -5839,7 +5832,7 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Integrations — bootstrapping the automaticity primitives (review §5/§7)
+# Integrations — bootstrapping the automaticity primitives
 # --------------------------------------------------------------------------- #
 #
 # The package already ships every ingredient for automatic use (the fenced
@@ -5910,8 +5903,8 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     what = getattr(args, "mcp_what", None)
     if what == "serve":
         # `--project` must actually target the server at that project — it was
-        # accepted and silently ignored, so reads AND writes went to cwd's store
-        # (review #3 R12). The server resolves $BREADCRUMBS_PROJECT.
+        # accepted and silently ignored, so reads AND writes went to cwd's store.
+        # The server resolves $BREADCRUMBS_PROJECT.
         if getattr(args, "project", None):
             os.environ["BREADCRUMBS_PROJECT"] = str(resolve_root(args.project))
         # Lazy import keeps `crumb` stdlib-only; the server degrades with a clear
@@ -5972,7 +5965,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return 2
 
 
-# ---- adapter signpost block (review §7.1) ---------------------------------- #
+# ---- adapter signpost block ------------------------------------------------ #
 
 # Markdown-comment markers for the adapter managed block (same fence mechanism as
 # .gitignore, different comment syntax).
@@ -5986,7 +5979,7 @@ ADAPTER_END = "<!-- <<< breadcrumbs managed block <<< -->"
 def managed_block_text(text: str) -> str | None:
     """The breadcrumbs-managed region of an adapter file, or None if absent.
 
-    Every size check must measure *this*, never the host file (MF-79). `CLAUDE.md`
+    Every size check must measure *this*, never the host file. `CLAUDE.md`
     and `AGENTS.md` are the project's own agent-instruction files and are routinely
     tens of KB in a mature repo; measuring the whole file meant `doctor` reported
     the adapter row as bloated the moment the signpost was installed *correctly*,
@@ -6067,7 +6060,7 @@ def remove_adapter_block(root: Path, name: str) -> bool:
     return had
 
 
-# ---- Claude Code hooks (review §7.3 / Appendix A.6) ------------------------ #
+# ---- Claude Code hooks ----------------------------------------------------- #
 
 HOOK_EVENTS = ("session", "guard", "capture")
 # breadcrumbs event -> (Claude Code event name, PreToolUse matcher or None)
@@ -6078,12 +6071,13 @@ _HOOK_SPECS: dict[str, tuple[str, str | None]] = {
 }
 
 # The key `init` stamps into each hook entry it owns, valued with the breadcrumbs
-# event name. Identity must not live in the command text (MF-83): a hook installed
+# event name. Identity must not live in the command text: a hook installed
 # through any launcher — a wrapper script, a venv path, `python -m breadcrumbs` —
 # was invisible to us, so `doctor` said "no hooks installed" while all three fired,
 # `--remove-integrations` silently left them behind, and the next `init
 # --with-hooks` appended a second copy that fired alongside the first. Installing
-# through a wrapper has to stay a supported path, because MF-82 makes it necessary.
+# through a wrapper has to stay a supported path: on some hosts it is the only
+# way to reach the CLI at all.
 HOOK_MARKER = "breadcrumbsHook"
 
 # Where to look for the CLI, in order, before giving up. `command -v` answers for
@@ -6102,7 +6096,7 @@ _HOOK_CRUMB_PATHS = (
 _HOOK_PYTHONS = ("python3", "python", "py")
 
 # What a SessionStart hook says when it could not find the CLI. Emphatically not
-# `{}` (MF-82): an empty object is a valid "no opinion" for every event, so a
+# `{}`: an empty object is a valid "no opinion" for every event, so a
 # breadcrumbs install that silently resolved to nothing would look healthy forever
 # while loading no memory at all. Single quotes are impossible here — the JSON is
 # carried inside a single-quoted shell word.
@@ -6131,7 +6125,7 @@ def _hook_fallback_json(event: str) -> str:
 def hook_command(event: str) -> str:
     """The shell command `init --with-hooks` installs for one hook event.
 
-    Not a bare `crumb hook <event>` (MF-82). In a containerized session the CLI is
+    Not a bare `crumb hook <event>`. In a containerized session the CLI is
     installed into a project venv at SessionStart and exported through
     `CLAUDE_ENV_FILE`, which reaches later *tool* calls but not necessarily a
     sibling hook in the same batch; on Windows a bash spawned from PowerShell
@@ -6184,7 +6178,7 @@ def _hook_command_event(command: object) -> str | None:
     the case that made `--remove-integrations` a lie.
 
     The event must appear as a whitespace-delimited *argument*, not merely
-    somewhere in the text (MF-86). `\\bsession\\b` also matches inside
+    somewhere in the text. `\\bsession\\b` also matches inside
     `.../crumb-hook-session-setup.sh`, because `-` is a word boundary — so a
     neighbouring script that happens to be named after a hook event was read as
     ours. Requiring an argument keeps every real launcher (`crumb hook session`,
@@ -6221,7 +6215,7 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
     re-running does not duplicate the breadcrumbs entries, whatever launcher those
     entries use. An entry already in the slot is adopted: it gets the marker so the
     rest of the tool can see it, and its command is rewritten only when breadcrumbs
-    is the one that wrote it (MF-82/MF-83).
+    is the one that wrote it.
     """
     path = root / ".claude" / "settings.json"
 
@@ -6255,14 +6249,14 @@ def remove_claude_hooks(root: Path) -> dict:
     because `--remove-integrations --json` reports it. Note it is always truthy;
     test `["removed"]`, not the dict.
 
-    **The marker is authoritative here, and only here (MF-86).** Detection may
+    **The marker is authoritative here, and only here.** Detection may
     guess — over-reporting a hook as installed costs nothing — but deletion is
     irreversible, and `_hook_command_event` matches any command naming crumb plus
     an event word, so a `crumb-session-setup.sh` that was never ours would be
     matched and destroyed. Adoption is the safe direction: `init --with-hooks`
     stamps an entry it recognizes, and stamped entries are removable forever
-    after. What is *not* acceptable is the MF-83 failure mode — leaving a hook
-    behind while reporting a clean uninstall — so anything recognized but unmarked
+    after. What is *not* acceptable is leaving a hook behind while reporting a
+    clean uninstall — so anything recognized but unmarked
     is reported in `left` and the caller must say so out loud.
 
     Per *entry*, not per group: a group we share with someone else's hook keeps
@@ -6338,7 +6332,7 @@ def _fmt_adapter_targets(root: Path, names: list[str]) -> str:
 
     `--print-integrations` used to print a bare filename for a file that was
     never going to be touched, so the dry run promised what the real run then
-    silently skipped (MF-65).
+    silently skipped.
     """
     if not names:
         return "(none)"
@@ -6346,7 +6340,7 @@ def _fmt_adapter_targets(root: Path, names: list[str]) -> str:
 
 
 def _adapter_request_note(args: argparse.Namespace, adapters: list[str]) -> str | None:
-    """Explain an adapter request that legitimately resolved to nothing (MF-65).
+    """Explain an adapter request that legitimately resolved to nothing.
 
     Bare `--with-adapter` means "every agent-guidance file I can detect", so in a
     project with none it is a defensible no-op — inventing a `CLAUDE.md` nobody
@@ -6368,8 +6362,8 @@ def _prompt_yes(question: str, default: bool) -> bool:
 
     Mapping `KeyboardInterrupt` to the default meant Ctrl+C at "Register the MCP
     server in .mcp.json?" (default yes) was recorded as consent and went on to edit
-    `.mcp.json` — the one input that unambiguously means "stop" (review #5 Low).
-    EOF is the same class (MF-73): it means the shell *cannot* answer, not that it
+    `.mcp.json` — the one input that unambiguously means "stop".
+    EOF is the same class: it means the shell *cannot* answer, not that it
     answered yes — under an agent harness whose stdin looks like a TTY but reads
     EOF, taking the yes-default was an unasked `.mcp.json` write. Only an explicit
     or defaulted *answer from a read that succeeded* counts as consent.
@@ -6387,7 +6381,7 @@ def _prompt_yes(question: str, default: bool) -> bool:
 def validate_integration_flags(args: argparse.Namespace) -> str | None:
     """Error message if `--with-adapter`/`--with-hooks` name unknown values, else None.
 
-    Must run before any filesystem mutation (review #5 M6/M7, audit #6 N4).
+    Must run before any filesystem mutation.
     Unvalidated, `--with-hooks=bogus` reached `_HOOK_SPECS[ev]` and escaped as a raw
     `KeyError` — *after* `init` had swapped in the scaffold and written
     `.gitignore`, leaving a store with no hooks that the command then refused to
@@ -6464,7 +6458,7 @@ def apply_integrations(root: Path, plan: dict) -> dict:
     A name reaches `plan["adapters"]` only two ways: detection (bare
     `--with-adapter` / the prompt, which list *existing* files only) or an
     explicit `--with-adapter=NAME`. So a name here that is not on disk was asked
-    for by name, and the file is created (MF-65). Guarding on `is_file()` made
+    for by name, and the file is created. Guarding on `is_file()` made
     `--with-adapter=CLAUDE.md` a silent no-op in a repo without one, while
     `--print-integrations` had just promised the opposite and `doctor` went on
     recommending the command that could not help.
@@ -6491,8 +6485,8 @@ def discover_adapter_blocks(root: Path) -> list[str]:
     """Every file carrying our managed signpost block, canonical or not.
 
     Removal used to iterate `ADAPTER_FILENAMES` alone, so a block injected into any
-    other file — which `--with-adapter=<anything>` accepted before MF-14 validated
-    it — was unreachable via the documented undo. The scan stays bounded: the
+    other file — which `--with-adapter=<anything>` accepted before the flag was
+    validated — was unreachable via the documented undo. The scan stays bounded: the
     canonical names plus the project root's own top-level files, skipping anything
     too large to plausibly be a guidance file.
     """
@@ -6516,7 +6510,7 @@ def discover_adapter_blocks(root: Path) -> list[str]:
                 continue
         except OSError:
             continue
-        # Lenient read (review #5 H4): an undecodable file in the project root must
+        # Lenient read: an undecodable file in the project root must
         # not take the whole removal down with it.
         text, _ = read_text_lenient(path)
         if ADAPTER_BEGIN in text:
@@ -6529,7 +6523,7 @@ def remove_integrations(root: Path) -> dict:
 
     `hooks` is `remove_claude_hooks`'s report, not a bool: hook entries that look
     like ours but carry no marker are deliberately left in place, and the caller
-    has to surface them (MF-86).
+    has to surface them.
     """
     removed: dict = {"adapters": [], "mcp": False, "hooks": {"removed": [], "left": []}}
     for name in discover_adapter_blocks(root):
@@ -6540,7 +6534,7 @@ def remove_integrations(root: Path) -> dict:
     return removed
 
 
-# ---- crumb doctor (review §A.7) -------------------------------------------- #
+# ---- crumb doctor ---------------------------------------------------------- #
 
 
 def doctor_report(root: Path) -> dict:
@@ -6560,7 +6554,7 @@ def doctor_report(root: Path) -> dict:
 
     # Adapter blocks
     present = present_adapters(root)
-    # One lenient read each (review #5 H4): doctor used to read every adapter
+    # One lenient read each: doctor used to read every adapter
     # twice and die on the first undecodable one, taking the whole report with it.
     adapter_text: dict[str, str] = {}
     unreadable: list[str] = []
@@ -6569,7 +6563,7 @@ def doctor_report(root: Path) -> dict:
         if problem:
             unreadable.append(f"{n} ({problem})")
     blocked = [n for n in present if ADAPTER_BEGIN in adapter_text[n]]
-    # Size the managed block, not the host file (MF-79). Measuring the file made a
+    # Size the managed block, not the host file. Measuring the file made a
     # correct install fail permanently in any repo whose CLAUDE.md is a real
     # instruction file — the check punished the very thing it asks for.
     bloated = [
@@ -6586,8 +6580,7 @@ def doctor_report(root: Path) -> dict:
                 if present
                 # Naming the fix matters here: `crumb init --with-adapter` (what
                 # the first-run nudge recommends) resolves to the *detected*
-                # files, so in a project with none it cannot clear this check
-                # (MF-65).
+                # files, so in a project with none it cannot clear this check.
                 else (
                     "no agent-guidance files detected — create one with "
                     f"`crumb init --with-adapter={ADAPTER_FILENAMES[0]}`"
@@ -6644,7 +6637,7 @@ def doctor_report(root: Path) -> dict:
 def _installed_hook_commands(root: Path) -> list[str]:
     """The breadcrumbs hook commands present in .claude/settings.json.
 
-    Recognized by `_hook_entry_event`, not by command text (MF-83), so a hook run
+    Recognized by `_hook_entry_event`, not by command text, so a hook run
     through a wrapper counts as installed — it *is* installed, and reporting "no
     hooks installed" while all three fire is worse than reporting nothing.
     """
@@ -6678,7 +6671,7 @@ def _packet_is_stale(memory_dir: Path, root: Path) -> bool:
 
 
 # The rendered project line: `**<name>** — \`<path>\``. Machine-dependent for any
-# packet written before the path went project-relative (audit #6 N2).
+# packet written before the path went project-relative.
 _PACKET_PROJECT_LINE_RE = re.compile(r"^\*\*.*\*\* — `.*`\s*$")
 
 
@@ -6712,7 +6705,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 0 if (report["integrated"] or not report["store"]) else 1
 
 
-# ---- crumb hook session|guard|capture (review §A.6) ------------------------ #
+# ---- crumb hook session|guard|capture -------------------------------------- #
 
 
 def _read_hook_stdin() -> dict:
@@ -6725,7 +6718,7 @@ def _read_hook_stdin() -> dict:
     except json.JSONDecodeError:
         return {}
     # Valid JSON that isn't an object (a list, a string) is as useless to the
-    # hook as malformed JSON — treat it the same (review #3 R13).
+    # hook as malformed JSON — treat it the same.
     return payload if isinstance(payload, dict) else {}
 
 
@@ -6737,7 +6730,7 @@ def _hook_root(payload: dict) -> Path:
 # Used only to decide whether to escalate to full guard — a pure regex scan of a
 # short string, no record I/O, so the common path stays well inside the hook budget.
 # Store-specific trap shapes are NOT hardcoded here — they come from the
-# generated/ trap-token index below (review #3 R9).
+# generated/ trap-token index below.
 _HOOK_RISK_RE = re.compile(
     r"(?i)(--force\b|force-push|push\s+-f\b|reset\s+--hard|rm\s+-rf|git\s+clean|"
     r"--stop\b|drop\s+table|truncate\b|--no-verify|branch\s+-D\b)"
@@ -6745,7 +6738,7 @@ _HOOK_RISK_RE = re.compile(
 
 
 def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) -> bool:
-    """Does the action overlap the reindex-time trap-token index? (review #3 R9)
+    """Does the action overlap the reindex-time trap-token index?
 
     One small generated-file read — no record walk — keeping the pre-filter's
     "cheap on the common path" promise while closing the near-miss class where a
@@ -6812,14 +6805,14 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict):
         # A truthy non-dict tool_input crashed with a raw traceback where every
-        # other malformed-payload path degrades to {} (review #3 R13).
+        # other malformed-payload path degrades to {}.
         tool_input = {}
     action, files = _hook_action_from_tool(payload.get("tool_name") or "", tool_input)
     if not action:
         print(json.dumps({}))
         return 0
     # Cost-aware pre-filter: pure-string classify + risk regex on the common
-    # path, plus one read of the reindex-time trap-token index (review #3 R9) so
+    # path, plus one read of the reindex-time trap-token index so
     # trap-shaped routine commands escalate too. Only a plausibly-risky action
     # escalates to full guard scoring.
     _primary, classes = classify_action(action)
@@ -6842,7 +6835,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         # call, skipping the prompt the user would otherwise get, and its reason
         # is shown only to the user, never to the model. Emitting it on an
         # advisory verdict removed a safety gate and swallowed the warning: the
-        # exact inverse of "memory informs, never decides" (review #5 H1). So
+        # exact inverse of "memory informs, never decides". So
         # READ_FIRST takes no permission decision at all — the normal flow is
         # left untouched and the matched records reach the agent as context.
         out = {
@@ -6882,7 +6875,7 @@ def _work_dirty_files(files: list) -> tuple[str, ...]:
 
 
 def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
-    """True when nothing has moved since the newest session record (review #5 H2).
+    """True when nothing has moved since the newest session record.
 
     Claude Code's `Stop` fires every time the agent finishes responding — every
     turn, not once per session — so an unconditional capture floods `sessions/`
@@ -6931,7 +6924,7 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
         set=None,
         focus=None,
         # A Stop-hook capture is always a machine write, so `agent` is the floor
-        # here, not `unknown` (MF-74) — named harness when the env names one.
+        # here, not `unknown` — named harness when the env names one.
         agent=detect_agent(fallback="agent"),
         capture_what="session",
     )
@@ -6946,7 +6939,7 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
 
 def cmd_hook(args: argparse.Namespace) -> int:
     event = getattr(args, "hook_event", None)
-    # Validate the event *before* reading stdin (review #5 Low): `crumb hook` with
+    # Validate the event *before* reading stdin: `crumb hook` with
     # no subcommand used to block on a terminal until EOF and only then report the
     # usage error, which reads as a hang.
     if event not in HOOK_EVENTS:
@@ -7004,14 +6997,14 @@ def get_version() -> str:
 _GLOBAL_FLAG_DEFAULTS = {"project": None, "json": False, "plain": False, "verbose": False}
 
 
-# One wording for every `--agent` flag. The default is deliberately *not* `human`
-# (MF-74): an omitted flag is an absence of evidence, so it resolves to the
+# One wording for every `--agent` flag. The default is deliberately *not* `human`:
+# an omitted flag is an absence of evidence, so it resolves to the
 # detected harness or to `unknown`, and a person asserts authorship explicitly.
 _AGENT_FLAG_HELP = "{what} label (default: detected agent harness, else 'unknown')"
 
 
 class _LazyVersionAction(argparse.Action):
-    """`--version`, without charging every *other* command for it (MF-76).
+    """`--version`, without charging every *other* command for it.
 
     argparse's built-in `version` action wants the finished string at parser
     construction time, so `build_parser()` called `get_version()` — which imports
@@ -7067,7 +7060,7 @@ def _add_init(sub, global_parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="overwrite an existing .project-memory/ scaffold",
     )
-    # Integration flags (review §7). Tri-state: unset -> prompt on a TTY / off when
+    # Integration flags. Tri-state: unset -> prompt on a TTY / off when
     # non-interactive; --with-* enables; --no-* disables. set_defaults keeps all three
     # at None so default `crumb init` is byte-identical to before.
     p_init.add_argument(
@@ -7124,17 +7117,17 @@ def _add_init(sub, global_parser: argparse.ArgumentParser) -> None:
     p_init.set_defaults(func=cmd_init, adapter=None, mcp=None, hooks=None)
 
 
-# validate (Phase 2)
+# validate
 def _add_validate(sub, global_parser: argparse.ArgumentParser) -> None:
     p_validate = sub.add_parser(
         "validate",
         parents=[global_parser],
-        help="deterministically check the .project-memory/ store (plan §16)",
+        help="deterministically check the .project-memory/ store ",
     )
     p_validate.set_defaults(func=cmd_validate)
 
 
-# remember decision | attempt (Phase 3)
+# remember decision | attempt
 def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
     p_remember = sub.add_parser(
         "remember",
@@ -7171,7 +7164,7 @@ def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
         pr.add_argument("--status", choices=VALID_STATUS)
         pr.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author"))
         if rtype == "attempt":
-            # The fixed attempt vocabulary as named flags (review §6.2/§8); each
+            # The fixed attempt vocabulary as named flags; each
             # overrides the matching --set heading.
             pr.add_argument("--problem", help="Problem section")
             pr.add_argument("--tried", help="Tried section")
@@ -7184,7 +7177,7 @@ def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
         pr.set_defaults(func=cmd_remember)
 
 
-# schema introspection (review §6.2/§8)
+# schema introspection
 def _add_schema(sub, global_parser: argparse.ArgumentParser) -> None:
     p_schema = sub.add_parser(
         "schema",
@@ -7205,7 +7198,7 @@ def _add_schema(sub, global_parser: argparse.ArgumentParser) -> None:
     p_schema.set_defaults(func=cmd_schema)
 
 
-# note question|trap|idea (review §6.6 write-surface)
+# note question|trap|idea
 def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     p_note = sub.add_parser(
         "note",
@@ -7246,7 +7239,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pi.set_defaults(func=cmd_note)
 
 
-# verify (review F1) — record a verification result (a finding about reality)
+# verify — record a verification result (a finding about reality)
 def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
     p_verify = sub.add_parser(
         "verify",
@@ -7287,7 +7280,7 @@ def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
     p_verify.set_defaults(func=cmd_verify)
 
 
-# mark-status (review #3 R25) — record lifecycle mutation from the CLI
+# mark-status — record lifecycle mutation from the CLI
 def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mark = sub.add_parser(
         "mark-status",
@@ -7317,7 +7310,7 @@ def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mark.set_defaults(func=cmd_mark_status)
 
 
-# reindex (review F2) — explicit projection refresh (mutations reindex automatically)
+# reindex — explicit projection refresh (mutations reindex automatically)
 def _add_reindex(sub, global_parser: argparse.ArgumentParser) -> None:
     p_reindex = sub.add_parser(
         "reindex",
@@ -7327,7 +7320,7 @@ def _add_reindex(sub, global_parser: argparse.ArgumentParser) -> None:
     p_reindex.set_defaults(func=cmd_reindex)
 
 
-# capture session (Phase 3)
+# capture session
 def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
     p_capture = sub.add_parser(
         "capture",
@@ -7364,7 +7357,7 @@ def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
     p_session.set_defaults(func=cmd_capture_session)
 
 
-# resume (Phase 4)
+# resume
 def _add_resume(sub, global_parser: argparse.ArgumentParser) -> None:
     p_resume = sub.add_parser(
         "resume",
@@ -7387,13 +7380,13 @@ def _add_resume(sub, global_parser: argparse.ArgumentParser) -> None:
         "--task",
         default=None,
         metavar="TEXT",
-        help="resume FOR this task: scope likely-files to matching records (review F4); "
+        help="resume FOR this task: scope likely-files to matching records; "
         "a task-scoped packet prints only and does not overwrite the committed snapshot",
     )
     p_resume.set_defaults(func=cmd_resume)
 
 
-# search (Phase 5) — deterministic exact/keyword/tag/file lookup
+# search — deterministic exact/keyword/tag/file lookup
 def _add_search(sub, global_parser: argparse.ArgumentParser) -> None:
     p_search = sub.add_parser(
         "search",
@@ -7426,7 +7419,7 @@ def _add_search(sub, global_parser: argparse.ArgumentParser) -> None:
     p_search.set_defaults(func=cmd_search)
 
 
-# guard (Phase 5) — guard-before-action: warn before repeating a mistake
+# guard — guard-before-action: warn before repeating a mistake
 def _add_guard(sub, global_parser: argparse.ArgumentParser) -> None:
     p_guard = sub.add_parser(
         "guard",
@@ -7451,7 +7444,7 @@ def _add_guard(sub, global_parser: argparse.ArgumentParser) -> None:
     p_guard.set_defaults(func=cmd_guard)
 
 
-# audit (Phase 6) — heuristic stale/unsafe/bloated detection (does NOT gate validate)
+# audit — heuristic stale/unsafe/bloated detection (does NOT gate validate)
 def _add_audit(sub, global_parser: argparse.ArgumentParser) -> None:
     p_audit = sub.add_parser(
         "audit",
@@ -7468,7 +7461,7 @@ def _add_audit(sub, global_parser: argparse.ArgumentParser) -> None:
     p_audit.set_defaults(func=cmd_audit)
 
 
-# scan-secrets (Phase 6) — the secret sub-check as a standalone command
+# scan-secrets — the secret sub-check as a standalone command
 def _add_scan_secrets(sub, global_parser: argparse.ArgumentParser) -> None:
     p_scan = sub.add_parser(
         "scan-secrets",
@@ -7478,7 +7471,7 @@ def _add_scan_secrets(sub, global_parser: argparse.ArgumentParser) -> None:
     p_scan.set_defaults(func=cmd_scan_secrets)
 
 
-# mcp serve|register — surface the optional MCP server from the CLI (review §6.3)
+# mcp serve|register — surface the optional MCP server from the CLI
 def _add_mcp(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mcp = sub.add_parser(
         "mcp",
@@ -7507,7 +7500,7 @@ def _add_mcp(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mcp_doctor.set_defaults(func=cmd_mcp, mcp_what="doctor")
 
 
-# doctor — integration health (review §A.7)
+# doctor — integration health
 def _add_doctor(sub, global_parser: argparse.ArgumentParser) -> None:
     p_doctor = sub.add_parser(
         "doctor",
@@ -7517,7 +7510,7 @@ def _add_doctor(sub, global_parser: argparse.ArgumentParser) -> None:
     p_doctor.set_defaults(func=cmd_doctor)
 
 
-# hook session|guard|capture — harness translation layer (review §A.6)
+# hook session|guard|capture — harness translation layer
 def _add_hook(sub, global_parser: argparse.ArgumentParser) -> None:
     p_hook = sub.add_parser(
         "hook",
@@ -7535,7 +7528,7 @@ def _add_hook(sub, global_parser: argparse.ArgumentParser) -> None:
         ph.set_defaults(func=cmd_hook, hook_event=ev)
 
 
-# Every subcommand's parser, built on demand (MF-76). `build_parser()` used to
+# Every subcommand's parser, built on demand. `build_parser()` used to
 # construct all of these up front — ~5 ms before argparse had even looked at
 # argv — on every invocation, including the `hook guard` pre-filter that fires
 # on every tool call and usually returns `{}` without touching memory. `main()`
@@ -7565,7 +7558,7 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
 
 
 def build_parser(only: str | None = None) -> argparse.ArgumentParser:
-    """The `crumb` parser. `only` builds just that one subcommand's parser (MF-76).
+    """The `crumb` parser. `only` builds just that one subcommand's parser.
 
     `only` is an optimisation, never a behaviour change: pass a name from
     `_SUBCOMMAND_BUILDERS` and the returned parser handles exactly that command;
@@ -7635,7 +7628,7 @@ def _consumes_next_token(token: str) -> bool:
 
 
 def requested_command(argv: list[str]) -> str | None:
-    """The subcommand `argv` names, or None if it names none (MF-76).
+    """The subcommand `argv` names, or None if it names none.
 
     A cheap pre-scan so `main()` can build one subparser instead of twenty. The
     subcommand is argparse's first positional, so this skips options (and the one
@@ -7667,7 +7660,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except KeyboardInterrupt:
-        # Ctrl+C at a prompt aborts the command (review #5 Low). 130 is the shell
+        # Ctrl+C at a prompt aborts the command. 130 is the shell
         # convention for SIGINT; the message goes to stderr so `--json` output is
         # never half a document followed by a traceback.
         print("\naborted.", file=sys.stderr)

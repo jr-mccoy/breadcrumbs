@@ -198,7 +198,7 @@ Identity is **filename-canonical**. The file's path is the single source of trut
 
 Why filename-canonical: the filesystem cannot hold two files with the same name in
 one directory, so ID uniqueness is enforced for free and id/slug/filename cannot
-drift. `validate` (Phase 2) recomputes `id`/`slug` from the filename and flags any
+drift. `validate` recomputes `id`/`slug` from the filename and flags any
 frontmatter that disagrees rather than trusting the stored value.
 
 ---
@@ -226,7 +226,7 @@ their writes are machine writes, so they fall back to `agent` instead of
 
 ---
 
-## 7. Non-git fallback (resolved Phase 1)
+## 7. Non-git fallback (resolved)
 
 Several frontmatter fields are git-derived (`branch`, `commit`, `dirty_files`).
 When the project is **not** a git repo, the tool uses defined sentinels everywhere:
@@ -293,7 +293,7 @@ degrades gracefully (age-based signals still apply).
 ## Related Records
 ```
 
-### Verification record (review F1)
+### Verification record
 
 ```markdown
 ## Subject

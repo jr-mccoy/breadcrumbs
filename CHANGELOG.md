@@ -9,8 +9,8 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ### Fixed — 2026-08-06 field test, round 2 (verification pass on the same Android repo)
 
-- **Uninstall no longer deletes a hook it cannot prove is ours (MF-86).** MF-83
-  made an unmarked entry removable by matching "names crumb, names a hook event".
+- **Uninstall no longer deletes a hook it cannot prove is ours.** The previous
+  release made an unmarked entry removable by matching "names crumb, names a hook event".
   Two problems. First, the event only had to appear on a word boundary, and `-`
   is one — so `.claude/hooks/crumb-session-setup.sh`, a neighbouring script that
   was never breadcrumbs', matched `session` inside its own filename. The event
@@ -20,14 +20,14 @@ uses semantic versioning. The package version is independent of the on-disk reco
   irreversible, so `--remove-integrations` now keys on the `breadcrumbsHook`
   marker **alone**. Detection stays heuristic — over-reporting a hook as
   installed costs nothing — but a heuristic match is reported, not destroyed.
-  Crucially it is not *ignored* either, which would be the MF-83 failure mode
+  Crucially it is not *ignored* either, which would be the original failure mode
   again: removal names each entry it left behind and says how to finish the job
   (`crumb init --with-hooks` adopts an entry, stamping the marker without
   touching your command, after which removal takes it). `remove_claude_hooks`
   now returns `{"removed": [...], "left": [...]}` instead of a bool; it is always
   truthy, so test `["removed"]`.
 
-- **The guard stopped getting slower every session (MF-84).** `_score_item` called
+- **The guard stopped getting slower every session.** `_score_item` called
   `git_commit_distance` per scored record, and that is three subprocess spawns
   each (`is_git_repo`, `rev-parse --verify`, `rev-list --count`). So the
   `PreToolUse` guard cost ~3 process spawns *per record* and grew monotonically
@@ -47,7 +47,7 @@ uses semantic versioning. The package version is independent of the on-disk reco
   init` re-probes instead of returning a stale answer. Net at 120 records:
   **784 ms → 38 ms, and 360+ git spawns → 6**, with the per-record slope down from
   6.4 ms to 0.29 ms. The remaining cost no longer scales with the store.
-- **A session record no longer contradicts its own frontmatter (MF-85).** The
+- **A session record no longer contradicts its own frontmatter.** The
   diffstat summary describes the *commit range*, so a session whose work was still
   uncommitted — the normal state when a `Stop` hook fires — recorded
   `_(no file changes detected)_` in the body while `dirty_files` listed 25 paths.
@@ -58,7 +58,7 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ### Fixed — 2026-08-06 field test (first real install: an Android repo, 73KB CLAUDE.md, Windows + web containers)
 
-- **Hook identity no longer lives in the command string (MF-83).** `doctor`,
+- **Hook identity no longer lives in the command string.** `doctor`,
   `--remove-integrations` and `install_claude_hooks` all recognized our hooks by
   `command.startswith("crumb hook")`, so a hook installed through *any*
   indirection — a wrapper script, a venv path, `python -m breadcrumbs` — was
@@ -69,11 +69,11 @@ uses semantic versioning. The package version is independent of the on-disk reco
   appended a **duplicate** that fired alongside the original. Entries are now
   stamped with a `"breadcrumbsHook": "<event>"` key that `doctor` and removal
   match on, so a custom launcher is a supported install path — which matters,
-  because MF-82 makes one necessary. Unstamped entries are still recognized when
+  because the CLI is not always reachable by a bare name. Unstamped entries are still recognized when
   the command names both `crumb` and a hook event, deliberately narrow because a
   false positive here deletes someone else's hook. Removal is now per *entry*:
   a group shared with a foreign hook keeps it and loses only ours.
-- **The installed hook command resolves the CLI instead of assuming it (MF-82).**
+- **The installed hook command resolves the CLI instead of assuming it.**
   `init --with-hooks` emitted a bare `crumb hook <event>`. In a Claude Code web
   container the CLI is installed into a venv at SessionStart and exported through
   `CLAUDE_ENV_FILE`, which reaches later *tool* calls but not necessarily a
@@ -87,8 +87,8 @@ uses semantic versioning. The package version is independent of the on-disk reco
   loading nothing. It returns `additionalContext` saying memory is inactive, where
   to read the packet by hand, and how to fix it. Re-running `init --with-hooks`
   upgrades a bare legacy entry in place; a launcher *you* wrote is never rewritten.
-- **The adapter bloat check measures our block, not your instruction file
-  (MF-79).** Both `doctor` and `audit` sized the *entire* adapter file against
+- **The adapter bloat check measures our block, not your instruction file.**
+  Both `doctor` and `audit` sized the *entire* adapter file against
   `ADAPTER_BLOAT_CHARS` (4000). `CLAUDE.md` and `AGENTS.md` are the project's own
   agent-instruction files — the reporting repo's is 73,326 chars — so `doctor`
   reported `✗ [adapter] BLOATED` permanently from the moment the signpost was
@@ -97,7 +97,7 @@ uses semantic versioning. The package version is independent of the on-disk reco
   `adapter_block()`'s docstring always claimed was being checked. A file with no
   managed block is not a signpost and is no longer sized at all; `audit`'s
   `adapter-duplication` check still catches records pasted into one.
-- **The signpost no longer tells agents to run an interactive command (MF-80).**
+- **The signpost no longer tells agents to run an interactive command.**
   The block injected into `CLAUDE.md`/`AGENTS.md` ended with "**Session end:**
   `crumb capture session`" — which prompts for five sections. Under an agent it
   died with `EOFError` *after* printing its full git summary, so it looked like it
@@ -108,7 +108,7 @@ uses semantic versioning. The package version is independent of the on-disk reco
   through to the normal "a session needs a Next Action" error instead of a
   traceback — `_interactive()` is a heuristic over two `isatty()` calls, and when
   it guesses wrong the command must degrade, not die.
-- **Capture no longer attributes months of history to one session (MF-81).** The
+- **Capture no longer attributes months of history to one session.** The
   prefill diffed from the newest session record's commit with no bound, so on a
   store idle for six weeks the first capture claimed ~50 commits and "807 files
   changed, +90962/-14441" as one sitting's work. It self-corrected once
@@ -120,11 +120,11 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 Everything from the 2026-08-04 agent field test (run against a real Android
 repo's store plus a 600-record synthetic store): the four high-severity findings
-first (MF-71 … MF-73), then the four remaining ones (MF-74 … MF-77), plus a red
-CI matrix leg found while checking that work landed clean (MF-78).
+first, then the four remaining ones, plus a red
+CI matrix leg found while checking that work landed clean.
 
 ### Fixed
-- **CI was red on Python 3.14, and had been since before this batch (MF-78).**
+- **CI was red on Python 3.14, and had been for several releases.**
   `test (3.14)` and both `mcp (3.14, …)` legs failed while every other Python
   passed. **3.14 colorizes argparse output**, so merely *constructing* a parser
   now reaches `_colorize.can_colorize()` → `os.isatty(sys.stdout.fileno())`.
@@ -137,11 +137,10 @@ CI matrix leg found while checking that work landed clean (MF-78).
   pin the contract directly so the next stdout double fails with a name that
   says why. This matters beyond a red badge: `mode: publish` requires the `ci`
   workflow to have succeeded on the commit being released, so a red matrix leg
-  blocks a release outright — the same class of breakage as MF-69's unpinned
-  ruff. Also fixed while here: `re.split(r"\s+#", val, 1)` passed `maxsplit`
+  blocks a release outright — the same class of breakage as an unpinned linter. Also fixed while here: `re.split(r"\s+#", val, 1)` passed `maxsplit`
   positionally, which 3.13+ deprecates and a later Python will reject; the
   suite is now clean under `-W error::DeprecationWarning` on 3.14.
-- **A record an agent wrote no longer claims a human wrote it (MF-74).**
+- **A record an agent wrote no longer claims a human wrote it.**
   `derive_fields()` defaulted `agent="human"`, so every write through the CLI
   without an explicit `--agent` was attributed to a person — while the MCP
   surface recorded the *same* write as `agent`. Two surfaces, two answers, and
@@ -156,7 +155,7 @@ CI matrix leg found while checking that work landed clean (MF-78).
   instead of `unknown`, so all three surfaces now name the same harness. No
   fixture or test pinned `agent: human`; committed fixtures are read, not
   regenerated, so they are untouched.
-- **A long title no longer produces a path that breaks the clone (MF-75).**
+- **A long title no longer produces a path that breaks the clone.**
   `slugify()` had no length cap, so the whole title became the filename under
   `.project-memory/<type>/`. Past roughly 240 characters `remember` failed
   outright — `[Errno 36] File name too long`, straight out of the writer — and
@@ -169,8 +168,8 @@ CI matrix leg found while checking that work landed clean (MF-78).
   *read*, so records already on disk with longer names still load, validate and
   resolve by id. The full text was never in the filename's keeping anyway: it is
   the record's `title`.
-- **Startup no longer charges every command for work almost none of them do
-  (MF-76).** The field-test report blamed eager `subprocess`/`shutil`/`hashlib`
+- **Startup no longer charges every command for work almost none of them do.**
+  The field-test report blamed eager `subprocess`/`shutil`/`hashlib`
   imports; measured, that is less than half of it. `build_parser()` resolved
   `--version` eagerly, which imports `importlib.metadata` and with it `email`,
   `zipfile`, `csv` and `socket` (~24 ms), and it constructed all 17 subparsers
@@ -188,7 +187,7 @@ CI matrix leg found while checking that work landed clean (MF-78).
   work above the floor). `crumb --version` is unchanged by design — it is the one
   command that still has to resolve the version. The report's headline 375 ms was
   Windows process-spawn dominated and does not transfer.
-- **Staleness de-weights; it no longer erases (MF-71).** Guard's branch-mismatch
+- **Staleness de-weights; it no longer erases.** Guard's branch-mismatch
   (0.8), age (0.7) and commit-distance (0.7) factors compound to 0.39, which
   pushed prose-only records under the noise floor and dropped them with no
   trace — the field test's controlled experiment turned an `ASK_HUMAN` into a
@@ -197,17 +196,17 @@ CI matrix leg found while checking that work landed clean (MF-78).
   decay is now kept, marked `stale-suppressed`, and demoted to guard's
   `history` list (mention-only, never driving the verdict). Match payloads
   carry a new `raw_score` and `suppressed` alongside `score`.
-- **`init` can no longer register MCP without consent (MF-73).** `_interactive()`
+- **`init` can no longer register MCP without consent.** `_interactive()`
   gated on `sys.stdin.isatty()` alone; under an agent harness whose stdin passes
   `isatty()` while every read hits EOF (and stdout is a pipe), `init` entered the
   interactive picker and the MCP prompt's `[Y/n]` default counted as a yes —
   an unasked `.mcp.json` write, contradicting the README. The gate now requires
   *both* stdin and stdout to be terminals, and EOF at a consent prompt declines
-  instead of taking the default — the same class of fix as the MF-21
+  instead of taking the default — the same class of fix as the earlier
   `KeyboardInterrupt` hardening: a shell that cannot answer answered nothing.
 
 ### Added
-- **Title matches outweigh body mentions (MF-72).** A query token that appears
+- **Title matches outweigh body mentions.** A query token that appears
   in a record's own title now scores `GUARD_W_KEYWORD + GUARD_W_TITLE` (2)
   instead of 1 — a title names what the record is about; a body mention can be
   incidental. This is what recovers the field test's GUEST case: the record
@@ -215,7 +214,7 @@ CI matrix leg found while checking that work landed clean (MF-78).
   reference and sat one stale factor from silence. Title tokens are a subset of
   the text bag, so this re-weights existing matches and can never create one
   the anti-noise gate would have rejected.
-- **`crumb audit` warns on guard-unreachable records (MF-72).** An active
+- **`crumb audit` warns on guard-unreachable records.** An active
   decision/attempt/verification with no `tags` and no file references can only
   surface through generic keyword overlap — the weakest signal, and the first
   one decay pushes under the floor. Audit now emits a warn-severity
@@ -223,8 +222,8 @@ CI matrix leg found while checking that work landed clean (MF-78).
   add tags or file evidence. Warn never changes the exit code (§10 ladder).
 
 ### Changed
-- **`guard`'s synthesized advice is `recommended_action`, not `next_action`
-  (MF-77).** The key `next_action` meant two unrelated things in two commands.
+- **`guard`'s synthesized advice is `recommended_action`, not `next_action`.**
+  The key `next_action` meant two unrelated things in two commands.
   In `guard --json` it was advice *this code composes* from the match kinds
   behind the verdict (`_recommended_action`, §11.6) — always a non-empty string,
   and already labelled **"Recommended next action:"** in the human output. In the
@@ -243,7 +242,7 @@ CI matrix leg found while checking that work landed clean (MF-78).
 ## [0.1.8] — 2026-08-02
 
 The first release since 0.1.7, and the one that puts nine review batches
-(MF-01 … MF-69) in front of users: every entry below has been sitting in
+in front of users: every entry below has been sitting in
 `[Unreleased]` against a PyPI release that predates all of it. Two changes are
 user-visible beyond a bug fix — the resume packet renames a JSON key
 (`stale_days` → `stale_after_days`, plus two new measurement fields), and
@@ -252,7 +251,7 @@ appear below. Upgrading also invalidates every stored `inputs_hash` projection
 stamp once; run `crumb reindex` and it clears.
 
 ### Added
-- **`ideas/` records are searchable (MF-57).** `crumb note idea` has always written
+- **`ideas/` records are searchable.** `crumb note idea` has always written
   a real, validated record that nothing loaded, so an idea could only be found by
   opening the directory. `crumb search` (and the `memory_search` MCP tool) now
   include them, and `--type idea` is offered. **They remain invisible to `guard`,
@@ -263,16 +262,16 @@ stamp once; run `crumb reindex` and it clears.
   narrow one. New **Fixture 12** is the control: its single untried hunch scores
   8.96 against a `READ_FIRST` band of 5 when scored, and `crumb guard` still
   answers `PROCEED` with zero matches.
-- **The MCP server supports SDK 2.x as well as 1.x (MF-59).** See *Fixed* below for
+- **The MCP server supports SDK 2.x as well as 1.x.** See *Fixed* below for
   why this is a fix and not just a feature.
-- **The MCP server advertises the package version (MF-60, agentic review #2 F11).**
+- **The MCP server advertises the package version.**
   On an SDK that allows it (2.x, via the constructor's `version=`), the server
   reports `breadcrumbs <package version>` instead of the SDK's own version.
   Whether to pass it is read from the constructor signature, never guessed: SDK
   1.x has no such parameter and raises `TypeError`, so on 1.x the previous
   behavior stands.
 
-- **A `lint` CI job — the repo had no static analysis of any kind (MF-27).** No
+- **A `lint` CI job — the repo had no static analysis of any kind.** No
   ruff, flake8, mypy or formatter config existed and no workflow ran one, so every
   unused import, dead assignment and placeholder f-string was left for a human
   review round to find; this was the sixth such round. CI now runs `ruff check` and
@@ -283,7 +282,7 @@ stamp once; run `crumb reindex` and it clears.
   findings the first run surfaced are fixed here: two placeholder f-strings, three
   unused imports, five unused assignments. The codebase was formatted with
   `ruff format` in a separate, mechanical commit.
-- **Workflow hygiene, with tests (MF-38 … MF-42).** Neither workflow set a
+- **Workflow hygiene, with tests.** Neither workflow set a
   **top-level `permissions:`**, so any job without its own ran with the repository
   default token scope; both now floor at `contents: read`. Neither declared a
   **`concurrency`** group: `ci` triggers on both `push` and `pull_request`, so every
@@ -309,8 +308,8 @@ stamp once; run `crumb reindex` and it clears.
   reproduce the same bytes.
 
 ### Changed
-- **The resume packet names its staleness numbers for what they are (MF-56,
-  agentic review #2 F10).** The packet carried one number, `stale_days` — which was
+- **The resume packet names its staleness numbers for what they are.** The
+  packet carried one number, `stale_days` — which was
   the *threshold* — while the *age* it gets compared against existed only as English
   inside a warning ("handoff is 6 day(s) old"). A consumer had the policy as data
   and the fact as prose. The threshold is now **`stale_after_days`**, and the
@@ -322,23 +321,23 @@ stamp once; run `crumb reindex` and it clears.
   `--stale-days` also has one help string across `resume`/`search`/`guard`/`audit`
   instead of being an "aged-unresolved threshold" on two of them and a "recency
   de-weighting threshold" on another — one cutoff, described as one thing.
-- **`audit` no longer tells you to wait for a rollup command that does not exist
-  (MF-51).** The sessions-growth note said "consider a periodic rollup (forward-ref
+- **`audit` no longer tells you to wait for a rollup command that does not exist.**
+  The sessions-growth note said "consider a periodic rollup (forward-ref
   Phase 10)". Nothing is scheduled to build one, so the advice is now what a human
   can act on today: promote what still matters with `crumb remember`, prune the rest.
 
-- **The tag / PyPI history is documented instead of implied (MF-13).** The
+- **The tag / PyPI history is documented instead of implied.** The
   intended invariant is one git tag per published PyPI version, and three
   entries break it: `v0.1.5` (tag only, never published), `v0.1.6` (tag **and**
   GitHub Release, never published), and `0.1.2` (**on PyPI, never tagged** — the
-  exact shape MF-11 made permanent). `pipx install git+…@v0.1.6` therefore yields a
+  exact shape the pre-flight now recovers from). `pipx install git+…@v0.1.6` therefore yields a
   version PyPI never shipped. `RELEASING.md` now carries a *Tag / PyPI history*
   table recording all three and why `0.1.2` is deliberately left untagged rather
   than hand-tagged; `CLAUDE.md` points at it. The dead tags are left in place —
   deleting them is the maintainer's call — and the release workflow refuses to
   re-use either one.
 - **The CLI/MCP fork on an omitted `confidence` is a stated choice, not a lying
-  comment (MF-24).** Non-interactive `crumb remember` exits 2 when there is no
+  comment.** Non-interactive `crumb remember` exits 2 when there is no
   evidence and no `--confidence`; the identical `memory_record` payload records
   `low`. The `mcp_core` comment claimed exact parity with the CLI, which was false.
   Both behaviors are kept — the CLI's error names the flag a human forgot, while a
@@ -346,14 +345,14 @@ stamp once; run `crumb reindex` and it clears.
   no confidence" means — and the divergence is now documented in
   `docs/mcp-spec.md` and described accurately in the code. An *explicit*
   `medium`/`high` without evidence remains an error on both surfaces.
-- **The `[mcp]` extra hint names the Python floor (MF-25).** The extra is marked
+- **The `[mcp]` extra hint names the Python floor.** The extra is marked
   `python_version >= '3.10'`, so `pip install "crumb-kit[mcp]"` succeeds and
   installs **nothing** on 3.9 — and the hint told the user to run exactly that
   command without mentioning it. The message now says the SDK needs Python ≥ 3.10
   and what happens on 3.9.
 
 ### Removed
-- **`evidence/refs.yml` is no longer scaffolded by `init` (MF-58).** It was created
+- **`evidence/refs.yml` is no longer scaffolded by `init`.** It was created
   for the whole life of the package and **no released version ever read or wrote
   it**. Nothing replaces it: per-record evidence already lives in each record's
   `evidence:` frontmatter, which `resume` (Likely Relevant Files, Verification
@@ -364,7 +363,7 @@ stamp once; run `crumb reindex` and it clears.
 
 ### Fixed
 - **A single network blip cost a whole release run, and the build job blamed the
-  wrong thing (MF-70).** The first `publish` run of this version failed at the
+  wrong thing.** The first `publish` run of this version failed at the
   upload step with `ConnectTimeout` on `upload.pypi.org`. Nothing about the
   release was wrong: the suite, the CI gate, the pre-flight (`on_pypi=no
   tag_exists=false`), `twine check` and the installed-binary smoke test had all
@@ -384,8 +383,8 @@ stamp once; run `crumb reindex` and it clears.
   step's own. Anyone debugging the failure read that first. The test now captures
   its output, and a source-level check keeps the next one from calling the CLI
   uncaptured.
-- **CI's `lint` job was red on an untouched `main`, because ruff was unpinned
-  (MF-69).** The job ran `pip install ruff`, so it silently took whatever was
+- **CI's `lint` job was red on an untouched `main`, because ruff was unpinned.**
+  The job ran `pip install ruff`, so it silently took whatever was
   newest. ruff **0.16 began formatting fenced Python inside Markdown**, which took
   the checked file set from 29 files to 234 and made `ruff format --check` demand
   a rewrite of a code excerpt inside an **archived review document** — an excerpt
@@ -398,9 +397,9 @@ stamp once; run `crumb reindex` and it clears.
   keeps the archived review/audit documents out of the formatter's input —
   reformatting a quotation falsifies it. Living prose (README, CHANGELOG, the spec
   docs) stays in scope. Every GitHub Action here has been pinned to a commit SHA
-  since MF-39 for exactly this class of failure; the tool that decides pass/fail
+  for exactly this class of failure; the tool that decides pass/fail
   was the one thing left moving.
-- **`scan-secrets` missed credentials embedded in a connection string (MF-67).**
+- **`scan-secrets` missed credentials embedded in a connection string.**
   `postgres://app:<password>@db.example.com/prod`, `mongodb+srv://root:<pw>@…`,
   `redis://:<pw>@…`, `https://user:<token>@host/repo.git` — every form of it reported
   **OK**. Nothing in the covered set could see them: the password follows a bare
@@ -417,7 +416,7 @@ stamp once; run `crumb reindex` and it clears.
   `tests/test_secrets.py` now re-runs as a test. `docs/security.md` §2 records the
   new coverage and the new deliberate gap.
 - **`crumb init --with-adapter` could install nothing, silently, while `doctor`
-  told you to run it (MF-65).** In a project with no `AGENTS.md`/`CLAUDE.md`, the
+  told you to run it.** In a project with no `AGENTS.md`/`CLAUDE.md`, the
   flag resolved to the *detected* guidance files — an empty list — applied nothing,
   and printed no explanation, while `doctor` reported `✗ [adapter] no
   agent-guidance files detected` and the first-run nudge recommended exactly that
@@ -432,15 +431,16 @@ stamp once; run `crumb reindex` and it clears.
   `(will be created)`; and `doctor`'s miss message names a command that can
   actually clear it. Removal is unchanged and still reverses a created file's
   block.
-- **The `[mcp]` extra was untested on two Pythons it installs on (MF-68).** The CI
+- **The `[mcp]` extra was untested on two Pythons it installs on.** The CI
   `mcp` job's matrix stopped at 3.12 while the `test` job already ran to 3.14, the
   extra is marked `python_version >= '3.10'` with no ceiling, and both SDK majors
   declare 3.13/3.14 support — so the SDK-present paths had no coverage on the two
   newest Pythons. The matrix now runs 3.10–3.14 against both majors, and
   `tests/test_release_process.py` pins the range (and the two-major axis) so it
-  cannot quietly narrow again. This is the mirror image of the gap MF-42 closed.
+  cannot quietly narrow again. This is the mirror image of the gap closed earlier
+  for the `test` job.
 - **The documented list of SDK 1.x/2.x differences was incomplete and
-  miscategorized (MF-66).** `docs/mcp-spec.md` said "two differences are visible to
+  miscategorized.** `docs/mcp-spec.md` said "two differences are visible to
   a caller" and listed `uriTemplate` → `uri_template`, which was simply the one
   attribute the code happened to touch. SDK 2.0 renamed **every** camelCase model
   attribute to snake_case (`Tool.inputSchema`, `Tool.outputSchema`,
@@ -452,8 +452,8 @@ stamp once; run `crumb reindex` and it clears.
   suite and the CI job read fields through one alias-tolerant accessor instead of a
   per-field fallback, and `tests/test_mcp.py` pins the alias invariant on whichever
   major is installed (CI runs it on both).
-- **The optional `[mcp]` extra installed an SDK the server could not import
-  (MF-59).** The extra was declared `mcp>=1.2` with no upper bound. MCP SDK **2.0
+- **The optional `[mcp]` extra installed an SDK the server could not import.**
+  The extra was declared `mcp>=1.2` with no upper bound. MCP SDK **2.0
   renamed `mcp.server.fastmcp.FastMCP` to `mcp.server.mcpserver.MCPServer`**, so a
   fresh `pip install "crumb-kit[mcp]"` resolved to 2.x, the hardcoded 1.x import
   failed, and the graceful-degradation path reported the SDK as **"not installed —
@@ -467,21 +467,21 @@ stamp once; run `crumb reindex` and it clears.
   install hint. One caller-visible SDK difference:
   `list_resource_templates()` returns `uriTemplate` on 1.x and `uri_template` on
   2.x.
-- **The bundled store no longer ships text that promises unbuilt machinery
-  (MF-49, MF-50).** `index/README.md` described the SQLite FTS / vector index as
+- **The bundled store no longer ships text that promises unbuilt machinery.**
+  `index/README.md` described the SQLite FTS / vector index as
   arriving "in a later phase" and "regenerated by a build command (planned)" —
   nothing builds one, and `search` scans the records directly. It now says the
   directory is a reserved, always-gitignored slot with no writer. `generated/README.md`
   advertised a "3k–5k tokens" resume packet; the bound is a 5,000-token ceiling with
   no floor. Both files are copied into every user's repo by `init`, which is why the
   template — not the doc describing it — was the thing to fix.
-- **`docs/cli-spec.md` documents `search` (MF-43).** The command surface spec had no
+- **`docs/cli-spec.md` documents `search`.** The command surface spec had no
   row and no section for a command shipped in Phase 5, so `--type`, `--status`,
   `--tag`, `--file` and `--stale-days` were specified nowhere. The new section also
   records the corpus limit the omission hid: `ideas/` and `sessions/` are not
   searchable, so `crumb note idea` writes records `search` cannot find (filed as an
   open item, not fixed here).
-- **Doc/code drift across the spec docs (MF-44 … MF-48, MF-52 … MF-55).** A sweep of
+- **Doc/code drift across the spec docs.** A sweep of
   every doc against the code it describes: `--version` and `resume --task` missing
   from the CLI spec; two dead "see the Phase 6 doc" cross-references replaced with
   the covered set and the deliberate known gaps of the secret scanner;
@@ -494,16 +494,16 @@ stamp once; run `crumb reindex` and it clears.
   fixed. `README.md` gained an *installed vs. this checkout* note (it said PyPI's
   newest release predated everything here, which this release is what resolves),
   and `CHANGELOG.md` explains the missing 0.1.5 and the never-published 0.1.6 where
-  a reader hits them. See `docs/fix-list.md` → Batch 7.
+  a reader hits them.
 - **`git_dirty_files` no longer corrupts the first filename in the most common
-  dirty state (MF-03).** `git status --porcelain` emits a worktree-only
+  dirty state.** `git status --porcelain` emits a worktree-only
   modification as `" M path"` — a leading space in the status columns — and
   `_git_out`'s whole-output `strip()` ate it on the *first* line, after which
   `line[3:]` chopped three characters off the path: one unstaged edit to
   `tracked.py` produced `['racked.py']`. The mangled path reached every record's
   `dirty_files` frontmatter and fed guard/search file matching. `_git_out` now
   strips only the trailing newline.
-- **One undecodable byte no longer defeats the trust primitives (MF-04).**
+- **One undecodable byte no longer defeats the trust primitives.**
   A single invalid UTF-8 byte in committed memory used to make `crumb audit` die
   with a path-less error and emit zero findings, silently exempt the whole file
   from `crumb scan-secrets` (which then reported OK), leave `crumb validate`
@@ -514,7 +514,7 @@ stamp once; run `crumb reindex` and it clears.
   `unscannable-file` finding instead of failing open, `validate` reports the
   unreadable core file, `resume` carries it as a packet warning, `doctor` reports
   an unreadable adapter, and `reindex` prints the actual cause.
-- **A verification can now influence a guard verdict (MF-05).** A verification
+- **A verification can now influence a guard verdict.** A verification
   record carries its outcome (`open`/`regressed`/…) in the item `status` so
   `search --status` filters on what agents care about, but guard's liveness test
   only accepted `"active"` — so *every* verification landed in history and was
@@ -524,8 +524,8 @@ stamp once; run `crumb reindex` and it clears.
   and whose outcome is unsettled (`open`, `regressed`, `inconclusive`, mirroring
   `active_verifications`); a specific match on one floors `READ_FIRST`. Settled
   outcomes (`fixed`, `not_applicable`) stay history, as before.
-- **The `PreToolUse` guard hook no longer auto-approves the calls it warns about
-  (MF-01).** For any non-`PROCEED` verdict other than `ASK_HUMAN` the hook emitted
+- **The `PreToolUse` guard hook no longer auto-approves the calls it warns about.**
+  For any non-`PROCEED` verdict other than `ASK_HUMAN` the hook emitted
   `permissionDecision: "allow"`, which in the Claude Code hook contract *approves
   the tool call outright* — skipping the permission prompt the user would
   otherwise have seen — and shows its reason only to the user, never to the model.
@@ -535,7 +535,7 @@ stamp once; run `crumb reindex` and it clears.
   permission flow left untouched, `PAUSE`/`ASK_HUMAN` → `"ask"` with the reason.
   The hook emits neither `allow` nor `deny`: memory informs, it never decides.
 - **The `Stop` capture hook no longer floods `sessions/` or clobbers your Next
-  Action (MF-02).** Claude Code's `Stop` fires every time the agent finishes
+  Action.** Claude Code's `Stop` fires every time the agent finishes
   responding — every turn, not once per session — and the hook ran a full
   `capture session --fast` each time, producing a run of near-empty session
   records and overwriting `handoff.md`'s Next Action with the stand-in text
@@ -546,7 +546,7 @@ stamp once; run `crumb reindex` and it clears.
   as placeholder text, so it can never overwrite a real Next Action or Current
   Focus; and the payload's `stop_hook_active` flag is honored.
 - **`session_tracking: distillate` no longer makes `validate` fail on every clone,
-  permanently (MF-06).** The projection freshness stamp (`inputs_hash`) hashed
+  permanently.** The projection freshness stamp (`inputs_hash`) hashed
   every record directory including `sessions/` — which that policy *gitignores* —
   while generated projections are committed by default. The committed packet was
   therefore stamped with a value no clone could reproduce, so every teammate's
@@ -559,8 +559,8 @@ stamp once; run `crumb reindex` and it clears.
   deliberately not consulted, since folding one developer's personal excludes into
   a shared stamp would recreate the same bug). The policy value itself is part of
   the hash, so flipping it invalidates stamps once, deliberately.
-- **The committed resume packet no longer embeds the author's absolute host path
-  (MF-07).** `generated/resume-packet.md` is tracked by default and served over
+- **The committed resume packet no longer embeds the author's absolute host path.**
+  `generated/resume-packet.md` is tracked by default and served over
   MCP, and it rendered `**project** — \`/Users/<name>/…\``: every commit published
   the author's local directory layout, a byte-identical clone at a different path
   read as *stale* (`crumb doctor`: ✓ fresh in one checkout, ✗ stale in the copy),
@@ -568,7 +568,7 @@ stamp once; run `crumb reindex` and it clears.
   packet now records the project path as `.` in both the rendered file and
   `--json`. Packets written by older versions are handled too: the staleness
   comparison ignores the project line.
-- **The freshness gate can now see a rename (MF-08).** `inputs_hash` hashed file
+- **The freshness gate can now see a rename.** `inputs_hash` hashed file
   *contents* only, concatenated without separators, while record identity is
   filename-derived — so renaming `2026-01-01-foo.md` to `2026-02-02-bar.md`
   changed that record's id everywhere in the packet without moving the hash, and
@@ -579,7 +579,7 @@ stamp once; run `crumb reindex` and it clears.
   `validate` or `audit` after upgrading reports a one-time
   `stale projection`/`packet-drift` finding on `generated/*.md`. Run
   `crumb reindex` once and it clears; no record data is affected.
-- **`crumb resume` refreshes every projection, atomically (MF-09).** It wrote
+- **`crumb resume` refreshes every projection, atomically.** It wrote
   `generated/resume-packet.md` directly with a plain (non-atomic) `write_text`
   instead of going through the reindex every mutation uses, so
   `generated/guard-prefilter.json` was left unrebuilt — `crumb hook guard` stayed
@@ -587,8 +587,8 @@ stamp once; run `crumb reindex` and it clears.
   `audit` report zero packet drift, hiding the staleness until the next mutation.
   The store-global write now calls `reindex_projections`, which writes both files
   atomically. `--fast` and `--task` remain print-only.
-- **`guard-prefilter.json` now obeys `commit_generated_projections: false`
-  (MF-10).** The local-only branch of the managed `.gitignore` block ignored only
+- **`guard-prefilter.json` now obeys `commit_generated_projections: false`.**
+  The local-only branch of the managed `.gitignore` block ignored only
   `generated/*.md`, so the JSON index — rebuilt on every write — stayed tracked and
   churning in a repo whose owner had asked for local-only projections. The branch
   now also ignores `generated/*.json`. The file was undocumented everywhere; it is
@@ -596,7 +596,7 @@ stamp once; run `crumb reindex` and it clears.
   `docs/cli-spec.md`. Existing stores pick the rule up by re-running `crumb init`
   (a tracked `guard-prefilter.json` needs one `git rm --cached`).
 
-- **A partial publish is recoverable by re-run, and the docs say so (MF-11).**
+- **A partial publish is recoverable by re-run, and the docs say so.**
   The publish job uploads to PyPI first and creates the tag + GitHub Release
   afterwards, so a failure in that last step leaves the version permanently
   published with no tag and no Release — and the build job's pre-flight then
@@ -613,7 +613,7 @@ stamp once; run `crumb reindex` and it clears.
   `.github/scripts/release_preflight.py` with unit tests, instead of being
   discovered during a release. The false recovery advice in `RELEASING.md`, the
   workflow header comment and `CLAUDE.md` is corrected.
-- **`mode: publish` now runs the test suite and gates on CI (MF-12).** The
+- **`mode: publish` now runs the test suite and gates on CI.** The
   release workflow ran `twine check`, a bundled-template identity check and a
   two-command installed-binary smoke test, but never the test suite, and had no
   check that `ci` had succeeded on the commit being published — a commit that
@@ -624,7 +624,7 @@ stamp once; run `crumb reindex` and it clears.
   the Python matrix are covered too. `RELEASING.md`'s claim that dry-run "runs
   every check CI does" is corrected to what it actually runs.
 
-- **`crumb init` validates integration flags before it writes anything (MF-14).**
+- **`crumb init` validates integration flags before it writes anything.**
   `--with-hooks=bogus` used to reach `_HOOK_SPECS[ev]` and escape as a raw
   `KeyError` traceback — *after* the scaffold had been swapped in and `.gitignore`
   written, leaving a store with no hooks that `init` would then refuse to touch
@@ -636,8 +636,8 @@ stamp once; run `crumb reindex` and it clears.
   2 with a message naming the valid values. For stores already in the bad state,
   `--remove-integrations` now discovers managed blocks in the project root's own
   files, not just the canonical list, and reverses them.
-- **`Record.sections` is fence-aware — there is one section splitter now (MF-15).**
-  The review #3 fence fix landed in `split_md_ordered`/`split_md_sections` and
+- **`Record.sections` is fence-aware — there is one section splitter now.**
+  The earlier fence fix landed in `split_md_ordered`/`split_md_sections` and
   never reached `Record.sections`, a second hand-rolled copy. A body whose fenced
   code block contained `## Next Action` — routine, since `--set 'Commands /
   Verification' …` writes fences — reported a section that does not exist: validate
@@ -646,11 +646,11 @@ stamp once; run `crumb reindex` and it clears.
   could cite the wrong text, and content after the fake heading vanished from the
   dict view. `Record.sections` now delegates to `split_md_sections`, which also
   merges duplicate headings instead of last-wins.
-- **`memory_record` returns the documented error envelope (MF-16).** It called
+- **`memory_record` returns the documented error envelope.** It called
   `cli.write_record` bare while every other write path wrapped it, so a newline in
   `title` (and any other value the writer refuses) escaped as a raw `ToolError`
   instead of the `{ok:false, error}` `docs/mcp-spec.md` promises.
-- **MCP write tools no longer return absolute host paths (MF-17).** `mcp_core`
+- **MCP write tools no longer return absolute host paths.** `mcp_core`
   states the rule at the top of the module — never hand the MCP client an absolute
   host path — and applied it to the missing-store error while every success payload
   did exactly that. `memory_record`, `memory_note`, `memory_verify`,
@@ -658,7 +658,7 @@ stamp once; run `crumb reindex` and it clears.
   (`decisions/2026-07-24-x.md`), the same form validate/audit/doctor findings use;
   the choice is stated in `docs/mcp-spec.md`. The CLI still prints absolute paths
   for humans.
-- **Open-question ids no longer collide on a shared 48-character prefix (MF-18).**
+- **Open-question ids no longer collide on a shared 48-character prefix.**
   Ids were `q:` + the first 48 characters of the slug, so two distinct questions
   ("… to the new **columnar store this quarter**" / "… to the new **row store next
   quarter**") produced one id, and `search`'s by_id map kept only the last — which
@@ -666,31 +666,31 @@ stamp once; run `crumb reindex` and it clears.
   advice for another's. A truncated slug now carries a short digest of the full
   question; ids short enough not to be cut are unchanged. `_candidate_items` also
   disambiguates any residual duplicate (traps derive ids from free text too).
-- **Interactive `remember` no longer prompts for sections already given (MF-19).**
+- **Interactive `remember` no longer prompts for sections already given.**
   `sections.setdefault(heading, input(...))` evaluated the prompt eagerly, so a
   heading supplied via `--set` was asked for anyway and the answer discarded.
-- **`crumb hook` with no subcommand reports usage instead of hanging (MF-20).**
+- **`crumb hook` with no subcommand reports usage instead of hanging.**
   It read stdin before validating the event, so from a terminal it blocked until
   EOF and only then printed the usage error.
-- **Ctrl+C at an `init` prompt aborts instead of consenting (MF-21).** `_prompt_yes`
+- **Ctrl+C at an `init` prompt aborts instead of consenting.** `_prompt_yes`
   and `prompt_session_tracking` mapped `KeyboardInterrupt` to the prompt's default,
   and the adapter/MCP prompts default to *yes* — so aborting at "Register the MCP
   server in .mcp.json?" was recorded as consent and went on to edit `.mcp.json`.
   Ctrl+C now aborts the command with exit 130 and a one-line message; `EOFError`
   still takes the default, so piped input behaves exactly as before.
-- **A comment-only frontmatter value parses as null (MF-22).** `_strip_inline_comment`
+- **A comment-only frontmatter value parses as null.** `_strip_inline_comment`
   requires a space before the `#`, so `superseded_by: # none yet` survived as the
   literal string `"# none yet"` — truthy garbage that satisfied validate §16.6's
   "a superseded record needs a `superseded_by`" check. YAML reads it as null; so
   do we.
-- **Filename canonicality rejects impossible dates and stray slug characters
-  (MF-23).** `RECORD_STEM_RE` was `(\d{4})-(\d{2})-(\d{2})-(.+)`, which accepted
+- **Filename canonicality rejects impossible dates and stray slug characters.**
+  `RECORD_STEM_RE` was `(\d{4})-(\d{2})-(\d{2})-(.+)`, which accepted
   `9999-99-99-My Slug!.md` and derived the id `dec_99999999_My Slug!` — spaces and
   punctuation inside an exact-match key. The date must now be a real calendar date
   and the slug must match the charset `slugify` emits. Writers always produced
   clean names; `validate` §16.4 exists for hand-created files, which is where this
   mattered, and its finding now names the rule.
-- **The two projection files nothing ever generated are gone (MF-26).**
+- **The two projection files nothing ever generated are gone.**
   `generated/stale-report.md` and `generated/memory-index.md` were scaffolded by
   `init` into every store, carried the `GENERATED PROJECTION` marker and a
   "Rebuilt by `crumb audit`" header, and were written by nothing — `stale-report`
@@ -700,69 +700,68 @@ stamp once; run `crumb reindex` and it clears.
   them, which is the clearest evidence they were never real. Both templates are
   removed, and `docs/record-schema.md` §1/§2 and the bundled `generated/README.md`
   no longer list them. Existing stores can delete both files; nothing reads them.
-- **The MCP resource registries are a checked manifest instead of dead code
-  (MF-28).** `STATIC_RESOURCES`/`TEMPLATE_RESOURCES` carried a comment saying the
+- **The MCP resource registries are a checked manifest instead of dead code.**
+  `STATIC_RESOURCES`/`TEMPLATE_RESOURCES` carried a comment saying the
   server consumed them, and nothing referenced them anywhere. `build_server` binds
   each URI explicitly on purpose, so the registries are kept as the *declared*
   surface — the "8 resources" the README and mcp-spec advertise — the comment now
   says so, and a test pins the bound URIs to the registry keys (read from the AST,
   so it runs without the optional SDK).
-- **The missing-store envelope test covers all ten tools (MF-29).** It listed
+- **The missing-store envelope test covers all ten tools.** It listed
   eight; the two it omitted (`memory_verify`, `memory_reindex`) were the only ones
   whose envelope nothing else exercised. The test now enumerates the tools by name
   and fails if `mcp_core` grows one that is not listed. `memory_record`'s explicit
   medium/high-without-evidence branch and the templated resources' unknown-id
   rejection are covered too.
-- **Contributor tooling is declared (MF-37).** `CLAUDE.md` told contributors to run
+- **Contributor tooling is declared.** `CLAUDE.md` told contributors to run
   `python -m pytest -q` while pytest was declared nowhere — no dev extra, no
   requirements file — and CI ran `unittest discover`. `unittest discover -s tests`
   is now documented as canonical (it needs nothing installed, which is the point of
   a zero-dependency package), a `[dev]` extra declares pytest/ruff/build/twine, and
   `[tool.pytest.ini_options] testpaths` stops a stray root `.pytest_cache`.
-- **`import breadcrumbs` no longer imports the CLI (MF-31).** The module docstring
+- **`import breadcrumbs` no longer imports the CLI.** The module docstring
   said importing the package avoided importing the (heavier) CLI just to read
   `__version__`; the next statement was an unconditional
   `from breadcrumbs.cli import …`, so the claim held only for setuptools' static
   read. The re-exports are lazy now (PEP 562 `__getattr__`), so the docstring is
   true for a real import and `from breadcrumbs import main` still works.
-- **Docs corrected where they described something the code does not do (MF-30,
-  MF-33, MF-34, MF-35, MF-36).** The bundled store README documents
+- **Docs corrected where they described something the code does not do.** The
+  bundled store README documents
   `verifications/`, the directory `crumb verify` writes to, which it had never
-  mentioned. The CHANGELOG's dangling link to a review doc deleted in `a4da5c0` is
-  annotated. The README's install line no longer calls PyPI "(future)" three weeks
+  mentioned. The README's install line no longer calls PyPI "(future)" three weeks
   after 0.1.7 shipped there. `RELEASING.md` Path B scopes its token to
   **`crumb-kit`** (the PyPI project) rather than `breadcrumbs` (the import package),
   and warns that Path B bypasses every guardrail Path A adds.
   `docs/record-schema.md` says `git diff --shortstat` (what capture has used since
   0.1.2), and `docs/cli-spec.md` no longer claims `guard` writes a session note —
   `cmd_guard` performs no writes.
-- **The stray review file at the repo root is gone (MF-32).**
+- **The stray review file at the repo root is gone.**
   `crumb-kit-agentic-review-2026-06-26.md.txt` (34 KB, double extension) sat beside
   the package while every other review doc lives in `docs/`; its findings shipped in
   0.1.2/0.1.3, and this repo deletes a review doc once its findings are resolved
-  (review #3's was). The one reference to it now explains where it went.
-- **A new fixture was invisible to CI and to half the test suite (MF-63).** CI
+  ('s was). The one reference to it now explains where it went.
+- **A new fixture was invisible to CI and to half the test suite.** CI
   looped over `fixtures/fixture-0[2-9]-* fixtures/fixture-1[01]-*`, so a twelfth
   fixture would simply not have been globbed — `validate` and `audit` would have
   reported success over eleven of twelve. `tests/test_mcp.py` also kept a second,
   independent hand-maintained copy of the fixture roster. CI now globs
   `fixtures/fixture-*/`, both test modules derive the roster from the directory,
   and `tests/test_fixtures.py` fails if a fixture on disk is not registered.
-- **The `init` tree test never checked `verifications/` (MF-62).** `EXPECTED_TREE`
+- **The `init` tree test never checked `verifications/`.** `EXPECTED_TREE`
   listed `decisions/`, `attempts/`, `sessions/` and `ideas/` but not
   `verifications/.gitkeep`, although the template has shipped it since the record
   type landed — so removing it from the scaffold would have gone unnoticed. It is
   listed now, and the tree is additionally compared against the bundled template
   itself, because an inclusion list only catches deletions someone remembered to
   enumerate.
-- **A dead "see the Phase 6 doc" pointer survived in the code (MF-61).** MF-45
+- **A dead "see the Phase 6 doc" pointer survived in the code.** An earlier pass
   replaced that cross-reference in `docs/security.md` and `docs/cli-spec.md` — no
   phase doc has ever existed — but missed the copy above `SECRET_PATTERNS` in
   `cli.py`, which is where someone looking for the scanner's covered set actually
   lands. It now names the real record: the pattern tuple, `docs/security.md` §2,
   and `tests/test_secrets.py`.
 - **The two projection-freshness checks are documented as complementary, and
-  pinned (MF-64).** `detect_packet_drift` ("is the stamped inputs hash stale?") and
+  pinned.** `detect_packet_drift` ("is the stamped inputs hash stale?") and
   `_packet_is_stale` ("would a rebuild produce different bytes?") were read as
   redundant. They are not, in either direction: an edit to a section the *bounded*
   packet never renders invalidates the stamp while the bytes are identical, and a
@@ -799,63 +798,61 @@ tagged but never reached PyPI — the release workflow failed to publish them �
 > reached PyPI inside 0.1.7. The entry stays because the work is real and 0.1.7's
 > notes assume it.
 
-Resolves the six high-severity findings from the third (full-system) review
-(`docs/crumb-kit-system-review-2026-07-01.md` — doc since removed in `a4da5c0`,
-once every finding had shipped — R1–R6), and — in a second pass —
-all twenty of its Medium/Low findings (R7–R26), completing the review.
+Resolves the six high-severity findings from the third full-system review and —
+in a second pass — all twenty of its medium/low findings, completing the round.
 
 ### Added
-- **`crumb mark-status <id> <status>` (R25)** — the record lifecycle mutation
+- **`crumb mark-status <id> <status>` ** — the record lifecycle mutation
   (stale/disputed/superseded/…) as a CLI command; it previously existed only as
   the MCP `memory_mark_status` tool despite README/docs describing the flow.
   `--superseded-by ID` sets the pointer validate requires when superseding
   (mirrored on the MCP tool as a new optional param) — this is the "supersede
   flow" mcp-spec referenced.
-- **Trap-token guard pre-filter index (R9)** — reindex now also writes
+- **Trap-token guard pre-filter index ** — reindex now also writes
   `generated/guard-prefilter.json`, a token/path index over known traps and
   do-not-retry attempts. The `PreToolUse` hook consults it (one small-file
   read; still no record walk on the common path), so a trap-shaped but
   routine-looking command (`pytest -n auto`) escalates to full guard scoring —
-  the near-miss class that motivated hooks in review #1, previously covered
+  the near-miss class that motivated hooks in the first place, previously covered
   only by a hardcoded regex.
 
 ### Fixed
-- **`capture session` reindexes on write (R1)** — the session-end flow (and the
+- **`capture session` reindexes on write ** — the session-end flow (and the
   `Stop → crumb hook capture` hook) mutates three packet inputs (session record,
   `handoff.md`, `current.md`) but was the one canonical mutation that never
   refreshed the `generated/` projections, so `crumb validate` failed on
   freshness immediately after the documented workflow.
-- **Integrations-only `init` on an existing store (R2)** — `crumb init
+- **Integrations-only `init` on an existing store ** — `crumb init
   --with-adapter/--with-mcp/--with-hooks` against a project that already has a
   store now applies just those integrations and leaves the store untouched;
   previously it errored and steered users toward `--force`, which replaces the
   scaffold and deletes every record. The clobber-guard message now spells out
   that `--force` is destructive.
-- **Round-trip-safe frontmatter re-rendering (R3)** — values containing both
+- **Round-trip-safe frontmatter re-rendering ** — values containing both
   quote kinds are now emitted single-quoted with YAML `''` escaping (and parsed
   back), block lists render both scalar and map items under *any* key (scalar
   `evidence` items no longer crash; list-of-maps under generic keys no longer
   persist as Python `repr` strings), unrepresentable nesting raises instead of
   corrupting, and `set_record_status` refuses to write any rendering the parser
   would read back differently (fail-closed round-trip check).
-- **Fence-aware markdown section splitting (R4)** — `## ` lines inside
+- **Fence-aware markdown section splitting ** — `## ` lines inside
   ``` / ~~~ code fences are content, not section boundaries, so `capture
   session` no longer structurally corrupts a `handoff.md`/`current.md` whose
   sections contain fenced command output.
-- **MCP server on Python 3.10/3.11 (R5)** — tool schemas now use
+- **MCP server on Python 3.10/3.11 ** — tool schemas now use
   `typing_extensions.TypedDict` (with a stdlib fallback for SDK-less installs);
   pydantic rejects `typing.TypedDict` before Python 3.12, so `breadcrumbs-mcp`
   crashed at startup on two of the three advertised Python versions.
-- **Release dry-run publishes to TestPyPI (R6)** — `release.yml` now routes
+- **Release dry-run publishes to TestPyPI ** — `release.yml` now routes
   `workflow_dispatch` to TestPyPI (environment `testpypi`) and only a published
   GitHub release to real PyPI, matching RELEASING.md; previously the documented
   "dry-run" performed an irreversible real publish.
-- **Trust loop (R7, R8)** — `_inputs_hash` now covers `manifest.yml` (a packet
+- **Trust loop ** — `_inputs_hash` now covers `manifest.yml` (a packet
   input), so the freshness check can no longer certify a packet built from a
   since-edited manifest; the packet's `warnings` list is capped (20) with an
   omitted-count disclosure and is budget-trimmable *after* every substantive
   section, so the ≤5k-token bound holds even on warning-heavy stores.
-- **MCP parity (R10, R11, R12)** — `memory_build_resume_packet(task=…)` passes
+- **MCP parity ** — `memory_build_resume_packet(task=…)` passes
   `task` through to the engine (scoped `likely_files`, `starting cold` label —
   identical to `crumb resume --task`) instead of merely echoing it;
   `memory_record` returns the CLI's error for an explicit evidence-less
@@ -863,21 +860,21 @@ all twenty of its Medium/Low findings (R7–R26), completing the review.
   confidence still defaults to low); `crumb mcp serve --project PATH` actually
   serves that project (exports `BREADCRUMBS_PROJECT`) instead of silently
   serving cwd.
-- **Hook robustness (R13)** — a truthy non-dict `tool_input` (and a valid but
+- **Hook robustness ** — a truthy non-dict `tool_input` (and a valid but
   non-object JSON stdin payload) degrades to `{}` like every other malformed
   payload instead of crashing with a traceback.
-- **Content preservation (R14)** — `update_handoff`/`update_current` keep user
+- **Content preservation ** — `update_handoff`/`update_current` keep user
   intro text between the header and the first `## `, and duplicate-heading
   bodies are merged instead of last-wins dropped (shared fence-aware ordered
   splitter).
-- **Shallow clones (R15)** — `capture session` diffs from the shallow boundary
+- **Shallow clones ** — `capture session` diffs from the shallow boundary
   instead of the empty tree, so "Files Touched" no longer claims the entire
   repo in a depth-limited clone.
-- **Validate robustness (R16, R17)** — a non-string verification `subject` and
+- **Validate robustness ** — a non-string verification `subject` and
   a non-UTF-8 `handoff.md`/`generated/*.md` are reported as findings instead of
   crashing the trust primitive; session done-markers are word-boundary matched
   ("done" no longer matches "abandoned").
-- **CI blindness (R18)** — the test job runs a 3.9/3.11/3.12 matrix (3.9 is the
+- **CI blindness ** — the test job runs a 3.9/3.11/3.12 matrix (3.9 is the
   documented floor); a new `mcp` job installs the `[mcp]` extra on 3.10–3.12,
   runs the suite (un-skipping the SDK registration test that would have caught
   R5) and asserts the server builds with all 10 tools + 6 prompts; the
@@ -886,13 +883,13 @@ all twenty of its Medium/Low findings (R7–R26), completing the review.
   step, red on `main` since the 0.1.4 freshness check landed: fixture-08's
   projection is *deliberately* stale, so that step now asserts the freshness
   failure instead of tripping over it (the unit suite already pinned this).
-- **Signal quality (R19, R20)** — template placeholder values in the handoff
+- **Signal quality ** — template placeholder values in the handoff
   header are treated as absent, so a fresh store no longer warns "branch
   mismatch … '<branch>'" / "timestamp is not parseable" on every resume/guard
   until first capture; `audit` reports the unconditional handoff age/distance
   line as INFO unless it is actually cold (⚠), so a seconds-old store audits
   quietly.
-- **Record integrity (R21, R23, R24)** — git's C-quoted porcelain paths
+- **Record integrity ** — git's C-quoted porcelain paths
   (spaces/quotes/non-ASCII) are decoded before storage in `dirty_files`;
   recency ordering parses timestamps instead of comparing strings (mixed UTC
   offsets no longer pick the wrong "newest" record); unborn-HEAD repos record
@@ -900,20 +897,20 @@ all twenty of its Medium/Low findings (R7–R26), completing the review.
   `#`; record/singleton/projection writes go through tmp+rename (no truncated
   files on interruption); a status-change `reason` containing `-->` can no
   longer escape the trailing HTML comment.
-- **Note hygiene (R22)** — question/trap text and field values are flattened to
+- **Note hygiene ** — question/trap text and field values are flattened to
   one line (embedded `\n## …` can no longer forge headings) and comment markers
   are neutralized (a `<!--`/`-->` pair across two traps could comment-join
   everything between them out of every reader); duplicate trap slugs and
   duplicate questions are refused instead of accumulating shadowed blocks; the
   template-placeholder filter matches the exact template lines instead of any
   user line shaped like `_No … yet._`.
-- **MCP envelope + docs (R25)** — every tool success now carries `ok`
+- **MCP envelope + docs ** — every tool success now carries `ok`
   (search/guard/packet gained it; `scan_secrets` keeps `clean` alongside);
   the dead `fast` parameter is gone from the packet adapter;
   `breadcrumbs-mcp --help` prints usage instead of silently starting the stdio
   server; mcp-spec's tool table matches reality (incl. `files` on
   `memory_search`).
-- **Heuristic coverage (R26)** — the instruction-like scan catches natural
+- **Heuristic coverage ** — the instruction-like scan catches natural
   phrasings ("ignore failing tests", "ignore all prior instructions", "bypass
   the code review"); the secret scan adds `refresh_token`/`private_key`/
   `id_token`/`session_token`/`signing_key` labels, matches JSON-quoted keys,
@@ -925,9 +922,8 @@ all twenty of its Medium/Low findings (R7–R26), completing the review.
 
 ## [0.1.4] — 2026-06-29
 
-Resolves the high-leverage findings from the second agentic review (MCP
-integration, write path, cloud portability — `docs/crumb-kit-agentic-review-2026-06-27.md`).
-The CLI remains the single source of behavior; the MCP layer stays a thin wrapper
+Resolves the high-leverage findings from the second full-system review (MCP
+integration, write path, cloud portability). The CLI remains the single source of behavior; the MCP layer stays a thin wrapper
 over it. The on-disk record `schema_version` is unchanged (still `1`): the new
 `verification` records use the same frontmatter contract as existing record types.
 
