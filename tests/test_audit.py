@@ -1,4 +1,4 @@
-"""Tests for `crumb audit` (Phase 6, plan §10/§15/§16 note/§19b).
+"""Tests for `crumb audit` (§19b).
 
 `audit` is the heuristic safety net `validate`'s determinism intentionally excludes.
 Covered here:
@@ -151,7 +151,7 @@ class HealthViewTests(unittest.TestCase):
             # The record was written on the original branch; HEAD is now on
             # feature-x. (The handoff-level "branch mismatch" line no longer
             # fires here: a fresh store's handoff carries only the template
-            # placeholder branch, which is placeholder-aware since review #3 R19.)
+            # placeholder branch, and that placeholder is recognized as one.)
             self.assertIn("written on other branches", warns_text(findings))
 
 
@@ -250,7 +250,7 @@ class BloatTests(unittest.TestCase):
             kinds = {f.get("kind") for f in findings if f["check"] == "bloat"}
             self.assertIn("adapter-duplication", kinds)
 
-    def test_MF79_a_large_host_file_with_a_small_signpost_is_not_bloat(self):
+    def test_a_large_host_file_with_a_small_signpost_is_not_bloat(self):
         """The signpost is ours to keep small; the instruction file is not ours."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -266,7 +266,7 @@ class BloatTests(unittest.TestCase):
             kinds = {f.get("kind") for f in crumb.run_audit(mem, root) if f["check"] == "bloat"}
             self.assertNotIn("adapter-bloat", kinds)
 
-    def test_MF79_a_bloated_managed_block_is_still_flagged(self):
+    def test_a_bloated_managed_block_is_still_flagged(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             mem = fresh_store(tmp)
@@ -301,10 +301,10 @@ class CliTests(unittest.TestCase):
 
 
 class FreshnessComplementarityTests(unittest.TestCase):
-    """MF-64 — pin that the two staleness checks answer *different* questions.
+    """Pin that the two staleness checks answer *different* questions.
 
     The fix list files "three competing notions of projection freshness" as the
-    strongest argument for splitting `cli.py` (D4). Two of the three are not
+    strongest argument for splitting `cli.py`. Two of the three are not
     competing: `_inputs_hash` is the primitive, and the other two are complementary
     detectors, each catching a class the other cannot. This test reproduces both
     directions, so a future split (or a well-meant "deduplicate these") cannot
@@ -371,12 +371,12 @@ class FreshnessComplementarityTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-72 — guard reachability (field test 2026-08-04): a record with no tags and
+# Guard reachability (field test 2026-08-04): a record with no tags and
 # no file evidence can only surface through generic keyword overlap, which the
 # stale factors readily push under the noise floor. Audit must say so while the
 # author is still around to fix it.
 # --------------------------------------------------------------------------- #
-class MF72UnreachableRecordTests(unittest.TestCase):
+class UnreachableRecordTests(unittest.TestCase):
     def _store(self, tmp: str) -> tuple[Path, Path]:
         root = Path(tmp)
         self.assertEqual(
@@ -384,7 +384,7 @@ class MF72UnreachableRecordTests(unittest.TestCase):
         )
         return root, root / crumb.MEMORY_DIRNAME
 
-    def test_MF72_prose_only_record_warns(self):
+    def test_prose_only_record_warns(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
             path, _meta = crumb.write_record(
@@ -399,7 +399,7 @@ class MF72UnreachableRecordTests(unittest.TestCase):
             self.assertEqual(hits[0]["severity"], crumb.AUDIT_WARN)
             self.assertIn(path.name, hits[0]["path"])
 
-    def test_MF72_tags_or_file_evidence_silence_the_warning(self):
+    def test_tags_or_file_evidence_silence_the_warning(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
             crumb.write_record(
@@ -421,7 +421,7 @@ class MF72UnreachableRecordTests(unittest.TestCase):
             findings = crumb.run_audit(mem, root)
             self.assertEqual([f for f in findings if f["check"] == "unreachable"], [])
 
-    def test_MF72_non_active_records_are_exempt(self):
+    def test_non_active_records_are_exempt(self):
         """A superseded record no longer drives verdicts; do not nag about it."""
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)

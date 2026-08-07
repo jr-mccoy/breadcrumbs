@@ -493,31 +493,30 @@ automatically so it stays in step.)
 
 | Command | State |
 |---|---|
-| `init` | implemented (Phase 1) |
-| `validate` | implemented (Phase 2) |
-| `remember decision` / `remember attempt` | implemented (Phase 3) |
+| `init` | implemented |
+| `validate` | implemented |
+| `remember decision` / `remember attempt` | implemented |
 | `verify` (verification result: outcome + method + evidence) | implemented |
 | `mark-status` (record lifecycle mutation, validate-gated, `--superseded-by`) | implemented |
 | `reindex` (rebuild generated projections) | implemented |
-| `capture session` (incl. `--fast`) | implemented (Phase 3) |
-| `resume` (incl. `--fast`, computed staleness) | implemented (Phase 4 — **MVP-core**) |
-| `search` (deterministic keyword/tag/file) | implemented (Phase 5) |
-| `guard` (deterministic ranking, §11 verdicts) | implemented (Phase 5) |
-| `audit` (heuristic: secrets, instruction-like, drift, staleness, bloat) | implemented (Phase 6 — **MVP-trust**) |
-| `scan-secrets` (committed-memory secret gate) | implemented (Phase 6) |
+| `capture session` (incl. `--fast`) | implemented |
+| `resume` (incl. `--fast`, computed staleness) | implemented (**MVP-core**) |
+| `search` (deterministic keyword/tag/file) | implemented |
+| `guard` (deterministic ranking, §11 verdicts) | implemented |
+| `audit` (heuristic: secrets, instruction-like, drift, staleness, bloat) | implemented (**MVP-trust**) |
+| `scan-secrets` (committed-memory secret gate) | implemented |
 | `schema` (record contract introspection + template) | implemented |
 | `note question` / `note trap` / `note idea` (write-surface) | implemented |
-| `pipx`/`pip` packaging (`crumb` console script, bundled templates) | implemented (Phase 7) |
-| MCP server (`breadcrumbs-mcp`: 8 resources, 6 prompts, 10 tools) | implemented (Phase 8 — **optional**) |
+| `pipx`/`pip` packaging (`crumb` console script, bundled templates) | implemented |
+| MCP server (`breadcrumbs-mcp`: 8 resources, 6 prompts, 10 tools) | implemented (**optional**) |
 | Integrations: `init` bootstrapper, `doctor`, `mcp`, `hook` (adapter + `.mcp.json` + hooks) | implemented |
 
-With Phase 6 the full MVP (capture → resume → trust) is complete and CI-guarded;
-Phase 7 packages it as a `pipx`-installable `crumb` binary (see **Install**
-above). Phase 8 adds an **optional** MCP server (`pip install
-"crumb-kit[mcp]"`) that exposes the same memory engine to agents without
-shelling out — a thin wrapper over the Phase 1–6 functions, never required for
-baseline use. The **Integrations** layer (`crumb init --with-*`, `crumb doctor`,
-`crumb hook`) wires that engine into your agent so the store is consulted
+The full loop (capture → resume → trust) is complete and CI-guarded, and ships as
+a `pipx`-installable `crumb` binary (see **Install** above). An **optional** MCP
+server (`pip install "crumb-kit[mcp]"`) exposes the same memory engine to agents
+without shelling out — a thin wrapper over the same core functions, never
+required for baseline use. The **Integrations** layer (`crumb init --with-*`,
+`crumb doctor`, `crumb hook`) wires that engine into your agent so the store is consulted
 automatically rather than only when an agent remembers to. See [`docs/`](docs/)
 for the architecture, record schema, CLI spec, [MCP spec](docs/mcp-spec.md), and
 security posture.

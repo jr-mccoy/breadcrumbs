@@ -1,4 +1,4 @@
-"""Tests for `crumb schema` (review §6.2/§8 — schema discoverable without probing --help).
+"""Tests for `crumb schema` (schema discoverable without probing --help).
 
 Run with:  python -m pytest tests/
        or:  python tests/test_schema.py

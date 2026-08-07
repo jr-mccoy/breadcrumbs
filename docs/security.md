@@ -20,7 +20,7 @@ part of the memory design, not an add-on.
 
 ## 2. Required controls
 
-- **Secret scan memory before commit.** Implemented in Phase 6: `crumb
+- **Secret scan memory before commit.** Implemented as `crumb
   scan-secrets` (and the `audit` secret sub-check) scans committed memory for
   token-like strings and exits non-zero on a hit — the one blocking check in `audit`.
   Run it before any "commit memory" workflow. Coverage is conservative: the covered
@@ -42,7 +42,7 @@ part of the memory design, not an add-on.
   it blocks. `tests/test_secrets.py` pins the covered shapes, these controls, and —
   for the URL pattern — a zero-false-positive sweep of this repository.
 
-  The URL case was missed until 0.1.8 (MF-67): a password after a bare `:` inside
+  The URL case was missed until 0.1.8: a password after a bare `:` inside
   a URL carries no `password=`-style label for the keyword list to match, and it is
   usually too short and too word-like for the entropy heuristic. A "how to run
   this" note carrying a `DATABASE_URL` is among the likeliest secrets to be written
@@ -70,13 +70,13 @@ part of the memory design, not an add-on.
   than hidden. Detached HEAD and a record written on a since-merged branch both
   count as a mismatch and warn. (Records carrying the `(no-git)` sentinel are not
   treated as mismatches — see [`record-schema.md`](record-schema.md) §7.)
-- **Privacy labels enforced by validation** (Phase 2).
+- **Privacy labels enforced by validation**.
 
 ---
 
 ## 3. Validation posture (deterministic vs heuristic)
 
-`validate` (Phase 2) is **fully deterministic**. It checks structure and invariants:
+`validate` is **fully deterministic**. It checks structure and invariants:
 
 1. `manifest.yml` exists and has a supported `schema_version`.
 2. Required core files exist.

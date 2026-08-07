@@ -1,4 +1,4 @@
-"""Tests for `crumb guard` — guard-before-action (Phase 5, plan §11 / §17).
+"""Tests for `crumb guard` — guard-before-action.
 
 Run with:  python -m pytest tests/
        or:  python -m unittest discover -s tests
@@ -370,7 +370,7 @@ class JsonShapeTests(unittest.TestCase):
 
 
 class SpeculativeIdeaTests(unittest.TestCase):
-    """MF-57 / O1 — Fixture 12: a speculative idea must never raise a verdict.
+    """Fixture 12: a speculative idea must never raise a verdict.
 
     An idea is a proposal, deliberately exempt from the §16.9 evidence rule, and
     `_decide_verdict`'s score band is kind-agnostic. Making `ideas/` searchable
@@ -439,7 +439,7 @@ class SpeculativeIdeaTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-71 / MF-72 — staleness de-weights; it must never erase (field test 2026-08-04)
+# Staleness de-weights; it must never erase (field test 2026-08-04)
 # --------------------------------------------------------------------------- #
 def _age_record(path: Path, *, days: int, branch: str | None = None) -> None:
     """Rewrite a record's clock (and optionally its branch) to simulate decay."""
@@ -452,7 +452,7 @@ def _age_record(path: Path, *, days: int, branch: str | None = None) -> None:
     path.write_text(text, encoding="utf-8")
 
 
-class MF71StaleSuppressionTests(unittest.TestCase):
+class StaleSuppressionTests(unittest.TestCase):
     """The stale/branch factors compound to 0.39, which pushed prose-only real
     matches under the noise floor and dropped them with no trace — the store was
     quietest exactly where it was oldest. Decay now demotes to history instead."""
@@ -473,7 +473,7 @@ class MF71StaleSuppressionTests(unittest.TestCase):
         )
         return mem, path
 
-    def test_MF71_decay_demotes_to_history_instead_of_dropping(self):
+    def test_decay_demotes_to_history_instead_of_dropping(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem, path = self._store(tmp)
             # raw 4 (3 keywords + active) x age factor 0.7 = 2.8, under floor 3.
@@ -489,7 +489,7 @@ class MF71StaleSuppressionTests(unittest.TestCase):
             self.assertLess(h["score"], crumb.GUARD_NOISE_FLOOR)
             self.assertIn("de-weighted below the noise floor", h["reason"])
 
-    def test_MF71_fresh_match_is_unchanged(self):
+    def test_fresh_match_is_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem, _path = self._store(tmp)
             res = cli.guard(mem, Path(tmp), self.QUERY)
@@ -497,7 +497,7 @@ class MF71StaleSuppressionTests(unittest.TestCase):
             self.assertFalse(res["matches"][0]["suppressed"])
             self.assertEqual(res["history"], [])
 
-    def test_MF71_raw_subfloor_noise_still_drops_silently(self):
+    def test_raw_subfloor_noise_still_drops_silently(self):
         """Two shared keywords on a superseded record score 2 raw — under the
         floor before any decay. That is genuine noise, not a decayed match."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -508,12 +508,12 @@ class MF71StaleSuppressionTests(unittest.TestCase):
             self.assertEqual(res["history"], [])
 
 
-class MF72TitleWeightTests(unittest.TestCase):
+class TitleWeightTests(unittest.TestCase):
     """A shared token in the record's own *title* is a targeted signal; scoring
     it like a body mention left title-named decisions one stale factor away from
     the noise floor."""
 
-    def test_MF72_title_hit_outscores_the_same_overlap_in_a_body(self):
+    def test_title_hit_outscores_the_same_overlap_in_a_body(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run(["init", "--project", tmp, "--session-tracking", "full"])
@@ -546,7 +546,7 @@ class MF72TitleWeightTests(unittest.TestCase):
             self.assertNotIn("title", body_only["signals"])
             self.assertGreater(titled["score"], body_only["score"])
 
-    def test_MF72_the_field_test_guest_case_is_no_longer_silent(self):
+    def test_the_field_test_guest_case_is_no_longer_silent(self):
         """The report's controlled experiment: the same decision, aged 38 days
         onto another branch, returned PROCEED with zero matches and zero
         history — silence on the exact action its title names."""
@@ -569,8 +569,8 @@ class MF72TitleWeightTests(unittest.TestCase):
             self.assertIn("title", surfaced[0]["signals"])
 
 
-class MF77NextActionDisambiguationTests(unittest.TestCase):
-    """One key name meant two unrelated things across two commands (MF-77).
+class NextActionDisambiguationTests(unittest.TestCase):
+    """One key name meant two unrelated things across two commands.
 
     `guard --json` carried `next_action` = advice this code synthesizes, always
     non-empty. `resume --json` carries `next_action` = the Next Action a session
@@ -585,7 +585,7 @@ class MF77NextActionDisambiguationTests(unittest.TestCase):
         run(["init", "--project", tmp, "--session-tracking", "full"])
         return root, root / crumb.MEMORY_DIRNAME
 
-    def test_MF77_guard_json_has_recommended_action_and_no_next_action(self):
+    def test_guard_json_has_recommended_action_and_no_next_action(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
             res = cli.guard(mem, root, "rewrite the auth middleware")
@@ -593,7 +593,7 @@ class MF77NextActionDisambiguationTests(unittest.TestCase):
             self.assertNotIn("next_action", res)
             self.assertTrue(res["recommended_action"].strip())
 
-    def test_MF77_the_two_keys_never_collide_in_one_payload(self):
+    def test_the_two_keys_never_collide_in_one_payload(self):
         """Whatever the store's state, the names stay distinguishable."""
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
@@ -604,7 +604,7 @@ class MF77NextActionDisambiguationTests(unittest.TestCase):
             self.assertIn("next_action", packet_keys)
             self.assertIn("recommended_action", guard_keys)
 
-    def test_MF77_guard_advice_is_non_empty_where_the_packet_may_be_blank(self):
+    def test_guard_advice_is_non_empty_where_the_packet_may_be_blank(self):
         """The asymmetry that made an unset handoff look like a broken guard."""
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
@@ -616,7 +616,7 @@ class MF77NextActionDisambiguationTests(unittest.TestCase):
             self.assertEqual(cli.build_resume_packet(mem, root)["next_action"], "")
             self.assertTrue(cli.guard(mem, root, "anything at all")["recommended_action"])
 
-    def test_MF77_human_render_still_labels_the_recommendation(self):
+    def test_human_render_still_labels_the_recommendation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
             text = crumb.render_guard_human(cli.guard(mem, root, "rewrite the auth middleware"))
@@ -624,7 +624,7 @@ class MF77NextActionDisambiguationTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-84 — guard's cost must not scale with the store
+# Guard's cost must not scale with the store
 # --------------------------------------------------------------------------- #
 def _git(root: Path, *args: str) -> str:
     return subprocess.run(

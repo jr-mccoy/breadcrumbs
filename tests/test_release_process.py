@@ -1,8 +1,8 @@
-"""Release-process regression tests (MF-11 … MF-13).
+"""Release-process regression tests.
 
 The release workflow had no tests at all, which is how it shipped a pre-flight
-that made a partial publish unrecoverable (MF-11) and a publish path that never
-ran the suite (MF-12). The decision logic now lives in
+that made a partial publish unrecoverable and a publish path that never
+ran the suite. The decision logic now lives in
 `.github/scripts/release_preflight.py` — a plain stdlib module — so the rules can
 be exercised here instead of during a release. The rest of this file pins the
 workflow-level guarantees by reading the YAML as text (the suite is stdlib-only;
@@ -52,23 +52,23 @@ def decide(**kw):
 
 
 # --------------------------------------------------------------------------- #
-# MF-11 — a partial publish must be recoverable by re-run
+# A partial publish must be recoverable by re-run
 # --------------------------------------------------------------------------- #
 class PreflightRecoveryTests(unittest.TestCase):
-    def test_MF11_published_but_untagged_continues(self):
+    def test_published_but_untagged_continues(self):
         """The whole point: PyPI accepted the upload, the tag step did not run."""
         d = decide(on_pypi=preflight.ON_PYPI_YES, latest_on_pypi="0.1.8", tag_exists=False)
         self.assertTrue(d.ok, d.reason())
         self.assertIn("recovering an untagged publish", d.reason())
 
-    def test_MF11_recovery_warns_that_the_tag_follows_this_run(self):
+    def test_recovery_warns_that_the_tag_follows_this_run(self):
         d = decide(on_pypi=preflight.ON_PYPI_YES, latest_on_pypi="0.1.8", tag_exists=False)
         self.assertTrue(
             any("main has not advanced" in text for _, text in d.messages),
             d.messages,
         )
 
-    def test_MF11_recovery_also_allowed_in_dry_run(self):
+    def test_recovery_also_allowed_in_dry_run(self):
         d = decide(
             on_pypi=preflight.ON_PYPI_YES,
             latest_on_pypi="0.1.8",
@@ -80,35 +80,35 @@ class PreflightRecoveryTests(unittest.TestCase):
             any("dry-run publishes nothing" in text for _, text in d.messages), d.messages
         )
 
-    def test_MF11_published_and_tagged_still_stops(self):
+    def test_published_and_tagged_still_stops(self):
         """A forgotten version bump must still fail fast, before anything is built."""
         d = decide(on_pypi=preflight.ON_PYPI_YES, latest_on_pypi="0.1.8", tag_exists=True)
         self.assertFalse(d.ok)
         self.assertIn("already released", d.reason())
 
-    def test_MF11_recovery_is_not_a_way_to_retag_an_old_version(self):
+    def test_recovery_is_not_a_way_to_retag_an_old_version(self):
         """0.1.2 is on PyPI and untagged forever; re-running it must not tag today."""
         d = decide(version="0.1.2", on_pypi=preflight.ON_PYPI_YES, latest_on_pypi="0.1.7")
         self.assertFalse(d.ok)
         self.assertIn("version regression", d.reason())
 
-    def test_MF11_unknown_latest_blocks_the_recovery_path(self):
+    def test_unknown_latest_blocks_the_recovery_path(self):
         d = decide(on_pypi=preflight.ON_PYPI_YES, latest_on_pypi=None, tag_exists=False)
         self.assertFalse(d.ok)
         self.assertIn("could not be determined", d.reason())
 
-    def test_MF11_dead_tag_without_a_publish_stops(self):
+    def test_dead_tag_without_a_publish_stops(self):
         """v0.1.5 / v0.1.6: tagged, never published. Re-using a tag is never right."""
         d = decide(on_pypi=preflight.ON_PYPI_NO, tag_exists=True)
         self.assertFalse(d.ok)
         self.assertIn("dead tag", d.reason())
 
-    def test_MF11_clean_version_proceeds(self):
+    def test_clean_version_proceeds(self):
         d = decide()
         self.assertTrue(d.ok, d.reason())
         self.assertIn("good to publish", d.reason())
 
-    def test_MF11_unreachable_pypi_warns_but_proceeds(self):
+    def test_unreachable_pypi_warns_but_proceeds(self):
         d = decide(on_pypi=preflight.ON_PYPI_UNKNOWN)
         self.assertTrue(d.ok, d.reason())
         self.assertTrue(any(level == preflight.WARNING for level, _ in d.messages), d.messages)
@@ -116,7 +116,7 @@ class PreflightRecoveryTests(unittest.TestCase):
     def _run_cli(self, *, tag_exists: str) -> tuple[int, str]:
         """Run the pre-flight CLI, capturing what it prints.
 
-        The capture is not incidental (MF-70). `main()` prints GitHub Actions
+        The capture is not incidental. `main()` prints GitHub Actions
         annotations — `::error::…` — and this suite runs *inside* the release
         workflow's build job, where the runner reads stdout for exactly those
         commands. Left uncaptured, this test stamped a red
@@ -143,25 +143,25 @@ class PreflightRecoveryTests(unittest.TestCase):
             )
         return code, buf.getvalue()
 
-    def test_MF11_cli_exit_codes_match_the_decision(self):
+    def test_cli_exit_codes_match_the_decision(self):
         ok, _ = self._run_cli(tag_exists="false")
         blocked, _ = self._run_cli(tag_exists="true")
         self.assertEqual((ok, blocked), (0, 1))
 
-    def test_MF11_cli_emits_the_decision_as_an_annotation(self):
+    def test_cli_emits_the_decision_as_an_annotation(self):
         _, recovered = self._run_cli(tag_exists="false")
         self.assertIn("::warning::recovering an untagged publish", recovered)
         _, stopped = self._run_cli(tag_exists="true")
         self.assertIn("::error::crumb-kit 0.1.8 is already released", stopped)
 
-    def test_MF70_the_cli_helper_leaks_nothing_to_the_real_stdout(self):
+    def test_the_cli_helper_leaks_nothing_to_the_real_stdout(self):
         """An annotation printed by a test is indistinguishable from a real one."""
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             self._run_cli(tag_exists="true")
         self.assertEqual(buf.getvalue(), "")
 
-    def test_MF70_no_test_calls_the_pre_flight_cli_uncaptured(self):
+    def test_no_test_calls_the_pre_flight_cli_uncaptured(self):
         """The next test to add must go through `_run_cli`, not `preflight.main`.
 
         Read from source, because the leak is invisible at runtime: a stray
@@ -181,20 +181,20 @@ class PreflightRecoveryTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-12 — publish runs the suite and gates on CI
+# Publish runs the suite and gates on CI
 # --------------------------------------------------------------------------- #
 class ReleaseWorkflowChecksTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.yml = RELEASE_YML.read_text(encoding="utf-8")
 
-    def test_MF12_build_job_runs_the_test_suite(self):
+    def test_build_job_runs_the_test_suite(self):
         self.assertTrue(
             "python -m unittest discover -s tests" in self.yml,
             "release.yml never runs the suite",
         )
 
-    def test_MF12_suite_runs_in_dry_run_too(self):
+    def test_suite_runs_in_dry_run_too(self):
         """The suite step must not be conditioned on mode — dry-run must run it."""
         lines = self.yml.splitlines()
         idx = next(i for i, ln in enumerate(lines) if "unittest discover" in ln)
@@ -209,19 +209,19 @@ class ReleaseWorkflowChecksTests(unittest.TestCase):
             f"the test-suite step is conditional: {step}",
         )
 
-    def test_MF12_suite_runs_before_anything_is_published(self):
+    def test_suite_runs_before_anything_is_published(self):
         self.assertLess(
             self.yml.index("unittest discover"),
             self.yml.index("gh-action-pypi-publish"),
         )
 
-    def test_MF12_publish_gates_on_the_ci_workflow_conclusion(self):
+    def test_publish_gates_on_the_ci_workflow_conclusion(self):
         self.assertTrue(
             "actions/workflows/ci.yml/runs?head_sha=" in self.yml, "no CI-conclusion gate"
         )
         self.assertTrue("CI concluded" in self.yml, "the CI gate never fails on a red run")
 
-    def test_MF12_ci_gate_can_read_workflow_runs(self):
+    def test_ci_gate_can_read_workflow_runs(self):
         self.assertTrue("actions: read" in self.yml, "the CI gate has no permission to read runs")
 
 
@@ -253,7 +253,7 @@ class PreflightWiringTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-70 — a transient network failure must not cost a release run
+# A transient network failure must not cost a release run
 # --------------------------------------------------------------------------- #
 class PublishRetryTests(unittest.TestCase):
     """The 0.1.8 publish failed on a 5-second connect timeout to upload.pypi.org.
@@ -286,22 +286,22 @@ class PublishRetryTests(unittest.TestCase):
             steps.append("\n".join(current))
         return [s for s in steps if "uses: pypa/gh-action-pypi-publish@" in s]
 
-    def test_MF70_the_upload_is_attempted_twice(self):
+    def test_the_upload_is_attempted_twice(self):
         self.assertEqual(
             len(self._upload_steps()),
             2,
             "the PyPI upload has no retry — one network blip loses the run",
         )
 
-    def test_MF70_the_first_attempt_does_not_fail_the_job(self):
+    def test_the_first_attempt_does_not_fail_the_job(self):
         """Without this the retry never runs: a failed step ends the job."""
         self.assertIn("continue-on-error: true", self._upload_steps()[0])
 
-    def test_MF70_the_retry_is_conditional_on_the_first_attempt_failing(self):
+    def test_the_retry_is_conditional_on_the_first_attempt_failing(self):
         """A second unconditional upload would run on every green publish."""
         self.assertIn("if: steps.publish.outcome == 'failure'", self._upload_steps()[1])
 
-    def test_MF70_the_retry_itself_can_still_fail_the_job(self):
+    def test_the_retry_itself_can_still_fail_the_job(self):
         """Two failures must leave no tag, so only the first attempt may be soft."""
         self.assertNotIn("continue-on-error:", self._upload_steps()[1])
         soft = [
@@ -315,13 +315,13 @@ class PublishRetryTests(unittest.TestCase):
             f"more than one step in the publish job swallows its own failure: {soft}",
         )
 
-    def test_MF70_every_attempt_uses_skip_existing(self):
+    def test_every_attempt_uses_skip_existing(self):
         """What makes a retry safe: a re-upload of an accepted file is a no-op."""
         for i, step in enumerate(self._upload_steps()):
             with self.subTest(attempt=i + 1):
                 self.assertIn("skip-existing: true", step)
 
-    def test_MF70_the_tag_step_still_runs_only_after_a_successful_upload(self):
+    def test_the_tag_step_still_runs_only_after_a_successful_upload(self):
         """`continue-on-error` on attempt 1 must not let the tag outlive a failure."""
         job = self._publish_job()
         self.assertLess(
@@ -332,7 +332,7 @@ class PublishRetryTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-13 — the tag/PyPI history is documented, since the invariant is violated
+# The tag/PyPI history is documented, since the invariant is violated
 # --------------------------------------------------------------------------- #
 class TagHistoryDocumentedTests(unittest.TestCase):
     """`tags == published releases` is false for this repo; say so where it bites."""
@@ -342,7 +342,7 @@ class TagHistoryDocumentedTests(unittest.TestCase):
         cls.releasing = (REPO_ROOT / "RELEASING.md").read_text(encoding="utf-8")
         cls.changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
-    def test_MF13_dead_tags_are_documented(self):
+    def test_dead_tags_are_documented(self):
         self.assertTrue(
             "Tag / PyPI history" in self.releasing, "RELEASING.md has no tag/PyPI history"
         )
@@ -351,18 +351,18 @@ class TagHistoryDocumentedTests(unittest.TestCase):
                 version in self.releasing, f"{version} (tagged, never published) undocumented"
             )
 
-    def test_MF13_the_untagged_pypi_version_is_documented(self):
+    def test_the_untagged_pypi_version_is_documented(self):
         self.assertTrue("0.1.2" in self.releasing, "0.1.2 (on PyPI, untagged) undocumented")
         self.assertTrue("0.1.2" in self.changelog, "0.1.2 gap missing from CHANGELOG")
 
-    def test_MF13_recovery_doc_no_longer_claims_nothing_to_clean_up(self):
+    def test_recovery_doc_no_longer_claims_nothing_to_clean_up(self):
         """RELEASING.md:78-81 described a recovery that did not work."""
         self.assertFalse(
             "nothing to clean up — no tag or release was\n  created" in self.releasing,
             "RELEASING.md still describes the old (wrong) partial-publish recovery",
         )
 
-    def test_MF35_path_b_names_the_pypi_project_and_its_missing_guardrails(self):
+    def test_path_b_names_the_pypi_project_and_its_missing_guardrails(self):
         """Path B said to scope the token to `breadcrumbs`; the project is `crumb-kit`."""
         path_b = self.releasing.split("## Path B")[1]
         self.assertIn("crumb-kit", path_b)
@@ -371,7 +371,7 @@ class TagHistoryDocumentedTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# Workflow hygiene (MF-38 … MF-42) — both workflows, read as text
+# Workflow hygiene — both workflows, read as text
 # --------------------------------------------------------------------------- #
 CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
@@ -403,7 +403,7 @@ class WorkflowHygieneTests(unittest.TestCase):
                 return "\n".join(out)
         return None
 
-    def test_MF38_both_workflows_set_top_level_permissions(self):
+    def test_both_workflows_set_top_level_permissions(self):
         """Without one, a job with no `permissions:` gets the repo-default scope."""
         for name, text in self.files.items():
             with self.subTest(workflow=name):
@@ -411,7 +411,7 @@ class WorkflowHygieneTests(unittest.TestCase):
                 self.assertIsNotNone(block, f"{name} has no top-level permissions block")
                 self.assertIn("contents: read", block)
 
-    def test_MF40_both_workflows_declare_a_concurrency_group(self):
+    def test_both_workflows_declare_a_concurrency_group(self):
         """ci ran twice per PR (push + pull_request); two publishes could race."""
         for name, text in self.files.items():
             with self.subTest(workflow=name):
@@ -419,12 +419,12 @@ class WorkflowHygieneTests(unittest.TestCase):
                 self.assertIsNotNone(block, f"{name} has no concurrency group")
                 self.assertIn("group:", block)
 
-    def test_MF40_release_never_cancels_a_run_in_progress(self):
+    def test_release_never_cancels_a_run_in_progress(self):
         """Cancelling mid-publish is how a version lands on PyPI with no tag."""
         block = self._top_level_block(self.files["release.yml"], "concurrency")
         self.assertIn("cancel-in-progress: false", block)
 
-    def test_MF39_every_action_is_pinned_to_a_commit_sha(self):
+    def test_every_action_is_pinned_to_a_commit_sha(self):
         """`@release/v1` is a moving *branch* on the OIDC-publishing path."""
         import re
 
@@ -441,7 +441,7 @@ class WorkflowHygieneTests(unittest.TestCase):
                     )
         self.assertGreater(seen, 0, "no `uses:` steps found — did the parse break?")
 
-    def test_MF39_each_pin_records_the_human_readable_version(self):
+    def test_each_pin_records_the_human_readable_version(self):
         """A bare SHA is unreviewable; the trailing comment says what it is."""
         for name, text in self.files.items():
             for ln in text.splitlines():
@@ -449,7 +449,7 @@ class WorkflowHygieneTests(unittest.TestCase):
                     with self.subTest(workflow=name, line=ln.strip()):
                         self.assertIn("#", ln.split("@", 1)[1])
 
-    def test_MF42_test_matrix_covers_the_supported_range(self):
+    def test_test_matrix_covers_the_supported_range(self):
         """3.10 was exercised only by the `mcp` job; 3.13/3.14 not at all."""
         text = self.files["ci.yml"]
         matrix = text.split("python-version:", 1)[1].splitlines()[0]
@@ -457,13 +457,13 @@ class WorkflowHygieneTests(unittest.TestCase):
             with self.subTest(version=version):
                 self.assertIn(f'"{version}"', matrix)
 
-    def test_MF68_mcp_job_covers_every_python_the_extra_installs_on(self):
+    def test_mcp_job_covers_every_python_the_extra_installs_on(self):
         """The `mcp` job stopped at 3.12 while `test` already ran to 3.14.
 
         The `[mcp]` extra is marked `python_version >= '3.10'` with no ceiling and
         both SDK majors declare 3.13/3.14 support, so those two legs installed the
         extra in the wild and nothing exercised it — the mirror image of the gap
-        MF-42 closed for the `test` job.
+        already closed for the `test` job.
         """
         text = self.files["ci.yml"]
         # Scope to the `mcp` job, then take its matrix line — the file has several
@@ -476,34 +476,34 @@ class WorkflowHygieneTests(unittest.TestCase):
             with self.subTest(version=version):
                 self.assertIn(f'"{version}"', matrix)
 
-    def test_MF59_mcp_job_runs_both_sdk_majors(self):
+    def test_mcp_job_runs_both_sdk_majors(self):
         """A rename in a future major must not pass unnoticed the way 2.0's did."""
         text = self.files["ci.yml"]
         matrix = text.split("mcp-version:", 1)[1].splitlines()[0]
         self.assertIn('"<2"', matrix)
         self.assertIn('">=2,<3"', matrix)
 
-    def test_MF41_mcp_job_asserts_the_advertised_resource_count(self):
+    def test_mcp_job_asserts_the_advertised_resource_count(self):
         """It pinned 10 tools and 6 prompts but never the 8 resources."""
         text = self.files["ci.yml"]
         self.assertIn("list_resources()", text)
         self.assertIn("list_resource_templates()", text)
         self.assertIn("== 8", text)
 
-    def test_MF27_ci_has_a_lint_job(self):
+    def test_ci_has_a_lint_job(self):
         text = self.files["ci.yml"]
         self.assertIn("ruff check", text)
         self.assertIn("ruff format --check", text)
 
-    def test_MF69_ruff_is_pinned_and_ci_matches_the_dev_extra(self):
+    def test_ruff_is_pinned_and_ci_matches_the_dev_extra(self):
         """An unpinned formatter turned `lint` red on an untouched `main`.
 
         ruff 0.16 began formatting fenced Python inside Markdown; the checked file
-        set went from 29 to 234 and a historical review document's verbatim code
-        excerpt became a failure. `publish` gates on `ci`, so a floating linter can
+        set went from 29 to 234 and prose files that had never been formatter
+        input became one. `publish` gates on `ci`, so a floating linter can
         block a release. Both pins must exist and agree — two copies of a version
-        is exactly the drift this repo removed for its own version (MF-12) and its
-        actions (MF-39).
+        is exactly the drift this repo removed for its own version and its
+        actions.
         """
         import re
 
@@ -518,12 +518,6 @@ class WorkflowHygieneTests(unittest.TestCase):
             extra_pin.group(1),
             "CI and the `dev` extra pin different ruff versions — bump them together",
         )
-
-    def test_MF69_archived_review_docs_are_not_formatter_input(self):
-        """Their code excerpts are quotations; reformatting one falsifies it."""
-        pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn("extend-exclude", pyproject)
-        self.assertIn("docs/crumb-kit-*.md", pyproject)
 
 
 if __name__ == "__main__":

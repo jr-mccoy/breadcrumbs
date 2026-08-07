@@ -1,4 +1,4 @@
-"""Tests for the MCP server layer (Phase 8, plan §13).
+"""Tests for the MCP server layer.
 
 These exercise the stdlib-only adapter core (`breadcrumbs.mcp_core`) plus the
 graceful-degradation contract of the server module. They require NO third-party
@@ -28,7 +28,7 @@ from breadcrumbs import cli, mcp_core, mcp_server  # noqa: E402
 
 FIXTURES = REPO_ROOT / "fixtures"
 
-# Derived, not hand-listed (MF-63). This file kept a second, independent copy of
+# Derived, not hand-listed. This file kept a second, independent copy of
 # the fixture roster that silently fell behind the one in `test_fixtures.py` —
 # the same drift that let CI's numeric globs skip a new fixture.
 ALL_FIXTURES = sorted(p.name for p in FIXTURES.iterdir() if p.name.startswith("fixture-"))
@@ -128,14 +128,14 @@ class ToolParityTests(unittest.TestCase):
         name = "fixture-02-guard-true-positive"
         root = root_of(name)
         # `memory_search` is the lookup surface, so it uses the same wider corpus
-        # `crumb search` does — ideas in, sessions out (MF-57 / O1).
+        # `crumb search` does — ideas in, sessions out.
         matches, _ = cli.search(mem_of(name), root, "sqlite", include_ideas=True)
         tool = mcp_core.tool_search("sqlite", root=root)
         self.assertEqual(tool["count"], len(matches))
         self.assertEqual([m["id"] for m in tool["matches"]], [m["id"] for m in matches])
 
     def test_search_tool_sees_ideas_and_guard_tool_does_not(self):
-        """MF-57 / O1 — the corpus split holds across the MCP surface too."""
+        """The corpus split holds across the MCP surface too."""
         root = root_of("fixture-12-speculative-idea")
         found = mcp_core.tool_search("auth middleware cache", root=root)
         self.assertEqual({m["kind"] for m in found["matches"]}, {"idea"})
@@ -149,7 +149,7 @@ class ToolParityTests(unittest.TestCase):
 
     def test_validate_reports_clean_fixtures(self):
         # fixture-08 ships a deliberately stale projection; the freshness check
-        # (review F3) now flags it via validate, so it is no longer "clean".
+        # now flags it via validate, so it is no longer "clean".
         for name in ALL_FIXTURES:
             if name == "fixture-08-packet-stale":
                 continue
@@ -238,11 +238,11 @@ class WriteGateTests(unittest.TestCase):
         res = mcp_core.tool_mark_status("dec_20200101_nope", "stale", "x", root=self.tmp)
         self.assertFalse(res["ok"])
 
-    def test_MF16_write_error_uses_the_structured_envelope(self):
+    def test_write_error_uses_the_structured_envelope(self):
         """`cli.write_record` was called bare, so a ValueError escaped as a ToolError.
 
         Every other write path wraps it; `docs/mcp-spec.md` promises
-        `{ok: false, error}` for all of them (review #5 M8).
+        `{ok: false, error}` for all of them.
         """
         for payload in (
             {"title": "bad\ntitle", "confidence": "low"},
@@ -261,11 +261,10 @@ class WriteGateTests(unittest.TestCase):
                 # …and the failed write left nothing behind.
                 self.assertTrue(mcp_core.tool_validate(root=self.tmp)["ok"])
 
-    def test_MF24_omitted_confidence_matches_the_documented_mcp_behavior(self):
+    def test_omitted_confidence_matches_the_documented_mcp_behavior(self):
         """The MCP default (low) deliberately differs from the CLI's exit 2.
 
-        The code comment used to claim exact parity, which was false (review #5
-        Low). Only the *explicit* medium/high-without-evidence case is an error.
+        The code comment used to claim exact parity, which was false. Only the *explicit* medium/high-without-evidence case is an error.
         """
         res = mcp_core.tool_record("decision", {"title": "no confidence stated"}, root=self.tmp)
         self.assertTrue(res["ok"], res)
@@ -278,7 +277,7 @@ class WriteGateTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-17 — no absolute host path in any tool payload (audit #6 N5)
+# No absolute host path in any tool payload
 # --------------------------------------------------------------------------- #
 class ToolPathTests(unittest.TestCase):
     """`mcp_core` states the rule at the top of the module and then broke it.
@@ -305,7 +304,7 @@ class ToolPathTests(unittest.TestCase):
         # …and it still resolves to the real file inside the store.
         self.assertTrue((self.mem / path).exists(), path)
 
-    def test_MF17_record_path_is_store_relative(self):
+    def test_record_path_is_store_relative(self):
         res = mcp_core.tool_record(
             "decision",
             {
@@ -318,7 +317,7 @@ class ToolPathTests(unittest.TestCase):
         self.assertTrue(res["ok"], res)
         self._assert_store_relative(res, f"decisions/{Path(res['path']).name}")
 
-    def test_MF17_note_paths_are_store_relative(self):
+    def test_note_paths_are_store_relative(self):
         for kind, text, expected in (
             ("question", "Does the cache need eviction?", "open-questions.md"),
             ("trap", "the daemon holds a lock", "known-traps.md"),
@@ -328,23 +327,23 @@ class ToolPathTests(unittest.TestCase):
                 self.assertTrue(res["ok"], res)
                 self._assert_store_relative(res, expected)
 
-    def test_MF17_idea_note_path_is_store_relative(self):
+    def test_idea_note_path_is_store_relative(self):
         res = mcp_core.tool_note("idea", "Try a columnar layout", root=self.tmp)
         self.assertTrue(res["ok"], res)
         self._assert_store_relative(res, f"ideas/{Path(res['path']).name}")
 
-    def test_MF17_verify_path_is_store_relative(self):
+    def test_verify_path_is_store_relative(self):
         res = mcp_core.tool_verify(
             "the cache eviction path", "open", method="static", confidence="low", root=self.tmp
         )
         self.assertTrue(res["ok"], res)
         self._assert_store_relative(res, f"verifications/{Path(res['path']).name}")
 
-    def test_MF17_reindex_path_is_store_relative(self):
+    def test_reindex_path_is_store_relative(self):
         res = mcp_core.tool_reindex(root=self.tmp)
         self._assert_store_relative(res, "generated/resume-packet.md")
 
-    def test_MF17_mark_status_path_is_store_relative(self):
+    def test_mark_status_path_is_store_relative(self):
         rec = mcp_core.tool_record(
             "decision",
             {
@@ -358,7 +357,7 @@ class ToolPathTests(unittest.TestCase):
         self.assertTrue(res["ok"], res)
         self._assert_store_relative(res, f"decisions/{Path(res['path']).name}")
 
-    def test_MF17_no_tool_payload_contains_a_host_path(self):
+    def test_no_tool_payload_contains_a_host_path(self):
         """A sweep, so the next tool added does not quietly reintroduce the leak."""
         results = [
             mcp_core.tool_record(
@@ -379,7 +378,7 @@ class ToolPathTests(unittest.TestCase):
         self.assertNotIn(str(self.tmp), blob)
         self.assertNotIn(str(self.tmp.parent), blob)
 
-    def test_MF17_cli_still_prints_absolute_paths_for_humans(self):
+    def test_cli_still_prints_absolute_paths_for_humans(self):
         """The relativization belongs to the MCP layer, not to `cli`."""
         res = crumb.note(
             self.mem, self.tmp, "question", "Human-facing path?", fields={}, tags=[], agent="test"
@@ -442,7 +441,7 @@ class GracefulDegradationTests(unittest.TestCase):
 
         All ten, checked by name against the documented surface: the tuple used to
         cover eight, and the two it omitted (`tool_verify`, `tool_reindex`) are
-        exactly the ones whose envelope nothing else exercised (review #5 Low).
+        exactly the ones whose envelope nothing else exercised.
         """
         empty = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
@@ -496,7 +495,7 @@ class GracefulDegradationTests(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 class ResourceRegistryTests(unittest.TestCase):
     """`STATIC_RESOURCES`/`TEMPLATE_RESOURCES` were dead code with a comment
-    claiming the server consumed them; nothing referenced them (review #5 Low).
+    claiming the server consumed them; nothing referenced them.
 
     `build_server` binds each URI explicitly on purpose — one visible endpoint per
     resource — so the registries are kept as the *declared* surface (the "8
@@ -554,7 +553,7 @@ class ResourceRegistryTests(unittest.TestCase):
 
 
 def sdk_field(model, json_key: str):
-    """Read an SDK model field by its **JSON** name, on either SDK major (MF-66).
+    """Read an SDK model field by its **JSON** name, on either SDK major.
 
     SDK 2.0 renamed every camelCase attribute on its models to snake_case —
     `Tool.inputSchema` → `input_schema`, `Resource.mimeType` → `mime_type`,
@@ -638,11 +637,11 @@ class InputSchemaTests(unittest.TestCase):
     def test_evidence_item_keys(self):
         self.assertEqual(set(mcp_server.EvidenceItem.__required_keys__), {"type", "ref"})
 
-    def test_MF25_install_hint_names_the_python_floor(self):
+    def test_install_hint_names_the_python_floor(self):
         """`pip install "crumb-kit[mcp]"` succeeds and installs nothing on 3.9.
 
         The extra's marker is `python_version >= '3.10'`, so the hint was a
-        no-op instruction for exactly the users who needed it (review #5 Low).
+        no-op instruction for exactly the users who needed it.
         """
         self.assertIn("3.10", mcp_server._INSTALL_HINT)
         self.assertIn('pip install "crumb-kit[mcp]"', mcp_server._INSTALL_HINT)
@@ -663,7 +662,7 @@ class InputSchemaTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-59 / MF-60 — the SDK moved its server class in 2.0
+# The SDK moved its server class in 2.0
 # --------------------------------------------------------------------------- #
 class SdkMajorCompatibilityTests(unittest.TestCase):
     """The `[mcp]` extra had no upper bound, so `pip install "crumb-kit[mcp]"`
@@ -701,7 +700,7 @@ class SdkMajorCompatibilityTests(unittest.TestCase):
         self.assertIn("mcp = [\"mcp>=1.2,<3; python_version >= '3.10'\"]", text)
 
     def test_version_is_passed_only_when_the_constructor_takes_it(self):
-        """D3 / MF-60. SDK 1.x has no `version` parameter and raises TypeError on
+        """SDK 1.x has no `version` parameter and raises TypeError on
         one, so the decision is read from the signature, never guessed."""
         if not mcp_server.sdk_available():
             self.skipTest("MCP SDK not installed; the CI `mcp` job covers both majors")

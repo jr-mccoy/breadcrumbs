@@ -147,7 +147,7 @@ class VerifySearchTests(unittest.TestCase):
 
 
 class VerifyGuardTests(unittest.TestCase):
-    """review #5 M1 — a verification could never influence a guard verdict.
+    """A verification could never influence a guard verdict.
 
     `_item_from_record` stores a verification's *outcome* in `status`, and guard's
     liveness test only accepted `"active"`, so every verification landed in

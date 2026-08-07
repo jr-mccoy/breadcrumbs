@@ -14,8 +14,8 @@ that getting it wrong cost real releases:
     a failure in that last step leaves the version permanently published with no
     tag and no Release. Hard-failing on "already on PyPI" made that state
     unrecoverable by re-run: the only escapes were hand-tagging (forbidden) or
-    burning a version, leaving the published one untagged forever (review #5 H5
-    / MF-11). 0.1.2 is exactly that: on PyPI, never tagged.
+    burning a version, leaving the published one untagged forever. 0.1.2 is
+    exactly that: on PyPI, never tagged.
   * The recovery path must not double as a way to tag today's commit with an old
     version, so it is allowed only when the version is the newest one on PyPI —
     which is always true of a publish that just failed, and never true of a
@@ -88,7 +88,7 @@ def decide(
 
     if published and not tag_exists:
         # The partial-publish state: PyPI accepted the upload, the tag step did not
-        # run or failed. Completing it is the whole point (MF-11) — but only for the
+        # run or failed. Completing it is the whole point — but only for the
         # version that was just published, never as a way to re-tag an old one.
         if not latest_on_pypi:
             return Decision(

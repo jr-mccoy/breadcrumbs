@@ -4,31 +4,31 @@ Sample `.project-memory/` stores and expected outputs for the evaluation suite.
 
 All twelve are built and run in CI on every push (see the bottom of this file):
 
-| Fixture | Exercises | Phase |
-|---|---|---|
-| 1 — Fresh resume | `resume` answers project/active/decided/failed/next/do-not-retry | **4 (built)** |
-| 2 — Guard true positive | `guard` returns `PAUSE`/`READ_FIRST` on a real match | **5 (built)** |
-| 3 — Guard false-positive control | `guard` returns `PROCEED` on a generic-word-only overlap | **5 (built)** |
-| 4 — Stale handoff | staleness warning on aged / wrong-branch handoff | **5 (built)** |
-| 5 — Superseded decision | superseded decision not treated as active | **5 (built)** |
-| 6 — Secret leak | `audit` / `scan-secrets` fails on token-like string | **6 (built)** |
-| 7 — Poisoned memory text | `audit` flags instruction-like text; `guard` treats it as data | **6 (built)** |
-| 8 — Generated packet stale | `audit` flags resume packet older than its source records | **6 (built)** |
-| 9 — Cloud fallback | plain files + generated packet support manual resume, no CLI | **6 (built)** |
-| 10 — Many sessions | resume packet stays bounded with 100 session records | **6 (built)** |
-| 11 — Multi-machine | a `distillate` store with no `sessions/` stays clean from two checkout paths | **6 (built)** |
-| 12 — Speculative idea | `search` finds an `ideas/` record; `guard` still returns `PROCEED` on it | **built** |
+| Fixture | Exercises |
+|---|---|
+| 1 — Fresh resume | `resume` answers project/active/decided/failed/next/do-not-retry |
+| 2 — Guard true positive | `guard` returns `PAUSE`/`READ_FIRST` on a real match |
+| 3 — Guard false-positive control | `guard` returns `PROCEED` on a generic-word-only overlap |
+| 4 — Stale handoff | staleness warning on aged / wrong-branch handoff |
+| 5 — Superseded decision | superseded decision not treated as active |
+| 6 — Secret leak | `audit` / `scan-secrets` fails on token-like string |
+| 7 — Poisoned memory text | `audit` flags instruction-like text; `guard` treats it as data |
+| 8 — Generated packet stale | `audit` flags resume packet older than its source records |
+| 9 — Cloud fallback | plain files + generated packet support manual resume, no CLI |
+| 10 — Many sessions | resume packet stays bounded with 100 session records |
+| 11 — Multi-machine | a `distillate` store with no `sessions/` stays clean from two checkout paths |
+| 12 — Speculative idea | `search` finds an `ideas/` record; `guard` still returns `PROCEED` on it |
 
-Phase 1 created this directory and tracker. Phase 4 committed **Fixture 1**
-(`fixture-01-fresh-resume/`), a hand-authored sample `.project-memory/` store that
-`validate` passes and `resume` reduces to a packet answering the six reorientation
-questions. Phase 5 committed **Fixtures 2–5** (`fixture-02-guard-true-positive/`,
-`fixture-03-guard-false-positive/`, `fixture-04-stale-handoff/`,
-`fixture-05-superseded-decision/`), each of which `validate` passes and which pin one
-`guard` behaviour (true positive → `PAUSE`/`READ_FIRST`; false-positive control →
-`PROCEED`; stale handoff → staleness warning; superseded → history-only).
+**Fixture 1** (`fixture-01-fresh-resume/`) is a hand-authored sample
+`.project-memory/` store that `validate` passes and `resume` reduces to a packet
+answering the six reorientation questions. **Fixtures 2–5**
+(`fixture-02-guard-true-positive/`, `fixture-03-guard-false-positive/`,
+`fixture-04-stale-handoff/`, `fixture-05-superseded-decision/`) each `validate`
+clean and pin one `guard` behaviour (true positive → `PAUSE`/`READ_FIRST`;
+false-positive control → `PROCEED`; stale handoff → staleness warning;
+superseded → history-only).
 
-Phase 6 (MVP-trust) committed **Fixtures 6–10**. Every fixture `validate`s clean —
+**Fixtures 6–10** cover the trust surface. Every fixture `validate`s clean —
 structure stays well-formed even where `audit` objects, which is the whole point of
 the deterministic/heuristic split:
 
@@ -50,19 +50,18 @@ the deterministic/heuristic split:
   current/handoff/active-decisions, and never inlines a session transcript. `audit`
   emits a sessions-growth note.
 
-**11 — Multi-machine** (`fixture-11-multi-machine/`) was added with the Batch 3
-fixes (MF-06 … MF-10). It is the store the suite had no example of: `session_tracking:
+**11 — Multi-machine** (`fixture-11-multi-machine/`) was added with the
+multi-machine fixes. It is the store the suite had no example of: `session_tracking:
 distillate`, so `sessions/` is gitignored and **absent**, with a committed
 `generated/resume-packet.md` and `guard-prefilter.json`, an `AGENTS.md` signpost, and
 records that only reference project-relative paths. It exists to be checked out at two
 different paths at once: `tests/test_multi_machine.py` copies it to two temp paths and
 requires `validate`, `audit` and `doctor` to come up clean at both, the committed
 packet to be accepted unchanged at either path, and a reindex on either machine to
-reproduce the same bytes. Before Batch 3 every one of those failed.
+reproduce the same bytes. Before those fixes every one of those failed.
 
-**12 — Speculative idea** (`fixture-12-speculative-idea/`) was added with Batch 8
-(MF-57 / O1), when `ideas/` became searchable. Its only record is an untried hunch
-— "cache parsed sessions in the auth middleware", explicitly *not measured* — that
+**12 — Speculative idea** (`fixture-12-speculative-idea/`) was added when `ideas/`
+became searchable. Its only record is an untried hunch — "cache parsed sessions in the auth middleware", explicitly *not measured* — that
 names `src/auth/middleware.ts` and carries the `auth`/`session` tags. That makes it
 the control for the corpus split: `crumb search` must find it, and `crumb guard
 "rewrite the auth middleware to cache parsed sessions" --files src/auth/middleware.ts`

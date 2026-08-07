@@ -1,4 +1,4 @@
-"""Tests for `crumb hook session|guard|capture` (review §A.6).
+"""Tests for `crumb hook session|guard|capture`.
 
 These drive the hook translators by feeding a JSON payload on stdin and asserting
 the emitted JSON matches the verified Claude Code contract.
@@ -151,7 +151,7 @@ class HookGuardTests(unittest.TestCase):
                 )
 
     def test_verdict_to_permission_decision_mapping(self):
-        """All four verdicts map per review #5 H1: never `allow`, never `deny`.
+        """All four verdicts map the same way: never `allow`, never `deny`.
 
         `permissionDecision: "allow"` auto-approves the call and hides the reason
         from the model — the inverse of "memory informs, never decides". PROCEED
@@ -208,7 +208,7 @@ class HookCaptureTests(unittest.TestCase):
             self.assertEqual([f for f in crumb.run_validate(mem) if f["status"] == "fail"], [])
 
     def test_repeat_firings_write_one_record_and_keep_next_action(self):
-        """`Stop` fires every turn (review #5 H2), not once per session.
+        """`Stop` fires every turn, not once per session.
 
         Three consecutive firings against one store must leave exactly one
         session record, and must not overwrite a Next Action a human set.
@@ -271,14 +271,14 @@ class HookCaptureTests(unittest.TestCase):
             self.assertEqual(out, {})
 
 
-class MF20HookUsageTests(unittest.TestCase):
+class HookUsageTests(unittest.TestCase):
     """`crumb hook` with no subcommand read stdin before validating the event.
 
     From a terminal that blocks until EOF, so the usage error a user is waiting
-    for looks like a hang instead (review #5 Low).
+    for looks like a hang instead.
     """
 
-    def test_MF20_missing_subcommand_never_reads_stdin(self):
+    def test_missing_subcommand_never_reads_stdin(self):
         def explode():
             raise AssertionError("stdin was read before the event was validated")
 
@@ -291,7 +291,7 @@ class MF20HookUsageTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("session|guard|capture", err.getvalue())
 
-    def test_MF20_does_not_block_on_a_terminal(self):
+    def test_does_not_block_on_a_terminal(self):
         """End to end: a real process with a tty-less pipe that never sends EOF."""
         proc = subprocess.Popen(
             [sys.executable, str(REPO_ROOT / "crumb.py"), "hook"],
@@ -308,7 +308,7 @@ class MF20HookUsageTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("session|guard|capture", stderr)
 
-    def test_MF20_valid_events_still_read_their_payload(self):
+    def test_valid_events_still_read_their_payload(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             init_store(root)

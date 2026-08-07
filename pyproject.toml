@@ -21,16 +21,16 @@ classifiers = [
     "Topic :: Software Development",
     "Topic :: Utilities",
 ]
-# Standard library only — there are no runtime dependencies, by design
-# (plan §1 / non-goal 4: plain files + CLI work first, no third-party deps).
+# Standard library only — there are no runtime dependencies, by design:
+# plain files + CLI work first, no third-party deps.
 dependencies = []
 
-# The MCP server (Phase 8) is the one optional interop layer. It is NOT a core
-# dependency: the CLI and plain files work without it (graceful degradation,
-# plan §3 / §13 "MCP later"). Install it explicitly with `pip install
+# The MCP server is the one optional interop layer. It is NOT a core
+# dependency: the CLI and plain files work without it (graceful degradation —
+# MCP comes later, or never). Install it explicitly with `pip install
 # "crumb-kit[mcp]"`. The SDK needs Python >=3.10, hence the marker.
 [project.optional-dependencies]
-# Upper-bounded on purpose (MF-59). SDK 2.0 renamed the server class, and an
+# Upper-bounded on purpose. SDK 2.0 renamed the server class, and an
 # unbounded `mcp>=1.2` silently resolved to it — the server then reported itself
 # as "not installed". `mcp_server` supports both 1.x and 2.x; a future 3.x is
 # assumed to break again until someone checks.
@@ -43,12 +43,12 @@ mcp = ["mcp>=1.2,<3; python_version >= '3.10'"]
 # a doc telling you to run a command nothing installed.
 dev = [
     "pytest",       # optional alternative runner; `unittest discover` is canonical
-    # Pinned, and the CI `lint` job installs the SAME pin — bump both together
-    # (MF-69). A formatter is a moving spec: ruff 0.16 began formatting fenced
-    # Python inside Markdown, which took the checked file set from 29 to 234 and
-    # turned `lint` red on an untouched `main`. Every GitHub Action here is pinned
-    # to a commit SHA for exactly this reason (MF-39); the tool that decides
-    # pass/fail was the one thing left floating.
+    # Pinned, and the CI `lint` job installs the SAME pin — bump both together.
+    # A formatter is a moving spec: ruff 0.16 began formatting fenced Python
+    # inside Markdown, which took the checked file set from 29 to 234 and turned
+    # `lint` red on an untouched `main`. Every GitHub Action here is pinned to a
+    # commit SHA for exactly this reason; the tool that decides pass/fail was the
+    # one thing left floating.
     "ruff==0.16.1", # lint + format, enforced by the `lint` CI job
     "build",        # `python -m build` (release dry-run)
     "twine",        # `twine check` / Path B upload
@@ -108,14 +108,6 @@ testpaths = ["tests"]
 # it did not rewrap the whole codebase.
 line-length = 100
 target-version = "py39"   # the documented floor (requires-python >=3.9)
-
-# The archived review/audit documents quote `cli.py` **verbatim as it was**, which
-# is the whole point of keeping them (see docs/fix-list.md → MF-53). Since ruff
-# 0.16 formats fenced Python inside Markdown, they became formatter input and it
-# wanted to rewrap a quotation to today's style — silently falsifying the excerpt
-# an old finding is evidence for. Living prose (README, CHANGELOG, the spec docs)
-# stays in scope (MF-69).
-extend-exclude = ["docs/crumb-kit-*.md"]
 
 [tool.ruff.lint]
 # ruff's default rules (pyflakes + the pycodestyle errors that indicate real

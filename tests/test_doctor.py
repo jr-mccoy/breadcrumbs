@@ -1,4 +1,4 @@
-"""Tests for `crumb doctor` — integration health (review §A.7).
+"""Tests for `crumb doctor` — integration health.
 
 Run with:  python -m pytest tests/
        or:  python tests/test_doctor.py
@@ -86,7 +86,7 @@ class DoctorTests(unittest.TestCase):
 
 
 class AdapterBloatTests(unittest.TestCase):
-    """MF-79 — the bloat check must size our managed block, not the host file.
+    """The bloat check must size our managed block, not the host file.
 
     CLAUDE.md/AGENTS.md are the project's own agent-instruction files; a mature
     repo's is tens of KB. Measuring the file meant the adapter row went ✗

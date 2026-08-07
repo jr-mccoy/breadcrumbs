@@ -3,7 +3,7 @@ name: release
 # Publishes the Breadcrumbs package (PyPI name: crumb-kit) via Trusted Publishing
 # (OIDC) — no API tokens are stored anywhere in this repo.
 #
-# HOW TO RELEASE (idiot-proof, one action):
+# HOW TO RELEASE (one action):
 #   1. Bump `__version__` in breadcrumbs/__init__.py (the single source of truth)
 #      and add a CHANGELOG entry. Merge to main. That is the ONLY manual edit.
 #   2. Actions → release → Run workflow, from the `main` branch:
@@ -48,7 +48,7 @@ on:
           - publish
         default: dry-run
 
-# Least privilege by default (review #5 Low). Both jobs already scope their own
+# Least privilege by default. Both jobs already scope their own
 # tokens (build reads the `ci` conclusion; publish needs OIDC + tag/Release write);
 # this floor means a job added later cannot silently inherit the repo default.
 permissions:
@@ -56,7 +56,7 @@ permissions:
 
 # A publish is irreversible, and the pre-flight's "is this version on PyPI?" check
 # is a read followed much later by a write — two dispatches started together could
-# both pass it and race to upload (review #5 Low). Serialize every run of this
+# both pass it and race to upload. Serialize every run of this
 # workflow, and never cancel one: cancelling mid-publish is how a version ends up
 # on PyPI with no tag.
 concurrency:
@@ -88,7 +88,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      # The suite the smoke test is not a substitute for (review #5 M11 / MF-12).
+      # The suite the smoke test is not a substitute for.
       # Stdlib-only, so it needs no install step and costs ~15 seconds; it runs in
       # dry-run too, which is what makes "dry-run first" worth doing.
       - name: Test suite (stdlib unittest)
@@ -141,8 +141,8 @@ jobs:
       #
       # Neither fact alone settles it. "Already on PyPI" with no tag is the
       # partial-publish state, and the ONLY way out of it is to let this run
-      # continue and cut the tag — hard-failing there made the state permanent
-      # (review #5 H5 / MF-11). The rules live in .github/scripts/release_preflight.py
+      # continue and cut the tag — hard-failing there made the state permanent.
+      # The rules live in .github/scripts/release_preflight.py
       # so they are unit-tested (tests/test_release_process.py) rather than
       # discovered during a release.
       - name: Release pre-flight (PyPI + tag state)
@@ -177,7 +177,7 @@ jobs:
         run: python -m twine check dist/*
 
       # Identity check against the tracked source tree — no duplicated magic
-      # counts to keep in sync across workflows (review #3 R18).
+      # counts to keep in sync across workflows.
       - name: Bundled templates match the tracked source tree
         run: |
           WHEEL="$(ls dist/crumb_kit-*.whl)"
@@ -237,10 +237,10 @@ jobs:
       # Release is created, so a re-run is clean. If it *succeeded* and the tag
       # step below failed, a re-run is also the fix: the pre-flight recognises
       # published-but-untagged as a recovery, this upload no-ops on skip-existing,
-      # and the tag step completes the release (MF-11).
+      # and the tag step completes the release.
       #
       # Two attempts, because the 0.1.8 publish died here on a network blip and
-      # nothing else was wrong (MF-70). The action's very first call is the
+      # nothing else was wrong. The action's very first call is the
       # Trusted-Publishing token exchange, `GET upload.pypi.org/_/oidc/audience`,
       # made with a hard 5-second connect timeout and no retry inside the action;
       # that connect timed out, so the run failed before a single byte was

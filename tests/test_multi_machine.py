@@ -1,4 +1,4 @@
-"""Multi-machine correctness — the projection/freshness cluster (MF-06 … MF-10).
+"""Multi-machine correctness — the projection/freshness cluster.
 
 Every defect these pin is invisible on one machine and wrong the moment a second
 one exists: a freshness stamp no clone can reproduce, an absolute host path in a
@@ -84,10 +84,10 @@ def seed_record(root: Path, title: str = "Split the worker") -> None:
 
 
 # --------------------------------------------------------------------------- #
-# MF-06 — a local-only record directory is not a shared freshness input
+# A local-only record directory is not a shared freshness input
 # --------------------------------------------------------------------------- #
 class InputsHashPolicyTests(unittest.TestCase):
-    def test_MF06_distillate_hash_ignores_the_local_sessions_dir(self):
+    def test_distillate_hash_ignores_the_local_sessions_dir(self):
         """The stamp must survive the clone that has no `sessions/` at all."""
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp)
@@ -100,7 +100,7 @@ class InputsHashPolicyTests(unittest.TestCase):
             shutil.rmtree(mem / "sessions")  # what every clone of a distillate store sees
             self.assertEqual(crumb._inputs_hash(mem), author)
 
-    def test_MF06_full_tracking_still_hashes_sessions(self):
+    def test_full_tracking_still_hashes_sessions(self):
         """The skip is the policy's, not a blanket exemption."""
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full")
@@ -110,7 +110,7 @@ class InputsHashPolicyTests(unittest.TestCase):
             shutil.rmtree(mem / "sessions")
             self.assertNotEqual(crumb._inputs_hash(mem), before)
 
-    def test_MF06_clone_of_a_distillate_store_validates_clean(self):
+    def test_clone_of_a_distillate_store_validates_clean(self):
         """End to end: author commits, teammate clones, validate agrees on both."""
         with tempfile.TemporaryDirectory() as tmp:
             author = make_store(Path(tmp) / "author", "distillate")
@@ -154,7 +154,7 @@ class InputsHashPolicyTests(unittest.TestCase):
                 ),
             )
 
-    def test_MF06_committed_gitignore_excludes_a_record_dir_from_the_hash(self):
+    def test_committed_gitignore_excludes_a_record_dir_from_the_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full")
             mem = root / crumb.MEMORY_DIRNAME
@@ -172,7 +172,7 @@ class InputsHashPolicyTests(unittest.TestCase):
             (mem / "ideas" / "2026-07-02-another.md").write_text("x\n", encoding="utf-8")
             self.assertEqual(crumb._inputs_hash(mem), after)
 
-    def test_MF06_machine_local_excludes_never_change_the_hash(self):
+    def test_machine_local_excludes_never_change_the_hash(self):
         """`.git/info/exclude` is per-machine; folding it in would recreate the bug."""
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full")
@@ -183,7 +183,7 @@ class InputsHashPolicyTests(unittest.TestCase):
             self.assertIn("ideas", crumb._hashed_input_dirs(mem, root, {}))
             self.assertEqual(crumb._inputs_hash(mem), before)
 
-    def test_MF06_flipping_the_policy_invalidates_the_stamp(self):
+    def test_flipping_the_policy_invalidates_the_stamp(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full")
             mem = root / crumb.MEMORY_DIRNAME
@@ -200,10 +200,10 @@ class InputsHashPolicyTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-07 — the committed packet carries no host path
+# The committed packet carries no host path
 # --------------------------------------------------------------------------- #
 class PacketPathTests(unittest.TestCase):
-    def test_MF07_packet_path_is_project_relative(self):
+    def test_packet_path_is_project_relative(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full", git_repo=False)
             packet = crumb.build_resume_packet(root / crumb.MEMORY_DIRNAME, root)
@@ -212,7 +212,7 @@ class PacketPathTests(unittest.TestCase):
             self.assertNotIn(str(root), md)
             self.assertNotIn(str(root), json.dumps(packet))
 
-    def test_MF07_byte_identical_store_at_another_path_is_not_stale(self):
+    def test_byte_identical_store_at_another_path_is_not_stale(self):
         """The clone-at-a-different-path case `doctor` used to call stale."""
         with tempfile.TemporaryDirectory() as tmp:
             here = make_store(Path(tmp) / "here", "full", git_repo=False)
@@ -232,7 +232,7 @@ class PacketPathTests(unittest.TestCase):
                 checks = {c["check"]: c for c in crumb.doctor_report(root)["checks"]}
                 self.assertTrue(checks["resume_packet"]["ok"], checks["resume_packet"])
 
-    def test_MF07_legacy_absolute_path_line_is_not_read_as_staleness(self):
+    def test_legacy_absolute_path_line_is_not_read_as_staleness(self):
         """Belt-and-braces for packets written by an older version."""
         md = (
             "<!-- source_commit: abc | inputs_hash: deadbeef | generated_at: X -->\n"
@@ -244,7 +244,7 @@ class PacketPathTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-08 — the hash sees renames, not just contents
+# The hash sees renames, not just contents
 # --------------------------------------------------------------------------- #
 class InputsHashIdentityTests(unittest.TestCase):
     def _store_with_two_records(self, tmp: str) -> tuple[Path, Path]:
@@ -259,7 +259,7 @@ class InputsHashIdentityTests(unittest.TestCase):
             )
         return root, mem
 
-    def test_MF08_renaming_a_record_invalidates_the_hash(self):
+    def test_renaming_a_record_invalidates_the_hash(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store_with_two_records(tmp)
             before = crumb._inputs_hash(mem)
@@ -272,7 +272,7 @@ class InputsHashIdentityTests(unittest.TestCase):
                 "a rename changes every derived record id — the stamp must not survive it",
             )
 
-    def test_MF08_rename_is_caught_by_the_freshness_gate(self):
+    def test_rename_is_caught_by_the_freshness_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store_with_two_records(tmp)
             run(["reindex", "--project", str(root)])
@@ -287,7 +287,7 @@ class InputsHashIdentityTests(unittest.TestCase):
             fails = [f for f in crumb.run_validate(mem) if f["status"] == "fail"]
             self.assertTrue(any(f["check"] == "freshness" for f in fails), fails)
 
-    def test_MF08_moving_text_between_records_invalidates_the_hash(self):
+    def test_moving_text_between_records_invalidates_the_hash(self):
         """Undelimited concatenation could not see content move across files."""
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store_with_two_records(tmp)
@@ -301,7 +301,7 @@ class InputsHashIdentityTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-09 — `resume` refreshes every projection, atomically
+# `resume` refreshes every projection, atomically
 # --------------------------------------------------------------------------- #
 class ResumeReindexTests(unittest.TestCase):
     TRAP = (
@@ -310,7 +310,7 @@ class ResumeReindexTests(unittest.TestCase):
         "- Symptom: it deadlocks on the xdist worker pool\n"
     )
 
-    def test_MF09_resume_rebuilds_the_guard_prefilter(self):
+    def test_resume_rebuilds_the_guard_prefilter(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full", git_repo=False)
             mem = root / crumb.MEMORY_DIRNAME
@@ -326,7 +326,7 @@ class ResumeReindexTests(unittest.TestCase):
             # the index guard actually consults now sees the newly recorded trap
             self.assertTrue(crumb._prefilter_trap_hit(mem, "pytest -n auto", None))
 
-    def test_MF09_resume_writes_the_packet_atomically(self):
+    def test_resume_writes_the_packet_atomically(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full", git_repo=False)
             mem = root / crumb.MEMORY_DIRNAME
@@ -337,7 +337,7 @@ class ResumeReindexTests(unittest.TestCase):
             self.assertIn(crumb.GUARD_PREFILTER_FILENAME, written)
             self.assertFalse(list((mem / "generated").glob("*.tmp")))
 
-    def test_MF09_fast_and_task_views_stay_print_only(self):
+    def test_fast_and_task_views_stay_print_only(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full", git_repo=False)
             mem = root / crumb.MEMORY_DIRNAME
@@ -349,17 +349,17 @@ class ResumeReindexTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# MF-10 — the JSON projection obeys the store's commit policy
+# The JSON projection obeys the store's commit policy
 # --------------------------------------------------------------------------- #
 class GeneratedJsonPolicyTests(unittest.TestCase):
-    def test_MF10_local_only_projections_cover_the_json_index(self):
+    def test_local_only_projections_cover_the_json_index(self):
         block = crumb.gitignore_block("full", False)
         self.assertIn(f"{crumb.MEMORY_DIRNAME}/generated/*.json", block)
         self.assertNotIn(
             f"{crumb.MEMORY_DIRNAME}/generated/*.json", crumb.gitignore_block("full", True)
         )
 
-    def test_MF10_prefilter_is_git_ignored_under_no_commit_generated(self):
+    def test_prefilter_is_git_ignored_under_no_commit_generated(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             git(root, "init", "-q")
@@ -384,7 +384,7 @@ class GeneratedJsonPolicyTests(unittest.TestCase):
             )
             self.assertEqual(r.returncode, 0, f"{rel} escaped the local-only policy")
 
-    def test_MF10_template_readme_documents_the_prefilter(self):
+    def test_template_readme_documents_the_prefilter(self):
         readme = (
             Path(bcli.__file__).parent / "templates" / "project-memory" / "generated" / "README.md"
         ).read_text(encoding="utf-8")
