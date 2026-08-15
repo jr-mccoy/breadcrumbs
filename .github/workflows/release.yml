@@ -33,9 +33,22 @@ name: release
 #     additionally requires the `ci` workflow to have succeeded on this commit —
 #     a green smoke test is not evidence that the suite passes.
 #
+#   * The trusted publisher on PyPI is matched against the repo's CURRENT owner
+#     and name. Renaming or transferring the repo silently breaks publishing:
+#     the run fails at the very first step of `publish-pypi`, the OIDC token
+#     exchange, with `invalid-publisher` ("valid token, but no corresponding
+#     publisher"). Nothing in this repo can fix that — the publisher entry on
+#     PyPI has to be re-pointed at the new owner/repo by hand. The 0.1.10
+#     publish attempts died here after the repo moved from `jumbodaddystack` to
+#     `jr-mccoy`. The retry below does not help: `invalid-publisher` is
+#     deterministic, so attempt 2 fails identically. Nothing is burned when it
+#     does — the failure is before the upload, so there is no tag, no Release,
+#     and no version on PyPI, and a re-run after fixing PyPI is clean.
+#
 # One-time PyPI setup (already done; here for reference):
-#   pypi.org "pending publisher": owner=jumbodaddystack, repo=breadcrumbs,
-#   workflow=release.yml, environment=pypi. No secrets — OIDC mints a token per run.
+#   pypi.org publisher: owner=jr-mccoy, repo=breadcrumbs, workflow=release.yml,
+#   environment=pypi. No secrets — OIDC mints a token per run. Keep the owner
+#   here in sync with the repo's actual owner; see the rename note above.
 
 on:
   workflow_dispatch:

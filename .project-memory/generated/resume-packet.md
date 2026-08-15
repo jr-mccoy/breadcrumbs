@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: ac8352c | inputs_hash: dd88f4a43cca | generated_at: 2026-08-15T03:14:19+00:00 -->
+<!-- source_commit: 24878e5 | inputs_hash: 7f8fd6b363aa | generated_at: 2026-08-15T04:39:19+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/system-audit-viability-e2sft7` · commit `ac8352c` · 7 uncommitted file(s)
+branch `claude/release-run-failures-gcuil8` · commit `24878e5` · 5 uncommitted file(s)
 
 ## Current Focus
 Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
@@ -14,6 +14,7 @@ Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --w
 Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
 
 ## Active Decisions
+- `dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo` — Treat invalid-publisher as a PyPI-side config defect, never a workflow bug. The fix is to update the publisher entry at pypi.org/manage/project/crumb-kit/settings/publishing to match the OIDC claims the run prints (owner=jr-mccoy, repo=breadcrumbs, workflow=release.yml, environment=pypi), then re-run release.yml with mode=publish. Documented the failure mode in release.yml's header and in RELEASING.md (one-time setup callout + 'If a release fails' bullet), and corrected the stale owner=jumbodaddystack reference in both.
 - `dec_20260815_cut-0-1-10-as-the-agent-authorship-release` — Bump __version__ to 0.1.10 (single source of truth) and date the CHANGELOG section. Headline is the Stop-hook extraction turn; the prefilter and stemming fixes make what it writes reachable. Version bump + changelog are the ONLY manual edits — release.yml cuts the tag and Release.
 - `dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store` — Remove the blanket ignore and commit .project-memory/ in this repo, exactly as a target project would (managed block still keeps private/ and index/ local). The store is the repo's continuity ledger and its live demo.
 - `dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author` — When the ending turn produced new commits, hook capture holds the stop once (decision: block) and instructs the agent to write records, ending with capture session --next which clears the prompt. Loop-guarded by stop_hook_active; machine snapshot is the floor; manifest extraction_prompt is the kill switch.
@@ -29,11 +30,14 @@ _(none recorded)_
 - Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
 
 ## Likely Relevant Files
+- .github/workflows/release.yml:36
+- RELEASING.md:22
 - breadcrumbs/__init__.py
 - .gitignore
 - breadcrumbs/cli.py
 
 ## Verifications
+- `ver_20260815_release-0-1-10-blocked-by-pypi-invalid-publisher-open` — release 0.1.10 blocked by PyPI invalid-publisher: **open** · static
 - `ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence` — hook guard escalates on edits to files named by --evidence file: **fixed** · test
 
 ## Verification Commands
@@ -44,4 +48,6 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 2 commit(s) behind current HEAD.
+- branch mismatch: handoff was written on 'claude/system-audit-viability-e2sft7' but HEAD is on 'claude/release-run-failures-gcuil8'.
+- 4 record(s) written on other branches than 'claude/release-run-failures-gcuil8': dec_20260815_cut-0-1-10-as-the-agent-authorship-release (on 'claude/system-audit-viability-e2sft7'), dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store (on 'claude/system-audit-viability-e2sft7'), dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author (on 'claude/system-audit-viability-e2sft7'), dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint (on 'claude/system-audit-viability-e2sft7').
