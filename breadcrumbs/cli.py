@@ -2990,6 +2990,72 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---- prune — session-snapshot retention (P1-9) ------------------------------ #
+
+# The Stop hook writes a snapshot whenever the work moved, which is right for
+# capture (an interrupted session with dirty files is exactly the handoff worth
+# keeping) and wrong for retention: the 0.1.10 field-test store held 83 session
+# files against 17 durable records, and `audit` could only complain about the
+# bloat the tool itself created. Retention is a separate, explicit act.
+PRUNE_SESSIONS_KEEP_DEFAULT = 20
+
+
+def prune_sessions(
+    memory_dir: Path,
+    root: Path,
+    *,
+    keep: int = PRUNE_SESSIONS_KEEP_DEFAULT,
+    dry_run: bool = False,
+) -> dict:
+    """Delete old *machine* session snapshots beyond the newest `keep` sessions.
+
+    Only records whose Next Action is still the machine placeholder are
+    candidates: a session someone gave a real Next Action (or any enriched
+    section) is a deliberate handoff, and deleting human judgement is not this
+    command's call. The newest `keep` sessions are never touched regardless —
+    they anchor the Stop-hook dedupe and the extraction baseline.
+    """
+    keep = max(1, keep)
+    recs = [r for r in load_records(memory_dir, types=("session",)) if not r.error]
+    recs.sort(key=lambda r: r.path.name, reverse=True)
+    candidates = [r for r in recs[keep:] if _is_placeholder(r.sections.get("Next Action") or "")]
+    deleted = []
+    for r in candidates:
+        if not dry_run:
+            r.path.unlink()
+        deleted.append(r.meta.get("id", r.stem))
+    if deleted and not dry_run:
+        reindex_projections(memory_dir, root)
+    return {
+        "sessions": len(recs),
+        "kept": len(recs) - (0 if dry_run else len(deleted)),
+        "deleted": deleted,
+        "dry_run": dry_run,
+    }
+
+
+def cmd_prune(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    res = prune_sessions(memory_dir, root, keep=args.keep, dry_run=args.dry_run)
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0
+    verb = "would delete" if res["dry_run"] else "deleted"
+    print(
+        f"prune sessions: {res['sessions']} session record(s), "
+        f"{verb} {len(res['deleted'])} machine snapshot(s)"
+    )
+    for rid in res["deleted"]:
+        print(f"  - {rid}")
+    if res["dry_run"] and res["deleted"]:
+        print("Re-run without --dry-run to delete.")
+    return 0
+
+
 # ---- handoff.md / current.md updaters -------------------------------------- #
 
 HANDOFF_SECTIONS = [
@@ -5894,7 +5960,8 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 "path": "sessions/",
                 "message": (
                     f"{n} session records — promote what still matters with `crumb "
-                    "remember` and prune the rest so the store stays navigable"
+                    "remember`, then `crumb prune sessions` to drop old machine "
+                    "snapshots so the store stays navigable"
                 ),
             }
         )
@@ -7359,10 +7426,16 @@ def _extraction_reason(commits: list[str]) -> str:
     listing = "\n".join(f"  {c}" for c in shown)
     if extra > 0:
         listing += f"\n  … and {extra} more"
+    # "landed", not "this turn produced": the range is HEAD-based, and the
+    # workspace may be shared with other terminals/agents (P1-7) — attributing
+    # someone else's commit to the agent would ask it to describe work it never
+    # did. The instruction below scopes recording to the session's own work.
     return (
-        f"breadcrumbs: this turn produced {len(commits)} new commit(s) since the last "
-        f"recorded session:\n{listing}\n"
-        "Before stopping, persist what the next session cannot rediscover:\n"
+        f"breadcrumbs: {len(commits)} new commit(s) landed since the last recorded "
+        f"session (this turn's work, or another actor's if the workspace is "
+        f"shared):\n{listing}\n"
+        "Before stopping, persist what the next session cannot rediscover — from "
+        "this session's own work only; skip commits you did not make:\n"
         '1. A durable choice made here -> `crumb remember decision --title "…" '
         '--set Decision "…" --evidence commit <sha>`\n'
         '2. An approach tried that failed -> `crumb remember attempt --title "…" '
@@ -7808,6 +7881,31 @@ def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mark.set_defaults(func=cmd_mark_status)
 
 
+# prune — explicit retention for machine session snapshots
+def _add_prune(sub, global_parser: argparse.ArgumentParser) -> None:
+    p_prune = sub.add_parser(
+        "prune",
+        parents=[global_parser],
+        help="delete old machine session snapshots (keeps human handoffs + the newest N)",
+    )
+    p_prune.add_argument(
+        "what",
+        choices=("sessions",),
+        help="what to prune (only `sessions` exists today)",
+    )
+    p_prune.add_argument(
+        "--keep",
+        type=int,
+        default=PRUNE_SESSIONS_KEEP_DEFAULT,
+        metavar="N",
+        help=f"newest sessions never pruned (default: {PRUNE_SESSIONS_KEEP_DEFAULT})",
+    )
+    p_prune.add_argument(
+        "--dry-run", action="store_true", help="list what would be deleted; delete nothing"
+    )
+    p_prune.set_defaults(func=cmd_prune)
+
+
 # reindex — explicit projection refresh (mutations reindex automatically)
 def _add_reindex(sub, global_parser: argparse.ArgumentParser) -> None:
     p_reindex = sub.add_parser(
@@ -7847,7 +7945,7 @@ def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
         help="override a session body section (repeatable)",
     )
     p_session.add_argument(
-        "--focus", help="Current Focus for handoff/current (default: Next Action)"
+        "--focus", help="Current Focus for handoff/current (default: keep the previous focus)"
     )
     p_session.add_argument(
         "--agent", default=None, help=_AGENT_FLAG_HELP.format(what="session author")
@@ -8042,6 +8140,7 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "note": _add_note,
     "verify": _add_verify,
     "mark-status": _add_mark_status,
+    "prune": _add_prune,
     "reindex": _add_reindex,
     "capture": _add_capture,
     "resume": _add_resume,

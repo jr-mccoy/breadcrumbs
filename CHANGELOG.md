@@ -13,8 +13,26 @@ hooks pivot — worked and is untouched; everything here is tuning the signal
 quality around it. The guard was the uninstall risk: a ~1-in-30 relevance rate
 trains an agent to ignore the one warning that matters.
 
+### Added
+
+- **`crumb prune sessions` (P1-9).** The Stop hook snapshots eagerly — right
+  for capture (an interrupted session with dirty files is exactly the handoff
+  worth keeping), wrong for retention: the field-test store held 83 session
+  files against 17 durable records, and `audit` could only complain about
+  bloat the tool itself created. `prune sessions` deletes machine snapshots
+  (placeholder Next Action) beyond the newest `--keep N` (default 20); a
+  session a human gave a real Next Action is never a candidate. `--dry-run`
+  lists; deletions reindex the projections. `audit`'s bloat note now points
+  here.
+
 ### Changed
 
+- **The extraction turn no longer claims authorship it can't verify (P1-7).**
+  Its commit range is HEAD-based, and the workspace may be shared with other
+  terminals and agents — so the prompt now says "N commit(s) *landed* since
+  the last recorded session (this turn's work, or another actor's)" and scopes
+  the instruction to the session's own work ("skip commits you did not make"),
+  instead of asserting "this turn produced" someone else's commits.
 - **The resume packet's focus claims are now falsifiable (P1-5).** The
   staleness system measured record age and commit distance — structurally true,
   semantically blind: the field-test packet told a fresh session to redo two

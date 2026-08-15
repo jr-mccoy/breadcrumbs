@@ -323,5 +323,69 @@ class NonInteractiveCaptureTests(unittest.TestCase):
             self.assertEqual(code, 2)  # a clean "needs --next", not an EOFError
 
 
+class PruneSessionsTests(unittest.TestCase):
+    """P1-9 (0.1.10 field test): the Stop hook creates the session bloat audit
+    warns about; `crumb prune sessions` is the explicit retention act. Machine
+    snapshots only — a session with a human Next Action is a deliberate
+    handoff — and the newest N are never touched."""
+
+    def _store_with_sessions(self, tmp: str) -> tuple[Path, Path]:
+        root = make_repo(tmp)
+        mem = init_store(root)
+        # Titles a..e make the filename order deterministic (same date, slug sorts).
+        for title, next_action in (
+            ("session a", cli.HOOK_SESSION_NEXT_ACTION),
+            ("session b", cli.HOOK_SESSION_NEXT_ACTION),
+            ("session c", cli.HOOK_SESSION_NEXT_ACTION),
+            ("session d", "finish the flurble rollout"),  # human handoff
+            ("session e", cli.HOOK_SESSION_NEXT_ACTION),  # newest
+        ):
+            crumb.write_record(
+                mem,
+                root,
+                "session",
+                title,
+                {"Next Action": next_action, "Work Completed": "w"},
+            )
+        return root, mem
+
+    def test_dry_run_lists_without_deleting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store_with_sessions(tmp)
+            code, out = run(
+                ["prune", "sessions", "--keep", "1", "--dry-run", "--project", str(root), "--json"]
+            )
+            self.assertEqual(code, 0)
+            res = json.loads(out)
+            self.assertTrue(res["dry_run"])
+            self.assertEqual(len(res["deleted"]), 3, res)
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 5)
+
+    def test_prune_deletes_machine_snapshots_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store_with_sessions(tmp)
+            code, out = run(["prune", "sessions", "--keep", "1", "--project", str(root), "--json"])
+            self.assertEqual(code, 0)
+            res = json.loads(out)
+            remaining = sorted(p.name for p in (mem / "sessions").glob("*.md"))
+            # The human handoff (d) and the newest session (e) survive.
+            self.assertEqual(len(remaining), 2, (remaining, res))
+            self.assertTrue(any("session-d" in n for n in remaining), remaining)
+            self.assertTrue(any("session-e" in n for n in remaining), remaining)
+            # The store still validates and the projections were rebuilt.
+            fails = [f for f in crumb.run_validate(mem) if f["status"] == "fail"]
+            self.assertEqual(fails, [])
+
+    def test_newest_sessions_are_never_pruned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store_with_sessions(tmp)
+            code, out = run(["prune", "sessions", "--project", str(root), "--json"])
+            self.assertEqual(code, 0)
+            res = json.loads(out)
+            # Default keep (20) exceeds the 5 sessions: nothing to delete.
+            self.assertEqual(res["deleted"], [])
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 5)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
