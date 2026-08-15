@@ -246,29 +246,121 @@ class HookCaptureTests(unittest.TestCase):
             # a second firing with nothing changed adds nothing …
             self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
             self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
-            # … but a new commit is new work.
+            # … but a new commit is new work: the firing becomes the extraction
+            # prompt, and the loop-guarded re-firing takes the snapshot.
             (root / "g.txt").write_text("b\n")
             git(root, "add", "g.txt")
             git(root, "commit", "-qm", "more work")
-            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+            out = run_hook("capture", {"cwd": str(root)})
+            self.assertEqual(out.get("decision"), "block", out)
+            run_hook("capture", {"cwd": str(root), "stop_hook_active": True})
             self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 2)
-            # as is an uncommitted edit outside the store.
+            # an uncommitted edit outside the store is new work too, but not
+            # commit-shaped — snapshot only, no prompt.
             (root / "h.txt").write_text("c\n")
             self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
             self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 3)
 
-    def test_stop_hook_active_is_honored(self):
+    def test_stop_hook_active_never_blocks_and_falls_back_to_snapshot(self):
+        # A continuation of a blocked Stop must never be blocked again (that is
+        # the loop); if the agent ignored the instruction, the machine snapshot
+        # is the floor.
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             mem = init_store(root)
             out = run_hook("capture", {"cwd": str(root), "stop_hook_active": True})
             self.assertEqual(out, {})
-            self.assertEqual(list((mem / "sessions").glob("*.md")), [])
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
 
     def test_no_store_is_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = run_hook("capture", {"cwd": tmp})
             self.assertEqual(out, {})
+
+
+class ExtractionTurnTests(unittest.TestCase):
+    """The Stop-hook extraction turn: when the ending turn produced new commits,
+    the hook blocks ONCE with an instruction to persist durable memory while the
+    agent still holds the session's context. This is the agent-as-author moment;
+    everything here pins its lifecycle: proportional trigger, self-clearing via
+    `capture session`, the stop_hook_active loop guard, and the manifest kill
+    switch.
+    """
+
+    def _store_with_baseline(self, tmp: str) -> tuple[Path, Path]:
+        root = make_repo(tmp)
+        mem = init_store(root)
+        # first firing takes the baseline snapshot silently — install day must
+        # not interrogate the agent about pre-existing history
+        self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+        self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
+        return root, mem
+
+    def _commit(self, root: Path, name: str, msg: str) -> None:
+        (root / name).write_text("x\n")
+        git(root, "add", name)
+        git(root, "commit", "-qm", msg)
+
+    def test_new_commits_block_once_with_a_concrete_instruction(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _ = self._store_with_baseline(tmp)
+            self._commit(root, "g.txt", "wire the reconciler")
+            out = run_hook("capture", {"cwd": str(root)})
+            self.assertEqual(out.get("decision"), "block", out)
+            reason = out.get("reason", "")
+            # the instruction names the work and the commands that clear it
+            self.assertIn("wire the reconciler", reason)
+            self.assertIn("crumb remember", reason)
+            self.assertIn("crumb capture session --next", reason)
+
+    def test_capture_clears_the_prompt(self):
+        # Completing the instruction IS the reset: after `capture session`,
+        # a re-firing Stop sees the fresh record as redundant and stays silent.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store_with_baseline(tmp)
+            self._commit(root, "g.txt", "more work")
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}).get("decision"), "block")
+            crumb.main(
+                ["capture", "session", "--project", str(root), "--fast", "--next", "ship it"]
+            )
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+            handoff = crumb.split_md_sections((mem / "handoff.md").read_text())
+            self.assertEqual(handoff["Next Action"].strip(), "ship it")
+
+    def test_dirty_files_without_commits_snapshot_silently(self):
+        # Proportionality: an edit-only turn never earns an interrogation.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store_with_baseline(tmp)
+            (root / "notes.txt").write_text("scratch\n")
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 2)
+
+    def test_manifest_kill_switch_disables_the_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._store_with_baseline(tmp)
+            manifest = mem / "manifest.yml"
+            manifest.write_text(
+                manifest.read_text().replace("extraction_prompt: true", "extraction_prompt: false")
+            )
+            self._commit(root, "g.txt", "more work")
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 2)
+
+    def test_commit_listing_is_bounded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _ = self._store_with_baseline(tmp)
+            for i in range(8):
+                self._commit(root, f"f{i}.txt", f"commit number {i}")
+            reason = run_hook("capture", {"cwd": str(root)}).get("reason", "")
+            self.assertIn("8 new commit(s)", reason)
+            self.assertIn("… and 3 more", reason)
+
+    def test_non_git_project_never_prompts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            init_store(root)
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
+            self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
 
 
 class HookUsageTests(unittest.TestCase):
@@ -313,6 +405,81 @@ class HookUsageTests(unittest.TestCase):
             root = make_repo(tmp)
             init_store(root)
             self.assertIsInstance(run_hook("session", {"cwd": str(root)}), dict)
+
+
+class PrefilterEvidencePathTests(unittest.TestCase):
+    """The hook pre-filter must see the files a do-not-retry attempt names via
+    `--evidence file` — the documented way to attach a file. Scraping prose
+    alone left `crumb guard "edit src/billing.py"` saying PAUSE while the hook
+    on the identical Edit stayed silent (the field-test defect this class pins).
+    """
+
+    def _attempt_with_file_evidence(self, root: Path) -> None:
+        crumb.main(
+            [
+                "remember",
+                "attempt",
+                "--project",
+                str(root),
+                "--title",
+                "Batched the billing reconciler writes",
+                "--tried",
+                "batched writes",
+                "--result",
+                "double-charged customers in staging",
+                "--do-not-retry",
+                "an idempotency key exists",
+                "--evidence",
+                "file",
+                "src/billing.py",
+                "--tags",
+                "billing",
+            ]
+        )
+
+    def test_prefilter_index_carries_evidence_file_paths(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            self._attempt_with_file_evidence(root)
+            idx = json.loads(
+                (mem / "generated" / _cli.GUARD_PREFILTER_FILENAME).read_text(encoding="utf-8")
+            )
+            self.assertIn("src/billing.py", idx["paths"], idx)
+
+    def test_edit_of_an_evidenced_file_escalates_in_the_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            self._attempt_with_file_evidence(root)
+            out = run_hook(
+                "guard",
+                {
+                    "cwd": str(root),
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": "src/billing.py"},
+                },
+            )
+            hso = out.get("hookSpecificOutput") or {}
+            self.assertTrue(
+                hso.get("permissionDecisionReason") or hso.get("additionalContext"),
+                f"hook stayed silent on the exact file the attempt evidences: {out}",
+            )
+
+    def test_stale_raw_token_prefilter_still_matches_stemmed_actions(self):
+        # A prefilter written before the stemmer holds raw tokens; the reader
+        # re-stems them, so an inflected action still trips the index.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            pre = mem / "generated" / _cli.GUARD_PREFILTER_FILENAME
+            pre.write_text(
+                json.dumps({"tokens": ["reconciler", "batched"], "paths": []}),
+                encoding="utf-8",
+            )
+            self.assertTrue(
+                _cli._prefilter_trap_hit(mem, "batching the reconciliation writes", None)
+            )
 
 
 if __name__ == "__main__":

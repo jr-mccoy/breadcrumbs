@@ -5,6 +5,87 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
+## [Unreleased]
+
+### Added
+
+- **The Stop hook makes the agent the memory author (the extraction turn).**
+  The store's most valuable records — decisions, failed attempts, do-not-retry
+  conditions — were 100% manual: auto-capture only ever wrote git snapshots, so
+  the whole payload depended on a human (or a standing signpost the agent read
+  hundreds of turns ago) remembering to run `crumb remember`. That is the
+  discipline tax that kills tools of this shape. Now, when the ending turn
+  produced **new commits** since the last session record, `crumb hook capture`
+  holds the stop once (`decision: block`) and hands the agent a concrete
+  instruction: record any durable decision / failed attempt / verification from
+  this session, mark any record the session contradicted, then
+  `crumb capture session --next "…"` — which is also exactly what clears the
+  prompt, so completing the instruction and moving on are the same act. The
+  request lands while the model still holds the session's "why".
+  Proportionality keeps it quiet: edit-only and no-change turns never prompt; a
+  `stop_hook_active` continuation is never held again (if the agent ignored the
+  instruction, the machine snapshot is the floor — behavior never drops below
+  what 0.1.9 did); the first firing in a store takes a silent baseline rather
+  than interrogating the agent about pre-existing history; and the commit
+  listing in the prompt is bounded. Per-project kill switch:
+  `extraction_prompt: false` in `manifest.yml` (absent = on, so existing stores
+  get the behavior on upgrade — this line is the notice).
+
+- **`guard`/`search` match morphological variants of the recorded words.**
+  Matching was exact-token set intersection, which missed the main case the
+  tool exists for: a *different* session phrases the same intent differently.
+  "Group reconciliation writes into batches" scored zero shared keywords
+  against an attempt titled "Batched the billing reconciler writes" — a
+  recorded do-not-retry, invisible to the exact phrasing that repeats it.
+  Query and record tokens (and tags) are now folded by a small deterministic
+  suffix-stripper — every rule a plain strip applied longest-first to a
+  fixpoint, so whole families (reconciliation/reconciler/reconciling,
+  batch/batched/batching, migrations/migrate) land on one stem — plus a
+  deliberately tiny alias table for abbreviations stemming cannot derive
+  (authentication/authorization→auth, configuration→config, database→db,
+  repository→repo). The fixpoint makes stemming idempotent, which is what lets
+  the hook pre-filter re-stem tokens read from an older on-disk
+  `guard-prefilter.json` without diverging from freshly written ones. Stop-word
+  filtering runs on stems too, so inflections the raw list missed ("changes"
+  when the list has "change changed changing") drop out with it. On a 16-case
+  paraphrase eval this took guard recall from 9/12 to 11/12 with zero new false
+  positives; matched tags still display in their original spelling, and
+  `keyword_overlap` in `--json` output now contains stems.
+
+### Fixed
+
+- **The hook pre-filter now sees the files named by `--evidence file`.**
+  `crumb guard "edit src/billing.py"` said PAUSE while the `PreToolUse` hook on
+  the *identical* Edit stayed silent. `_build_guard_prefilter` scraped paths
+  only from prose (trap text, attempt titles, Do Not Retry sections) — never
+  from `evidence:` frontmatter, the documented way to attach a file and the one
+  the README demonstrates. So a do-not-retry attempt evidencing a
+  neutrally-named file (`billing.py`, `reconciler.py`) got no automatic
+  protection at all; earlier field tests passed by accident because "auth" in a
+  path trips the security keyword classifier. Evidence `file`/`path` refs are
+  now unioned into the pre-filter's path index, matching what full scoring
+  already read.
+
+- **Bare `--with-adapter` creates `AGENTS.md` on a green-field project.** With
+  no guidance file detected it used to resolve to a (reported) no-op — which
+  left the one-command wire-up (`init --with-adapter --with-mcp --with-hooks`)
+  silently unwired on exactly the projects a set-and-forget install targets.
+  The flag *is* the ask for a signpost; `AGENTS.md` is the cross-agent
+  standard, so that is the file the fallback creates. Detected files still win,
+  naming files explicitly still wins, and the interactive prompt now offers the
+  creation instead of skipping it. (`--no-adapter` unchanged.)
+
+- **An auto-derived trap slug shares the record-filename budget.** `crumb note
+  trap "<a full sentence>"` slugified the entire text into the id, so every
+  downstream mention of the trap (resume packet, guard reasons) carried a
+  paragraph-long `trap_…` identifier. Auto-derived slugs are now cut at the
+  same 60-character word boundary as record filenames; an explicit `--slug` is
+  untouched. Found within minutes of this repo finally dogfooding its own
+  store (`.project-memory/` now ships in this repository — see the new
+  records for the decisions behind this release).
+
+- The evidence-requirement error no longer reads "a attempt".
+
 ## [0.1.9] — 2026-08-06
 
 ### Fixed — 2026-08-06 field test, round 2 (verification pass on the same Android repo)

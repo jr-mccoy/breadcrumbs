@@ -287,6 +287,8 @@ def manifest_content(
         f"#   distillate = sessions/ stays local; commit only promoted decisions/attempts\n"
         f"commit_generated_projections: {str(commit_generated).lower()}"
         f"   # commit generated/*.md summaries (indexes always ignored)\n"
+        f"extraction_prompt: true   # Stop hook may ask the agent (once per new-commit\n"
+        f"#   turn) to write decision/attempt records before ending; false = snapshot only\n"
     )
 
 
@@ -2085,7 +2087,8 @@ def cmd_remember(args: argparse.Namespace) -> int:
         else:
             _emit_error(
                 args,
-                f"a {rtype} needs evidence or low confidence (validate §16.9): "
+                f"a{'n' if rtype[0] in 'aeiou' else ''} {rtype} needs evidence "
+                f"or low confidence (validate §16.9): "
                 f"pass --evidence TYPE REF or --confidence low",
             )
             return 2
@@ -2334,6 +2337,13 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
             )
             tokens |= _specific(text)
             paths |= _paths_from_text(text)
+            # Evidence file refs count as paths too. Scraping prose alone meant
+            # `--evidence file src/billing.py` — the documented way to attach a
+            # file — contributed nothing here, so an Edit to that exact file
+            # sailed past the hook while `crumb guard "edit src/billing.py"`
+            # said PAUSE. Full scoring already reads these (see _item_from_record);
+            # the pre-filter must see the same files or it gates them out.
+            paths |= set(_evidence_refs(rec, ("file", "path")))
     return {"tokens": sorted(tokens), "paths": sorted(paths)}
 
 
@@ -2434,7 +2444,12 @@ def note(
 
     elif kind == "trap":
         path = memory_dir / "known-traps.md"
-        slug = fields.get("slug") or slugify(text)
+        # Same budget as record filenames: an auto-derived slug is the whole
+        # trap text, and an unbounded one turns every downstream mention
+        # (resume packet, guard reasons) into a paragraph-long id. Found by
+        # dogfooding this repo's own store on day one. An explicit --slug is
+        # the author's to spend as they like.
+        slug = fields.get("slug") or truncate_slug(slugify(text))
         marker = f"trap_{slug}:".lower()
         # A duplicate heading would shadow the earlier block in every dict-based
         # reader, leaving its body unreachable — refuse instead.
@@ -4321,9 +4336,117 @@ def _tokenize(text: str) -> set[str]:
     return {t for t in _TOKEN_RE.findall((text or "").lower()) if len(t) > 1}
 
 
+# Morphology folding for guard/search matching. Exact-token intersection missed
+# the main case the tool exists for: a *different* session phrases the same
+# intent differently ("reconciliation" vs the recorded "reconciler",
+# "batching" vs "batched"), and the record stayed invisible. This is a small
+# deterministic suffix-stripper, not Porter: every rule is a plain strip (or the
+# ies/ied→y rewrite), applied longest-first to a fixpoint so the whole
+# morphological family lands on one stem. The fixpoint also makes stemming
+# idempotent, which is what lets `_prefilter_trap_hit` re-stem tokens read from
+# an older on-disk prefilter without diverging from freshly-written ones.
+# Matching runs on stems on BOTH sides (query and record), so a miss is always
+# symmetric; `keyword_overlap` in --json output therefore contains stems.
+_STEM_REPLACEMENTS = (("ies", "y"), ("ied", "y"))
+_STEM_SUFFIXES = tuple(
+    sorted(
+        (
+            "ations",
+            "ements",
+            "ments",
+            "ances",
+            "ences",
+            "ities",
+            "ation",
+            "ement",
+            "ating",
+            "ance",
+            "ence",
+            "ancy",
+            "ency",
+            "ings",
+            "ated",
+            "ates",
+            "ment",
+            "ions",
+            "ing",
+            "ate",
+            "ity",
+            "ion",
+            "ers",
+            "ors",
+            "ed",
+            "er",
+            "or",
+            "es",
+            "ly",
+            "s",
+            "e",
+            "i",
+        ),
+        key=len,
+        reverse=True,
+    )
+)
+_STEM_MIN_RESIDUE = 3
+
+# Ubiquitous dev abbreviations the stemmer cannot derive. Keys are stems (post
+# suffix-strip), values are the short form people actually type. Deliberately
+# tiny: every entry here is a curated equivalence, not a synonym engine.
+GUARD_STEM_ALIASES = {
+    "authentic": "auth",
+    "authoriz": "auth",
+    "configur": "config",
+    "repository": "repo",
+    "databas": "db",
+}
+
+
+def _stem(token: str) -> str:
+    """Fold a token to its morphological stem (deterministic, idempotent)."""
+    word = token
+    for _ in range(4):  # fixpoint: families collapse in <=4 strips
+        if word.isdigit():
+            break
+        # Alias keys terminate the loop: they are already canonical family
+        # names, and letting the strip rules keep going would walk past them
+        # ("databas" -> "databa", missing the db alias entirely).
+        if word in GUARD_STEM_ALIASES:
+            break
+        changed = False
+        for suf, repl in _STEM_REPLACEMENTS:
+            if word.endswith(suf) and len(word) - len(suf) >= _STEM_MIN_RESIDUE:
+                word = word[: -len(suf)] + repl
+                changed = True
+                break
+        if not changed:
+            for suf in _STEM_SUFFIXES:
+                if not word.endswith(suf) or len(word) - len(suf) < _STEM_MIN_RESIDUE:
+                    continue
+                # never strip the second s of an "ss" ending (class, address)
+                if suf == "s" and word.endswith("ss"):
+                    continue
+                word = word[: -len(suf)]
+                changed = True
+                break
+        if not changed:
+            break
+    return GUARD_STEM_ALIASES.get(word, word)
+
+
+# Stopwords are filtered on stems so inflections a raw list misses ("changes"
+# when the list has "change changed changing") drop out too.
+_GUARD_STOPWORD_STEMS = frozenset(GUARD_STOPWORDS | {_stem(w) for w in GUARD_STOPWORDS})
+
+
 def _specific(text: str) -> set[str]:
-    """Meaningful tokens only: word tokens minus the generic stop-words."""
-    return _tokenize(text) - GUARD_STOPWORDS
+    """Meaningful stems only: tokenized words, stemmed, minus stop-word stems."""
+    out = set()
+    for t in _tokenize(text):
+        s = _stem(t)
+        if len(s) > 1 and s not in _GUARD_STOPWORD_STEMS and t not in GUARD_STOPWORDS:
+            out.add(s)
+    return out
 
 
 def _paths_from_text(text: str) -> set[str]:
@@ -4485,6 +4608,9 @@ def _item_from_record(rec: Record) -> dict:
         "lifecycle": lifecycle,
         "title": rec.meta.get("title", "") or rec.stem,
         "tags": tags,
+        # Stem -> original tag. Matching runs on stems (a "migrations" tag must
+        # meet a "migration" query); display and `tag:` filters keep the raw tag.
+        "tag_stems": {_stem(t): t for t in tags},
         "files": files,
         "specific": _specific(text),
         # The title's own tokens, kept separate so `_score_item` can weight a
@@ -4641,7 +4767,10 @@ def _score_item(
     extra_bare = {f for f in raw_files if "/" not in f and f not in covered}
     matched_files = sorted(full_paths | extra_bare)
     file_count = len(full_paths) + len(extra_bare)
-    matched_tags = item["tags"] & q_specific
+    # Tag overlap is computed on stems; the display set carries the raw tags.
+    tag_stems = item.get("tag_stems") or {t: t for t in item["tags"]}
+    matched_tag_stems = set(tag_stems) & q_specific
+    matched_tags = {tag_stems[s] for s in matched_tag_stems}
     kw_overlap = item["specific"] & q_specific
     kw_count = len(kw_overlap)
     # Title tokens are a subset of `specific` (the text bag includes the title),
@@ -4660,7 +4789,7 @@ def _score_item(
         score += GUARD_W_FILE * file_count
         signals.append("file")
     if matched_tags:
-        score += GUARD_W_TAG * len(matched_tags)
+        score += GUARD_W_TAG * len(matched_tag_stems)
         signals.append("tag")
     if kw_count:
         score += GUARD_W_KEYWORD * kw_count
@@ -6342,17 +6471,16 @@ def _fmt_adapter_targets(root: Path, names: list[str]) -> str:
 def _adapter_request_note(args: argparse.Namespace, adapters: list[str]) -> str | None:
     """Explain an adapter request that legitimately resolved to nothing.
 
-    Bare `--with-adapter` means "every agent-guidance file I can detect", so in a
-    project with none it is a defensible no-op — inventing a `CLAUDE.md` nobody
-    asked for is worse. What was not defensible is that it was a *silent* no-op
-    while `doctor` reported `✗ [adapter]` and the first-run nudge kept
-    recommending exactly the command that had just done nothing. Naming a file
-    (`--with-adapter=AGENTS.md`) creates it.
+    Bare `--with-adapter` on a project with no guidance file now falls back to
+    creating `AGENTS.md` (the cross-agent standard), so the only way an
+    explicit adapter request resolves empty is `--with-adapter=` with an empty
+    list — still worth a note rather than a silent no-op, because `doctor`
+    will report `✗ [adapter]` and the user should hear both facts together.
     """
     if adapters or getattr(args, "adapter", None) in (None, False):
         return None
     return (
-        "no agent-guidance file detected, so no signpost was written. "
+        "the adapter list resolved to no files, so no signpost was written. "
         f"Name one to create it, e.g. `--with-adapter={ADAPTER_FILENAMES[0]}`."
     )
 
@@ -6420,6 +6548,13 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
         raise ValueError(problem)
     detected = present_adapters(root)
     adapters = _resolve_tristate_list(getattr(args, "adapter", None), detected)
+    # Bare `--with-adapter` on a project with no guidance file used to resolve
+    # to a no-op (with a note recommending the flag spelling that would work).
+    # But the flag IS the ask for a signpost, and `AGENTS.md` is the
+    # cross-agent standard — so a green-field project gets that one file
+    # created rather than nothing. Naming files explicitly still wins.
+    if getattr(args, "adapter", None) == "*" and not adapters:
+        adapters = [ADAPTER_FILENAMES[0]]
     hooks = _resolve_tristate_list(getattr(args, "hooks", None), list(HOOK_EVENTS))
     mcp = getattr(args, "mcp", None)  # True / False / None
 
@@ -6435,7 +6570,15 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
                     else []
                 )
             else:
-                adapters = []  # nothing to point at; don't create files
+                adapters = (
+                    [ADAPTER_FILENAMES[0]]
+                    if _prompt_yes(
+                        f"  No agent-guidance file found. Create {ADAPTER_FILENAMES[0]} "
+                        "with the signpost?",
+                        True,
+                    )
+                    else []
+                )
         if mcp is None:
             mcp = _prompt_yes("  Register the MCP server in .mcp.json?", True)
         if hooks is None:
@@ -6754,8 +6897,11 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     if not isinstance(idx, dict):
         return False
     # Two specific shared tokens, mirroring the guard anti-noise floor — a single
-    # generic word never escalates (§19b.8).
-    if len(_specific(action) & set(idx.get("tokens") or ())) >= GUARD_MIN_KEYWORD_OVERLAP:
+    # generic word never escalates (§19b.8). Index tokens are re-stemmed at read
+    # time: a prefilter written by an older version holds raw tokens, and _stem
+    # is idempotent, so fresh and stale files compare identically.
+    idx_tokens = {_stem(str(t)) for t in (idx.get("tokens") or ())}
+    if len(_specific(action) & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
         return True
     action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
     index_paths = _norm_files(idx.get("paths") or ())
@@ -6893,26 +7039,78 @@ def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
     return _work_dirty_files(recorded) == _work_dirty_files(git_dirty_files(root))
 
 
-def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
-    if not memory_dir.is_dir():
-        print(json.dumps({}))
-        return 0
-    # A Stop firing that is itself the continuation of a Stop hook has already
-    # been captured once; re-capturing it is duplicate work at best, a loop at
-    # worst. Same for a turn that changed nothing since the last record.
-    if payload.get("stop_hook_active"):
-        print(json.dumps({}))
-        return 0
-    try:
-        redundant = _hook_capture_is_redundant(memory_dir, root)
-    except Exception:  # pragma: no cover - a dedupe failure must not block Stop
-        redundant = False
-    if redundant:
-        print(json.dumps({}))
-        return 0
-    # Reuse the same --fast snapshot path the CLI uses (diff-stat already summarized).
-    # The Next Action is placeholder text (`_is_placeholder` knows it), so this
-    # machine capture cannot clobber a Next Action / Focus a human set.
+def _extraction_enabled(memory_dir: Path) -> bool:
+    """Manifest kill switch for the Stop-hook extraction prompt (default on)."""
+    manifest = load_manifest(memory_dir) or {}
+    raw = str(manifest.get("extraction_prompt", "true")).strip().lower()
+    return raw not in ("false", "no", "off", "0")
+
+
+# The extraction prompt fires only when the ending turn produced new commits —
+# a proportional trigger: chunky agent turns that landed real work get asked
+# once; small interactive turns (edits with no commit) only get the silent
+# snapshot. Bound mirrors the capture window's philosophy (never dump a wall).
+EXTRACTION_MAX_COMMITS_SHOWN = 5
+
+
+def _extraction_commits(memory_dir: Path, root: Path) -> list[str]:
+    """One-line subjects for commits since the last session record.
+
+    Empty means "do not prompt": nothing new, no git, or no prior session
+    record — the first firing in a store takes the baseline snapshot silently
+    instead of interrogating the agent about pre-existing history.
+    """
+    last = _last_session_commit(memory_dir)
+    if not last:
+        return []
+    cur = git_commit(root)
+    if cur == NO_GIT_COMMIT or cur == last:
+        return []
+    out = _git_out(root, "log", "--oneline", "--no-decorate", f"{last}..HEAD")
+    if out is None:
+        # `last` unknown to this clone (rebase / shallow fetch): HEAD still
+        # moved, which is the signal — say so without a bogus range.
+        return [f"(history rewritten; HEAD is now {_short_ref(cur)})"]
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    return lines or [f"(HEAD moved to {_short_ref(cur)})"]
+
+
+def _extraction_reason(commits: list[str]) -> str:
+    """The block message: a concrete, one-shot instruction to persist memory.
+
+    This is the agent-as-author moment — the request lands while the model
+    still holds the session's "why", instead of relying on a standing signpost
+    it read hundreds of turns ago. `capture session` is the last step, so
+    completing the instruction is exactly what clears it (a re-firing Stop sees
+    the fresh session record as redundant and stays silent).
+    """
+    shown = commits[:EXTRACTION_MAX_COMMITS_SHOWN]
+    extra = len(commits) - len(shown)
+    listing = "\n".join(f"  {c}" for c in shown)
+    if extra > 0:
+        listing += f"\n  … and {extra} more"
+    return (
+        f"breadcrumbs: this turn produced {len(commits)} new commit(s) since the last "
+        f"recorded session:\n{listing}\n"
+        "Before stopping, persist what the next session cannot rediscover:\n"
+        '1. A durable choice made here -> `crumb remember decision --title "…" '
+        '--set Decision "…" --evidence commit <sha>`\n'
+        '2. An approach tried that failed -> `crumb remember attempt --title "…" '
+        '--result "…" --do-not-retry "…" --evidence commit <sha>`\n'
+        '3. Something checked against reality -> `crumb verify "<subject>" '
+        '--status fixed|open|regressed --evidence command "<cmd>"`\n'
+        "4. A record this session contradicted -> `crumb mark-status <id> "
+        'stale --reason "…"`\n'
+        'Finish with `crumb capture session --next "<the next concrete action>"`. '
+        "Record durable facts only — routine work needs no records; if nothing "
+        "durable happened, run just the final capture command."
+    )
+
+
+def _hook_capture_snapshot(root: Path) -> None:
+    """The machine snapshot: the same --fast path the CLI uses (diff-stat already
+    summarized). The Next Action is placeholder text (`_is_placeholder` knows
+    it), so this capture cannot clobber a Next Action / Focus a human set."""
     ns = argparse.Namespace(
         project=str(root),
         json=True,
@@ -6933,6 +7131,35 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
             cmd_capture_session(ns)
     except Exception:  # pragma: no cover - a capture failure must not block Stop
         pass
+
+
+def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
+    if not memory_dir.is_dir():
+        print(json.dumps({}))
+        return 0
+    try:
+        redundant = _hook_capture_is_redundant(memory_dir, root)
+    except Exception:  # pragma: no cover - a dedupe failure must not block Stop
+        redundant = False
+    # A Stop firing that is itself the continuation of a blocked Stop already
+    # had its extraction chance — never block twice (that is the loop). If the
+    # agent captured, the fresh session record reads as redundant and we stay
+    # silent; if it ignored the instruction, fall back to the machine snapshot
+    # so the floor is never below plain snapshot behavior.
+    if payload.get("stop_hook_active"):
+        if not redundant:
+            _hook_capture_snapshot(root)
+        print(json.dumps({}))
+        return 0
+    if redundant:
+        print(json.dumps({}))
+        return 0
+    if _extraction_enabled(memory_dir):
+        commits = _extraction_commits(memory_dir, root)
+        if commits:
+            print(json.dumps({"decision": "block", "reason": _extraction_reason(commits)}))
+            return 0
+    _hook_capture_snapshot(root)
     print(json.dumps({}))
     return 0
 

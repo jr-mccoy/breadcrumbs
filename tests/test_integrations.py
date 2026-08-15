@@ -527,21 +527,33 @@ class InitFlagTests(unittest.TestCase):
             self.assertTrue((root / ".mcp.json").exists())
             self.assertFalse((root / ".claude" / "settings.json").exists())
 
-    def test_no_adapter_file_means_nothing_created(self):
+    def test_bare_with_adapter_on_green_field_creates_agents_md(self):
+        # The flag IS the ask for a signpost. Resolving bare --with-adapter to a
+        # no-op on a project with no guidance file left the one-command wire-up
+        # (`init --with-adapter --with-mcp --with-hooks`) silently unwired on
+        # every green-field agent project; AGENTS.md is the cross-agent
+        # standard, so that is the file the fallback creates.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            code, out = run(
+            code, _ = run(
                 ["init", "--project", tmp, "--session-tracking", "full", "--with-adapter"]
             )
             self.assertEqual(code, 0)
-            # A *bare* --with-adapter means "every guidance file I can detect", so
-            # with none detected we still invent nothing (kept this half).
+            self.assertTrue((root / "AGENTS.md").is_file())
+            self.assertIn(crumb.ADAPTER_BEGIN, (root / "AGENTS.md").read_text())
+            # explicitly created nothing else
             self.assertFalse((root / "CLAUDE.md").exists())
-            # ...but it may no longer be silent about it: `doctor` reports ✗ on
-            # this very check and the first-run nudge recommends the command that
-            # just ran, so the no-op has to say why and how to get past it.
-            self.assertIn("no agent-guidance file detected", out)
-            self.assertIn("--with-adapter=AGENTS.md", out)
+
+    def test_bare_with_adapter_prefers_detected_files_over_creation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "CLAUDE.md").write_text("# guidance\n")
+            code, _ = run(
+                ["init", "--project", tmp, "--session-tracking", "full", "--with-adapter"]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn(crumb.ADAPTER_BEGIN, (root / "CLAUDE.md").read_text())
+            self.assertFalse((root / "AGENTS.md").exists())
 
 
 class AdapterCreationTests(unittest.TestCase):

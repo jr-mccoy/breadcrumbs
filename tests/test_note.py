@@ -110,6 +110,25 @@ class NoteTrapTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out)["ref"], "trap_flaky-migration-on-rotate")
 
+    def test_derived_slug_shares_the_filename_budget(self):
+        # An auto-derived slug is the whole trap text; unbounded, it turned
+        # every downstream mention of the trap (resume packet, guard reasons)
+        # into a paragraph-long id. Found dogfooding this repo's own store.
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            text = (
+                "Never create a git tag or GitHub Release by hand because the "
+                "release workflow owns both of them on the exact commit it builds "
+                "and hand-tagging the wrong commit caused nearly every past failure"
+            )
+            code, out = run(["note", "trap", text, "--project", tmp, "--json"])
+            self.assertEqual(code, 0)
+            ref = json.loads(out)["ref"]
+            self.assertLessEqual(len(ref), len("trap_") + crumb.SLUG_MAX_CHARS, ref)
+            # the full text survives as the summary even though the id is cut
+            traps = crumb.load_traps(Path(tmp) / crumb.MEMORY_DIRNAME)
+            self.assertTrue(any("nearly every past failure" in t["heading"] for t in traps))
+
 
 class NoteIdeaTests(unittest.TestCase):
     def test_idea_creates_valid_record(self):

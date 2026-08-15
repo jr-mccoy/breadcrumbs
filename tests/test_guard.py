@@ -754,5 +754,133 @@ class CommitDistanceIndexTests(unittest.TestCase):
             self.assertLess(many, 20, f"{many} git calls for one guard call")
 
 
+class MorphologyMatchingTests(unittest.TestCase):
+    """Guard matches across morphological variants of the recorded words.
+
+    Exact-token intersection missed the main case the tool exists for: a
+    different session phrases the same intent differently. These pin the
+    stemmer's contract — family collapse, idempotence, alias folding — and the
+    end-to-end effect on the verdict.
+    """
+
+    def test_stem_collapses_a_morphological_family(self):
+        for a, b in (
+            ("reconciliation", "reconciler"),
+            ("batched", "batching"),
+            ("migrations", "migrate"),
+            ("caching", "cache"),
+            ("queries", "query"),
+            ("dependencies", "dependence"),
+        ):
+            self.assertEqual(cli._stem(a), cli._stem(b), (a, b))
+
+    def test_stem_is_idempotent(self):
+        # Idempotence is load-bearing: `_prefilter_trap_hit` re-stems tokens
+        # read from an older on-disk prefilter, so stem(stem(x)) must be stem(x).
+        for w in ("reconciliation", "databases", "authentication", "versioning", "middleware"):
+            self.assertEqual(cli._stem(cli._stem(w)), cli._stem(w), w)
+
+    def test_aliases_fold_long_forms_to_the_typed_short_form(self):
+        for long, short in (
+            ("authentication", "auth"),
+            ("authorization", "auth"),
+            ("configuration", "config"),
+            ("databases", "db"),
+            ("repositories", "repo"),
+        ):
+            self.assertEqual(cli._stem(long), short, long)
+
+    def test_paraphrased_do_not_retry_is_no_longer_invisible(self):
+        # The recorded attempt says "reconciler"; the new session says
+        # "reconciliation". Before stemming this scored zero shared keywords.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            crumb.main(
+                [
+                    "remember",
+                    "attempt",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "Batched the billing reconciler writes",
+                    "--tried",
+                    "batched writes in the reconciler",
+                    "--result",
+                    "double-charged customers",
+                    "--do-not-retry",
+                    "never batch reconciler writes without an idempotency key",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                    "--tags",
+                    "billing",
+                ]
+            )
+            data = guard_json(
+                ["guard", "group reconciliation writes into batches", "--project", str(root)]
+            )
+            self.assertNotEqual(data["verdict"], "PROCEED", data)
+            self.assertTrue(data["matches"], data)
+
+    def test_stemming_does_not_create_matches_from_generic_prose(self):
+        # Precision guard: unrelated phrasing sharing only generic/stop words
+        # must still PROCEED (Fixture 3's contract survives the stemmer).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            crumb.main(
+                [
+                    "remember",
+                    "attempt",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "Batched the billing reconciler writes",
+                    "--tried",
+                    "batching",
+                    "--result",
+                    "failed",
+                    "--do-not-retry",
+                    "never batch reconciler writes",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                    "--tags",
+                    "billing",
+                ]
+            )
+            data = guard_json(["guard", "add a health check endpoint", "--project", str(root)])
+            self.assertEqual(data["verdict"], "PROCEED", data)
+
+    def test_tag_matching_folds_morphology_but_displays_the_raw_tag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "Schema migrations run in CI only",
+                    "--set",
+                    "Decision",
+                    "migrations are CI-owned",
+                    "--evidence",
+                    "commit",
+                    "abc1234",
+                    "--tags",
+                    "migrations",
+                ]
+            )
+            data = guard_json(
+                ["guard", "run a schema migration by hand in prod", "--project", str(root)]
+            )
+            match = data["matches"][0]
+            self.assertIn("migrations", match["matched_tags"], match)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
