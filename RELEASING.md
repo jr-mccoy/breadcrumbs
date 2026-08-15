@@ -19,7 +19,7 @@ The workflow lives at [`.github/workflows/release.yml`](.github/workflows/releas
 1. Go to **https://pypi.org/manage/account/publishing/**.
 2. Add a **pending publisher** with:
    - **PyPI project name:** `crumb-kit`
-   - **Owner:** `jumbodaddystack`
+   - **Owner:** `jr-mccoy`
    - **Repository:** `breadcrumbs`
    - **Workflow name:** `release.yml`
    - **Environment:** `pypi`
@@ -28,6 +28,12 @@ The workflow lives at [`.github/workflows/release.yml`](.github/workflows/releas
    required reviewers if you want a manual approval gate before each publish.
 
 No secrets to add. That's the whole setup.
+
+> **If the repo is ever renamed or transferred, come back here.** PyPI matches
+> the publisher against the repo's owner and name at the time of the run, and it
+> does not follow GitHub's redirects. The publisher entry has to be updated by
+> hand or every publish fails with `invalid-publisher` — see *If a release fails*
+> below.
 
 ### The whole release, in two steps
 
@@ -94,6 +100,20 @@ crumb --version
   version is still free. The 0.1.8 publish died this way, on the action's
   Trusted-Publishing token exchange (`GET /_/oidc/audience`, 5-second connect
   timeout, no retry inside the action) — before a single byte was uploaded.
+- **`invalid-publisher` — "valid token, but no corresponding publisher"**: the
+  repo's owner or name no longer matches the trusted publisher registered on
+  PyPI, so the OIDC exchange has nothing to match against. The error prints the
+  claims GitHub actually sent (`repository`, `repository_owner`, `workflow_ref`,
+  `environment`) — read those as the *truth* about the repo, and fix PyPI to
+  agree with them. Go to
+  **https://pypi.org/manage/project/crumb-kit/settings/publishing/**, delete the
+  stale publisher, and add one matching the claims (see *One-time setup* above).
+  Nothing in this repo can fix it, and re-running unchanged cannot either: unlike
+  the network failure above, this is deterministic, so the built-in retry fails
+  identically. Nothing is burned, though — the failure is before the upload, so
+  there is no tag, no Release, and the version is still free. Re-run once PyPI is
+  updated. This is what broke the 0.1.10 publish, after the repo moved from
+  `jumbodaddystack` to `jr-mccoy`; 0.1.9 was the last release under the old owner.
 - **The upload succeeded but the tag/Release step failed** — the version is on
   PyPI with no tag. **Re-running is the fix.** The pre-flight recognises
   published-but-untagged as a recovery: it lets the run continue, the upload
