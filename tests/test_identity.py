@@ -248,5 +248,28 @@ class SlugLengthTests(unittest.TestCase):
             self.assertEqual(ident, [], "a long legacy name must still validate")
 
 
+class SlugTailTests(unittest.TestCase):
+    """P2-15 (0.1.10 field test): a truncated slug must not end on a function
+    word ('…-is-nullable-with-no') — it reads as a corrupted id."""
+
+    def test_truncated_slug_drops_trailing_function_words(self):
+        slug = crumb.slugify(
+            "the response payload is nullable with no fallback when the peer is offline"
+        )
+        cut = crumb.truncate_slug(slug, 40)
+        self.assertFalse(
+            cut.endswith(("-with", "-no", "-and", "-the", "-is", "-a")),
+            cut,
+        )
+
+    def test_untruncated_slug_is_never_rewritten(self):
+        # An author's own short title may legitimately end on a function word.
+        self.assertEqual(crumb.truncate_slug("say-no"), "say-no")
+
+    def test_result_stays_canonical(self):
+        cut = crumb.truncate_slug(crumb.slugify("keep the flex window and the period and a"), 30)
+        self.assertRegex(cut, r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

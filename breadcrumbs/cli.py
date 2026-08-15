@@ -318,7 +318,7 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
-def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -> None:
+def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -> bool:
     """Insert, replace, or remove a fenced managed block in a text file.
 
     Idempotent. `block` (when given) must contain the `begin` and `end` marker
@@ -326,6 +326,10 @@ def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -
     content is preserved. Pass `block=None` (or "") to strip the managed block,
     leaving everything else intact. The comment style lives in the markers, so the
     same surgery works for `.gitignore` (`#`) and Markdown adapters (`<!-- -->`).
+
+    Returns True iff the file's content actually changed — an already-current
+    block is a no-op (no write, no mtime churn), and callers report it as such
+    instead of claiming an update they did not make (P2-12).
     """
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
 
@@ -348,12 +352,15 @@ def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -
             new_content = prefix + block + (tail if tail.strip() else "")
     else:
         if not block:
-            return  # nothing to remove
+            return False  # nothing to remove
         sep = "" if (not existing or existing.endswith("\n")) else "\n"
         prefix = (existing + sep + "\n") if existing.strip() else ""
         new_content = prefix + block
 
+    if path.exists() and new_content == existing:
+        return False
     path.write_text(new_content, encoding="utf-8")
+    return True
 
 
 def write_gitignore(root: Path, block: str) -> None:
@@ -383,7 +390,13 @@ def merge_json_file(path: Path, mutate) -> None:
         data = {}
     if not isinstance(data, dict):
         raise ValueError(f"expected a JSON object at {path}, found {type(data).__name__}")
+    # Snapshot-compare so a semantic no-op never rewrites the file: a rewrite
+    # reformats entries this tool does not own (P2-13), and "we changed nothing"
+    # should leave no diff at all.
+    before = json.dumps(data, sort_keys=True)
     mutate(data)
+    if path.exists() and json.dumps(data, sort_keys=True) == before:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -503,13 +516,17 @@ def cmd_init(args: argparse.Namespace) -> int:
         if integrations_requested:
             plan = resolve_integration_plan(root, args)
             applied = apply_integrations(root, plan)
+            # P2-14: wiring an agent in is exactly when a fresh packet is needed
+            # next; leaving the old one stale meant `doctor` could not go green
+            # until a manual `crumb resume`.
+            try_reindex_projections(memory_dir, root)
             if args.json:
                 print(json.dumps({"store": "existing", "integrations": applied}, indent=2))
             else:
                 print(f"{MEMORY_DIRNAME}/ already present — store left untouched.")
                 print("Applied integrations:")
-                print(f"  adapter signpost -> {', '.join(applied['adapters']) or '(none)'}")
-                print(f"  MCP register     -> {'yes' if applied['mcp'] else 'no'}")
+                print(f"  adapter signpost -> {_fmt_applied_adapters(applied) or '(none)'}")
+                print(f"  MCP register     -> {_fmt_applied_mcp(applied)}")
                 print(f"  Claude hooks     -> {', '.join(applied['hooks']) or '(none)'}")
                 note = _adapter_request_note(args, applied["adapters"])
                 if note:
@@ -566,6 +583,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     plan = resolve_integration_plan(root, args)
     applied = apply_integrations(root, plan)
 
+    # Build the projections so `doctor` can be green immediately after init
+    # (P2-14: it used to report the resume packet stale/absent until the first
+    # manual `crumb resume`). Best-effort like every other reindex.
+    try_reindex_projections(memory_dir, root)
+
     summary = {
         "created": str(memory_dir),
         "project": project,
@@ -590,6 +612,22 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fmt_applied_adapters(applied: dict) -> str:
+    """Render adapter targets with what actually happened to each (P2-12)."""
+    states = applied.get("adapter_states") or {}
+    return ", ".join(
+        f"{name} ({states[name]})" if name in states else name
+        for name in applied.get("adapters") or []
+    )
+
+
+def _fmt_applied_mcp(applied: dict) -> str:
+    if not applied.get("mcp"):
+        return "no"
+    state = applied.get("mcp_state")
+    return f"yes ({state})" if state else "yes"
+
+
 def _emit_init_summary(args: argparse.Namespace, summary: dict) -> None:
     if args.json:
         print(json.dumps(summary, indent=2))
@@ -604,9 +642,10 @@ def _emit_init_summary(args: argparse.Namespace, summary: dict) -> None:
     if integ.get("adapters") or integ.get("mcp") or integ.get("hooks"):
         print("  integrations:")
         if integ.get("adapters"):
-            print(f"    adapter signpost:            {', '.join(integ['adapters'])}")
+            print(f"    adapter signpost:            {_fmt_applied_adapters(integ)}")
         if integ.get("mcp"):
-            print(f"    MCP registered:              {integ['mcp']}")
+            state = f" ({integ['mcp_state']})" if integ.get("mcp_state") else ""
+            print(f"    MCP registered:              {integ['mcp']}{state}")
         if integ.get("hooks"):
             print(f"    Claude hooks:                {', '.join(integ['hooks'])}")
     else:
@@ -1722,13 +1761,24 @@ def render_frontmatter(meta: dict) -> str:
 
 
 def render_body(rtype: str, sections: dict[str, str]) -> str:
-    """Render the §8 body for `rtype`, filling provided sections; stub the rest."""
+    """Render the §8 body for `rtype` — provided sections only, canonical order.
+
+    Unfilled sections are omitted, not stubbed (P2-10): the field test's best
+    record had 4 of 7 sections reading `_(not recorded)_`, burying the one
+    section that carried the value. `schema --template <type>` still shows a
+    human the full skeleton; the stored record only says what was recorded.
+    """
     out: list[str] = []
     for heading in BODY_SECTIONS[rtype]:
-        out.append(f"## {heading}")
         content = (sections.get(heading) or "").strip()
-        out.append(content if content else _EMPTY_SECTION)
+        if not content or content == _EMPTY_SECTION:
+            continue
+        out.append(f"## {heading}")
+        out.append(content)
         out.append("")
+    if not out:
+        # A record with no filled sections still needs a parseable body.
+        out = [f"## {BODY_SECTIONS[rtype][0]}", _EMPTY_SECTION, ""]
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -1751,6 +1801,13 @@ def slugify(title: str) -> str:
 # text either way; the filename only has to be a readable, unique handle.
 SLUG_MAX_CHARS = 60
 
+# Closed-class words a truncated slug must not end on (P2-15). Deliberately
+# tiny — nouns that double as function words in some titles ("test", "work")
+# stay out so a meaningful tail is never eaten.
+_SLUG_TRAILING_STOPWORDS = frozenset(
+    "a an the and or but nor with no not of in on for to is are was were has have had by at from as".split()
+)
+
 
 def truncate_slug(slug: str, limit: int = SLUG_MAX_CHARS) -> str:
     """Cap `slug` at `limit` characters, preferring a whole-word cut.
@@ -1766,7 +1823,15 @@ def truncate_slug(slug: str, limit: int = SLUG_MAX_CHARS) -> str:
     head, sep, _tail = cut.rpartition("-")
     if sep and len(head) >= limit // 2:
         cut = head
-    return cut.rstrip("-") or slug[:limit].rstrip("-")
+    cut = cut.rstrip("-") or slug[:limit].rstrip("-")
+    # A truncated slug that ends on a function word ("…-is-nullable-with-no",
+    # "…-15-minute-period-and") reads as corrupted (P2-15). Trim trailing
+    # function words — only here, on the truncation path: an author's own short
+    # title ("say-no") is never rewritten.
+    parts = cut.split("-")
+    while len(parts) > 1 and parts[-1] in _SLUG_TRAILING_STOPWORDS:
+        parts.pop()
+    return "-".join(parts)
 
 
 def _unique_record_path(directory: Path, date: str, slug: str) -> tuple[Path, str]:
@@ -5641,7 +5706,16 @@ INSTRUCTION_LIKE_PATTERNS: tuple["_LazyPattern", ...] = (
         + _IL_QUALIFIERS
         + r"(?:tests?|checks?|validation|guard|safety|linter?|ci)\b"
     ),
-    _LazyPattern(r"(?i)\b(?:never|always)\s+run\b"),
+    # Imperative "never run X" only: an auxiliary right before it ("has never
+    # run", "was never run") is a factual claim about history, not an
+    # instruction — the field test's audit fired 7 warnings, all on sentences
+    # like "E2E has never run in production" (P2-11). Python lookbehinds are
+    # fixed-width, hence one per auxiliary.
+    _LazyPattern(
+        r"(?i)(?<!\bis\s)(?<!\bare\s)(?<!\bwas\s)(?<!\bhas\s)(?<!\bhad\s)"
+        r"(?<!\bwere\s)(?<!\bbeen\s)(?<!\bhave\s)"
+        r"\b(?:never|always)\s+run\b"
+    ),
     _LazyPattern(r"(?i)\bdo\s+not\s+run\b"),
     _LazyPattern(r"(?i)\b(?:always|never)\s+(?:force[- ]?push|skip|disable|ignore|bypass)\b"),
     _LazyPattern(
@@ -6238,16 +6312,70 @@ def mcp_server_entry() -> dict:
     }
 
 
-def register_mcp(root: Path) -> Path:
-    """Merge the breadcrumbs server into `.mcp.json`, preserving any other servers."""
+def _splice_json_insert(text: str, parent_key: str, key: str, value: dict) -> str | None:
+    """Insert `key: value` into the `parent_key` object by text splice.
+
+    Preserves every other byte of the file — `merge_json_file`'s full
+    re-serialization reformatted entries it does not own (P2-13: a `firebase`
+    server's one-line args array came back multi-line). Returns the spliced
+    text, or None when the anchor cannot be found; the caller MUST verify the
+    result by re-parsing, which also defuses a false anchor match inside a
+    string value (the reparse then disagrees with the expected data and the
+    caller falls back to the full rewrite).
+    """
+    m = re.search(rf'"{re.escape(parent_key)}"\s*:\s*\{{', text)
+    if m is None:
+        return None
+    line_start = text.rfind("\n", 0, m.start()) + 1
+    parent_indent = re.match(r"[ \t]*", text[line_start:]).group(0)
+    child_indent = parent_indent + "  "
+    body = json.dumps(value, indent=2)
+    lines = body.splitlines()
+    rendered = lines[0] + "".join("\n" + child_indent + ln for ln in lines[1:])
+    snippet = f'\n{child_indent}"{key}": {rendered},'
+    return text[: m.end()] + snippet + text[m.end() :]
+
+
+def register_mcp(root: Path) -> tuple[Path, bool]:
+    """Add the breadcrumbs server to `.mcp.json`; other servers stay byte-identical.
+
+    Returns (path, changed). Three tiers, safest-first: an already-current entry
+    is a no-op; a fresh insert into an existing `mcpServers` object is a text
+    splice (verified by re-parse) so unrelated entries keep their exact
+    formatting; anything else falls back to the parse-validated full rewrite.
+    """
     path = root / ".mcp.json"
+    entry = mcp_server_entry()
+
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError:
+            data = None  # merge_json_file below raises the canonical error
+        if isinstance(data, dict) and isinstance(data.get("mcpServers"), dict):
+            servers = data["mcpServers"]
+            if servers.get(MCP_SERVER_NAME) == entry:
+                return path, False
+            if MCP_SERVER_NAME not in servers:
+                spliced = _splice_json_insert(text, "mcpServers", MCP_SERVER_NAME, entry)
+                if spliced is not None:
+                    expected = json.loads(json.dumps(data))
+                    expected["mcpServers"][MCP_SERVER_NAME] = entry
+                    try:
+                        ok = json.loads(spliced) == expected
+                    except json.JSONDecodeError:
+                        ok = False
+                    if ok:
+                        path.write_text(spliced, encoding="utf-8")
+                        return path, True
 
     def _mut(data: dict) -> None:
         servers = data.setdefault("mcpServers", {})
         servers[MCP_SERVER_NAME] = mcp_server_entry()
 
     merge_json_file(path, _mut)
-    return path
+    return path, True
 
 
 def unregister_mcp(root: Path) -> bool:
@@ -6295,13 +6423,19 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
     if what == "register":
         root = resolve_root(args.project)
-        path = register_mcp(root)
+        path, changed = register_mcp(root)
         sdk = _mcp_sdk_available()
-        summary = {"registered": str(path), "server": MCP_SERVER_NAME, "sdk_available": sdk}
+        summary = {
+            "registered": str(path),
+            "server": MCP_SERVER_NAME,
+            "changed": changed,
+            "sdk_available": sdk,
+        }
         if args.json:
             print(json.dumps(summary, indent=2))
         else:
-            print(f"Registered MCP server '{MCP_SERVER_NAME}' in {path}")
+            state = "" if changed else " (already current)"
+            print(f"Registered MCP server '{MCP_SERVER_NAME}' in {path}{state}")
             if not sdk:
                 print("  note: the MCP SDK isn't installed — run: pip install 'crumb-kit[mcp]'")
             print(
@@ -6419,15 +6553,16 @@ def present_adapters(root: Path) -> list[str]:
     return [name for name in ADAPTER_FILENAMES if (root / name).is_file()]
 
 
-def write_adapter_block(root: Path, name: str) -> None:
+def write_adapter_block(root: Path, name: str) -> bool:
     """Insert/replace the signpost block in an agent-guidance file, creating it if absent.
 
     `.github/copilot-instructions.md` is the one adapter name that lives in a
-    subdirectory, so creating it means creating `.github/` too.
+    subdirectory, so creating it means creating `.github/` too. Returns True iff
+    the file changed (an already-current block is a no-op).
     """
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, adapter_block())
+    return rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, adapter_block())
 
 
 def remove_adapter_block(root: Path, name: str) -> bool:
@@ -6857,12 +6992,19 @@ def apply_integrations(root: Path, plan: dict) -> dict:
     `--print-integrations` had just promised the opposite and `doctor` went on
     recommending the command that could not help.
     """
-    applied: dict = {"adapters": [], "mcp": None, "hooks": []}
+    # `adapter_states`/`mcp_state` say what actually happened per target:
+    # "updated" vs "already current". For a trust tool the distinction matters —
+    # init used to print `adapter signpost -> CLAUDE.md` while CLAUDE.md was
+    # byte-identical afterwards (P2-12), which reads as a lie in either direction.
+    applied: dict = {"adapters": [], "adapter_states": {}, "mcp": None, "hooks": []}
     for name in plan["adapters"]:
-        write_adapter_block(root, name)
+        changed = write_adapter_block(root, name)
         applied["adapters"].append(name)
+        applied["adapter_states"][name] = "updated" if changed else "already current"
     if plan["mcp"]:
-        applied["mcp"] = str(register_mcp(root))
+        path, changed = register_mcp(root)
+        applied["mcp"] = str(path)
+        applied["mcp_state"] = "updated" if changed else "already current"
     if plan["hooks"]:
         install_claude_hooks(root, plan["hooks"])
         applied["hooks"] = list(plan["hooks"])

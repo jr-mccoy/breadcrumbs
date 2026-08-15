@@ -25,6 +25,39 @@ trains an agent to ignore the one warning that matters.
   lists; deletions reindex the projections. `audit`'s bloat note now points
   here.
 
+### Fixed
+
+- **`audit`'s instruction-like detector learned tense (P2-11).** "E2E has
+  never run in production" is a fact; "never run the migration by hand" is an
+  instruction. An auxiliary (`has/have/had/is/are/was/were/been`) before
+  "never/always run" now suppresses the flag — the field test's 7 warnings
+  were 7 false positives on exactly this pattern.
+- **`init` reports what actually happened (P2-12).** Each adapter/MCP target
+  prints `(updated)` or `(already current)`; it no longer claims
+  `adapter signpost -> CLAUDE.md` while leaving CLAUDE.md byte-identical.
+  `--json` carries `adapter_states` / `mcp_state`.
+- **`.mcp.json` entries breadcrumbs does not own stay byte-identical (P2-13).**
+  Registering the server splices its own key in (verified by re-parse) instead
+  of round-tripping the whole file through the serializer; a semantically
+  unchanged merge writes nothing at all. No more collapsing another server's
+  one-line `args` array.
+- **`doctor` can be all-green immediately after `init` (P2-14).** `init` now
+  builds the `generated/` projections (resume packet + guard prefilter) in both
+  the fresh-store and integrations-only paths.
+- **Empty record sections are omitted, not stubbed (P2-10).** The field test's
+  most valuable record had 4 of 7 sections reading `_(not recorded)_`, burying
+  the one section that carried the un-rediscoverable value. `schema --template`
+  still shows the full skeleton; the stored record only says what was recorded.
+- **Truncated slugs no longer end on function words (P2-15).**
+  `…-is-nullable-with-no` now truncates to `…-is-nullable`; an author's own
+  short title ("say-no") is never rewritten.
+
+### Docs
+
+- The `breadcrumbsHook` marker key — an extension key inside Claude Code's
+  hook schema — is now documented as a deliberate choice with its failure
+  story and migration path (P3-16), instead of being an unexplained surprise.
+
 ### Changed
 
 - **The extraction turn no longer claims authorship it can't verify (P1-7).**

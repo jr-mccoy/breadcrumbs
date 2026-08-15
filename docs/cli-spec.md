@@ -79,6 +79,25 @@ project root for stray managed blocks and reverses them too.)
 Ctrl+C at any `init` prompt aborts with exit 130 and writes nothing further; EOF
 (piped input) still takes the prompt's default.
 
+**Reporting matches reality.** Each adapter/MCP target is reported as
+`(updated)` or `(already current)` — `init` never claims to have written a file
+it left byte-identical (`--json` carries `adapter_states` / `mcp_state`).
+Registering the MCP server leaves other `.mcp.json` entries byte-for-byte
+untouched (a fresh insert is a re-parse-verified text splice, an already-current
+entry is a no-op; only a degenerate file falls back to a full rewrite), and
+`init` finishes by building the `generated/` projections so `doctor` can be
+green immediately.
+
+**A note on the hook marker.** Installed hook entries carry a `breadcrumbsHook`
+key *inside* Claude Code's `.claude/settings.json` hook objects. That is a
+foreign key in another product's schema, relying on Claude Code ignoring
+unknown keys (which it documents and does). It is deliberate: identity in the
+command text broke under wrapper scripts, venv paths, and `python -m
+breadcrumbs` launchers — `doctor` saw "no hooks" while all three fired, and
+removal left ghosts. If Claude Code ever rejects unknown keys, reinstalling
+hooks (`init --with-hooks`) is the migration path; the marker's name is
+namespaced enough to make a collision implausible.
+
 ### Later commands (post-MVP)
 
 **None of these exist**, and none is scheduled. They are recorded here as the shape

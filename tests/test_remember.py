@@ -457,5 +457,29 @@ class AgentProvenanceTests(unittest.TestCase):
         self.assertIsNone(defaults.agent)
 
 
+class EmptySectionOmissionTests(unittest.TestCase):
+    """P2-10 (0.1.10 field test): the best record in the store had 4 of 7
+    sections reading '_(not recorded)_', burying the one that mattered."""
+
+    def test_unfilled_sections_are_omitted_not_stubbed(self):
+        body = crumb.render_body(
+            "attempt",
+            {
+                "Result": "AGP silently ignores the property",
+                "Do Not Retry Unless": "a splits { abi { } } block exists",
+            },
+        )
+        self.assertNotIn("_(not recorded)_", body)
+        self.assertIn("## Result", body)
+        self.assertIn("## Do Not Retry Unless", body)
+        self.assertNotIn("## Problem", body)
+        self.assertNotIn("## Related Records", body)
+
+    def test_a_record_with_nothing_recorded_still_has_a_parseable_body(self):
+        body = crumb.render_body("attempt", {})
+        self.assertIn("## Problem", body)  # first canonical section as anchor
+        self.assertIn("_(not recorded)_", body)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
