@@ -90,3 +90,26 @@ failed release). Two steps:
 
 When you make a fix on a branch and it merges to `main`, a release is then just
 step 2 above — no other ceremony.
+
+<!-- >>> breadcrumbs managed block (managed by `crumb init`) — edit above/below, not inside >>> -->
+## Project memory (breadcrumbs)
+
+This repo has a durable memory store under `.project-memory/`. Use it:
+
+- **Starting work / new session:** read the resume packet first —
+  `crumb resume` (or MCP resource `memory://resume-packet`).
+- **Before any risky or irreversible action** (deletes, force-push, schema
+  or build-system changes, rewrites): `crumb guard "<action>"` and honor a
+  `PAUSE` / `ASK_HUMAN` verdict.
+- **After a durable decision or a failed approach:**
+  `crumb remember decision|attempt …`.
+- **After checking whether something is still true / fixed:**
+  `crumb verify "<subject>" --status fixed|open|regressed|… --evidence …`.
+- **Leaving a note for the next agent:** `crumb note question|trap|idea …`.
+- **Session end:** `crumb capture session --next "<what to do next>"`
+  (add `--set "Decisions Made" "…"` for narrative). Pass `--next`: the bare
+  form prompts for each section and cannot be answered without a terminal.
+  If the `Stop` hook is installed, a snapshot is already taken for you.
+
+Memory must never contain secrets; `crumb scan-secrets` gates commits.
+<!-- <<< breadcrumbs managed block <<< -->

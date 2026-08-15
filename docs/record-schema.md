@@ -121,7 +121,14 @@ project: <project-name>
 # Tracking policy chosen during `crumb init`:
 session_tracking: full        # full | distillate
 commit_generated_projections: true   # commit generated/*.md (indexes always ignored)
+extraction_prompt: true   # Stop hook may hold the stop once per new-commit turn
+                          # to ask the agent for decision/attempt records
 ```
+
+`extraction_prompt` (default `true`, and treated as `true` when the key is
+absent — pre-existing stores get the behavior on upgrade) is the kill switch
+for the Stop-hook extraction turn. Set it to `false` and the hook only ever
+takes the silent machine snapshot.
 
 `schema_version` is `1` for this build. `project` is auto-derived from the project
 root directory name. `created_at` is ISO-8601 with timezone.

@@ -433,6 +433,22 @@ piece is independent:
     commit and dirty-file set are unchanged since the newest session record, and
     its stand-in Next Action never overwrites one you set.
 
+    When the ending turn produced **new commits**, the hook does more than
+    snapshot: it holds the stop once (**the extraction turn**) and hands the
+    agent a concrete instruction — record any durable decision, failed attempt,
+    or verification from this session (`crumb remember` / `verify` /
+    `mark-status`), then `crumb capture session --next "…"`. That last command
+    is also what clears the prompt, so completing the instruction and moving on
+    are the same act. This is what makes the agent the memory *author* with no
+    human in the loop: the request lands while the model still holds the
+    session's "why", instead of relying on a signpost it read hundreds of turns
+    ago. Proportionality rules keep it quiet: edit-only turns and no-change
+    turns never prompt, a continuation of a held stop is never held again (the
+    machine snapshot is the floor if the agent ignores the instruction), and
+    the very first firing in a store takes a silent baseline instead of
+    interrogating the agent about pre-existing history. Opt out per project
+    with `extraction_prompt: false` in `manifest.yml`.
+
   The installed command is a small POSIX-`sh` resolver, not a bare `crumb`: it
   tries `$PATH`, then `./.venv` (POSIX and Windows layouts), then any interpreter
   that can `import breadcrumbs`. That covers a container that provisions the CLI
