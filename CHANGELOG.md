@@ -5,6 +5,49 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
+## [Unreleased]
+
+Triage of the 0.1.10 production field test (a full working session in a real
+Android repo, 83-session store). The headline from that test — the agent-driven
+hooks pivot — worked and is untouched; everything here is tuning the signal
+quality around it. The guard was the uninstall risk: a ~1-in-30 relevance rate
+trains an agent to ignore the one warning that matters.
+
+### Changed
+
+- **Guard verdict floors need author-curated specificity (P0-2).** A
+  keyword-only trap match no longer floors `READ_FIRST` unconditionally — it
+  needs a file or tag signal, like decisions and verifications always did, and
+  keyword-only matches of any kind escalate only through the score bands. In
+  the field test the old floor made one WorkManager trap fire on all 13 edits
+  of the session, across files that never touch WorkManager.
+- **Corpus-ubiquitous tokens stop counting as signal (P0-2c).** Once a store
+  holds ≥ 8 searchable items, a stem present in more than a third of them
+  (package prefixes shed by cited file paths — "com", "kt" —, the project's own
+  domain noun) carries zero keyword weight and no gate credit in both `guard`
+  and `search`. File and tag matches are exempt: author-curated, deliberate
+  signal.
+- **`crumb guard` exits with a verdict-mapped code (P0-1):** `PROCEED` 0,
+  `READ_FIRST` 10, `PAUSE` 15, `ASK_HUMAN` 20 — so "block only on ASK_HUMAN"
+  is scriptable and no verdict can be mistaken for a crash. `2` stays the
+  usage-error code; the hook path still always exits 0.
+- **Guard staleness is risks-only (P0-4).** The per-action path now carries
+  only abnormal states (cold handoff, detached HEAD, branch mismatch). The
+  routine store facts that used to repeat verbatim on every call — fresh
+  handoff age, low-confidence and other-branch record lists — live in
+  `resume`/`doctor`/`audit`, which are read once per session.
+- **`search` shares guard's keyword floor (P1-8).** A pure-text match needs
+  the same shared-specific-token minimum (relaxed to the query's own length so
+  one-word lookups still work), so a weak query returns an honest zero instead
+  of five records that share the bare token "version".
+- **Hook edits carry content and advisories dedupe (P0-3, P0-2b).** The
+  `PreToolUse` guard action for an edit now includes a bounded snippet of the
+  new content — successive edits of one file stop producing byte-identical
+  guard output, and content-shaped traps can match. A `READ_FIRST` for the
+  same file + same records fires once per host session
+  (`private/hook-guard-seen.json`, machine-local, bounded); `PAUSE` and
+  `ASK_HUMAN` are never deduplicated.
+
 ## [0.1.10] — 2026-08-15
 
 The release that closes the authorship gap. Through 0.1.9 the store's most

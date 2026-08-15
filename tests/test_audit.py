@@ -183,8 +183,9 @@ class InstructionLikeTests(unittest.TestCase):
                 "--json",
             ]
         )
-        self.assertEqual(res_code, 0)
         res = json.loads(out)
+        # Exit code is verdict-mapped (P0-1); this test cares about content, not band.
+        self.assertEqual(res_code, crumb.GUARD_VERDICT_EXIT_CODES[res["verdict"]])
         self.assertTrue(res["matches"])  # the record surfaces...
         na = res["recommended_action"].lower()
         # ...but the imperative is never lifted into the recommended action.

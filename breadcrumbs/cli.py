@@ -3544,8 +3544,19 @@ def compute_staleness(
     attempts: list[Record],
     questions: list[dict],
     stale_days: int,
+    *,
+    risks_only: bool = False,
 ) -> list[str]:
-    """All computed staleness/risk warnings (§12, §15). Order: primary first."""
+    """All computed staleness/risk warnings (§12, §15). Order: primary first.
+
+    `risks_only` is the guard-context view (0.1.10 field test, P0-4): only
+    warnings that flag an *abnormal* state — cold handoff, detached HEAD,
+    handoff branch mismatch — are emitted. The full view additionally reports
+    routine per-store facts (handoff age when fresh, aged records, low
+    confidence, other-branch records); repeating those on every guard call was
+    invariant noise, so they stay in resume/doctor/audit where they are read
+    once per session, not once per edit.
+    """
     warnings: list[str] = []
     cur_branch = git_branch(root)
     detached = is_git_repo(root) and cur_branch == "HEAD"
@@ -3564,8 +3575,9 @@ def compute_staleness(
         if dist is not None:
             parts.append(f"written {dist} commit(s) behind current HEAD")
         cold = (age is not None and age > stale_days) or (dist is not None and dist >= 10)
-        warnings.append(("⚠ " if cold else "") + "handoff is " + ", ".join(parts) + ".")
-    elif handoff_meta.get("updated_at"):
+        if cold or not risks_only:
+            warnings.append(("⚠ " if cold else "") + "handoff is " + ", ".join(parts) + ".")
+    elif handoff_meta.get("updated_at") and not risks_only:
         warnings.append("handoff timestamp is not parseable; treat handoff age as unknown.")
 
     # (7) Branch mismatch (§15) — handoff first, then records, capped.
@@ -3585,7 +3597,7 @@ def compute_staleness(
         warnings.append(
             f"branch mismatch: handoff was written on '{hb}' but HEAD is on '{cur_branch}'."
         )
-    if not detached and cur_branch != NO_GIT_BRANCH:
+    if not detached and cur_branch != NO_GIT_BRANCH and not risks_only:
         mism = [
             f"{r.meta.get('id', r.stem)} (on '{r.meta.get('branch')}')"
             for r in (decisions + attempts)
@@ -3600,6 +3612,9 @@ def compute_staleness(
                 f"{len(mism)} record(s) written on other branches than "
                 f"'{cur_branch}': {shown}{extra}."
             )
+
+    if risks_only:
+        return warnings
 
     # (6) Aged-unresolved decisions + open questions.
     for r in decisions:
@@ -4272,6 +4287,19 @@ GUARD_READ_FIRST_SCORE = 5  # score band: at/above -> at least READ_FIRST
 GUARD_PAUSE_SCORE = 9  # score band: at/above -> at least PAUSE
 GUARD_MIN_KEYWORD_OVERLAP = 2  # specific shared tokens for a pure-text match
 
+# Ubiquity gate (0.1.10 field test, P0-2). In a store whose vocabulary overlaps
+# the codebase, the tokens most records share carry no discriminating signal —
+# package prefixes shed by cited file paths ("com", "kt", "java"), the project's
+# own domain noun — yet two of them used to clear the keyword gate on every
+# edit, so one trap fired on all 13 edits of a session. A stem present in more
+# than GUARD_DF_UBIQUITY of the candidate corpus is ignored for keyword matching
+# (zero weight, no gate credit), but only once the corpus is big enough for
+# frequency to mean anything — below GUARD_DF_MIN_CORPUS items (every fixture,
+# any young store) nothing is ubiquitous. File and tag matches are exempt: both
+# are author-curated, deliberate signal.
+GUARD_DF_UBIQUITY = 1 / 3
+GUARD_DF_MIN_CORPUS = 8
+
 # scoring weights (§11.4 signals)
 GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
 GUARD_W_TAG = 4  # per overlapping tag/component
@@ -4302,6 +4330,11 @@ GUARD_HIGH_IMPACT_CLASSES = frozenset({"deletion", "migration", "external_side_e
 
 _VERDICTS = ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN")
 _VERDICT_RANK = {v: i for i, v in enumerate(_VERDICTS)}
+
+# `crumb guard` exit codes, one per verdict (P0-1). Deliberately spaced so a
+# script can threshold (`>= 15` = human involvement) and deliberately clear of
+# 1 (crash), 2 (usage error), and 126+ (shell/OS conventions).
+GUARD_VERDICT_EXIT_CODES = {"PROCEED": 0, "READ_FIRST": 10, "PAUSE": 15, "ASK_HUMAN": 20}
 
 
 # Generic words that carry no domain signal. A shared stop-word never counts
@@ -4743,6 +4776,23 @@ def _disambiguate_item_ids(items: list[dict]) -> list[dict]:
 # ---- scoring (§11.4) ------------------------------------------------------- #
 
 
+def _ubiquitous_stems(items: list[dict]) -> frozenset[str]:
+    """Stems present in more than GUARD_DF_UBIQUITY of the corpus (see constants).
+
+    Deterministic document frequency over the candidate items' own token bags —
+    no external vocabulary, so the same store always yields the same set.
+    """
+    n = len(items)
+    if n < GUARD_DF_MIN_CORPUS:
+        return frozenset()
+    df: dict[str, int] = {}
+    for it in items:
+        for s in it["specific"]:
+            df[s] = df.get(s, 0) + 1
+    cutoff = n * GUARD_DF_UBIQUITY
+    return frozenset(s for s, c in df.items() if c > cutoff)
+
+
 def _score_item(
     item: dict,
     q_specific: set[str],
@@ -4753,6 +4803,7 @@ def _score_item(
     *,
     min_keyword: int,
     distances: CommitDistanceIndex,
+    ubiquitous: frozenset[str] = frozenset(),
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
     # _norm_files stores each file as both its full path and its bare basename,
@@ -4771,12 +4822,15 @@ def _score_item(
     tag_stems = item.get("tag_stems") or {t: t for t in item["tags"]}
     matched_tag_stems = set(tag_stems) & q_specific
     matched_tags = {tag_stems[s] for s in matched_tag_stems}
-    kw_overlap = item["specific"] & q_specific
+    # Ubiquitous stems (present in most of the corpus) are dropped before either
+    # the gate or the weights see them — a token every record shares proves
+    # nothing about *this* record.
+    kw_overlap = (item["specific"] & q_specific) - ubiquitous
     kw_count = len(kw_overlap)
     # Title tokens are a subset of `specific` (the text bag includes the title),
     # so this can only re-weight an existing keyword hit, never create a match
     # the candidate gate below would have rejected.
-    title_overlap = item.get("title_specific", set()) & q_specific
+    title_overlap = (item.get("title_specific", set()) & q_specific) - ubiquitous
 
     # Candidate gate (anti-noise, Fixture 3): a file or tag hit always qualifies;
     # a pure-text match needs >= min_keyword specific shared tokens.
@@ -4914,6 +4968,7 @@ def search(
     cur_branch = git_branch(root)
     # One commit-distance index for the whole pass — see the class.
     distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
+    ubiquitous = _ubiquitous_stems(items)
 
     matches: list[dict] = []
     for it in items:
@@ -4928,6 +4983,7 @@ def search(
             stale_days,
             min_keyword=min_keyword,
             distances=distances,
+            ubiquitous=ubiquitous,
         )
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.
@@ -5001,7 +5057,14 @@ def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
             floors.append("PAUSE")  # a failed attempt on these files/component
         elif m["kind"] == "decision" and specific:
             floors.append("READ_FIRST")  # an active decision constrains this area
-        elif m["kind"] == "trap" and (specific or "keyword" in sig):
+        elif m["kind"] == "trap" and specific:
+            # Keyword-only trap matches used to floor READ_FIRST here, bypassing
+            # the score bands — in a store whose vocabulary overlaps the codebase
+            # that made one trap fire on every edit of a session (0.1.10 field
+            # test, P0-2: 13 edits, 13 READ_FIRSTs, one relevant). A trap now
+            # needs the same file/tag specificity as a decision to floor the
+            # verdict; a strong keyword-only trap match can still escalate
+            # through the score band like everything else.
             floors.append("READ_FIRST")
         elif m["kind"] == "verification" and specific:
             floors.append("READ_FIRST")  # an unsettled finding on these files/component
@@ -5139,6 +5202,10 @@ def guard(
         if (memory_dir / "handoff.md").is_file()
         else ""
     )
+    # `risks_only`: guard is called once per edit, and the full staleness view
+    # repeated the same store-wide facts verbatim on every call (P0-4). Only
+    # abnormal states — cold handoff, detached HEAD, branch mismatch — belong
+    # on the per-action path; the rest lives in resume/doctor/audit.
     staleness = compute_staleness(
         root,
         parse_handoff_meta(handoff_text),
@@ -5146,6 +5213,7 @@ def guard(
         active_attempts(memory_dir),
         load_open_questions(memory_dir),
         stale_days,
+        risks_only=True,
     )[:GUARD_MAX_WARNINGS]
 
     return {
@@ -5236,8 +5304,21 @@ def cmd_search(args: argparse.Namespace) -> int:
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
     query = args.query or ""
     # Lookup, not judging: ideas are in this corpus and out of guard's.
+    #
+    # Same keyword standard as guard (0.1.10 field test, P1-8): a pure-text match
+    # needs GUARD_MIN_KEYWORD_OVERLAP shared specific tokens, relaxed to the
+    # query's own specific-token count so a one-word lookup ("libsignal") still
+    # works. Search can and should return zero — one generic shared token
+    # ("version") is not a match.
+    min_kw = max(1, min(GUARD_MIN_KEYWORD_OVERLAP, len(_specific(query)))) if query else 1
     matches, _ = search(
-        memory_dir, root, query, filters=filters, stale_days=stale_days, include_ideas=True
+        memory_dir,
+        root,
+        query,
+        filters=filters,
+        stale_days=stale_days,
+        min_keyword=min_kw,
+        include_ideas=True,
     )
 
     if args.json:
@@ -5268,7 +5349,12 @@ def cmd_guard(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(render_guard_human(result))
-    return 0
+    # Verdict-mapped exit codes (0.1.10 field test, P0-1) so callers can script
+    # on the verdict ("block only on ASK_HUMAN") without parsing output. Spaced
+    # and documented; 2 stays the usage-error code, and none of these can be
+    # mistaken for a crash (1) or an unhandled error (255). The hook path
+    # (`crumb hook guard`) is unaffected — hooks must exit 0.
+    return GUARD_VERDICT_EXIT_CODES[result["verdict"]]
 
 
 # --------------------------------------------------------------------------- #
@@ -6908,14 +6994,86 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     return bool(action_paths & index_paths)
 
 
+# How much of an edit's new content feeds the guard action string. Tokens are
+# what matter, not prose, so a modest window is enough to let a content-level
+# trap match ("flexTimeInterval", a banned API) while keeping the scoring pass
+# cheap and the risk-regex scan bounded.
+_HOOK_CONTENT_SNIPPET_CHARS = 400
+
+
 def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] | None]:
-    """Derive a guard action string + affected files from a PreToolUse payload."""
+    """Derive a guard action string + affected files from a PreToolUse payload.
+
+    For file edits the action carries a bounded snippet of the *new* content
+    (P0-3): with only `edit <path>` every edit of one file produced byte-identical
+    guard output, and the store could never match on what the edit actually says —
+    the exact signal a content-shaped trap needs.
+    """
     if tool == "Bash":
         return (tool_input.get("command") or "").strip(), None
     if tool in ("Edit", "Write", "MultiEdit"):
         fp = tool_input.get("file_path") or tool_input.get("path") or ""
-        return (f"edit {fp}".strip(), [fp] if fp else None)
+        if tool == "Write":
+            new = tool_input.get("content") or ""
+        elif tool == "MultiEdit":
+            edits = tool_input.get("edits")
+            parts = []
+            if isinstance(edits, list):
+                for e in edits:
+                    if isinstance(e, dict) and e.get("new_string"):
+                        parts.append(str(e["new_string"]))
+            new = "\n".join(parts)
+        else:
+            new = tool_input.get("new_string") or ""
+        snippet = " ".join(str(new).split())[:_HOOK_CONTENT_SNIPPET_CHARS]
+        action = f"edit {fp}: {snippet}" if snippet else f"edit {fp}"
+        return action.strip(), [fp] if fp else None
     return "", None
+
+
+# Advisory-dedupe state for the PreToolUse guard, keyed by host session. Lives
+# in private/ (machine-local, gitignored) because it is per-checkout runtime
+# state, not memory. Best-effort: a read or write failure must never block the
+# hook, and losing the file only means one repeated advisory.
+_HOOK_SEEN_FILENAME = "hook-guard-seen.json"
+_HOOK_SEEN_MAX_SESSIONS = 8
+_HOOK_SEEN_MAX_KEYS = 200
+
+
+def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bool:
+    """True if this advisory key already fired for this session; records it if not.
+
+    Same records + same file ⇒ say nothing after the first time (P0-2b): a
+    READ_FIRST that repeats verbatim on every edit trains the agent to ignore
+    the one that matters. Only advisories dedupe — PAUSE/ASK_HUMAN always fire.
+    """
+    path = memory_dir / "private" / _HOOK_SEEN_FILENAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+    sessions = data.get("sessions")
+    if not isinstance(sessions, dict):
+        sessions = {}
+    entry = sessions.get(session_id)
+    if not isinstance(entry, dict) or not isinstance(entry.get("seen"), list):
+        entry = {"seen": []}
+    if key in entry["seen"]:
+        return True
+    entry["seen"] = (entry["seen"] + [key])[-_HOOK_SEEN_MAX_KEYS:]
+    entry["updated_at"] = now_iso()
+    sessions[session_id] = entry
+    # Keep only the most recent sessions so the state file cannot grow unbounded.
+    keep = sorted(sessions, key=lambda s: sessions[s].get("updated_at") or "", reverse=True)
+    data = {"sessions": {s: sessions[s] for s in keep[:_HOOK_SEEN_MAX_SESSIONS]}}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(path, json.dumps(data, indent=0, sort_keys=True) + "\n")
+    except Exception:  # pragma: no cover - dedupe state is best-effort
+        pass
+    return False
 
 
 def _hook_guard_reason(result: dict) -> str:
@@ -6977,6 +7135,20 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         return 0
     reason = _hook_guard_reason(result)
     if verdict == "READ_FIRST":
+        # Dedupe within the host session: the same records surfacing for the
+        # same file is information exactly once (P0-2b/P0-3). Keyed on the
+        # matched record ids + the file (or the action when no file), so a new
+        # record or a different file speaks again; scoped to READ_FIRST so a
+        # PAUSE/ASK_HUMAN is never swallowed.
+        target = (files or [None])[0] or result["action"]
+        key = f"{target}|" + ",".join(sorted(m["id"] for m in result.get("matches", [])))
+        session_id = str(payload.get("session_id") or "unknown")
+        try:
+            if _hook_guard_advisory_seen(memory_dir, session_id, key):
+                print(json.dumps({}))
+                return 0
+        except Exception:  # pragma: no cover - dedupe must never block the hook
+            pass
         # `permissionDecision: "allow"` is not neutral — it *auto-approves* the
         # call, skipping the prompt the user would otherwise get, and its reason
         # is shown only to the user, never to the model. Emitting it on an

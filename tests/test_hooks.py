@@ -482,5 +482,123 @@ class PrefilterEvidencePathTests(unittest.TestCase):
             )
 
 
+class HookEditContentTests(unittest.TestCase):
+    """P0-3 (0.1.10 field test): the guard action for a file edit carries a
+    bounded snippet of the new content, so different edits of one file stop
+    producing byte-identical guard input and content-shaped traps can match."""
+
+    def test_edit_action_carries_bounded_snippet(self):
+        long_new = "val req = PeriodicWorkRequest(flexTimeInterval = 5)\n" * 50
+        action, files = _cli._hook_action_from_tool(
+            "Edit", {"file_path": "a/b.kt", "new_string": long_new}
+        )
+        self.assertTrue(action.startswith("edit a/b.kt: val req = PeriodicWorkRequest"))
+        self.assertLessEqual(len(action), len("edit a/b.kt: ") + _cli._HOOK_CONTENT_SNIPPET_CHARS)
+        self.assertEqual(files, ["a/b.kt"])
+
+    def test_edit_without_content_keeps_the_old_shape(self):
+        action, files = _cli._hook_action_from_tool("Edit", {"file_path": "a/b.kt"})
+        self.assertEqual(action, "edit a/b.kt")
+        self.assertEqual(files, ["a/b.kt"])
+
+    def test_multiedit_and_write_content_is_seen(self):
+        action, _ = _cli._hook_action_from_tool(
+            "MultiEdit",
+            {"file_path": "x.py", "edits": [{"new_string": "alpha"}, {"new_string": "beta"}]},
+        )
+        self.assertIn("alpha", action)
+        self.assertIn("beta", action)
+        action, _ = _cli._hook_action_from_tool(
+            "Write", {"file_path": "x.py", "content": "gamma delta"}
+        )
+        self.assertIn("gamma delta", action)
+
+
+class HookAdvisoryDedupeTests(unittest.TestCase):
+    """P0-2b (0.1.10 field test): the same records surfacing for the same file
+    is information exactly once per host session. Advisories only — PAUSE and
+    ASK_HUMAN always fire."""
+
+    def _store_with_file_trap(self, tmp: str) -> Path:
+        root = make_repo(tmp)
+        init_store(root)
+        kt = root / crumb.MEMORY_DIRNAME / "known-traps.md"
+        kt.write_text(
+            kt.read_text(encoding="utf-8")
+            + "\n## trap_accrual-shim: accrual shim must wrap ledger mutations\n"
+            "- Area / files: src/billing.py\n",
+            encoding="utf-8",
+        )
+        # Rebuild the guard prefilter so the hook's cheap path sees the trap.
+        crumb.main(["reindex", "--project", str(root)])
+        return root
+
+    def _edit_payload(self, root: Path, session_id: str) -> dict:
+        return {
+            "cwd": str(root),
+            "session_id": session_id,
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/billing.py"},
+        }
+
+    def test_read_first_fires_once_per_session_per_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_file_trap(tmp)
+            first = run_hook("guard", self._edit_payload(root, "s1"))
+            hso = first.get("hookSpecificOutput") or {}
+            self.assertTrue(hso.get("additionalContext"), first)
+            second = run_hook("guard", self._edit_payload(root, "s1"))
+            self.assertEqual(second, {}, "identical advisory must not repeat in-session")
+
+    def test_a_new_session_hears_the_advisory_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_file_trap(tmp)
+            run_hook("guard", self._edit_payload(root, "s1"))
+            other = run_hook("guard", self._edit_payload(root, "s2"))
+            hso = other.get("hookSpecificOutput") or {}
+            self.assertTrue(hso.get("additionalContext"), other)
+
+    def test_pause_is_never_deduplicated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            crumb.main(
+                [
+                    "remember",
+                    "attempt",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "Batched the billing reconciler writes",
+                    "--tried",
+                    "batched writes",
+                    "--result",
+                    "double-charged customers in staging",
+                    "--do-not-retry",
+                    "an idempotency key exists",
+                    "--evidence",
+                    "file",
+                    "src/billing.py",
+                ]
+            )
+            payload = {
+                "cwd": str(root),
+                "session_id": "s1",
+                "tool_name": "Edit",
+                "tool_input": {"file_path": "src/billing.py"},
+            }
+            for attempt in range(2):
+                out = run_hook("guard", payload)
+                hso = out.get("hookSpecificOutput") or {}
+                self.assertEqual(hso.get("permissionDecision"), "ask", (attempt, out))
+
+    def test_dedupe_state_lives_in_private(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_file_trap(tmp)
+            run_hook("guard", self._edit_payload(root, "s1"))
+            state = root / crumb.MEMORY_DIRNAME / "private" / _cli._HOOK_SEEN_FILENAME
+            self.assertTrue(state.is_file(), "advisory state must be machine-local")
+
+
 if __name__ == "__main__":
     unittest.main()

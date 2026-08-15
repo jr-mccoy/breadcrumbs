@@ -41,8 +41,10 @@ def run(argv: list[str]) -> tuple[int, str]:
 
 def guard_json(argv: list[str]) -> dict:
     code, out = run(argv + ["--json"])
-    assert code == 0, (code, out)
-    return json.loads(out)
+    data = json.loads(out)
+    # `crumb guard` exits with the verdict-mapped code (P0-1), never anything else.
+    assert code == cli.GUARD_VERDICT_EXIT_CODES[data["verdict"]], (code, out)
+    return data
 
 
 def copy_fixture(name: str, dest_parent: str) -> Path:
@@ -880,6 +882,212 @@ class MorphologyMatchingTests(unittest.TestCase):
             )
             match = data["matches"][0]
             self.assertIn("migrations", match["matched_tags"], match)
+
+
+# --------------------------------------------------------------------------- #
+# 0.1.10 field-test regressions (P0-1/2/4): verdict exit codes, the trap
+# keyword floor, corpus-wide token ubiquity, and guard's staleness scope.
+# --------------------------------------------------------------------------- #
+class VerdictExitCodeTests(unittest.TestCase):
+    def test_proceed_exits_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            code, _ = run(["guard", "tidy the launcher shortcut plumbing", "--project", str(root)])
+            self.assertEqual(code, 0)
+
+    def test_codes_are_spaced_and_never_collide_with_conventions(self):
+        codes = cli.GUARD_VERDICT_EXIT_CODES
+        self.assertEqual(set(codes), set(cli._VERDICTS))
+        self.assertEqual(codes["PROCEED"], 0)
+        # Never 1 (crash), 2 (usage), or >= 126 (shell/OS territory, incl. 255).
+        for verdict, code in codes.items():
+            if verdict != "PROCEED":
+                self.assertNotIn(code, (1, 2), verdict)
+                self.assertTrue(0 < code < 126, (verdict, code))
+
+
+class TrapKeywordFloorTests(unittest.TestCase):
+    """P0-2: a keyword-only trap match rides the score bands like every other
+    kind; the old unconditional READ_FIRST floor made one trap fire on all 13
+    edits of a field-test session."""
+
+    def _store_with_body_only_trap(self, tmp: str) -> Path:
+        root = make_repo(tmp)
+        crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        kt = root / crumb.MEMORY_DIRNAME / "known-traps.md"
+        kt.write_text(
+            kt.read_text(encoding="utf-8")
+            + "\n## trap_flurble-cache-goes-cold: flurble cache goes cold\n"
+            "- Symptom: seen when the reconciler batches writes across shard windows.\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def test_weak_keyword_trap_match_is_proceed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_body_only_trap(tmp)
+            # Shares exactly two body keywords (reconciler, batches) with the
+            # trap — no file, no tag, nothing from the heading. Under the old
+            # floor this was READ_FIRST; it must now stay PROCEED, with the
+            # trap still listed as a low-severity match.
+            res = guard_json(["guard", "tune the reconciler batch size", "--project", str(root)])
+            self.assertEqual(res["verdict"], "PROCEED", res)
+            self.assertTrue(res["matches"], "the trap should still surface as context")
+            self.assertEqual(res["matches"][0]["kind"], "trap")
+
+    def test_strong_keyword_trap_match_still_escalates_via_the_band(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_body_only_trap(tmp)
+            # Heading + body overlap pushes the score over the READ_FIRST band
+            # — keyword-only traps can still escalate, just not for free.
+            res = guard_json(
+                [
+                    "guard",
+                    "the flurble cache reconciler batches writes across shard windows",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertIn(res["verdict"], ("READ_FIRST", "PAUSE"), res)
+
+
+class UbiquityTests(unittest.TestCase):
+    """P0-2c: stems present in most of the corpus stop counting as signal."""
+
+    def _store(self, tmp: str) -> Path:
+        root = make_repo(tmp)
+        crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        for i in range(9):
+            crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    f"Gradle sandbox observation number {i}",
+                    "--set",
+                    "Decision",
+                    "the gradle sandbox behaves the same here",
+                    "--confidence",
+                    "low",
+                ]
+            )
+        crumb.main(
+            [
+                "remember",
+                "decision",
+                "--project",
+                str(root),
+                "--title",
+                "Adopt the flurble widget",
+                "--set",
+                "Decision",
+                "flurble widget replaces the legacy spinner",
+                "--confidence",
+                "low",
+            ]
+        )
+        return root
+
+    def test_corpus_wide_tokens_no_longer_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            # "gradle sandbox" appears in 9 of 10 records — sharing only those
+            # two tokens is no evidence about any one record.
+            res = guard_json(["guard", "adjust the gradle sandbox timeout", "--project", str(root)])
+            self.assertEqual(res["verdict"], "PROCEED", res)
+            self.assertEqual(res["matches"], [], res)
+
+    def test_rare_tokens_still_match_in_the_same_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            res = guard_json(
+                ["guard", "roll out the flurble widget everywhere", "--project", str(root)]
+            )
+            ids = [m["id"] for m in res["matches"]]
+            self.assertTrue(
+                any("flurble" in i for i in ids),
+                f"distinctive tokens must keep matching: {res['matches']}",
+            )
+
+    def test_small_stores_are_exempt(self):
+        # Below GUARD_DF_MIN_CORPUS nothing is ubiquitous — a young store must
+        # not lose its only vocabulary to the frequency gate.
+        items = [
+            {"specific": {"gradle", "sandbox"}},
+            {"specific": {"gradle", "sandbox"}},
+            {"specific": {"gradle"}},
+        ]
+        self.assertEqual(cli._ubiquitous_stems(items), frozenset())
+
+
+class GuardStalenessScopeTests(unittest.TestCase):
+    """P0-4: guard carries only abnormal-state staleness; the routine per-store
+    facts (fresh handoff age, low-confidence records, …) stay in resume/audit."""
+
+    def test_routine_store_facts_do_not_repeat_on_every_guard_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "A perfectly routine choice",
+                    "--set",
+                    "Decision",
+                    "chosen",
+                    "--confidence",
+                    "low",
+                ]
+            )
+            res = guard_json(["guard", "tidy the launcher plumbing", "--project", str(root)])
+            self.assertEqual(res["staleness"], [], res)
+
+    def test_full_view_still_reports_the_routine_facts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            crumb.main(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "A perfectly routine choice",
+                    "--set",
+                    "Decision",
+                    "chosen",
+                    "--confidence",
+                    "low",
+                ]
+            )
+            mem = root / crumb.MEMORY_DIRNAME
+            full = cli.compute_staleness(root, {}, cli.active_decisions(mem), [], [], 30)
+            self.assertTrue(
+                any("low-confidence" in w for w in full),
+                f"resume/audit view must keep the low-confidence warning: {full}",
+            )
+            risks = cli.compute_staleness(
+                root, {}, cli.active_decisions(mem), [], [], 30, risks_only=True
+            )
+            self.assertEqual(risks, [])
+
+    def test_cold_handoff_still_surfaces_in_guard(self):
+        # Fixture 4's stale handoff (57 days old) must keep reaching guard.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture("fixture-04-stale-handoff", tmp)
+            res = guard_json(["guard", "resume the migration work", "--project", str(root)])
+            self.assertTrue(
+                any("handoff" in w for w in res["staleness"]),
+                f"cold handoff must stay visible on the guard path: {res['staleness']}",
+            )
 
 
 if __name__ == "__main__":

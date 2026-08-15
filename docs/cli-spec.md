@@ -46,7 +46,7 @@ Default output is human-readable Markdown / plain text.
 | `note question\|trap\|idea` | user input, git state | open-questions / known-traps / idea record | Write-surface for the three kinds with no `remember` type; refreshes the resume packet. | **built** |
 | `resume` | current, handoff, records, git state | generated resume packet | Print a bounded resume packet (≤5k tokens) with computed staleness. `--fast` = git snapshot + focus + next action + staleness (print-only). `--task TEXT` scopes `likely_files` to matching records (print-only). | **4 (built)** |
 | `search [<query>]` | decisions, attempts, verifications, ideas, traps, open questions | search output (read-only — `search` writes nothing) | Deterministic keyword/tag/file lookup over the records; the permissive layer `guard` builds on. Keyword and tag matching folds morphological variants — query and record tokens are stemmed by a small deterministic suffix-stripper (plus a tiny curated alias table: auth/config/db/repo), so "reconciliation" meets a record that says "reconciler"; `keyword_overlap` in `--json` output therefore contains stems. | **5 (built)** |
-| `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff (**not** ideas) | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). | **5 (built)** |
+| `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff (**not** ideas) | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). Exits with the verdict-mapped code — see `guard` section. | **5 (built)** |
 | `audit` | all memory + adapters | health report | Find stale / unsafe / bloated memory (incl. secret + instruction-like heuristics). Heuristic — does NOT gate `validate`. | **6 (built)** |
 | `scan-secrets` | committed memory | secret report | Scan committed memory for secret-like strings; non-zero on a hit. Run before committing memory. | **6 (built)** |
 | `mark-status <id> <status>` | one record | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. | **built** |
@@ -211,10 +211,66 @@ Behavior:
   a `guard` verdict never sees it. Fixture 12 is the control.
 - A query with no filters ranks by overlap; filters with no query list every
   matching record instead of returning nothing.
-- `guard` is this same engine with a stricter keyword floor and a verdict on top,
+- **Search can return zero, and that is an answer.** A pure-text match needs the
+  same shared-keyword floor as `guard` (`GUARD_MIN_KEYWORD_OVERLAP`, relaxed to
+  the query's own specific-token count so a one-word lookup like "libsignal"
+  still works). Before 0.1.11 a single generic shared token ("version") counted
+  as a match, which made weak queries return confident noise.
+- **Ubiquity gate (shared with `guard`).** Once the corpus holds at least
+  `GUARD_DF_MIN_CORPUS` items, a stem present in more than `GUARD_DF_UBIQUITY`
+  of them (package prefixes shed by cited paths, the project's own domain noun)
+  carries zero keyword weight and no gate credit. File and tag matches are
+  exempt — both are author-curated signal.
+- `guard` is this same engine with a verdict on top plus a noise floor,
   so a `search` hit is the permissive case of a `guard` match.
 - Exit codes: `0` on success (including zero matches), `2` when no
   `.project-memory/` store is present.
+
+---
+
+## `guard` (built)
+
+```bash
+crumb guard "<proposed action>" [--files F ...] [--json] [--stale-days N]
+```
+
+The judging layer on top of `search`: classify the action, rank the overlapping
+records, emit one deterministic verdict (`PROCEED` / `READ_FIRST` / `PAUSE` /
+`ASK_HUMAN`) plus the matches behind it.
+
+Behavior (deltas from `search` — everything there applies here too):
+
+- **Verdict floors need author-curated specificity.** A matched decision,
+  unsettled verification, or trap floors the verdict at `READ_FIRST` (a
+  do-not-retry attempt at `PAUSE`) only when the match carries a **file or tag**
+  signal. A keyword-only match — however the tokens overlap — can escalate only
+  through the score bands (`GUARD_READ_FIRST_SCORE` / `GUARD_PAUSE_SCORE`).
+  Until 0.1.11 a keyword-only *trap* match floored `READ_FIRST` unconditionally;
+  in a store whose vocabulary overlaps the codebase that made one trap fire on
+  every edit of a session (the 0.1.10 field test's 13-for-13).
+- **Staleness on the guard path is risks-only.** Only abnormal states — cold
+  handoff (`⚠`), detached HEAD, handoff branch mismatch — ride along with a
+  verdict. The routine store facts (fresh handoff age, aged records, low
+  confidence, other-branch record lists) are read once per session in
+  `resume`/`doctor`/`audit`, not once per edit.
+- **Exit codes are verdict-mapped** so callers can script on the verdict
+  without parsing output: `PROCEED` = 0, `READ_FIRST` = 10, `PAUSE` = 15,
+  `ASK_HUMAN` = 20 (`>= 15` means a human belongs in the loop); `2` = usage
+  error / no store. Deliberately clear of 1, 2, and the shell's 126+ range.
+  The hook translator (`crumb hook guard`) always exits 0 — hook protocols
+  treat nonzero as a hook failure.
+
+The `PreToolUse` hook path adds two behaviors of its own:
+
+- **Edits carry content.** The guard action for an `Edit`/`Write`/`MultiEdit`
+  is `edit <path>: <bounded snippet of the new content>`, so successive edits
+  of one file stop producing byte-identical guard input and a content-shaped
+  trap ("this API is banned") can actually match.
+- **Advisories dedupe per host session.** A `READ_FIRST` for the same file and
+  the same matched records fires once per session (state in
+  `private/hook-guard-seen.json`, machine-local, bounded); a new record, a
+  different file, or a new session speaks again. `PAUSE`/`ASK_HUMAN` are never
+  deduplicated.
 
 ---
 
