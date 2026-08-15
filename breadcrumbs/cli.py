@@ -318,7 +318,7 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
-def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -> None:
+def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -> bool:
     """Insert, replace, or remove a fenced managed block in a text file.
 
     Idempotent. `block` (when given) must contain the `begin` and `end` marker
@@ -326,6 +326,10 @@ def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -
     content is preserved. Pass `block=None` (or "") to strip the managed block,
     leaving everything else intact. The comment style lives in the markers, so the
     same surgery works for `.gitignore` (`#`) and Markdown adapters (`<!-- -->`).
+
+    Returns True iff the file's content actually changed — an already-current
+    block is a no-op (no write, no mtime churn), and callers report it as such
+    instead of claiming an update they did not make (P2-12).
     """
     existing = path.read_text(encoding="utf-8") if path.exists() else ""
 
@@ -348,12 +352,15 @@ def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -
             new_content = prefix + block + (tail if tail.strip() else "")
     else:
         if not block:
-            return  # nothing to remove
+            return False  # nothing to remove
         sep = "" if (not existing or existing.endswith("\n")) else "\n"
         prefix = (existing + sep + "\n") if existing.strip() else ""
         new_content = prefix + block
 
+    if path.exists() and new_content == existing:
+        return False
     path.write_text(new_content, encoding="utf-8")
+    return True
 
 
 def write_gitignore(root: Path, block: str) -> None:
@@ -383,7 +390,13 @@ def merge_json_file(path: Path, mutate) -> None:
         data = {}
     if not isinstance(data, dict):
         raise ValueError(f"expected a JSON object at {path}, found {type(data).__name__}")
+    # Snapshot-compare so a semantic no-op never rewrites the file: a rewrite
+    # reformats entries this tool does not own (P2-13), and "we changed nothing"
+    # should leave no diff at all.
+    before = json.dumps(data, sort_keys=True)
     mutate(data)
+    if path.exists() and json.dumps(data, sort_keys=True) == before:
+        return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -503,13 +516,17 @@ def cmd_init(args: argparse.Namespace) -> int:
         if integrations_requested:
             plan = resolve_integration_plan(root, args)
             applied = apply_integrations(root, plan)
+            # P2-14: wiring an agent in is exactly when a fresh packet is needed
+            # next; leaving the old one stale meant `doctor` could not go green
+            # until a manual `crumb resume`.
+            try_reindex_projections(memory_dir, root)
             if args.json:
                 print(json.dumps({"store": "existing", "integrations": applied}, indent=2))
             else:
                 print(f"{MEMORY_DIRNAME}/ already present — store left untouched.")
                 print("Applied integrations:")
-                print(f"  adapter signpost -> {', '.join(applied['adapters']) or '(none)'}")
-                print(f"  MCP register     -> {'yes' if applied['mcp'] else 'no'}")
+                print(f"  adapter signpost -> {_fmt_applied_adapters(applied) or '(none)'}")
+                print(f"  MCP register     -> {_fmt_applied_mcp(applied)}")
                 print(f"  Claude hooks     -> {', '.join(applied['hooks']) or '(none)'}")
                 note = _adapter_request_note(args, applied["adapters"])
                 if note:
@@ -566,6 +583,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     plan = resolve_integration_plan(root, args)
     applied = apply_integrations(root, plan)
 
+    # Build the projections so `doctor` can be green immediately after init
+    # (P2-14: it used to report the resume packet stale/absent until the first
+    # manual `crumb resume`). Best-effort like every other reindex.
+    try_reindex_projections(memory_dir, root)
+
     summary = {
         "created": str(memory_dir),
         "project": project,
@@ -590,6 +612,22 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fmt_applied_adapters(applied: dict) -> str:
+    """Render adapter targets with what actually happened to each (P2-12)."""
+    states = applied.get("adapter_states") or {}
+    return ", ".join(
+        f"{name} ({states[name]})" if name in states else name
+        for name in applied.get("adapters") or []
+    )
+
+
+def _fmt_applied_mcp(applied: dict) -> str:
+    if not applied.get("mcp"):
+        return "no"
+    state = applied.get("mcp_state")
+    return f"yes ({state})" if state else "yes"
+
+
 def _emit_init_summary(args: argparse.Namespace, summary: dict) -> None:
     if args.json:
         print(json.dumps(summary, indent=2))
@@ -604,9 +642,10 @@ def _emit_init_summary(args: argparse.Namespace, summary: dict) -> None:
     if integ.get("adapters") or integ.get("mcp") or integ.get("hooks"):
         print("  integrations:")
         if integ.get("adapters"):
-            print(f"    adapter signpost:            {', '.join(integ['adapters'])}")
+            print(f"    adapter signpost:            {_fmt_applied_adapters(integ)}")
         if integ.get("mcp"):
-            print(f"    MCP registered:              {integ['mcp']}")
+            state = f" ({integ['mcp_state']})" if integ.get("mcp_state") else ""
+            print(f"    MCP registered:              {integ['mcp']}{state}")
         if integ.get("hooks"):
             print(f"    Claude hooks:                {', '.join(integ['hooks'])}")
     else:
@@ -1722,13 +1761,24 @@ def render_frontmatter(meta: dict) -> str:
 
 
 def render_body(rtype: str, sections: dict[str, str]) -> str:
-    """Render the §8 body for `rtype`, filling provided sections; stub the rest."""
+    """Render the §8 body for `rtype` — provided sections only, canonical order.
+
+    Unfilled sections are omitted, not stubbed (P2-10): the field test's best
+    record had 4 of 7 sections reading `_(not recorded)_`, burying the one
+    section that carried the value. `schema --template <type>` still shows a
+    human the full skeleton; the stored record only says what was recorded.
+    """
     out: list[str] = []
     for heading in BODY_SECTIONS[rtype]:
-        out.append(f"## {heading}")
         content = (sections.get(heading) or "").strip()
-        out.append(content if content else _EMPTY_SECTION)
+        if not content or content == _EMPTY_SECTION:
+            continue
+        out.append(f"## {heading}")
+        out.append(content)
         out.append("")
+    if not out:
+        # A record with no filled sections still needs a parseable body.
+        out = [f"## {BODY_SECTIONS[rtype][0]}", _EMPTY_SECTION, ""]
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -1751,6 +1801,13 @@ def slugify(title: str) -> str:
 # text either way; the filename only has to be a readable, unique handle.
 SLUG_MAX_CHARS = 60
 
+# Closed-class words a truncated slug must not end on (P2-15). Deliberately
+# tiny — nouns that double as function words in some titles ("test", "work")
+# stay out so a meaningful tail is never eaten.
+_SLUG_TRAILING_STOPWORDS = frozenset(
+    "a an the and or but nor with no not of in on for to is are was were has have had by at from as".split()
+)
+
 
 def truncate_slug(slug: str, limit: int = SLUG_MAX_CHARS) -> str:
     """Cap `slug` at `limit` characters, preferring a whole-word cut.
@@ -1766,7 +1823,15 @@ def truncate_slug(slug: str, limit: int = SLUG_MAX_CHARS) -> str:
     head, sep, _tail = cut.rpartition("-")
     if sep and len(head) >= limit // 2:
         cut = head
-    return cut.rstrip("-") or slug[:limit].rstrip("-")
+    cut = cut.rstrip("-") or slug[:limit].rstrip("-")
+    # A truncated slug that ends on a function word ("…-is-nullable-with-no",
+    # "…-15-minute-period-and") reads as corrupted (P2-15). Trim trailing
+    # function words — only here, on the truncation path: an author's own short
+    # title ("say-no") is never rewritten.
+    parts = cut.split("-")
+    while len(parts) > 1 and parts[-1] in _SLUG_TRAILING_STOPWORDS:
+        parts.pop()
+    return "-".join(parts)
 
 
 def _unique_record_path(directory: Path, date: str, slug: str) -> tuple[Path, str]:
@@ -2952,7 +3017,13 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         return 1
 
     # Refresh handoff + current.
-    focus = args.focus or sections.get("Next Action", "")
+    #
+    # Current Focus is NOT defaulted to the Next Action text: doing so rendered
+    # the packet's two headline fields as byte-identical ~1.4k-char duplicates
+    # (0.1.10 field test, P1-6). An unset --focus keeps the previous Current
+    # Focus (update_handoff/update_current retain the old value on empty),
+    # which is also the honest reading of "the caller said nothing about focus".
+    focus = args.focus or ""
     recently = sections.get("Work Completed", "")
     update_handoff(memory_dir, meta["branch"], meta["commit"], focus, sections["Next Action"])
     update_current(memory_dir, focus, recently)
@@ -2981,6 +3052,72 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         if tracking == "distillate":
             print("  note: session_tracking=distillate — sessions/ stays local (gitignored);")
             print("        promote durable items with `crumb remember` to commit them.")
+    return 0
+
+
+# ---- prune — session-snapshot retention (P1-9) ------------------------------ #
+
+# The Stop hook writes a snapshot whenever the work moved, which is right for
+# capture (an interrupted session with dirty files is exactly the handoff worth
+# keeping) and wrong for retention: the 0.1.10 field-test store held 83 session
+# files against 17 durable records, and `audit` could only complain about the
+# bloat the tool itself created. Retention is a separate, explicit act.
+PRUNE_SESSIONS_KEEP_DEFAULT = 20
+
+
+def prune_sessions(
+    memory_dir: Path,
+    root: Path,
+    *,
+    keep: int = PRUNE_SESSIONS_KEEP_DEFAULT,
+    dry_run: bool = False,
+) -> dict:
+    """Delete old *machine* session snapshots beyond the newest `keep` sessions.
+
+    Only records whose Next Action is still the machine placeholder are
+    candidates: a session someone gave a real Next Action (or any enriched
+    section) is a deliberate handoff, and deleting human judgement is not this
+    command's call. The newest `keep` sessions are never touched regardless —
+    they anchor the Stop-hook dedupe and the extraction baseline.
+    """
+    keep = max(1, keep)
+    recs = [r for r in load_records(memory_dir, types=("session",)) if not r.error]
+    recs.sort(key=lambda r: r.path.name, reverse=True)
+    candidates = [r for r in recs[keep:] if _is_placeholder(r.sections.get("Next Action") or "")]
+    deleted = []
+    for r in candidates:
+        if not dry_run:
+            r.path.unlink()
+        deleted.append(r.meta.get("id", r.stem))
+    if deleted and not dry_run:
+        reindex_projections(memory_dir, root)
+    return {
+        "sessions": len(recs),
+        "kept": len(recs) - (0 if dry_run else len(deleted)),
+        "deleted": deleted,
+        "dry_run": dry_run,
+    }
+
+
+def cmd_prune(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    res = prune_sessions(memory_dir, root, keep=args.keep, dry_run=args.dry_run)
+    if args.json:
+        print(json.dumps(res, indent=2))
+        return 0
+    verb = "would delete" if res["dry_run"] else "deleted"
+    print(
+        f"prune sessions: {res['sessions']} session record(s), "
+        f"{verb} {len(res['deleted'])} machine snapshot(s)"
+    )
+    for rid in res["deleted"]:
+        print(f"  - {rid}")
+    if res["dry_run"] and res["deleted"]:
+        print("Re-run without --dry-run to delete.")
     return 0
 
 
@@ -3544,8 +3681,19 @@ def compute_staleness(
     attempts: list[Record],
     questions: list[dict],
     stale_days: int,
+    *,
+    risks_only: bool = False,
 ) -> list[str]:
-    """All computed staleness/risk warnings (§12, §15). Order: primary first."""
+    """All computed staleness/risk warnings (§12, §15). Order: primary first.
+
+    `risks_only` is the guard-context view (0.1.10 field test, P0-4): only
+    warnings that flag an *abnormal* state — cold handoff, detached HEAD,
+    handoff branch mismatch — are emitted. The full view additionally reports
+    routine per-store facts (handoff age when fresh, aged records, low
+    confidence, other-branch records); repeating those on every guard call was
+    invariant noise, so they stay in resume/doctor/audit where they are read
+    once per session, not once per edit.
+    """
     warnings: list[str] = []
     cur_branch = git_branch(root)
     detached = is_git_repo(root) and cur_branch == "HEAD"
@@ -3564,8 +3712,9 @@ def compute_staleness(
         if dist is not None:
             parts.append(f"written {dist} commit(s) behind current HEAD")
         cold = (age is not None and age > stale_days) or (dist is not None and dist >= 10)
-        warnings.append(("⚠ " if cold else "") + "handoff is " + ", ".join(parts) + ".")
-    elif handoff_meta.get("updated_at"):
+        if cold or not risks_only:
+            warnings.append(("⚠ " if cold else "") + "handoff is " + ", ".join(parts) + ".")
+    elif handoff_meta.get("updated_at") and not risks_only:
         warnings.append("handoff timestamp is not parseable; treat handoff age as unknown.")
 
     # (7) Branch mismatch (§15) — handoff first, then records, capped.
@@ -3585,7 +3734,7 @@ def compute_staleness(
         warnings.append(
             f"branch mismatch: handoff was written on '{hb}' but HEAD is on '{cur_branch}'."
         )
-    if not detached and cur_branch != NO_GIT_BRANCH:
+    if not detached and cur_branch != NO_GIT_BRANCH and not risks_only:
         mism = [
             f"{r.meta.get('id', r.stem)} (on '{r.meta.get('branch')}')"
             for r in (decisions + attempts)
@@ -3600,6 +3749,9 @@ def compute_staleness(
                 f"{len(mism)} record(s) written on other branches than "
                 f"'{cur_branch}': {shown}{extra}."
             )
+
+    if risks_only:
+        return warnings
 
     # (6) Aged-unresolved decisions + open questions.
     for r in decisions:
@@ -3635,6 +3787,71 @@ def compute_staleness(
 
 
 # ---- packet assembly ------------------------------------------------------- #
+
+# How many commit subjects the packet lists between the handoff's commit and
+# HEAD (P1-5). Enough to falsify a stale work-list; small enough not to crowd
+# the packet.
+PACKET_COMMITS_SINCE_HANDOFF_MAX = 10
+
+
+def _commits_since(root: Path, ref: str | None, limit: int) -> list[str]:
+    """One-line subjects for `ref..HEAD`, newest first. [] when unknowable.
+
+    A rewritten/shallow history (ref unknown to this clone) yields [] — the
+    commit-distance staleness warning already covers that case; inventing a
+    bogus range here would present guesses as history.
+    """
+    if not ref or not is_git_repo(root):
+        return []
+    cur = git_commit(root)
+    if cur == NO_GIT_COMMIT or ref == cur:
+        return []
+    out = _git_out(root, "log", "--oneline", "--no-decorate", f"{ref}..HEAD")
+    if out is None:
+        return []
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    return lines[:limit]
+
+
+# Bounded so a store with many fixed verifications cannot flood the warnings
+# section with drift guesses.
+PACKET_DRIFT_CONFLICTS_MAX = 3
+
+
+def _focus_verification_conflicts(
+    next_action: str, current_focus: str, verifications: list[Record]
+) -> list[str]:
+    """Warn when a **fixed** verification names what the focus still claims is owed.
+
+    The P1-5 failure mode: the packet's Current Focus said two work items were
+    outstanding while its own Verifications section recorded one of them as
+    fixed — internally contradictory, and only a human noticed. This is the
+    deterministic cross-check: token overlap between the focus claims and each
+    fixed verification's subject (same stemming as guard/search), warn-only.
+    """
+    claims = _specific(f"{next_action} {current_focus}")
+    if not claims:
+        return []
+    out: list[str] = []
+    for r in verifications:
+        if (r.meta.get("outcome") or "open") != "fixed":
+            continue
+        subject = r.meta.get("subject") or r.meta.get("title", "")
+        subj = _specific(subject)
+        if not subj:
+            continue
+        if len(subj & claims) >= min(2, len(subj)):
+            rid = r.meta.get("id", r.stem)
+            when = r.meta.get("updated_at") or r.meta.get("created_at") or ""
+            when = f" on {when[:10]}" if when else ""
+            out.append(
+                f'possible drift: `{rid}` recorded "{subject}" as **fixed**{when}, '
+                "but Current Focus / Next Action still claims that work — "
+                "re-check before redoing it."
+            )
+            if len(out) >= PACKET_DRIFT_CONFLICTS_MAX:
+                break
+    return out
 
 
 def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
@@ -3906,6 +4123,9 @@ def build_resume_packet(
             }
             for r in verifications
         ],
+        "commits_since_handoff": _commits_since(
+            root, handoff_meta.get("commit"), PACKET_COMMITS_SINCE_HANDOFF_MAX
+        ),
         "warnings": (
             [f"⚠ {u}" for u in unreadable]
             + compute_staleness(root, handoff_meta, decisions, attempts, questions, stale_days)
@@ -3913,6 +4133,11 @@ def build_resume_packet(
         "omitted": {},
         "omitted_reason": {},
     }
+    # P1-5 cross-check: a fixed verification contradicting the focus claims is
+    # the one staleness the age/distance numbers can never see.
+    packet["warnings"] += _focus_verification_conflicts(
+        packet["next_action"], packet["current_focus"], verifications
+    )
 
     # Likely files: handoff section + file-type evidence refs (deduped, order-stable).
     files = _section_lines(handoff_sections, "Likely Relevant Files")
@@ -4073,18 +4298,37 @@ def render_packet_markdown(packet: dict) -> str:
             "where the last session left off)_",
             "",
         ]
+    # Stores written before 0.1.11 carry a Current Focus that is a verbatim copy
+    # of the Next Action (capture used to default one to the other, P1-6);
+    # collapse the duplicate at render time instead of spending ~1.4k chars
+    # printing the same text twice.
+    cf = packet["current_focus"]
+    if cf and cf.strip() == (packet["next_action"] or "").strip():
+        cf = "_(same as Next Action)_"
     out += [
         "## Project",
         f"**{proj['name']}** — `{proj['path']}`  ",
         f"branch `{proj['branch']}` · commit `{proj['commit']}` · {proj['dirty_state']}",
         "",
         "## Current Focus",
-        packet["current_focus"] or "_(not recorded — see current.md / handoff.md)_",
+        cf or "_(not recorded — see current.md / handoff.md)_",
         "",
         "## Next Action",
         packet["next_action"] or "_(not recorded — set one with `crumb capture session --next`)_",
         "",
     ]
+
+    # P1-5: the staleness numbers say how *old* the handoff is, never whether its
+    # claims still hold. Listing what actually landed since it was written makes
+    # the Current Focus / Next Action falsifiable by the reader — a fresh session
+    # can check the list before redoing work the packet still says is owed.
+    if packet.get("commits_since_handoff"):
+        out += [
+            "## Landed Since The Handoff Was Written",
+            "_(check Current Focus / Next Action against these before redoing work)_",
+        ]
+        out += [f"- {c}" for c in packet["commits_since_handoff"]]
+        out.append("")
 
     if not packet["fast"]:
         # The omitted-count disclosure is emitted in BOTH branches: budget-trimming
@@ -4272,6 +4516,19 @@ GUARD_READ_FIRST_SCORE = 5  # score band: at/above -> at least READ_FIRST
 GUARD_PAUSE_SCORE = 9  # score band: at/above -> at least PAUSE
 GUARD_MIN_KEYWORD_OVERLAP = 2  # specific shared tokens for a pure-text match
 
+# Ubiquity gate (0.1.10 field test, P0-2). In a store whose vocabulary overlaps
+# the codebase, the tokens most records share carry no discriminating signal —
+# package prefixes shed by cited file paths ("com", "kt", "java"), the project's
+# own domain noun — yet two of them used to clear the keyword gate on every
+# edit, so one trap fired on all 13 edits of a session. A stem present in more
+# than GUARD_DF_UBIQUITY of the candidate corpus is ignored for keyword matching
+# (zero weight, no gate credit), but only once the corpus is big enough for
+# frequency to mean anything — below GUARD_DF_MIN_CORPUS items (every fixture,
+# any young store) nothing is ubiquitous. File and tag matches are exempt: both
+# are author-curated, deliberate signal.
+GUARD_DF_UBIQUITY = 1 / 3
+GUARD_DF_MIN_CORPUS = 8
+
 # scoring weights (§11.4 signals)
 GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
 GUARD_W_TAG = 4  # per overlapping tag/component
@@ -4302,6 +4559,11 @@ GUARD_HIGH_IMPACT_CLASSES = frozenset({"deletion", "migration", "external_side_e
 
 _VERDICTS = ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN")
 _VERDICT_RANK = {v: i for i, v in enumerate(_VERDICTS)}
+
+# `crumb guard` exit codes, one per verdict (P0-1). Deliberately spaced so a
+# script can threshold (`>= 15` = human involvement) and deliberately clear of
+# 1 (crash), 2 (usage error), and 126+ (shell/OS conventions).
+GUARD_VERDICT_EXIT_CODES = {"PROCEED": 0, "READ_FIRST": 10, "PAUSE": 15, "ASK_HUMAN": 20}
 
 
 # Generic words that carry no domain signal. A shared stop-word never counts
@@ -4743,6 +5005,23 @@ def _disambiguate_item_ids(items: list[dict]) -> list[dict]:
 # ---- scoring (§11.4) ------------------------------------------------------- #
 
 
+def _ubiquitous_stems(items: list[dict]) -> frozenset[str]:
+    """Stems present in more than GUARD_DF_UBIQUITY of the corpus (see constants).
+
+    Deterministic document frequency over the candidate items' own token bags —
+    no external vocabulary, so the same store always yields the same set.
+    """
+    n = len(items)
+    if n < GUARD_DF_MIN_CORPUS:
+        return frozenset()
+    df: dict[str, int] = {}
+    for it in items:
+        for s in it["specific"]:
+            df[s] = df.get(s, 0) + 1
+    cutoff = n * GUARD_DF_UBIQUITY
+    return frozenset(s for s, c in df.items() if c > cutoff)
+
+
 def _score_item(
     item: dict,
     q_specific: set[str],
@@ -4753,6 +5032,7 @@ def _score_item(
     *,
     min_keyword: int,
     distances: CommitDistanceIndex,
+    ubiquitous: frozenset[str] = frozenset(),
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
     # _norm_files stores each file as both its full path and its bare basename,
@@ -4771,12 +5051,15 @@ def _score_item(
     tag_stems = item.get("tag_stems") or {t: t for t in item["tags"]}
     matched_tag_stems = set(tag_stems) & q_specific
     matched_tags = {tag_stems[s] for s in matched_tag_stems}
-    kw_overlap = item["specific"] & q_specific
+    # Ubiquitous stems (present in most of the corpus) are dropped before either
+    # the gate or the weights see them — a token every record shares proves
+    # nothing about *this* record.
+    kw_overlap = (item["specific"] & q_specific) - ubiquitous
     kw_count = len(kw_overlap)
     # Title tokens are a subset of `specific` (the text bag includes the title),
     # so this can only re-weight an existing keyword hit, never create a match
     # the candidate gate below would have rejected.
-    title_overlap = item.get("title_specific", set()) & q_specific
+    title_overlap = (item.get("title_specific", set()) & q_specific) - ubiquitous
 
     # Candidate gate (anti-noise, Fixture 3): a file or tag hit always qualifies;
     # a pure-text match needs >= min_keyword specific shared tokens.
@@ -4914,6 +5197,7 @@ def search(
     cur_branch = git_branch(root)
     # One commit-distance index for the whole pass — see the class.
     distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
+    ubiquitous = _ubiquitous_stems(items)
 
     matches: list[dict] = []
     for it in items:
@@ -4928,6 +5212,7 @@ def search(
             stale_days,
             min_keyword=min_keyword,
             distances=distances,
+            ubiquitous=ubiquitous,
         )
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.
@@ -5001,7 +5286,14 @@ def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
             floors.append("PAUSE")  # a failed attempt on these files/component
         elif m["kind"] == "decision" and specific:
             floors.append("READ_FIRST")  # an active decision constrains this area
-        elif m["kind"] == "trap" and (specific or "keyword" in sig):
+        elif m["kind"] == "trap" and specific:
+            # Keyword-only trap matches used to floor READ_FIRST here, bypassing
+            # the score bands — in a store whose vocabulary overlaps the codebase
+            # that made one trap fire on every edit of a session (0.1.10 field
+            # test, P0-2: 13 edits, 13 READ_FIRSTs, one relevant). A trap now
+            # needs the same file/tag specificity as a decision to floor the
+            # verdict; a strong keyword-only trap match can still escalate
+            # through the score band like everything else.
             floors.append("READ_FIRST")
         elif m["kind"] == "verification" and specific:
             floors.append("READ_FIRST")  # an unsettled finding on these files/component
@@ -5139,6 +5431,10 @@ def guard(
         if (memory_dir / "handoff.md").is_file()
         else ""
     )
+    # `risks_only`: guard is called once per edit, and the full staleness view
+    # repeated the same store-wide facts verbatim on every call (P0-4). Only
+    # abnormal states — cold handoff, detached HEAD, branch mismatch — belong
+    # on the per-action path; the rest lives in resume/doctor/audit.
     staleness = compute_staleness(
         root,
         parse_handoff_meta(handoff_text),
@@ -5146,6 +5442,7 @@ def guard(
         active_attempts(memory_dir),
         load_open_questions(memory_dir),
         stale_days,
+        risks_only=True,
     )[:GUARD_MAX_WARNINGS]
 
     return {
@@ -5236,8 +5533,21 @@ def cmd_search(args: argparse.Namespace) -> int:
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
     query = args.query or ""
     # Lookup, not judging: ideas are in this corpus and out of guard's.
+    #
+    # Same keyword standard as guard (0.1.10 field test, P1-8): a pure-text match
+    # needs GUARD_MIN_KEYWORD_OVERLAP shared specific tokens, relaxed to the
+    # query's own specific-token count so a one-word lookup ("libsignal") still
+    # works. Search can and should return zero — one generic shared token
+    # ("version") is not a match.
+    min_kw = max(1, min(GUARD_MIN_KEYWORD_OVERLAP, len(_specific(query)))) if query else 1
     matches, _ = search(
-        memory_dir, root, query, filters=filters, stale_days=stale_days, include_ideas=True
+        memory_dir,
+        root,
+        query,
+        filters=filters,
+        stale_days=stale_days,
+        min_keyword=min_kw,
+        include_ideas=True,
     )
 
     if args.json:
@@ -5268,7 +5578,12 @@ def cmd_guard(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
     else:
         print(render_guard_human(result))
-    return 0
+    # Verdict-mapped exit codes (0.1.10 field test, P0-1) so callers can script
+    # on the verdict ("block only on ASK_HUMAN") without parsing output. Spaced
+    # and documented; 2 stays the usage-error code, and none of these can be
+    # mistaken for a crash (1) or an unhandled error (255). The hook path
+    # (`crumb hook guard`) is unaffected — hooks must exit 0.
+    return GUARD_VERDICT_EXIT_CODES[result["verdict"]]
 
 
 # --------------------------------------------------------------------------- #
@@ -5391,7 +5706,16 @@ INSTRUCTION_LIKE_PATTERNS: tuple["_LazyPattern", ...] = (
         + _IL_QUALIFIERS
         + r"(?:tests?|checks?|validation|guard|safety|linter?|ci)\b"
     ),
-    _LazyPattern(r"(?i)\b(?:never|always)\s+run\b"),
+    # Imperative "never run X" only: an auxiliary right before it ("has never
+    # run", "was never run") is a factual claim about history, not an
+    # instruction — the field test's audit fired 7 warnings, all on sentences
+    # like "E2E has never run in production" (P2-11). Python lookbehinds are
+    # fixed-width, hence one per auxiliary.
+    _LazyPattern(
+        r"(?i)(?<!\bis\s)(?<!\bare\s)(?<!\bwas\s)(?<!\bhas\s)(?<!\bhad\s)"
+        r"(?<!\bwere\s)(?<!\bbeen\s)(?<!\bhave\s)"
+        r"\b(?:never|always)\s+run\b"
+    ),
     _LazyPattern(r"(?i)\bdo\s+not\s+run\b"),
     _LazyPattern(r"(?i)\b(?:always|never)\s+(?:force[- ]?push|skip|disable|ignore|bypass)\b"),
     _LazyPattern(
@@ -5710,7 +6034,8 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 "path": "sessions/",
                 "message": (
                     f"{n} session records — promote what still matters with `crumb "
-                    "remember` and prune the rest so the store stays navigable"
+                    "remember`, then `crumb prune sessions` to drop old machine "
+                    "snapshots so the store stays navigable"
                 ),
             }
         )
@@ -5987,16 +6312,70 @@ def mcp_server_entry() -> dict:
     }
 
 
-def register_mcp(root: Path) -> Path:
-    """Merge the breadcrumbs server into `.mcp.json`, preserving any other servers."""
+def _splice_json_insert(text: str, parent_key: str, key: str, value: dict) -> str | None:
+    """Insert `key: value` into the `parent_key` object by text splice.
+
+    Preserves every other byte of the file — `merge_json_file`'s full
+    re-serialization reformatted entries it does not own (P2-13: a `firebase`
+    server's one-line args array came back multi-line). Returns the spliced
+    text, or None when the anchor cannot be found; the caller MUST verify the
+    result by re-parsing, which also defuses a false anchor match inside a
+    string value (the reparse then disagrees with the expected data and the
+    caller falls back to the full rewrite).
+    """
+    m = re.search(rf'"{re.escape(parent_key)}"\s*:\s*\{{', text)
+    if m is None:
+        return None
+    line_start = text.rfind("\n", 0, m.start()) + 1
+    parent_indent = re.match(r"[ \t]*", text[line_start:]).group(0)
+    child_indent = parent_indent + "  "
+    body = json.dumps(value, indent=2)
+    lines = body.splitlines()
+    rendered = lines[0] + "".join("\n" + child_indent + ln for ln in lines[1:])
+    snippet = f'\n{child_indent}"{key}": {rendered},'
+    return text[: m.end()] + snippet + text[m.end() :]
+
+
+def register_mcp(root: Path) -> tuple[Path, bool]:
+    """Add the breadcrumbs server to `.mcp.json`; other servers stay byte-identical.
+
+    Returns (path, changed). Three tiers, safest-first: an already-current entry
+    is a no-op; a fresh insert into an existing `mcpServers` object is a text
+    splice (verified by re-parse) so unrelated entries keep their exact
+    formatting; anything else falls back to the parse-validated full rewrite.
+    """
     path = root / ".mcp.json"
+    entry = mcp_server_entry()
+
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except json.JSONDecodeError:
+            data = None  # merge_json_file below raises the canonical error
+        if isinstance(data, dict) and isinstance(data.get("mcpServers"), dict):
+            servers = data["mcpServers"]
+            if servers.get(MCP_SERVER_NAME) == entry:
+                return path, False
+            if MCP_SERVER_NAME not in servers:
+                spliced = _splice_json_insert(text, "mcpServers", MCP_SERVER_NAME, entry)
+                if spliced is not None:
+                    expected = json.loads(json.dumps(data))
+                    expected["mcpServers"][MCP_SERVER_NAME] = entry
+                    try:
+                        ok = json.loads(spliced) == expected
+                    except json.JSONDecodeError:
+                        ok = False
+                    if ok:
+                        path.write_text(spliced, encoding="utf-8")
+                        return path, True
 
     def _mut(data: dict) -> None:
         servers = data.setdefault("mcpServers", {})
         servers[MCP_SERVER_NAME] = mcp_server_entry()
 
     merge_json_file(path, _mut)
-    return path
+    return path, True
 
 
 def unregister_mcp(root: Path) -> bool:
@@ -6044,13 +6423,19 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
     if what == "register":
         root = resolve_root(args.project)
-        path = register_mcp(root)
+        path, changed = register_mcp(root)
         sdk = _mcp_sdk_available()
-        summary = {"registered": str(path), "server": MCP_SERVER_NAME, "sdk_available": sdk}
+        summary = {
+            "registered": str(path),
+            "server": MCP_SERVER_NAME,
+            "changed": changed,
+            "sdk_available": sdk,
+        }
         if args.json:
             print(json.dumps(summary, indent=2))
         else:
-            print(f"Registered MCP server '{MCP_SERVER_NAME}' in {path}")
+            state = "" if changed else " (already current)"
+            print(f"Registered MCP server '{MCP_SERVER_NAME}' in {path}{state}")
             if not sdk:
                 print("  note: the MCP SDK isn't installed — run: pip install 'crumb-kit[mcp]'")
             print(
@@ -6168,15 +6553,16 @@ def present_adapters(root: Path) -> list[str]:
     return [name for name in ADAPTER_FILENAMES if (root / name).is_file()]
 
 
-def write_adapter_block(root: Path, name: str) -> None:
+def write_adapter_block(root: Path, name: str) -> bool:
     """Insert/replace the signpost block in an agent-guidance file, creating it if absent.
 
     `.github/copilot-instructions.md` is the one adapter name that lives in a
-    subdirectory, so creating it means creating `.github/` too.
+    subdirectory, so creating it means creating `.github/` too. Returns True iff
+    the file changed (an already-current block is a no-op).
     """
     path = root / name
     path.parent.mkdir(parents=True, exist_ok=True)
-    rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, adapter_block())
+    return rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, adapter_block())
 
 
 def remove_adapter_block(root: Path, name: str) -> bool:
@@ -6606,12 +6992,19 @@ def apply_integrations(root: Path, plan: dict) -> dict:
     `--print-integrations` had just promised the opposite and `doctor` went on
     recommending the command that could not help.
     """
-    applied: dict = {"adapters": [], "mcp": None, "hooks": []}
+    # `adapter_states`/`mcp_state` say what actually happened per target:
+    # "updated" vs "already current". For a trust tool the distinction matters —
+    # init used to print `adapter signpost -> CLAUDE.md` while CLAUDE.md was
+    # byte-identical afterwards (P2-12), which reads as a lie in either direction.
+    applied: dict = {"adapters": [], "adapter_states": {}, "mcp": None, "hooks": []}
     for name in plan["adapters"]:
-        write_adapter_block(root, name)
+        changed = write_adapter_block(root, name)
         applied["adapters"].append(name)
+        applied["adapter_states"][name] = "updated" if changed else "already current"
     if plan["mcp"]:
-        applied["mcp"] = str(register_mcp(root))
+        path, changed = register_mcp(root)
+        applied["mcp"] = str(path)
+        applied["mcp_state"] = "updated" if changed else "already current"
     if plan["hooks"]:
         install_claude_hooks(root, plan["hooks"])
         applied["hooks"] = list(plan["hooks"])
@@ -6908,14 +7301,86 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     return bool(action_paths & index_paths)
 
 
+# How much of an edit's new content feeds the guard action string. Tokens are
+# what matter, not prose, so a modest window is enough to let a content-level
+# trap match ("flexTimeInterval", a banned API) while keeping the scoring pass
+# cheap and the risk-regex scan bounded.
+_HOOK_CONTENT_SNIPPET_CHARS = 400
+
+
 def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] | None]:
-    """Derive a guard action string + affected files from a PreToolUse payload."""
+    """Derive a guard action string + affected files from a PreToolUse payload.
+
+    For file edits the action carries a bounded snippet of the *new* content
+    (P0-3): with only `edit <path>` every edit of one file produced byte-identical
+    guard output, and the store could never match on what the edit actually says —
+    the exact signal a content-shaped trap needs.
+    """
     if tool == "Bash":
         return (tool_input.get("command") or "").strip(), None
     if tool in ("Edit", "Write", "MultiEdit"):
         fp = tool_input.get("file_path") or tool_input.get("path") or ""
-        return (f"edit {fp}".strip(), [fp] if fp else None)
+        if tool == "Write":
+            new = tool_input.get("content") or ""
+        elif tool == "MultiEdit":
+            edits = tool_input.get("edits")
+            parts = []
+            if isinstance(edits, list):
+                for e in edits:
+                    if isinstance(e, dict) and e.get("new_string"):
+                        parts.append(str(e["new_string"]))
+            new = "\n".join(parts)
+        else:
+            new = tool_input.get("new_string") or ""
+        snippet = " ".join(str(new).split())[:_HOOK_CONTENT_SNIPPET_CHARS]
+        action = f"edit {fp}: {snippet}" if snippet else f"edit {fp}"
+        return action.strip(), [fp] if fp else None
     return "", None
+
+
+# Advisory-dedupe state for the PreToolUse guard, keyed by host session. Lives
+# in private/ (machine-local, gitignored) because it is per-checkout runtime
+# state, not memory. Best-effort: a read or write failure must never block the
+# hook, and losing the file only means one repeated advisory.
+_HOOK_SEEN_FILENAME = "hook-guard-seen.json"
+_HOOK_SEEN_MAX_SESSIONS = 8
+_HOOK_SEEN_MAX_KEYS = 200
+
+
+def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bool:
+    """True if this advisory key already fired for this session; records it if not.
+
+    Same records + same file ⇒ say nothing after the first time (P0-2b): a
+    READ_FIRST that repeats verbatim on every edit trains the agent to ignore
+    the one that matters. Only advisories dedupe — PAUSE/ASK_HUMAN always fire.
+    """
+    path = memory_dir / "private" / _HOOK_SEEN_FILENAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+    sessions = data.get("sessions")
+    if not isinstance(sessions, dict):
+        sessions = {}
+    entry = sessions.get(session_id)
+    if not isinstance(entry, dict) or not isinstance(entry.get("seen"), list):
+        entry = {"seen": []}
+    if key in entry["seen"]:
+        return True
+    entry["seen"] = (entry["seen"] + [key])[-_HOOK_SEEN_MAX_KEYS:]
+    entry["updated_at"] = now_iso()
+    sessions[session_id] = entry
+    # Keep only the most recent sessions so the state file cannot grow unbounded.
+    keep = sorted(sessions, key=lambda s: sessions[s].get("updated_at") or "", reverse=True)
+    data = {"sessions": {s: sessions[s] for s in keep[:_HOOK_SEEN_MAX_SESSIONS]}}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_text_atomic(path, json.dumps(data, indent=0, sort_keys=True) + "\n")
+    except Exception:  # pragma: no cover - dedupe state is best-effort
+        pass
+    return False
 
 
 def _hook_guard_reason(result: dict) -> str:
@@ -6977,6 +7442,20 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         return 0
     reason = _hook_guard_reason(result)
     if verdict == "READ_FIRST":
+        # Dedupe within the host session: the same records surfacing for the
+        # same file is information exactly once (P0-2b/P0-3). Keyed on the
+        # matched record ids + the file (or the action when no file), so a new
+        # record or a different file speaks again; scoped to READ_FIRST so a
+        # PAUSE/ASK_HUMAN is never swallowed.
+        target = (files or [None])[0] or result["action"]
+        key = f"{target}|" + ",".join(sorted(m["id"] for m in result.get("matches", [])))
+        session_id = str(payload.get("session_id") or "unknown")
+        try:
+            if _hook_guard_advisory_seen(memory_dir, session_id, key):
+                print(json.dumps({}))
+                return 0
+        except Exception:  # pragma: no cover - dedupe must never block the hook
+            pass
         # `permissionDecision: "allow"` is not neutral — it *auto-approves* the
         # call, skipping the prompt the user would otherwise get, and its reason
         # is shown only to the user, never to the model. Emitting it on an
@@ -7089,10 +7568,16 @@ def _extraction_reason(commits: list[str]) -> str:
     listing = "\n".join(f"  {c}" for c in shown)
     if extra > 0:
         listing += f"\n  … and {extra} more"
+    # "landed", not "this turn produced": the range is HEAD-based, and the
+    # workspace may be shared with other terminals/agents (P1-7) — attributing
+    # someone else's commit to the agent would ask it to describe work it never
+    # did. The instruction below scopes recording to the session's own work.
     return (
-        f"breadcrumbs: this turn produced {len(commits)} new commit(s) since the last "
-        f"recorded session:\n{listing}\n"
-        "Before stopping, persist what the next session cannot rediscover:\n"
+        f"breadcrumbs: {len(commits)} new commit(s) landed since the last recorded "
+        f"session (this turn's work, or another actor's if the workspace is "
+        f"shared):\n{listing}\n"
+        "Before stopping, persist what the next session cannot rediscover — from "
+        "this session's own work only; skip commits you did not make:\n"
         '1. A durable choice made here -> `crumb remember decision --title "…" '
         '--set Decision "…" --evidence commit <sha>`\n'
         '2. An approach tried that failed -> `crumb remember attempt --title "…" '
@@ -7101,7 +7586,8 @@ def _extraction_reason(commits: list[str]) -> str:
         '--status fixed|open|regressed --evidence command "<cmd>"`\n'
         "4. A record this session contradicted -> `crumb mark-status <id> "
         'stale --reason "…"`\n'
-        'Finish with `crumb capture session --next "<the next concrete action>"`. '
+        'Finish with `crumb capture session --next "<the next concrete action — cite '
+        'a commit sha or file so the claim stays checkable>"`. '
         "Record durable facts only — routine work needs no records; if nothing "
         "durable happened, run just the final capture command."
     )
@@ -7537,6 +8023,31 @@ def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mark.set_defaults(func=cmd_mark_status)
 
 
+# prune — explicit retention for machine session snapshots
+def _add_prune(sub, global_parser: argparse.ArgumentParser) -> None:
+    p_prune = sub.add_parser(
+        "prune",
+        parents=[global_parser],
+        help="delete old machine session snapshots (keeps human handoffs + the newest N)",
+    )
+    p_prune.add_argument(
+        "what",
+        choices=("sessions",),
+        help="what to prune (only `sessions` exists today)",
+    )
+    p_prune.add_argument(
+        "--keep",
+        type=int,
+        default=PRUNE_SESSIONS_KEEP_DEFAULT,
+        metavar="N",
+        help=f"newest sessions never pruned (default: {PRUNE_SESSIONS_KEEP_DEFAULT})",
+    )
+    p_prune.add_argument(
+        "--dry-run", action="store_true", help="list what would be deleted; delete nothing"
+    )
+    p_prune.set_defaults(func=cmd_prune)
+
+
 # reindex — explicit projection refresh (mutations reindex automatically)
 def _add_reindex(sub, global_parser: argparse.ArgumentParser) -> None:
     p_reindex = sub.add_parser(
@@ -7576,7 +8087,7 @@ def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
         help="override a session body section (repeatable)",
     )
     p_session.add_argument(
-        "--focus", help="Current Focus for handoff/current (default: Next Action)"
+        "--focus", help="Current Focus for handoff/current (default: keep the previous focus)"
     )
     p_session.add_argument(
         "--agent", default=None, help=_AGENT_FLAG_HELP.format(what="session author")
@@ -7771,6 +8282,7 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "note": _add_note,
     "verify": _add_verify,
     "mark-status": _add_mark_status,
+    "prune": _add_prune,
     "reindex": _add_reindex,
     "capture": _add_capture,
     "resume": _add_resume,

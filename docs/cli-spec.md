@@ -46,10 +46,11 @@ Default output is human-readable Markdown / plain text.
 | `note question\|trap\|idea` | user input, git state | open-questions / known-traps / idea record | Write-surface for the three kinds with no `remember` type; refreshes the resume packet. | **built** |
 | `resume` | current, handoff, records, git state | generated resume packet | Print a bounded resume packet (≤5k tokens) with computed staleness. `--fast` = git snapshot + focus + next action + staleness (print-only). `--task TEXT` scopes `likely_files` to matching records (print-only). | **4 (built)** |
 | `search [<query>]` | decisions, attempts, verifications, ideas, traps, open questions | search output (read-only — `search` writes nothing) | Deterministic keyword/tag/file lookup over the records; the permissive layer `guard` builds on. Keyword and tag matching folds morphological variants — query and record tokens are stemmed by a small deterministic suffix-stripper (plus a tiny curated alias table: auth/config/db/repo), so "reconciliation" meets a record that says "reconciler"; `keyword_overlap` in `--json` output therefore contains stems. | **5 (built)** |
-| `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff (**not** ideas) | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). | **5 (built)** |
+| `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff (**not** ideas) | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). Exits with the verdict-mapped code — see `guard` section. | **5 (built)** |
 | `audit` | all memory + adapters | health report | Find stale / unsafe / bloated memory (incl. secret + instruction-like heuristics). Heuristic — does NOT gate `validate`. | **6 (built)** |
 | `scan-secrets` | committed memory | secret report | Scan committed memory for secret-like strings; non-zero on a hit. Run before committing memory. | **6 (built)** |
 | `mark-status <id> <status>` | one record | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. | **built** |
+| `prune sessions` | `sessions/` | deletions + reindex | Delete old **machine** session snapshots (placeholder Next Action) beyond the newest `--keep N` (default 20). Human handoffs are never candidates; `--dry-run` lists. The Stop hook creates snapshots eagerly (an interrupted session is a handoff worth keeping) — retention is this separate, explicit act. | **built** |
 | `doctor` | adapters, `.mcp.json`, hooks, packet | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. | **built** |
 | `mcp serve\|register\|doctor` | `.mcp.json` | running server / registration / health | Run the MCP server, merge its `.mcp.json` entry, or report MCP wiring (`[mcp]` extra + registration). | **built** |
 | `hook session\|guard\|capture` | hook stdin payload | hook JSON on stdout | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve). Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. `hook capture` runs the **extraction turn**: when the ending turn produced new commits since the last session record, it holds the stop once (`decision: block`) with an instruction to record durable decisions/attempts/verifications and finish with `capture session --next` (which is also what clears the prompt). Edit-only turns snapshot silently; a `stop_hook_active` continuation is never held again and falls back to the machine snapshot; the first firing in a store takes a silent baseline; `extraction_prompt: false` in `manifest.yml` disables the prompt entirely. | **built** |
@@ -77,6 +78,25 @@ project root for stray managed blocks and reverses them too.)
 
 Ctrl+C at any `init` prompt aborts with exit 130 and writes nothing further; EOF
 (piped input) still takes the prompt's default.
+
+**Reporting matches reality.** Each adapter/MCP target is reported as
+`(updated)` or `(already current)` — `init` never claims to have written a file
+it left byte-identical (`--json` carries `adapter_states` / `mcp_state`).
+Registering the MCP server leaves other `.mcp.json` entries byte-for-byte
+untouched (a fresh insert is a re-parse-verified text splice, an already-current
+entry is a no-op; only a degenerate file falls back to a full rewrite), and
+`init` finishes by building the `generated/` projections so `doctor` can be
+green immediately.
+
+**A note on the hook marker.** Installed hook entries carry a `breadcrumbsHook`
+key *inside* Claude Code's `.claude/settings.json` hook objects. That is a
+foreign key in another product's schema, relying on Claude Code ignoring
+unknown keys (which it documents and does). It is deliberate: identity in the
+command text broke under wrapper scripts, venv paths, and `python -m
+breadcrumbs` launchers — `doctor` saw "no hooks" while all three fired, and
+removal left ghosts. If Claude Code ever rejects unknown keys, reinstalling
+hooks (`init --with-hooks`) is the migration path; the marker's name is
+namespaced enough to make a collision implausible.
 
 ### Later commands (post-MVP)
 
@@ -148,6 +168,20 @@ Behavior:
 - **Computed staleness** (not just authored): handoff **age + commit-distance**,
   **aged-unresolved** questions/decisions (> `--stale-days`), **branch mismatch**
   (incl. detached HEAD), and **expired**/**low-confidence** records.
+- **The focus claims are falsifiable (0.1.11, P1-5).** Age and distance say how
+  *old* the handoff is, never whether its claims still hold — the field test's
+  packet told a fresh session to redo two items that had already landed. Two
+  checks close that gap: the packet lists the commit subjects landed since the
+  handoff was written (`commits_since_handoff`, bounded, rendered as *Landed
+  Since The Handoff Was Written*) so the reader can check the work-list against
+  history; and a **fixed** verification whose subject overlaps the Current
+  Focus / Next Action claims adds a warn-only `possible drift:` line. Citing a
+  commit sha or file in `--next` (the extraction prompt now asks for one) keeps
+  the claim checkable.
+- **Current Focus never mirrors Next Action.** `capture session` no longer
+  defaults an unset `--focus` to the Next Action text, and packets from stores
+  written before 0.1.11 render the verbatim duplicate as
+  `_(same as Next Action)_` instead of printing ~1.4k chars twice (P1-6).
 - **The threshold and the ages are separate, separately named fields.** `--json`
   carries `stale_after_days` (the cutoff in force) alongside `handoff_age_days` and
   `handoff_commit_distance` (what was measured; `null` when the timestamp is
@@ -211,10 +245,66 @@ Behavior:
   a `guard` verdict never sees it. Fixture 12 is the control.
 - A query with no filters ranks by overlap; filters with no query list every
   matching record instead of returning nothing.
-- `guard` is this same engine with a stricter keyword floor and a verdict on top,
+- **Search can return zero, and that is an answer.** A pure-text match needs the
+  same shared-keyword floor as `guard` (`GUARD_MIN_KEYWORD_OVERLAP`, relaxed to
+  the query's own specific-token count so a one-word lookup like "libsignal"
+  still works). Before 0.1.11 a single generic shared token ("version") counted
+  as a match, which made weak queries return confident noise.
+- **Ubiquity gate (shared with `guard`).** Once the corpus holds at least
+  `GUARD_DF_MIN_CORPUS` items, a stem present in more than `GUARD_DF_UBIQUITY`
+  of them (package prefixes shed by cited paths, the project's own domain noun)
+  carries zero keyword weight and no gate credit. File and tag matches are
+  exempt — both are author-curated signal.
+- `guard` is this same engine with a verdict on top plus a noise floor,
   so a `search` hit is the permissive case of a `guard` match.
 - Exit codes: `0` on success (including zero matches), `2` when no
   `.project-memory/` store is present.
+
+---
+
+## `guard` (built)
+
+```bash
+crumb guard "<proposed action>" [--files F ...] [--json] [--stale-days N]
+```
+
+The judging layer on top of `search`: classify the action, rank the overlapping
+records, emit one deterministic verdict (`PROCEED` / `READ_FIRST` / `PAUSE` /
+`ASK_HUMAN`) plus the matches behind it.
+
+Behavior (deltas from `search` — everything there applies here too):
+
+- **Verdict floors need author-curated specificity.** A matched decision,
+  unsettled verification, or trap floors the verdict at `READ_FIRST` (a
+  do-not-retry attempt at `PAUSE`) only when the match carries a **file or tag**
+  signal. A keyword-only match — however the tokens overlap — can escalate only
+  through the score bands (`GUARD_READ_FIRST_SCORE` / `GUARD_PAUSE_SCORE`).
+  Until 0.1.11 a keyword-only *trap* match floored `READ_FIRST` unconditionally;
+  in a store whose vocabulary overlaps the codebase that made one trap fire on
+  every edit of a session (the 0.1.10 field test's 13-for-13).
+- **Staleness on the guard path is risks-only.** Only abnormal states — cold
+  handoff (`⚠`), detached HEAD, handoff branch mismatch — ride along with a
+  verdict. The routine store facts (fresh handoff age, aged records, low
+  confidence, other-branch record lists) are read once per session in
+  `resume`/`doctor`/`audit`, not once per edit.
+- **Exit codes are verdict-mapped** so callers can script on the verdict
+  without parsing output: `PROCEED` = 0, `READ_FIRST` = 10, `PAUSE` = 15,
+  `ASK_HUMAN` = 20 (`>= 15` means a human belongs in the loop); `2` = usage
+  error / no store. Deliberately clear of 1, 2, and the shell's 126+ range.
+  The hook translator (`crumb hook guard`) always exits 0 — hook protocols
+  treat nonzero as a hook failure.
+
+The `PreToolUse` hook path adds two behaviors of its own:
+
+- **Edits carry content.** The guard action for an `Edit`/`Write`/`MultiEdit`
+  is `edit <path>: <bounded snippet of the new content>`, so successive edits
+  of one file stop producing byte-identical guard input and a content-shaped
+  trap ("this API is banned") can actually match.
+- **Advisories dedupe per host session.** A `READ_FIRST` for the same file and
+  the same matched records fires once per session (state in
+  `private/hook-guard-seen.json`, machine-local, bounded); a new record, a
+  different file, or a new session speaks again. `PAUSE`/`ASK_HUMAN` are never
+  deduplicated.
 
 ---
 

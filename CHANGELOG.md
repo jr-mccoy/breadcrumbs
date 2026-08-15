@@ -5,6 +5,116 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
+## [Unreleased]
+
+Triage of the 0.1.10 production field test (a full working session in a real
+Android repo, 83-session store). The headline from that test — the agent-driven
+hooks pivot — worked and is untouched; everything here is tuning the signal
+quality around it. The guard was the uninstall risk: a ~1-in-30 relevance rate
+trains an agent to ignore the one warning that matters.
+
+### Added
+
+- **`crumb prune sessions` (P1-9).** The Stop hook snapshots eagerly — right
+  for capture (an interrupted session with dirty files is exactly the handoff
+  worth keeping), wrong for retention: the field-test store held 83 session
+  files against 17 durable records, and `audit` could only complain about
+  bloat the tool itself created. `prune sessions` deletes machine snapshots
+  (placeholder Next Action) beyond the newest `--keep N` (default 20); a
+  session a human gave a real Next Action is never a candidate. `--dry-run`
+  lists; deletions reindex the projections. `audit`'s bloat note now points
+  here.
+
+### Fixed
+
+- **`audit`'s instruction-like detector learned tense (P2-11).** "E2E has
+  never run in production" is a fact; "never run the migration by hand" is an
+  instruction. An auxiliary (`has/have/had/is/are/was/were/been`) before
+  "never/always run" now suppresses the flag — the field test's 7 warnings
+  were 7 false positives on exactly this pattern.
+- **`init` reports what actually happened (P2-12).** Each adapter/MCP target
+  prints `(updated)` or `(already current)`; it no longer claims
+  `adapter signpost -> CLAUDE.md` while leaving CLAUDE.md byte-identical.
+  `--json` carries `adapter_states` / `mcp_state`.
+- **`.mcp.json` entries breadcrumbs does not own stay byte-identical (P2-13).**
+  Registering the server splices its own key in (verified by re-parse) instead
+  of round-tripping the whole file through the serializer; a semantically
+  unchanged merge writes nothing at all. No more collapsing another server's
+  one-line `args` array.
+- **`doctor` can be all-green immediately after `init` (P2-14).** `init` now
+  builds the `generated/` projections (resume packet + guard prefilter) in both
+  the fresh-store and integrations-only paths.
+- **Empty record sections are omitted, not stubbed (P2-10).** The field test's
+  most valuable record had 4 of 7 sections reading `_(not recorded)_`, burying
+  the one section that carried the un-rediscoverable value. `schema --template`
+  still shows the full skeleton; the stored record only says what was recorded.
+- **Truncated slugs no longer end on function words (P2-15).**
+  `…-is-nullable-with-no` now truncates to `…-is-nullable`; an author's own
+  short title ("say-no") is never rewritten.
+
+### Docs
+
+- The `breadcrumbsHook` marker key — an extension key inside Claude Code's
+  hook schema — is now documented as a deliberate choice with its failure
+  story and migration path (P3-16), instead of being an unexplained surprise.
+
+### Changed
+
+- **The extraction turn no longer claims authorship it can't verify (P1-7).**
+  Its commit range is HEAD-based, and the workspace may be shared with other
+  terminals and agents — so the prompt now says "N commit(s) *landed* since
+  the last recorded session (this turn's work, or another actor's)" and scopes
+  the instruction to the session's own work ("skip commits you did not make"),
+  instead of asserting "this turn produced" someone else's commits.
+- **The resume packet's focus claims are now falsifiable (P1-5).** The
+  staleness system measured record age and commit distance — structurally true,
+  semantically blind: the field-test packet told a fresh session to redo two
+  work items that had already landed, while its own Verifications section
+  listed one of them as fixed. Two deterministic checks close the gap: the
+  packet lists the commit subjects landed since the handoff was written
+  (`commits_since_handoff`, rendered as *Landed Since The Handoff Was
+  Written*), and a **fixed** verification whose subject overlaps the Current
+  Focus / Next Action claims adds a warn-only `possible drift:` line. The
+  extraction prompt now asks for a commit sha or file in `--next` so the claim
+  stays checkable.
+- **Current Focus no longer mirrors Next Action (P1-6).** `capture session`
+  without `--focus` used to copy the Next Action text into Current Focus —
+  ~2,800 characters of packet spent printing one field twice. An unset focus
+  now keeps the previous Current Focus, and packets from older stores render
+  the verbatim duplicate as `_(same as Next Action)_`.
+- **Guard verdict floors need author-curated specificity (P0-2).** A
+  keyword-only trap match no longer floors `READ_FIRST` unconditionally — it
+  needs a file or tag signal, like decisions and verifications always did, and
+  keyword-only matches of any kind escalate only through the score bands. In
+  the field test the old floor made one WorkManager trap fire on all 13 edits
+  of the session, across files that never touch WorkManager.
+- **Corpus-ubiquitous tokens stop counting as signal (P0-2c).** Once a store
+  holds ≥ 8 searchable items, a stem present in more than a third of them
+  (package prefixes shed by cited file paths — "com", "kt" —, the project's own
+  domain noun) carries zero keyword weight and no gate credit in both `guard`
+  and `search`. File and tag matches are exempt: author-curated, deliberate
+  signal.
+- **`crumb guard` exits with a verdict-mapped code (P0-1):** `PROCEED` 0,
+  `READ_FIRST` 10, `PAUSE` 15, `ASK_HUMAN` 20 — so "block only on ASK_HUMAN"
+  is scriptable and no verdict can be mistaken for a crash. `2` stays the
+  usage-error code; the hook path still always exits 0.
+- **Guard staleness is risks-only (P0-4).** The per-action path now carries
+  only abnormal states (cold handoff, detached HEAD, branch mismatch). The
+  routine store facts that used to repeat verbatim on every call — fresh
+  handoff age, low-confidence and other-branch record lists — live in
+  `resume`/`doctor`/`audit`, which are read once per session.
+- **`search` shares guard's keyword floor (P1-8).** A pure-text match needs
+  the same shared-specific-token minimum (relaxed to the query's own length so
+  one-word lookups still work), so a weak query returns an honest zero instead
+  of five records that share the bare token "version".
+- **Hook edits carry content and advisories dedupe (P0-3, P0-2b).** The
+  `PreToolUse` guard action for an edit now includes a bounded snippet of the
+  new content — successive edits of one file stop producing byte-identical
+  guard output, and content-shaped traps can match. A `READ_FIRST` for the
+  same file + same records fires once per host session
+  (`private/hook-guard-seen.json`, machine-local, bounded); `PAUSE` and
+  `ASK_HUMAN` are never deduplicated.
+
 ## [0.1.10] — 2026-08-15
 
 The release that closes the authorship gap. Through 0.1.9 the store's most

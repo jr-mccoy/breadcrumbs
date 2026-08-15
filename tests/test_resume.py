@@ -338,5 +338,161 @@ class CloudFallbackTests(unittest.TestCase):
             self.assertIn("a read-only cloud agent can read them", text)
 
 
+class PacketTruthTests(unittest.TestCase):
+    """0.1.10 field-test P1-5/P1-6: the packet's headline claims must be
+    checkable, and Current Focus must not be a verbatim copy of Next Action."""
+
+    def _init_and_capture(self, root: Path, next_action: str) -> None:
+        crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        crumb.main(["capture", "session", "--project", str(root), "--next", next_action, "--fast"])
+
+    def test_capture_without_focus_does_not_duplicate_next_action(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            self._init_and_capture(root, "wire the flurble widget into the launcher")
+            _, out = run(["resume", "--project", str(root), "--json"])
+            packet = json.loads(out)
+            self.assertEqual(packet["next_action"], "wire the flurble widget into the launcher")
+            self.assertNotEqual(
+                packet["current_focus"],
+                packet["next_action"],
+                "Current Focus must no longer mirror Next Action verbatim",
+            )
+
+    def test_explicit_focus_is_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            crumb.main(
+                [
+                    "capture",
+                    "session",
+                    "--project",
+                    str(root),
+                    "--next",
+                    "run the flurble suite",
+                    "--focus",
+                    "flurble hardening sprint",
+                    "--fast",
+                ]
+            )
+            _, out = run(["resume", "--project", str(root), "--json"])
+            packet = json.loads(out)
+            self.assertEqual(packet["current_focus"], "flurble hardening sprint")
+
+    def test_legacy_duplicate_focus_is_collapsed_at_render_time(self):
+        packet_md = crumb.render_packet_markdown(
+            {
+                "fast": True,
+                "source": {"commit": "c", "inputs_hash": "h", "generated_at": "now"},
+                "stale_after_days": 21,
+                "handoff_age_days": None,
+                "handoff_commit_distance": None,
+                "project": {
+                    "name": "p",
+                    "path": ".",
+                    "branch": "b",
+                    "commit": "c",
+                    "dirty": 0,
+                    "dirty_state": "clean",
+                },
+                "current_focus": "finish the rollout",
+                "next_action": "finish the rollout",
+                "warnings": [],
+                "omitted": {},
+                "omitted_reason": {},
+            }
+        )
+        self.assertIn("_(same as Next Action)_", packet_md)
+        self.assertEqual(packet_md.count("finish the rollout"), 1)
+
+    def test_commits_since_handoff_are_listed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            self._init_and_capture(root, "ship the flurble widget")
+            commit(root, "a.txt", "land the flurble widget")
+            commit(root, "b.txt", "fix the spinner")
+            _, out = run(["resume", "--project", str(root), "--json"])
+            packet = json.loads(out)
+            subjects = " ".join(packet["commits_since_handoff"])
+            self.assertIn("land the flurble widget", subjects)
+            self.assertIn("fix the spinner", subjects)
+            _, md = run(["resume", "--project", str(root)])
+            self.assertIn("Landed Since The Handoff", md)
+
+    def test_no_commits_since_handoff_renders_no_section(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            self._init_and_capture(root, "anything")
+            _, md = run(["resume", "--project", str(root)])
+            self.assertNotIn("Landed Since The Handoff", md)
+
+    def test_fixed_verification_contradicting_focus_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            crumb.main(
+                [
+                    "verify",
+                    "flurble widget rollout",
+                    "--project",
+                    str(root),
+                    "--status",
+                    "fixed",
+                    "--evidence",
+                    "command",
+                    "make test",
+                ]
+            )
+            crumb.main(
+                [
+                    "capture",
+                    "session",
+                    "--project",
+                    str(root),
+                    "--next",
+                    "finish the flurble widget rollout",
+                    "--fast",
+                ]
+            )
+            _, out = run(["resume", "--project", str(root), "--json"])
+            packet = json.loads(out)
+            drift = [w for w in packet["warnings"] if "possible drift" in w]
+            self.assertTrue(drift, packet["warnings"])
+            self.assertIn("flurble widget rollout", drift[0])
+
+    def test_open_verification_does_not_warn(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            crumb.main(
+                [
+                    "verify",
+                    "flurble widget rollout",
+                    "--project",
+                    str(root),
+                    "--status",
+                    "open",
+                    "--evidence",
+                    "command",
+                    "make test",
+                ]
+            )
+            crumb.main(
+                [
+                    "capture",
+                    "session",
+                    "--project",
+                    str(root),
+                    "--next",
+                    "finish the flurble widget rollout",
+                    "--fast",
+                ]
+            )
+            _, out = run(["resume", "--project", str(root), "--json"])
+            packet = json.loads(out)
+            self.assertEqual([w for w in packet["warnings"] if "possible drift" in w], [])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -171,6 +171,33 @@ class InstructionLikeTests(unittest.TestCase):
         fails = [f for f in crumb.run_validate(mem) if f["status"] == "fail"]
         self.assertEqual(fails, [])
 
+    def test_factual_never_run_is_not_flagged(self):
+        """P2-11 (0.1.10 field test): all 7 instruction-like warnings fired on
+        factual past/passive phrasing like 'E2E has never run in production'."""
+        factual = [
+            "E2E has never run in production",
+            "the migration was never run against the replica",
+            "these checks have never run on Windows",
+            "the suite is never run on release branches",
+        ]
+        imperative = [
+            "never run the migration by hand",
+            "always run the formatter before committing",
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mem = root / crumb.MEMORY_DIRNAME
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            lines = "".join(f"- {s}\n" for s in factual + imperative)
+            (mem / "known-traps.md").write_text(f"# Known Traps\n\n## trap_t: t\n{lines}")
+            hits = crumb.scan_instruction_like(mem)
+            phrases_at = {h["line"] for h in hits if h["path"] == "known-traps.md"}
+            # Lines 1-3 are headers; the bullets start at line 4.
+            factual_lines = set(range(4, 4 + len(factual)))
+            imperative_lines = set(range(4 + len(factual), 4 + len(factual) + len(imperative)))
+            self.assertEqual(phrases_at & factual_lines, set(), hits)
+            self.assertEqual(phrases_at & imperative_lines, imperative_lines, hits)
+
     def test_guard_treats_poisoned_text_as_data(self):
         res_code, out = run(
             [
@@ -183,8 +210,9 @@ class InstructionLikeTests(unittest.TestCase):
                 "--json",
             ]
         )
-        self.assertEqual(res_code, 0)
         res = json.loads(out)
+        # Exit code is verdict-mapped (P0-1); this test cares about content, not band.
+        self.assertEqual(res_code, crumb.GUARD_VERDICT_EXIT_CODES[res["verdict"]])
         self.assertTrue(res["matches"])  # the record surfaces...
         na = res["recommended_action"].lower()
         # ...but the imperative is never lifted into the recommended action.
@@ -238,7 +266,12 @@ class BloatTests(unittest.TestCase):
                 "keep memory in plain files",
                 {
                     "Decision": "plain markdown is canonical",
-                    "Rationale": "a read-only agent can read it",
+                    # Long enough that the body clears the duplication check's
+                    # 200-char substance floor now that empty sections are
+                    # omitted instead of stubbed (P2-10).
+                    "Rationale": "a read-only agent can read it without any tooling, "
+                    "a human can review it in any diff view, and no database or index "
+                    "has to exist for the memory to survive a checkout on a new machine",
                 },
                 tags=["memory"],
                 evidence=[{"type": "commit", "ref": "abc1234"}],

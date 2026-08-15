@@ -963,5 +963,113 @@ class ParserUnderAPatchedStdoutTests(unittest.TestCase):
             out.fileno()
 
 
+class TrustReportingTests(unittest.TestCase):
+    """0.1.10 field-test P2-12/P2-13/P2-14: say what actually happened, leave
+    other people's config bytes alone, and let doctor go green right after init."""
+
+    def _git_repo(self, tmp: str) -> Path:
+        root = Path(tmp)
+        subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
+        subprocess.run(["git", "config", "user.email", "t@t"], cwd=tmp, check=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=tmp, check=True)
+        (root / "f.txt").write_text("a\n")
+        subprocess.run(["git", "add", "f.txt"], cwd=tmp, check=True)
+        subprocess.run(["git", "commit", "-qm", "init"], cwd=tmp, check=True)
+        return root
+
+    def test_repeat_adapter_install_reports_already_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._git_repo(tmp)
+            run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter=CLAUDE.md",
+                ]
+            )
+            before = (root / "CLAUDE.md").read_bytes()
+            code, out = run(["init", "--project", tmp, "--with-adapter=CLAUDE.md", "--json"])
+            self.assertEqual(code, 0)
+            applied = json.loads(out)["integrations"]
+            self.assertEqual(applied["adapter_states"]["CLAUDE.md"], "already current")
+            # Reporting matches reality: the file is byte-identical.
+            self.assertEqual((root / "CLAUDE.md").read_bytes(), before)
+
+    def test_adapter_install_reports_updated_when_it_writes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._git_repo(tmp)
+            code, out = run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter=CLAUDE.md",
+                    "--json",
+                ]
+            )
+            self.assertEqual(code, 0)
+            applied = json.loads(out)["integrations"]
+            self.assertEqual(applied["adapter_states"]["CLAUDE.md"], "updated")
+            self.assertTrue((root / "CLAUDE.md").is_file())
+
+    def test_mcp_register_leaves_other_servers_byte_identical(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # Deliberately NOT this tool's serialization style: one-line arrays,
+            # 4-space indent. Registering must not reformat the firebase entry.
+            original = (
+                "{\n"
+                '    "mcpServers": {\n'
+                '        "firebase": {"command": "npx", '
+                '"args": ["-y", "firebase-tools@latest", "mcp"]}\n'
+                "    }\n"
+                "}\n"
+            )
+            (root / ".mcp.json").write_text(original, encoding="utf-8")
+            path, changed = crumb.register_mcp(root)
+            self.assertTrue(changed)
+            text = (root / ".mcp.json").read_text(encoding="utf-8")
+            self.assertIn(
+                '"firebase": {"command": "npx", "args": ["-y", "firebase-tools@latest", "mcp"]}',
+                text,
+                "the firebase entry must keep its exact original formatting",
+            )
+            data = json.loads(text)
+            self.assertEqual(data["mcpServers"]["breadcrumbs"], crumb.mcp_server_entry())
+
+    def test_mcp_register_is_a_no_op_when_already_current(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crumb.register_mcp(root)
+            before = (root / ".mcp.json").read_bytes()
+            path, changed = crumb.register_mcp(root)
+            self.assertFalse(changed)
+            self.assertEqual((root / ".mcp.json").read_bytes(), before)
+
+    def test_doctor_is_green_immediately_after_init(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._git_repo(tmp)
+            run(
+                [
+                    "init",
+                    "--project",
+                    tmp,
+                    "--session-tracking",
+                    "full",
+                    "--with-adapter=CLAUDE.md",
+                ]
+            )
+            code, out = run(["doctor", "--project", tmp, "--json"])
+            report = json.loads(out)
+            packet = next(c for c in report["checks"] if c["check"] == "resume_packet")
+            self.assertTrue(packet["ok"], report)
+            self.assertEqual(code, 0, out)
+
+
 if __name__ == "__main__":
     unittest.main()

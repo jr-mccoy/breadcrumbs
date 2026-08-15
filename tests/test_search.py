@@ -235,5 +235,33 @@ class SearchableIdeasTests(unittest.TestCase):
             self.assertNotIn("session", kinds)
 
 
+class NoiseFloorTests(unittest.TestCase):
+    """P1-8 (0.1.10 field test): search shares guard's keyword standard — a
+    single generic shared token is not a match, and zero results is an answer.
+    A one-word query relaxes the floor to its own length so distinctive
+    single-term lookups keep working."""
+
+    def test_one_shared_generic_token_is_not_a_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture("fixture-02-guard-true-positive", tmp)
+            # The store talks about an auth middleware rewrite; this query
+            # shares only the bare token "middleware" with it while carrying
+            # two other specific tokens the store has never seen.
+            code, out = run(
+                ["search", "payload middleware undecryptable", "--project", str(root), "--json"]
+            )
+            self.assertEqual(code, 0)
+            matches = json.loads(out)["matches"]
+            self.assertEqual(matches, [], matches)
+
+    def test_single_distinctive_token_query_still_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = copy_fixture("fixture-02-guard-true-positive", tmp)
+            code, out = run(["search", "middleware", "--project", str(root), "--json"])
+            self.assertEqual(code, 0)
+            ids = {m["id"] for m in json.loads(out)["matches"]}
+            self.assertIn("att_20260612_auth-middleware-rewrite", ids)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

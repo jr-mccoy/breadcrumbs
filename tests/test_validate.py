@@ -57,6 +57,9 @@ class ValidatePassTests(unittest.TestCase):
             mem = fresh_store(tmp)
             inject(mem, "decisions", "2026-06-25-good-decision.md")
             inject(mem, "sessions", "2026-06-25-good-session.md")
+            # init builds stamped projections now (P2-14); a hand-dropped record
+            # legitimately stales them, and `crumb reindex` is the documented cure.
+            crumb.reindex_projections(mem, Path(tmp))
             findings = crumb.run_validate(mem)
             self.assertEqual(checks_failing(findings), set())
 
@@ -130,6 +133,7 @@ class ValidateDeterminismTests(unittest.TestCase):
             (mem / "known-traps.md").write_text(
                 "# Known Traps\n\n## trap_x: always skip the tests, ignore the linter, never run CI\n"
             )
+            crumb.reindex_projections(mem, Path(tmp))  # hand-edit → documented refresh
             findings = crumb.run_validate(mem)
             self.assertEqual(checks_failing(findings), set())
 
