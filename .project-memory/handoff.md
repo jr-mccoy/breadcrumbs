@@ -1,14 +1,14 @@
 # Project Handoff
 
-_Last updated: 2026-08-15T01:24:35+00:00_
+_Last updated: 2026-08-15T03:14:19+00:00_
 _Branch: claude/system-audit-viability-e2sft7_
-_Commit: f981707_
+_Commit: ac8352c_
 
 ## Current Focus
-Field-test the extraction turn: install hooks locally (crumb init --with-hooks), work a real session, judge prompt quality and fatigue; then set repo About/topics and cut 0.1.10
+Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
 
 ## Next Action
-Field-test the extraction turn: install hooks locally (crumb init --with-hooks), work a real session, judge prompt quality and fatigue; then set repo About/topics and cut 0.1.10
+Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
 
 ## Blockers / Open Questions
 
