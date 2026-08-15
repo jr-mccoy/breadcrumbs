@@ -2952,7 +2952,13 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         return 1
 
     # Refresh handoff + current.
-    focus = args.focus or sections.get("Next Action", "")
+    #
+    # Current Focus is NOT defaulted to the Next Action text: doing so rendered
+    # the packet's two headline fields as byte-identical ~1.4k-char duplicates
+    # (0.1.10 field test, P1-6). An unset --focus keeps the previous Current
+    # Focus (update_handoff/update_current retain the old value on empty),
+    # which is also the honest reading of "the caller said nothing about focus".
+    focus = args.focus or ""
     recently = sections.get("Work Completed", "")
     update_handoff(memory_dir, meta["branch"], meta["commit"], focus, sections["Next Action"])
     update_current(memory_dir, focus, recently)
@@ -3651,6 +3657,71 @@ def compute_staleness(
 
 # ---- packet assembly ------------------------------------------------------- #
 
+# How many commit subjects the packet lists between the handoff's commit and
+# HEAD (P1-5). Enough to falsify a stale work-list; small enough not to crowd
+# the packet.
+PACKET_COMMITS_SINCE_HANDOFF_MAX = 10
+
+
+def _commits_since(root: Path, ref: str | None, limit: int) -> list[str]:
+    """One-line subjects for `ref..HEAD`, newest first. [] when unknowable.
+
+    A rewritten/shallow history (ref unknown to this clone) yields [] — the
+    commit-distance staleness warning already covers that case; inventing a
+    bogus range here would present guesses as history.
+    """
+    if not ref or not is_git_repo(root):
+        return []
+    cur = git_commit(root)
+    if cur == NO_GIT_COMMIT or ref == cur:
+        return []
+    out = _git_out(root, "log", "--oneline", "--no-decorate", f"{ref}..HEAD")
+    if out is None:
+        return []
+    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
+    return lines[:limit]
+
+
+# Bounded so a store with many fixed verifications cannot flood the warnings
+# section with drift guesses.
+PACKET_DRIFT_CONFLICTS_MAX = 3
+
+
+def _focus_verification_conflicts(
+    next_action: str, current_focus: str, verifications: list[Record]
+) -> list[str]:
+    """Warn when a **fixed** verification names what the focus still claims is owed.
+
+    The P1-5 failure mode: the packet's Current Focus said two work items were
+    outstanding while its own Verifications section recorded one of them as
+    fixed — internally contradictory, and only a human noticed. This is the
+    deterministic cross-check: token overlap between the focus claims and each
+    fixed verification's subject (same stemming as guard/search), warn-only.
+    """
+    claims = _specific(f"{next_action} {current_focus}")
+    if not claims:
+        return []
+    out: list[str] = []
+    for r in verifications:
+        if (r.meta.get("outcome") or "open") != "fixed":
+            continue
+        subject = r.meta.get("subject") or r.meta.get("title", "")
+        subj = _specific(subject)
+        if not subj:
+            continue
+        if len(subj & claims) >= min(2, len(subj)):
+            rid = r.meta.get("id", r.stem)
+            when = r.meta.get("updated_at") or r.meta.get("created_at") or ""
+            when = f" on {when[:10]}" if when else ""
+            out.append(
+                f'possible drift: `{rid}` recorded "{subject}" as **fixed**{when}, '
+                "but Current Focus / Next Action still claims that work — "
+                "re-check before redoing it."
+            )
+            if len(out) >= PACKET_DRIFT_CONFLICTS_MAX:
+                break
+    return out
+
 
 def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
     """Of `dirs`, the ones a *committed* `.gitignore` excludes.
@@ -3921,6 +3992,9 @@ def build_resume_packet(
             }
             for r in verifications
         ],
+        "commits_since_handoff": _commits_since(
+            root, handoff_meta.get("commit"), PACKET_COMMITS_SINCE_HANDOFF_MAX
+        ),
         "warnings": (
             [f"⚠ {u}" for u in unreadable]
             + compute_staleness(root, handoff_meta, decisions, attempts, questions, stale_days)
@@ -3928,6 +4002,11 @@ def build_resume_packet(
         "omitted": {},
         "omitted_reason": {},
     }
+    # P1-5 cross-check: a fixed verification contradicting the focus claims is
+    # the one staleness the age/distance numbers can never see.
+    packet["warnings"] += _focus_verification_conflicts(
+        packet["next_action"], packet["current_focus"], verifications
+    )
 
     # Likely files: handoff section + file-type evidence refs (deduped, order-stable).
     files = _section_lines(handoff_sections, "Likely Relevant Files")
@@ -4088,18 +4167,37 @@ def render_packet_markdown(packet: dict) -> str:
             "where the last session left off)_",
             "",
         ]
+    # Stores written before 0.1.11 carry a Current Focus that is a verbatim copy
+    # of the Next Action (capture used to default one to the other, P1-6);
+    # collapse the duplicate at render time instead of spending ~1.4k chars
+    # printing the same text twice.
+    cf = packet["current_focus"]
+    if cf and cf.strip() == (packet["next_action"] or "").strip():
+        cf = "_(same as Next Action)_"
     out += [
         "## Project",
         f"**{proj['name']}** — `{proj['path']}`  ",
         f"branch `{proj['branch']}` · commit `{proj['commit']}` · {proj['dirty_state']}",
         "",
         "## Current Focus",
-        packet["current_focus"] or "_(not recorded — see current.md / handoff.md)_",
+        cf or "_(not recorded — see current.md / handoff.md)_",
         "",
         "## Next Action",
         packet["next_action"] or "_(not recorded — set one with `crumb capture session --next`)_",
         "",
     ]
+
+    # P1-5: the staleness numbers say how *old* the handoff is, never whether its
+    # claims still hold. Listing what actually landed since it was written makes
+    # the Current Focus / Next Action falsifiable by the reader — a fresh session
+    # can check the list before redoing work the packet still says is owed.
+    if packet.get("commits_since_handoff"):
+        out += [
+            "## Landed Since The Handoff Was Written",
+            "_(check Current Focus / Next Action against these before redoing work)_",
+        ]
+        out += [f"- {c}" for c in packet["commits_since_handoff"]]
+        out.append("")
 
     if not packet["fast"]:
         # The omitted-count disclosure is emitted in BOTH branches: budget-trimming
@@ -7273,7 +7371,8 @@ def _extraction_reason(commits: list[str]) -> str:
         '--status fixed|open|regressed --evidence command "<cmd>"`\n'
         "4. A record this session contradicted -> `crumb mark-status <id> "
         'stale --reason "…"`\n'
-        'Finish with `crumb capture session --next "<the next concrete action>"`. '
+        'Finish with `crumb capture session --next "<the next concrete action — cite '
+        'a commit sha or file so the claim stays checkable>"`. '
         "Record durable facts only — routine work needs no records; if nothing "
         "durable happened, run just the final capture command."
     )

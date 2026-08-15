@@ -148,6 +148,20 @@ Behavior:
 - **Computed staleness** (not just authored): handoff **age + commit-distance**,
   **aged-unresolved** questions/decisions (> `--stale-days`), **branch mismatch**
   (incl. detached HEAD), and **expired**/**low-confidence** records.
+- **The focus claims are falsifiable (0.1.11, P1-5).** Age and distance say how
+  *old* the handoff is, never whether its claims still hold — the field test's
+  packet told a fresh session to redo two items that had already landed. Two
+  checks close that gap: the packet lists the commit subjects landed since the
+  handoff was written (`commits_since_handoff`, bounded, rendered as *Landed
+  Since The Handoff Was Written*) so the reader can check the work-list against
+  history; and a **fixed** verification whose subject overlaps the Current
+  Focus / Next Action claims adds a warn-only `possible drift:` line. Citing a
+  commit sha or file in `--next` (the extraction prompt now asks for one) keeps
+  the claim checkable.
+- **Current Focus never mirrors Next Action.** `capture session` no longer
+  defaults an unset `--focus` to the Next Action text, and packets from stores
+  written before 0.1.11 render the verbatim duplicate as
+  `_(same as Next Action)_` instead of printing ~1.4k chars twice (P1-6).
 - **The threshold and the ages are separate, separately named fields.** `--json`
   carries `stale_after_days` (the cutoff in force) alongside `handoff_age_days` and
   `handoff_commit_distance` (what was measured; `null` when the timestamp is

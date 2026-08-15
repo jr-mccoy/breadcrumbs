@@ -15,6 +15,22 @@ trains an agent to ignore the one warning that matters.
 
 ### Changed
 
+- **The resume packet's focus claims are now falsifiable (P1-5).** The
+  staleness system measured record age and commit distance — structurally true,
+  semantically blind: the field-test packet told a fresh session to redo two
+  work items that had already landed, while its own Verifications section
+  listed one of them as fixed. Two deterministic checks close the gap: the
+  packet lists the commit subjects landed since the handoff was written
+  (`commits_since_handoff`, rendered as *Landed Since The Handoff Was
+  Written*), and a **fixed** verification whose subject overlaps the Current
+  Focus / Next Action claims adds a warn-only `possible drift:` line. The
+  extraction prompt now asks for a commit sha or file in `--next` so the claim
+  stays checkable.
+- **Current Focus no longer mirrors Next Action (P1-6).** `capture session`
+  without `--focus` used to copy the Next Action text into Current Focus —
+  ~2,800 characters of packet spent printing one field twice. An unset focus
+  now keeps the previous Current Focus, and packets from older stores render
+  the verbatim duplicate as `_(same as Next Action)_`.
 - **Guard verdict floors need author-curated specificity (P0-2).** A
   keyword-only trap match no longer floors `READ_FIRST` unconditionally — it
   needs a file or tag signal, like decisions and verifications always did, and
