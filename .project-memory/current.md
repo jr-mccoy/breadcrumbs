@@ -3,30 +3,12 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Field-test the extraction turn: install hooks locally (crumb init --with-hooks), work a real session, judge prompt quality and fatigue; then set repo About/topics and cut 0.1.10
+Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
 
 ## Recently Changed
-- f981707 Merge pull request #37 from jumbodaddystack/claude/portfolio-repo-cleanup-gsf3hu
-- 744427e Remove internal review scaffolding from the public repo
-- 3392f95 Merge pull request #36 from jumbodaddystack/claude/crumb-kit-cli-defects-ytojy9
-- fd16c43 Uninstall never deletes a hook it cannot prove is ours (MF-86)
-- 30d83c9 Release 0.1.9
-- 7f1fbca Guard cost stops scaling with the store; records stop contradicting themselves
-- 45db06d Five field-test defects from the first real install (MF-79 … MF-83)
-- c32ead8 Merge pull request #35 from jumbodaddystack/claude/breadcrumbs-field-test-fixes-2c06ee
-- dd71f50 CI was red on Python 3.14, on a stdout double, not the CLI (MF-78)
-- 867252c Merge pull request #34 from jumbodaddystack/claude/breadcrumbs-field-test-fixes-2c06ee
-- 8fb6c64 One key name, two meanings: guard's advice is `recommended_action` (MF-77)
-- fc96e17 Honest provenance, bounded filenames, cheaper startup (MF-74 … MF-76)
-- b0e41a5 Merge pull request #33 from jumbodaddystack/claude/android-app-review-fmxidv
-- 72586ca Stale de-weighting surfaces instead of silencing; consent + reachability (MF-71 … MF-73)
-- 6165566 Merge pull request #32 from jumbodaddystack/claude/release-workflow-failure-5iq3kj
-- d99a592 Retry the PyPI upload; stop tests faking release annotations (MF-70)
-- 19138fd Merge pull request #31 from jumbodaddystack/claude/breadcrumbs-0.1.8-release-ehnhq9
-- a87c8fe Pin ruff: CI's lint job was red on an untouched main (MF-69)
-- 05fd636 Fresh pass over the 0.1.8 cut: MF-65 … MF-68
-- 86afe75 Cut 0.1.8: bump __version__, date the changelog section
+- ac8352c Merge pull request #38 from jr-mccoy/claude/system-audit-viability-e2sft7
+- 6f54728 The agent becomes the memory author; guard learns morphology; the repo dogfoods
 
-_Prefill window: last 20 commits (`9a5aaf0`..HEAD) — no prior session record to diff from._
+_Prefill window: `f981707`..HEAD — 2 commit(s) since the last session record._
 
 ## Watch Out For

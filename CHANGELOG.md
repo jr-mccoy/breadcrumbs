@@ -5,7 +5,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
-## [Unreleased]
+## [0.1.10] — 2026-08-15
+
+The release that closes the authorship gap. Through 0.1.9 the store's most
+valuable records — decisions, failed attempts, do-not-retry conditions — were
+entirely hand-written, so the whole value of the tool rested on a human
+remembering to run `crumb remember`. This release makes the **agent** the
+author: the `Stop` hook asks for the records at the one moment the model still
+holds the session's reasoning, and completing the ask is what dismisses it.
+Two matching fixes make what gets written actually reachable — the hook
+pre-filter now sees the files a record names via `--evidence file`, and
+`guard`/`search` match across word forms, so a later session that says
+"reconciliation" still finds the attempt that says "reconciler". Upgrading
+invalidates stored `inputs_hash` projection stamps once; `crumb reindex`
+clears it. Existing hook installs pick up the extraction prompt automatically
+— set `extraction_prompt: false` in `manifest.yml` to opt out.
 
 ### Added
 
