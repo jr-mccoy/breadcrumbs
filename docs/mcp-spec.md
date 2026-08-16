@@ -238,13 +238,22 @@ rejected (§16.6) and reverted. When superseding, pass `superseded_by` (the
 replacing record's id) — the same flow as `crumb mark-status <id> superseded
 --superseded-by <new-id>` on the CLI.
 
-A `trap_<slug>` id resolves here too. Traps are blocks inside the aggregate
-`known-traps.md` rather than one file each, so the block's `- Status:` bullet is
-edited in place (every other byte preserved) instead of frontmatter; a trap with
-no such bullet counts as `active`. Retiring a trap drops it from
-`memory://resume-packet` and the hook pre-filter and stops it driving a
-`memory_guard_before_action` verdict — it stays in that verdict's context-only
-history and stays findable through `memory_search` under its new status.
+A `trap_<slug>` or `q:<slug>` id resolves here too. Traps and open questions are
+blocks inside an aggregate file rather than one file each, so the block's
+`- Status:` bullet is edited in place (every other byte preserved) instead of
+frontmatter; a block with no such bullet counts as `active` (trap) / `open`
+(question). Retiring a trap drops it from `memory://resume-packet` and the hook
+pre-filter and stops it driving a `memory_guard_before_action` verdict;
+answering a question drops it from the packet, from that verdict's open-blocker
+floor and from the aged-unresolved staleness warning. Both stay in the verdict's
+context-only history and stay findable through `memory_search` under their new
+status.
+
+Questions take their own vocabulary — `open`, `answered`, `closed` — for the
+same reason a verification's `outcome` is not its `status`: no lifecycle value
+says "somebody answered this". The id decides which vocabulary applies, and a
+mismatch (`superseded` on a question, `answered` on a decision) is rejected by
+name rather than silently written.
 
 ---
 

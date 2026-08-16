@@ -378,7 +378,7 @@ class TrapLifecycleTests(unittest.TestCase):
             init_store(tmp)
             code, out = run(["mark-status", "trap_nope", "stale", "--project", tmp, "--json"])
             self.assertEqual(code, 1)
-            self.assertIn("no record or trap", json.loads(out)["error"])
+            self.assertIn("no record, trap or question", json.loads(out)["error"])
 
     def test_a_summary_only_trap_points_at_the_documented_template(self):
         # known-traps.md documents Area / Symptom / Why / Safe approach /
@@ -405,6 +405,172 @@ class TrapLifecycleTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertNotIn("--symptom", out)
+
+
+class QuestionLifecycleTests(unittest.TestCase):
+    """`mark-status` on an open question.
+
+    The other half of the aggregate-file gap. Every *reader* already honored a
+    question's `- Status:` bullet — the packet lists only `open` ones, guard
+    gives only an `open` question the open-blocker floor — but the bullet was
+    write-once at `note question` time. A question that got answered went on
+    counting as a live blocker forever, exactly as a fixed trap went on firing.
+    """
+
+    def _ask(self, tmp: str, text: str, **flags) -> tuple[Path, str]:
+        mem = Path(tmp) / crumb.MEMORY_DIRNAME
+        if not mem.is_dir():
+            init_store(tmp)
+        argv = ["note", "question", text, "--project", tmp]
+        for key, value in flags.items():
+            argv += [f"--{key}", value]
+        code, _ = run(argv)
+        self.assertEqual(code, 0)
+        return mem, crumb.question_item_id(text)
+
+    def test_a_question_can_be_answered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, qid = self._ask(tmp, "Should age signals gate compliance?", why="blocks export")
+            root = Path(tmp)
+            self.assertEqual(len(crumb.build_resume_packet(mem, root)["open_questions"]), 1)
+
+            code, out = run(
+                [
+                    "mark-status",
+                    qid,
+                    "answered",
+                    "--project",
+                    tmp,
+                    "--reason",
+                    "see dec_20260816_gate-on-age",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            self.assertEqual(crumb.find_questions_by_id(mem, qid)[0]["status"], "answered")
+            self.assertEqual(crumb.build_resume_packet(mem, root)["open_questions"], [])
+            self.assertEqual(crumb.open_questions(mem), [])
+
+    def test_an_answered_question_stops_being_an_open_blocker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, qid = self._ask(tmp, "Should we shard the ledger table?")
+            root = Path(tmp)
+            live = crumb.guard(mem, root, "shard the ledger table")
+            self.assertIn(qid, [m["id"] for m in live["matches"]])
+
+            run(["mark-status", qid, "answered", "--project", tmp, "--reason", "yes, in Q3"])
+            after = crumb.guard(mem, root, "shard the ledger table")
+            self.assertNotIn(qid, [m["id"] for m in after["matches"]])
+            self.assertIn(qid, [m["id"] for m in after["history"]])
+
+    def test_an_answered_question_stays_findable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, qid = self._ask(tmp, "Should we shard the ledger table?")
+            run(["mark-status", qid, "closed", "--project", tmp, "--reason", "withdrawn"])
+            matches, _ = crumb.search(mem, Path(tmp), "shard ledger", include_ideas=True)
+            found = [m for m in matches if m["id"] == qid]
+            self.assertEqual([m["status"] for m in found], ["closed"])
+
+    def test_an_answered_question_stops_aging_into_a_warning(self):
+        # compute_staleness nags about questions open past --stale-days. Before
+        # this there was no way to make it stop short of hand-editing.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, qid = self._ask(tmp, "Is the migration reversible?")
+            path = mem / "open-questions.md"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    f"- Opened: {crumb.now_iso()[:10]}", "- Opened: 2020-01-01"
+                ),
+                encoding="utf-8",
+            )
+            aged = crumb.compute_staleness(
+                Path(tmp), {}, [], [], crumb.load_open_questions(mem), crumb.STALE_AGE_DAYS
+            )
+            self.assertTrue(any("Is the migration reversible?" in w for w in aged))
+
+            run(["mark-status", qid, "answered", "--project", tmp, "--reason", "yes"])
+            quiet = crumb.compute_staleness(
+                Path(tmp), {}, [], [], crumb.load_open_questions(mem), crumb.STALE_AGE_DAYS
+            )
+            self.assertFalse(any("Is the migration reversible?" in w for w in quiet))
+
+    def test_a_question_can_reopen(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, qid = self._ask(tmp, "Do we still need the shim?")
+            run(["mark-status", qid, "answered", "--project", tmp, "--reason", "no"])
+            code, _ = run(["mark-status", qid, "open", "--project", tmp, "--reason", "it came up"])
+            self.assertEqual(code, 0)
+            self.assertEqual([q["id"] for q in crumb.open_questions(mem)], [qid])
+
+    def test_record_and_question_vocabularies_do_not_cross(self):
+        # A question is open/answered/closed, never superseded — forcing a
+        # record word onto it would record the opposite of what happened.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, qid = self._ask(tmp, "Does the cache need eviction?")
+            res = crumb.set_record_status(mem, qid, "superseded", "x")
+            self.assertFalse(res["ok"])
+            self.assertIn("invalid question status", res["error"])
+            self.assertEqual(crumb.find_questions_by_id(mem, qid)[0]["status"], "open")
+
+    def test_a_long_question_is_addressable_by_its_digest_id(self):
+        # question_item_id appends a digest past 48 slug chars; mark-status has
+        # to accept exactly the id search prints, digest and all.
+        with tempfile.TemporaryDirectory() as tmp:
+            text = (
+                "Should we migrate the ledger to the new columnar store this quarter "
+                "or wait for the row store rewrite?"
+            )
+            mem, qid = self._ask(tmp, text)
+            self.assertNotEqual(qid, "q:" + crumb.slugify(text))
+            code, _ = run(["mark-status", qid, "answered", "--project", tmp, "--reason", "wait"])
+            self.assertEqual(code, 0)
+            self.assertEqual(crumb.open_questions(mem), [])
+
+    def test_only_the_target_block_is_touched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, first = self._ask(tmp, "First question?", why="it blocks the export")
+            _, second = self._ask(tmp, "Second question?", needs="a decision")
+            path = mem / "open-questions.md"
+            before = path.read_text(encoding="utf-8")
+            run(["mark-status", first, "answered", "--project", tmp, "--reason", "done"])
+            after = path.read_text(encoding="utf-8")
+
+            self.assertEqual(after.split("## Q: First", 1)[0], before.split("## Q: First", 1)[0])
+            self.assertIn("- Needs: a decision", after)
+            self.assertIn("- Why it matters: it blocks the export", after)
+            self.assertEqual(crumb.find_questions_by_id(mem, second)[0]["status"], "open")
+
+    def test_bookkeeping_bullets_never_reach_the_keyword_index(self):
+        # `- Opened: 2026-08-16` and `- Status: open` are not what the question
+        # is about; indexing them adds tokens that match nothing meaningful.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, _ = self._ask(tmp, "Does the ledger need sharding?")
+            item = crumb._item_from_question(crumb.load_open_questions(mem)[0])
+            self.assertFalse(item["specific"] & {"statu", "open", "activ"}, item["specific"])
+
+    def test_reason_cannot_forge_question_content(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, qid = self._ask(tmp, "A real question?")
+            code, _ = run(
+                [
+                    "mark-status",
+                    qid,
+                    "answered",
+                    "--project",
+                    tmp,
+                    "--reason",
+                    "evil --> ## Q: injected?",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertNotIn("injected?", [q["question"] for q in crumb.load_open_questions(mem)])
+
+    def test_the_mcp_tool_reaches_questions_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, qid = self._ask(tmp, "Reachable over MCP?")
+            res = mcp_core.tool_mark_status(qid, "answered", "yes", root=tmp)
+            self.assertTrue(res["ok"], res)
+            self.assertEqual(res["path"], "open-questions.md")
+            self.assertEqual(crumb.find_questions_by_id(mem, qid)[0]["status"], "answered")
 
 
 if __name__ == "__main__":

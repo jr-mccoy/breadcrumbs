@@ -45,6 +45,21 @@ trains an agent to ignore the one warning that matters.
   — retiring is not deleting, exactly as for a superseded decision. Traps with
   no `- Status:` bullet — every trap written before this — still count as
   active. `memory_mark_status` gets the same reach through the same code path.
+- **An open question can finally be answered (P0-4).** The other half of the
+  same gap. Every *reader* already honored a question's `- Status:` bullet —
+  the resume packet lists only `open` ones, `guard` gives only an `open`
+  question its open-blocker floor, `compute_staleness` nags only about `open`
+  ones aging past `--stale-days` — but the bullet was write-once at
+  `note question` time, so a question that got answered went on counting as a
+  live blocker forever. `mark-status` now resolves `q:<slug>` ids (digest
+  suffix and all, exactly as `search` prints them) through the same in-place
+  block editor traps use. Questions get their own vocabulary —
+  `open`/`answered`/`closed` — for the reason a verification's `outcome` is not
+  its `status`: the record words do not fit, and the dominant way a question
+  retires is that somebody *answered* it. `note question --status` is
+  constrained to that vocabulary too; it previously took free text, where any
+  typo silently hid the question from every reader. A question with no
+  `- Status:` bullet still counts as open.
 - **`note trap` points at the template it was ignoring (P2-16).**
   `known-traps.md` documents an Area / Symptom / Why / Safe approach /
   Verification format at the top of the file, but a bare `note trap "…"` writes

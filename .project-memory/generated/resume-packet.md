@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 3ea2ddd | inputs_hash: e040af20f3b3 | generated_at: 2026-08-16T00:31:24+00:00 -->
+<!-- source_commit: 4d7c69a | inputs_hash: 5ac41da97160 | generated_at: 2026-08-16T02:22:49+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/trap-retirement-mark-status-o64qqs` · commit `3ea2ddd` · 3 uncommitted file(s)
+branch `claude/trap-retirement-mark-status-o64qqs` · commit `4d7c69a` · 11 uncommitted file(s)
 
 ## Current Focus
 Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
@@ -13,7 +13,12 @@ Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --w
 ## Next Action
 Trap retirement landed on claude/trap-retirement-mark-status-o64qqs (3ea2ddd): mark-status resolves trap_<slug> ids and retired traps leave the packet, the guard pre-filter and the verdict set. Next: open/merge the PR, then release per RELEASING.md (bump __version__, run release.yml from main). Open questions still have no status writer — same aggregate-file class, deliberately left out of scope.
 
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 4d7c69a memory: record the trap-retirement session
+
 ## Active Decisions
+- `dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one` — The record words do not fit. The dominant way a question retires is that somebody answered it, and no lifecycle value says that — marking an answered question 'stale' records the opposite of what happened. The codebase already has this shape: a verification's outcome is deliberately not its status, for the same reason. The id decides which vocabulary applies and a mismatch is rejected by name, so the two never silently cross.
 - `dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them` — Reusing VALID_STATUS through the existing mark-status entry point keeps one vocabulary and one writer, and gives the MCP memory_mark_status tool the same reach with no new code. search already printed [active] for traps, so the vocabulary was implied by the UI before it existed in the file.
 - `dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20` — Callers could not script on verdicts at all (everything exited 0), and a Windows field-test harness rendered advisory verdicts as tool failures; documented spaced codes make 'block only on ASK_HUMAN' possible and any host-layer weirdness diagnosable.
 - `dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword` — 0.1.10 field test: the unconditional trap keyword floor fired READ_FIRST on 13/13 edits with one relevant hit; an ignored alarm is worse than no alarm.
@@ -42,6 +47,7 @@ _(none recorded)_
 
 ## Verifications
 - `ver_20260815_release-0-1-10-blocked-by-pypi-invalid-publisher-open` — release 0.1.10 blocked by PyPI invalid-publisher: **open** · static
+- `ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed` — crumb mark-status can answer an open question: **fixed** · test
 - `ver_20260816_crumb-mark-status-can-retire-a-trap-fixed` — crumb mark-status can retire a trap: **fixed** · test
 - `ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence` — hook guard escalates on edits to files named by --evidence file: **fixed** · test
 
@@ -53,7 +59,8 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
 - 7 record(s) written on other branches than 'claude/trap-retirement-mark-status-o64qqs': dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 (on 'claude/crumb-kit-0.1.10-triage-l3qo5a'), dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword (on 'claude/crumb-kit-0.1.10-triage-l3qo5a'), dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo (on 'claude/release-run-failures-gcuil8'), dec_20260815_cut-0-1-10-as-the-agent-authorship-release (on 'claude/system-audit-viability-e2sft7'), dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store (on 'claude/system-audit-viability-e2sft7') (+2 more).
+- possible drift: `ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed` recorded "crumb mark-status can answer an open question" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260816_crumb-mark-status-can-retire-a-trap-fixed` recorded "crumb mark-status can retire a trap" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence` recorded "hook guard escalates on edits to files named by --evidence file" as **fixed** on 2026-08-15, but Current Focus / Next Action still claims that work — re-check before redoing it.

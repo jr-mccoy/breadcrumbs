@@ -105,7 +105,8 @@ crumb schema                     # print the record contract (sections, vocab, r
 crumb remember decision          # capture a durable choice
 crumb verify "finding#1" --status fixed   # record a verification result (a finding about reality)
 crumb mark-status "dec_…" stale --reason "superseded by reality"   # record lifecycle mutation
-crumb mark-status "trap_…" stale --reason "fixed in 2.1"           # ...and retire a trap the same way
+crumb mark-status "trap_…" stale --reason "fixed in 2.1"           # ...retire a trap the same way
+crumb mark-status "q:…" answered --reason "see dec_…"              # ...and answer an open question
 crumb note question|trap|idea    # leave a note for the next agent (no hand-editing)
 crumb capture session            # record session end (git-prefilled); updates handoff + current
 crumb resume                     # print a bounded resume packet with computed staleness
@@ -514,7 +515,7 @@ automatically so it stays in step.)
 | `validate` | implemented |
 | `remember decision` / `remember attempt` | implemented |
 | `verify` (verification result: outcome + method + evidence) | implemented |
-| `mark-status` (record **and trap** lifecycle mutation, validate-gated, `--superseded-by`) | implemented |
+| `mark-status` (record, **trap and question** lifecycle mutation, validate-gated, `--superseded-by`) | implemented |
 | `reindex` (rebuild generated projections) | implemented |
 | `capture session` (incl. `--fast`) | implemented |
 | `resume` (incl. `--fast`, computed staleness) | implemented (**MVP-core**) |
