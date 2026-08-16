@@ -70,6 +70,13 @@ trains an agent to ignore the one warning that matters.
   constrained to that vocabulary too; it previously took free text, where any
   typo silently hid the question from every reader. A question with no
   `- Status:` bullet still counts as open.
+- **A duplicate-slug collision names the way back to the trap.** With traps
+  now retirable, re-running the same `note trap` is exactly how an agent
+  rediscovers one it retired earlier — and the collision error offered only
+  "pass a distinct slug", which forks the trap in two rather than reviving the
+  one already there. It now leads with `crumb mark-status trap_<slug> active`
+  and keeps the distinct-slug option second, matching the question path's
+  error. Both messages are now pinned by tests; neither was covered before.
 - **`note trap` points at the template it was ignoring (P2-16).**
   `known-traps.md` documents an Area / Symptom / Why / Safe approach /
   Verification format at the top of the file, but a bare `note trap "…"` writes
