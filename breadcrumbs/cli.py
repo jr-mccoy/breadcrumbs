@@ -80,6 +80,21 @@ VALID_STATUS = (
 )
 VALID_PRIVACY = ("repo-safe", "local-private", "secret-prohibited")
 
+# Open-question vocabulary. A question has its own lifecycle for the same reason
+# a verification's `outcome` is not its `status`: the record words do not fit.
+# The dominant way a question retires is that somebody *answered* it, and no
+# lifecycle value says that — forcing `stale` onto an answered question would
+# record the opposite of what happened. Only `open` is live; every reader
+# already treats anything else as settled.
+VALID_QUESTION_STATUS = (
+    "open",
+    "answered",  # resolved — the answer exists (name it in --reason)
+    "closed",  # retired without an answer: withdrawn, obsolete, won't pursue
+)
+# What `mark-status` accepts on the command line. The id decides which
+# vocabulary actually applies; the resolver rejects a mismatch by name.
+MARK_STATUS_CHOICES = tuple(dict.fromkeys(VALID_STATUS + VALID_QUESTION_STATUS))
+
 # Directory name -> record type.
 DIR_TYPES = {
     "decisions": "decision",
@@ -1982,15 +1997,38 @@ def set_record_status(
     the docs reference.
     """
     memory_dir = Path(memory_dir)
+    # Resolution comes before the status check, because which vocabulary applies
+    # depends on what the id names: a question is `open`/`answered`/`closed`,
+    # never `superseded`.
+    rec = find_record_by_id(memory_dir, rid)
+    if rec is None:
+        # Traps and open questions are `## ` blocks inside aggregate files, not
+        # one file per record, so neither ever resolved here — which left every
+        # trap and every question permanently live, still scoring in `search`
+        # and still driving `guard`, with no way to retire one but hand-editing
+        # known-traps.md / open-questions.md.
+        if find_trap_by_id(memory_dir, rid) is not None:
+            return set_trap_status(
+                memory_dir, rid, status, reason, agent=agent, superseded_by=superseded_by
+            )
+        found = find_questions_by_id(memory_dir, rid)
+        if len(found) > 1:
+            return {
+                "ok": False,
+                "error": f"id {rid!r} matches {len(found)} questions; they are slug-derived "
+                "and these collide — rename one in open-questions.md to tell them apart",
+            }
+        if found:
+            return set_question_status(
+                memory_dir, rid, status, reason, agent=agent, superseded_by=superseded_by
+            )
+        return {"ok": False, "error": f"no record, trap or question with id {rid!r}"}
+
     if status not in VALID_STATUS:
         return {
             "ok": False,
             "error": f"invalid status {status!r}; valid: {', '.join(VALID_STATUS)}",
         }
-
-    rec = find_record_by_id(memory_dir, rid)
-    if rec is None:
-        return {"ok": False, "error": f"no record with id {rid!r}"}
 
     original = rec.path.read_text(encoding="utf-8")
     meta, body = parse_frontmatter(original)
@@ -2039,6 +2077,256 @@ def set_record_status(
     # back to the active set, so the projections must follow.
     reindex_projections(memory_dir)
     return {"ok": True, "id": rid, "path": str(rec.path), "from": prev, "to": status}
+
+
+# ---- trap + question lifecycle (the aggregate-file half of `mark-status`) --- #
+
+
+def find_trap_by_id(memory_dir: Path, rid: str) -> dict | None:
+    """Return the trap block whose `trap_<slug>` id == `rid`, or None.
+
+    Matches the id `note trap` prints and `search` lists, so the id a user is
+    shown is the id `mark-status` takes.
+    """
+    wanted = (rid or "").strip().lower()
+    if not wanted:
+        return None
+    for trap in load_traps(Path(memory_dir)):
+        if trap["id"].lower() == wanted:
+            return trap
+    return None
+
+
+def _apply_block_status(block: str, status: str, superseded_by: str | None, note: str) -> str:
+    """Rewrite one `## ` block's lifecycle bullets, changing as little as possible.
+
+    Only the `- Status:` bullet (inserted after the block's leading bullet run if
+    absent), an optional `- Superseded by:` bullet, and an appended provenance
+    comment differ from the input — the summary, the template fields and any
+    hand-written prose survive byte for byte.
+    """
+    lines = block.splitlines(keepends=True)
+    head = lines[0] if lines else ""
+    if head and not head.endswith("\n"):
+        head += "\n"
+    rest = lines[1:]
+
+    status_line = f"- Status: {status}\n"
+    for i, line in enumerate(rest):
+        if _BLOCK_STATUS_LINE_RE.match(line):
+            rest[i] = status_line
+            break
+    else:
+        # After the last bullet of the block's leading list, so lifecycle sits
+        # with the other `- key: value` fields rather than below loose prose.
+        insert = 0
+        for i, line in enumerate(rest):
+            if re.match(r"\s*-\s+\S", line):
+                insert = i + 1
+            elif line.strip():
+                break
+        rest.insert(insert, status_line)
+
+    if superseded_by:
+        sup_line = f"- Superseded by: {superseded_by}\n"
+        for i, line in enumerate(rest):
+            if _BLOCK_SUPERSEDED_LINE_RE.match(line):
+                rest[i] = sup_line
+                break
+        else:
+            rest.insert(rest.index(status_line) + 1, sup_line)
+
+    body = "".join(rest)
+    core = body.rstrip("\n")
+    # The trailing newline run is the blank line separating this block from the
+    # next heading — put it back after the note so blocks stay separated.
+    tail = body[len(core) :] or "\n"
+    return head + (core + "\n" if core else "") + note + tail
+
+
+def set_trap_status(
+    memory_dir: Path,
+    rid: str,
+    status: str,
+    reason: str,
+    *,
+    agent: str | None = None,
+    superseded_by: str | None = None,
+) -> dict:
+    """Change a trap's status by editing its block in known-traps.md in place.
+
+    The aggregate-file counterpart to `set_record_status`, and reached through
+    it, so the CLI and the `memory_mark_status` MCP tool both get this with no
+    second entry point. Returns the same result shape as the record path.
+
+    Fail-closed like `note()`: the file is reverted unless the edited block reads
+    back with the requested status and leaves `validate` clean.
+    """
+    memory_dir = Path(memory_dir)
+    if status not in VALID_STATUS:
+        return {
+            "ok": False,
+            "error": f"invalid status {status!r}; valid: {', '.join(VALID_STATUS)}",
+        }
+    trap = find_trap_by_id(memory_dir, rid)
+    if trap is None:
+        return {"ok": False, "error": f"no trap with id {rid!r}"}
+    tid, prev = trap["id"], trap["status"]
+    # Same rule validate 16.6 puts on records: `superseded` must say by what.
+    if status == "superseded" and not superseded_by:
+        return {
+            "ok": False,
+            "id": tid,
+            "error": "status superseded needs the replacing id (--superseded-by)",
+        }
+
+    path = memory_dir / "known-traps.md"
+    try:
+        original = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "id": tid, "error": f"cannot read known-traps.md: {exc}"}
+
+    span = next(
+        (
+            (start, end)
+            for start, end, heading in _md_heading_spans(original)
+            if heading.partition(":")[0].strip().lower() == tid.lower()
+        ),
+        None,
+    )
+    if span is None:  # pragma: no cover - defensive; load_traps just found it
+        return {"ok": False, "id": tid, "error": f"could not locate the {tid} block to edit"}
+
+    # The reason is data, not instruction (§15), and a literal `-->` inside it
+    # would close the comment early and leak the remainder as trap content.
+    reason = _sanitize_note_text(reason or "")
+    author = agent or detect_agent()
+    note_line = f"<!-- status: {prev} -> {status} ({reason}) by {author} at {now_iso()} -->"
+    start, end = span
+    new_text = (
+        original[:start]
+        + _apply_block_status(original[start:end], status, superseded_by, note_line)
+        + original[end:]
+    )
+    write_text_atomic(path, new_text)
+
+    after = find_trap_by_id(memory_dir, tid)
+    if after is None or after["status"] != status:
+        write_text_atomic(path, original)  # revert
+        return {"ok": False, "id": tid, "error": "edited trap did not parse back; reverted"}
+    fails = _validate_new_file(memory_dir, path)
+    if fails:
+        write_text_atomic(path, original)  # revert
+        return {
+            "ok": False,
+            "id": tid,
+            "error": "status change rejected by validate: "
+            + "; ".join(f["message"] for f in fails),
+        }
+    # A retired trap drops out of the packet and the guard pre-filter, so the
+    # projections have to follow the write, exactly as they do for records.
+    reindex_projections(memory_dir)
+    return {"ok": True, "id": tid, "path": str(path), "from": prev, "to": status}
+
+
+def find_questions_by_id(memory_dir: Path, rid: str) -> list[dict]:
+    """Every question block whose `q:<slug>` id == `rid` — normally zero or one.
+
+    A list, not an Optional, because question ids are slug-derived: two questions
+    can collide on one id (`question_item_id` only disambiguates the *truncated*
+    ones), and `search`'s `-2` suffixes are positional, not stable enough to
+    address a block by. The caller refuses an ambiguous edit rather than guessing
+    which of two questions the user meant.
+    """
+    wanted = (rid or "").strip().lower()
+    if not wanted:
+        return []
+    return [q for q in load_open_questions(Path(memory_dir)) if q["id"].lower() == wanted]
+
+
+def set_question_status(
+    memory_dir: Path,
+    rid: str,
+    status: str,
+    reason: str,
+    *,
+    agent: str | None = None,
+    superseded_by: str | None = None,
+) -> dict:
+    """Answer or close a `## Q:` block in open-questions.md, in place.
+
+    The question half of the aggregate-file gap: every reader already honored a
+    question's `- Status:` bullet (the packet lists only `open` ones, `guard`
+    gives only an `open` question the open-blocker floor), but the bullet was
+    write-once at `note question` time, so a question that got answered went on
+    counting as a live blocker forever.
+
+    Reached through `set_record_status`, so the CLI and `memory_mark_status` both
+    get it with no second entry point. Same result shape as the record path.
+    """
+    memory_dir = Path(memory_dir)
+    if status not in VALID_QUESTION_STATUS:
+        return {
+            "ok": False,
+            "error": f"invalid question status {status!r}; valid: "
+            + ", ".join(VALID_QUESTION_STATUS),
+        }
+    found = find_questions_by_id(memory_dir, rid)
+    if not found:
+        return {"ok": False, "error": f"no question with id {rid!r}"}
+    if len(found) > 1:  # pragma: no cover - caller checks first
+        return {"ok": False, "error": f"id {rid!r} matches {len(found)} questions"}
+    question = found[0]
+    qid, prev = question["id"], question["status"]
+
+    path = memory_dir / "open-questions.md"
+    try:
+        original = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "id": qid, "error": f"cannot read open-questions.md: {exc}"}
+
+    span = next(
+        (
+            (start, end)
+            for start, end, heading in _md_heading_spans(original)
+            if heading.lower().startswith("q:")
+            and question_item_id(heading[2:].strip()).lower() == qid.lower()
+        ),
+        None,
+    )
+    if span is None:  # pragma: no cover - defensive; the loader just found it
+        return {"ok": False, "id": qid, "error": f"could not locate the {qid} block to edit"}
+
+    # The reason is data, not instruction (§15); a literal `-->` inside it would
+    # close the comment early and leak the remainder as question content.
+    reason = _sanitize_note_text(reason or "")
+    author = agent or detect_agent()
+    note_line = f"<!-- status: {prev} -> {status} ({reason}) by {author} at {now_iso()} -->"
+    start, end = span
+    new_text = (
+        original[:start]
+        + _apply_block_status(original[start:end], status, superseded_by, note_line)
+        + original[end:]
+    )
+    write_text_atomic(path, new_text)
+
+    after = find_questions_by_id(memory_dir, qid)
+    if len(after) != 1 or after[0]["status"] != status:
+        write_text_atomic(path, original)  # revert
+        return {"ok": False, "id": qid, "error": "edited question did not parse back; reverted"}
+    fails = _validate_new_file(memory_dir, path)
+    if fails:
+        write_text_atomic(path, original)  # revert
+        return {
+            "ok": False,
+            "id": qid,
+            "error": "status change rejected by validate: "
+            + "; ".join(f["message"] for f in fails),
+        }
+    # An answered question leaves the packet's Open Questions and stops raising
+    # the open-blocker floor, so the projections follow the write.
+    reindex_projections(memory_dir)
+    return {"ok": True, "id": qid, "path": str(path), "from": prev, "to": status}
 
 
 # ---- input helpers --------------------------------------------------------- #
@@ -2358,7 +2646,15 @@ def _question_block(text: str, *, why=None, needs=None, status="open") -> str:
 
 
 def _trap_block(
-    summary: str, *, slug=None, area=None, symptom=None, why=None, safe=None, verify=None
+    summary: str,
+    *,
+    slug=None,
+    area=None,
+    symptom=None,
+    why=None,
+    safe=None,
+    verify=None,
+    status="active",
 ) -> str:
     slug = slug or slugify(summary)
     lines = [f"## trap_{slug}: {summary}"]
@@ -2372,6 +2668,10 @@ def _trap_block(
         lines.append(f"- Safe approach: {safe}")
     if verify:
         lines.append(f"- Verification: {verify}")
+    # Written explicitly even though `active` is the parsed default: a trap is a
+    # long-lived warning, and the bullet is what tells the human reading this
+    # file that the trap has a lifecycle and can be retired.
+    lines.append(f"- Status: {status or 'active'}")
     return "\n".join(lines)
 
 
@@ -2391,8 +2691,8 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     """
     tokens: set[str] = set()
     paths: set[str] = set()
-    for trap in load_traps(memory_dir):
-        text = trap["heading"] + "\n" + (trap.get("body") or "")
+    for trap in active_traps(memory_dir):
+        text = trap["heading"] + "\n" + trap["content"]
         tokens |= _specific(text)
         paths |= _paths_from_text(text)
     for rec in active_attempts(memory_dir):
@@ -2493,8 +2793,25 @@ def note(
 
     if kind == "question":
         path = memory_dir / "open-questions.md"
+        # The CLI constrains `--status` through argparse; this is the same gate
+        # for the MCP writer, which passes fields straight through. An
+        # unrecognized status is not a harmless typo: every reader treats
+        # anything but `open` as settled, so it would silently hide the question
+        # from the packet, from guard and from the aged-question warning.
+        qstatus = (fields.get("status") or "open").strip().lower()
+        if qstatus not in VALID_QUESTION_STATUS:
+            return {
+                "ok": False,
+                "error": f"invalid question status {fields.get('status')!r}; valid: "
+                + ", ".join(VALID_QUESTION_STATUS),
+            }
+        fields = {**fields, "status": qstatus}
         if any(q["question"] == text for q in load_open_questions(memory_dir)):
-            return {"ok": False, "error": f"question already recorded: {text!r}"}
+            return {
+                "ok": False,
+                "error": f"question already recorded: {text!r} (reopen it with "
+                "`crumb mark-status <id> open`)",
+            }
         before = path.read_text(encoding="utf-8") if path.exists() else ""
         _append_md_block(
             path,
@@ -2541,6 +2858,17 @@ def note(
             write_text_atomic(path, before)  # revert
             return {"ok": False, "error": "appended trap did not parse back; reverted"}
         result = {"ok": True, "kind": "trap", "ref": f"trap_{slug}", "path": str(path)}
+        # known-traps.md documents a five-field format at the top of the file,
+        # but the writer accepts a bare summary, so the whole trap lands on the
+        # heading line and the documented template goes unused. Say so at the
+        # point of writing — a warning with no mechanism is what the next agent
+        # cannot act on.
+        if not any(fields.get(k) for k in ("area", "symptom", "why", "safe", "verify")):
+            result["hint"] = (
+                "summary line only — known-traps.md documents Area / Symptom / Why / "
+                "Safe approach / Verification; pass --area/--symptom/--why/--safe/"
+                "--verify so the next agent gets the mechanism, not just the warning"
+            )
 
     elif kind == "idea":
         sections = dict(fields.get("sections") or {})
@@ -2617,6 +2945,8 @@ def cmd_note(args: argparse.Namespace) -> int:
     else:
         print(f"Noted {kind}: {result.get('id') or result.get('ref')}")
         print(f"  file: {result['path']}")
+        if result.get("hint"):
+            print(f"  note: {result['hint']}")
     return 0
 
 
@@ -3547,9 +3877,49 @@ def active_attempts(memory_dir: Path) -> list[Record]:
     return active_records(memory_dir, "attempt")
 
 
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+
 def _strip_html_comments(text: str) -> str:
     """Drop `<!-- ... -->` regions so template example blocks never leak into a packet."""
-    return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    return _HTML_COMMENT_RE.sub("", text)
+
+
+def _md_heading_spans(text: str) -> list[tuple[int, int, str]]:
+    """`(start, end, heading)` for every real `## ` section, as offsets into `text`.
+
+    The span runs from the heading line through the byte before the next heading,
+    so a caller can splice one section and leave every other byte of the file
+    untouched — which `_md_blocks` cannot offer, because it reads through a
+    comment-stripped, whitespace-normalized copy.
+
+    Comment- and fence-aware for the same reasons those readers are: the bundled
+    known-traps.md documents its own format *inside* an HTML comment, so a naive
+    scan would find the example `## trap_<short-slug>:` heading and edit the
+    template instead of a trap.
+    """
+    comments = [(m.start(), m.end()) for m in _HTML_COMMENT_RE.finditer(text)]
+    heads: list[list] = []
+    fence: str | None = None
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        inert = any(a <= offset < b for a, b in comments)
+        fm = re.match(r"^(`{3,}|~{3,})", line.lstrip())
+        if inert:
+            pass
+        elif fence is not None:
+            if fm and fm.group(1)[0] == fence[0] and len(fm.group(1)) >= len(fence):
+                fence = None
+        else:
+            m = re.match(r"^##\s+(.*)$", line)
+            if m:
+                heads.append([offset, len(text), m.group(1).strip()])
+            elif fm:
+                fence = fm.group(1)
+        offset += len(line)
+    for i in range(len(heads) - 1):
+        heads[i][1] = heads[i + 1][0]
+    return [(a, b, h) for a, b, h in heads]
 
 
 def _md_blocks(path: Path, head_predicate) -> list[dict]:
@@ -3570,37 +3940,121 @@ def _md_blocks(path: Path, head_predicate) -> list[dict]:
     return blocks
 
 
-def load_traps(memory_dir: Path) -> list[dict]:
-    """Trap blocks from known-traps.md (each `## trap_<slug>: <summary>`)."""
-    return _md_blocks(
-        Path(memory_dir) / "known-traps.md",
-        lambda h: h.lower().startswith("trap"),
+# Bookkeeping bullets a trap or question block carries alongside its content.
+# They are read back as the block's status, and stripped from the text that
+# feeds keyword matching — see `_block_content`.
+_BLOCK_STATUS_LINE_RE = re.compile(r"\s*-\s*status\s*:\s*(.+)", re.I)
+_BLOCK_SUPERSEDED_LINE_RE = re.compile(r"\s*-\s*superseded[ _]by\s*:\s*(.+)", re.I)
+_BLOCK_OPENED_LINE_RE = re.compile(r"\s*-\s*opened\s*:\s*(.+)", re.I)
+
+
+def _block_status(body: str, default: str) -> str:
+    """A trap/question block's lifecycle status, or `default` if it has no bullet.
+
+    Blocks written before traps had a status — every trap in every store that
+    predates this — carry no bullet and keep meaning exactly what they meant.
+    """
+    for line in body.splitlines():
+        m = _BLOCK_STATUS_LINE_RE.match(line)
+        if m:
+            return m.group(1).strip().lower() or default
+    return default
+
+
+def _block_content(body: str) -> str:
+    """A trap/question body minus its bookkeeping bullets.
+
+    Keyword matching and the guard pre-filter index must see the *warning*, not
+    its bookkeeping: `- Status: active` tokenizes to `statu`/`activ`, so scoring
+    the raw body would hand every trap in the store two extra tokens and make any
+    action mentioning "status" trip the pre-filter — new alarm noise added by the
+    very change meant to let traps be silenced. `- Opened: 2026-08-16` on a
+    question is the same kind of nothing.
+    """
+    return "\n".join(
+        ln
+        for ln in body.splitlines()
+        if not (
+            _BLOCK_STATUS_LINE_RE.match(ln)
+            or _BLOCK_SUPERSEDED_LINE_RE.match(ln)
+            or _BLOCK_OPENED_LINE_RE.match(ln)
+        )
     )
 
 
+def load_traps(memory_dir: Path) -> list[dict]:
+    """Trap blocks from known-traps.md (each `## trap_<slug>: <summary>`).
+
+    Each block is returned with its `id` (the `trap_<slug>` heading prefix — the
+    same id `note trap` prints and `search` lists), its one-line `summary`, and
+    the lifecycle `status` from its `- Status:` bullet. `mark-status` writes that
+    bullet; readers that only want traps which still apply use `active_traps`.
+    """
+    out: list[dict] = []
+    for block in _md_blocks(
+        Path(memory_dir) / "known-traps.md",
+        lambda h: h.lower().startswith("trap"),
+    ):
+        ident, _, summary = block["heading"].partition(":")
+        body = block.get("body") or ""
+        out.append(
+            {
+                **block,
+                "id": ident.strip() or "trap",
+                "summary": summary.strip(),
+                "status": _block_status(body, "active"),
+                "content": _block_content(body),
+            }
+        )
+    return out
+
+
+def active_traps(memory_dir: Path) -> list[dict]:
+    """Traps that still apply — what guard, the pre-filter and resume warn about.
+
+    A retired trap stays in the file (and stays findable through `search`, like a
+    superseded decision does) but stops being advice.
+    """
+    return [t for t in load_traps(memory_dir) if t["status"] == "active"]
+
+
 def load_open_questions(memory_dir: Path) -> list[dict]:
-    """Parse `## Q: <question>` blocks into {question, opened, status, body}."""
+    """Parse `## Q: <question>` blocks into {id, question, opened, status, body}.
+
+    `id` is the `q:<slug>` id `search` lists and `mark-status` takes. The name is
+    historical: this returns *all* questions with their status, open or not —
+    every caller filters on `status == "open"` itself, or uses `open_questions`.
+    """
     out: list[dict] = []
     for block in _md_blocks(
         Path(memory_dir) / "open-questions.md", lambda h: h.lower().startswith("q:")
     ):
-        opened = status = None
+        opened = None
         for line in block["body"].splitlines():
-            m = re.match(r"\s*-\s*opened\s*:\s*(.+)", line, re.I)
+            m = _BLOCK_OPENED_LINE_RE.match(line)
             if m:
                 opened = m.group(1).strip()
-            m = re.match(r"\s*-\s*status\s*:\s*(.+)", line, re.I)
-            if m:
-                status = m.group(1).strip().lower()
+        question = block["heading"][2:].strip()
         out.append(
             {
-                "question": block["heading"][2:].strip(),
+                "id": question_item_id(question),
+                "question": question,
                 "opened": opened,
-                "status": status or "open",
+                "status": _block_status(block["body"], "open"),
+                "content": _block_content(block["body"]),
                 "body": block["body"],
             }
         )
     return out
+
+
+def open_questions(memory_dir: Path) -> list[dict]:
+    """Questions that are still open — the ones that count as live blockers.
+
+    An answered/closed question stays in the file and stays findable through
+    `search`, exactly as a retired trap or a superseded decision does.
+    """
+    return [q for q in load_open_questions(memory_dir) if q["status"] == "open"]
 
 
 def parse_handoff_meta(text: str) -> dict:
@@ -4041,7 +4495,7 @@ def build_resume_packet(
 
     decisions = active_decisions(memory_dir)
     attempts = active_attempts(memory_dir)
-    traps = load_traps(memory_dir)
+    traps = active_traps(memory_dir)
     questions = load_open_questions(memory_dir)
     verifications = active_verifications(memory_dir)
 
@@ -4109,9 +4563,7 @@ def build_resume_packet(
             for r in attempts
         ],
         "known_traps": [t["heading"] for t in traps],
-        "open_questions": [
-            q["question"] for q in questions if (q.get("status") or "open") == "open"
-        ],
+        "open_questions": [q["question"] for q in questions if q["status"] == "open"],
         "likely_files": [],
         "verification": [],
         "verifications": [
@@ -4886,12 +5338,14 @@ def _item_from_record(rec: Record) -> dict:
 
 
 def _item_from_trap(trap: dict) -> dict:
-    heading, body = trap["heading"], trap.get("body", "")
+    heading, body = trap["heading"], trap.get("content", trap.get("body", ""))
     text = heading + "\n" + body
     return {
-        "id": heading.split(":", 1)[0].strip() or "trap",
+        "id": trap.get("id") or heading.split(":", 1)[0].strip() or "trap",
         "kind": "trap",
-        "status": "active",
+        # Was hardcoded "active", which is what made a retired trap keep scoring
+        # in search and keep counting as live in guard's active/history split.
+        "status": trap.get("status") or "active",
         "title": heading,
         "tags": set(),
         "files": _norm_files(_paths_from_text(body)),
@@ -4924,14 +5378,15 @@ def question_item_id(question: str) -> str:
 
 
 def _item_from_question(q: dict) -> dict:
-    text = q["question"] + "\n" + q.get("body", "")
+    body = q.get("content", q.get("body", ""))
+    text = q["question"] + "\n" + body
     return {
-        "id": question_item_id(q["question"]),
+        "id": q.get("id") or question_item_id(q["question"]),
         "kind": "question",
         "status": (q.get("status") or "open"),
         "title": q["question"],
         "tags": set(),
-        "files": _norm_files(_paths_from_text(q.get("body", ""))),
+        "files": _norm_files(_paths_from_text(body)),
         "specific": _specific(text),
         "title_specific": _specific(q["question"]),
         "branch": None,
@@ -6534,7 +6989,14 @@ def adapter_block() -> str:
                 "  `crumb remember decision|attempt …`.",
                 "- **After checking whether something is still true / fixed:**",
                 '  `crumb verify "<subject>" --status fixed|open|regressed|… --evidence …`.',
-                "- **Leaving a note for the next agent:** `crumb note question|trap|idea …`.",
+                "- **Leaving a note for the next agent:** `crumb note question|trap|idea …`",
+                "  (for a trap, pass `--area/--symptom/--why/--safe/--verify` — a warning",
+                "  with no mechanism is one the next agent learns to ignore).",
+                "- **When a trap or decision no longer applies:**",
+                '  `crumb mark-status <id> stale --reason "…"`, so it stops raising `guard`.',
+                "- **When an open question gets answered:**",
+                '  `crumb mark-status q:<slug> answered --reason "…"` (name the decision',
+                "  that answered it), so it stops counting as a live blocker.",
                 '- **Session end:** `crumb capture session --next "<what to do next>"`',
                 '  (add `--set "Decisions Made" "…"` for narrative). Pass `--next`: the bare',
                 "  form prompts for each section and cannot be answered without a terminal.",
@@ -7925,7 +8387,12 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pq.add_argument("text", help="the question, in one line")
     pq.add_argument("--why", help="why it matters / what is blocked")
     pq.add_argument("--needs", help="human input | investigation | a decision")
-    pq.add_argument("--status", default="open", help="status (default: open)")
+    pq.add_argument(
+        "--status",
+        default="open",
+        choices=VALID_QUESTION_STATUS,
+        help="status (default: open); retire one later with `crumb mark-status <id> answered`",
+    )
     pq.set_defaults(func=cmd_note)
 
     pt = note_sub.add_parser("trap", parents=[global_parser], help="record a reusable known trap")
@@ -7998,16 +8465,21 @@ def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mark = sub.add_parser(
         "mark-status",
         parents=[global_parser],
-        help="change a record's status (stale/disputed/superseded/…), validate-gated",
+        help="change a record's, trap's or question's status, validate-gated",
     )
     p_mark.add_argument(
-        "record_id", metavar="ID", help="record id, e.g. dec_20260510_markdown-source-of-truth"
+        "record_id",
+        metavar="ID",
+        help="record id (e.g. dec_20260510_markdown-source-of-truth), trap id "
+        "(e.g. trap_hand-tagged-releases) or question id (e.g. q:should-we-shard) — "
+        "retiring a trap or answering a question stops it raising guard",
     )
     p_mark.add_argument(
         "new_status",
         metavar="STATUS",
-        choices=VALID_STATUS,
-        help=f"new status ({', '.join(VALID_STATUS)})",
+        choices=MARK_STATUS_CHOICES,
+        help=f"new status — records and traps: {', '.join(VALID_STATUS)}; "
+        f"questions: {', '.join(VALID_QUESTION_STATUS)}",
     )
     p_mark.add_argument(
         "--reason", default="", help="why the status changed (recorded as a trailing comment)"

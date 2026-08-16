@@ -27,6 +27,46 @@ trains an agent to ignore the one warning that matters.
 
 ### Fixed
 
+- **A trap can finally be retired (P0-3).** `crumb note trap` printed an id,
+  `crumb search` listed it `[active]` with a score — and `crumb mark-status
+  <that exact id>` answered *no record with id*. Traps are `## trap_<slug>`
+  blocks inside the aggregate `known-traps.md` while decisions/attempts/
+  verifications are one file each, and `mark-status` resolved only the per-file
+  types. The consequence was permanent: no trap could ever be quieted through
+  the CLI, so every trap ever written stayed active and kept surfacing in
+  `guard` and `search` forever — the compounding half of the alarm-fatigue
+  finding P0-2 tuned the other half of. (The field test's WorkManager trap fired
+  on all 13 edits of the session with no supported way to ever silence it.)
+  `mark-status` now resolves trap ids too, editing the block in place: only the
+  `- Status:` bullet and a provenance comment change, so hand-written traps
+  survive byte for byte. A retired trap leaves the resume packet and the hook
+  pre-filter and stops driving a `guard` verdict (it stays in guard's
+  context-only history), but remains findable in `search` under its real status
+  — retiring is not deleting, exactly as for a superseded decision. Traps with
+  no `- Status:` bullet — every trap written before this — still count as
+  active. `memory_mark_status` gets the same reach through the same code path.
+- **An open question can finally be answered (P0-4).** The other half of the
+  same gap. Every *reader* already honored a question's `- Status:` bullet —
+  the resume packet lists only `open` ones, `guard` gives only an `open`
+  question its open-blocker floor, `compute_staleness` nags only about `open`
+  ones aging past `--stale-days` — but the bullet was write-once at
+  `note question` time, so a question that got answered went on counting as a
+  live blocker forever. `mark-status` now resolves `q:<slug>` ids (digest
+  suffix and all, exactly as `search` prints them) through the same in-place
+  block editor traps use. Questions get their own vocabulary —
+  `open`/`answered`/`closed` — for the reason a verification's `outcome` is not
+  its `status`: the record words do not fit, and the dominant way a question
+  retires is that somebody *answered* it. `note question --status` is
+  constrained to that vocabulary too; it previously took free text, where any
+  typo silently hid the question from every reader. A question with no
+  `- Status:` bullet still counts as open.
+- **`note trap` points at the template it was ignoring (P2-16).**
+  `known-traps.md` documents an Area / Symptom / Why / Safe approach /
+  Verification format at the top of the file, but a bare `note trap "…"` writes
+  the whole note as the `##` heading and nothing else. The flags always
+  existed; nothing said so at the point of writing. A summary-only trap now
+  prints a hint naming them (`hint` in `--json`) — a warning with no mechanism
+  is the kind the next agent learns to ignore.
 - **`audit`'s instruction-like detector learned tense (P2-11).** "E2E has
   never run in production" is a fact; "never run the migration by hand" is an
   instruction. An auxiliary (`has/have/had/is/are/was/were/been`) before

@@ -307,10 +307,16 @@ def build_server():  # -> FastMCP
     def memory_mark_status(
         id: str, status: str, reason: str, superseded_by: str | None = None
     ) -> dict:
-        """Change a record's status, validate-gated (wraps `set_record_status`).
+        """Change a record's or trap's status, validate-gated (wraps `set_record_status`).
 
         Pass `superseded_by` (the replacing record's id) when marking
         `superseded` — validate rejects a superseded record without it.
+
+        A `trap_<slug>` id retires a known trap and a `q:<slug>` id resolves an
+        open question: either leaves the resume packet and stops raising
+        `memory_guard_before_action`, while staying findable in `memory_search`
+        under its new status. Questions take `open`/`answered`/`closed`; records
+        and traps take the lifecycle vocabulary (`active`/`stale`/`superseded`/…).
         """
         return mcp_core.tool_mark_status(
             id, status, reason, superseded_by=superseded_by, root=_root()
