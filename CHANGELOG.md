@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
-## [Unreleased]
+## [0.1.11] — 2026-08-16
 
 Triage of the 0.1.10 production field test (a full working session in a real
 Android repo, 83-session store). The headline from that test — the agent-driven
