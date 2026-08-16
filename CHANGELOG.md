@@ -27,6 +27,16 @@ trains an agent to ignore the one warning that matters.
 
 ### Fixed
 
+- **CI no longer dies on `guard`'s own exit codes (P0-5).** `guard` exits its
+  verdict (`GUARD_VERDICT_EXIT_CODES`), and GitHub Actions runs `run:` blocks
+  under `bash -e` — so the moment those codes landed, every CI step that calls
+  `guard` aborted on the *correct* answer, before a single assertion ran. The
+  guard-fixture step died on the true-positive fixture returning `PAUSE`
+  (exit 15) and the installed-binary smoke test died on `READ_FIRST` (exit 10),
+  taking all six `test` matrix jobs and `package` red on `main` from the 0.1.10
+  triage merge onward. The three call sites now capture the code around
+  `set +e`/`set -e` and assert it against the verdict, so the documented
+  exit-code contract is covered by CI instead of killing it.
 - **A trap can finally be retired (P0-3).** `crumb note trap` printed an id,
   `crumb search` listed it `[active]` with a score — and `crumb mark-status
   <that exact id>` answered *no record with id*. Traps are `## trap_<slug>`
@@ -60,6 +70,13 @@ trains an agent to ignore the one warning that matters.
   constrained to that vocabulary too; it previously took free text, where any
   typo silently hid the question from every reader. A question with no
   `- Status:` bullet still counts as open.
+- **A duplicate-slug collision names the way back to the trap.** With traps
+  now retirable, re-running the same `note trap` is exactly how an agent
+  rediscovers one it retired earlier — and the collision error offered only
+  "pass a distinct slug", which forks the trap in two rather than reviving the
+  one already there. It now leads with `crumb mark-status trap_<slug> active`
+  and keeps the distinct-slug option second, matching the question path's
+  error. Both messages are now pinned by tests; neither was covered before.
 - **`note trap` points at the template it was ignoring (P2-16).**
   `known-traps.md` documents an Area / Symptom / Why / Safe approach /
   Verification format at the top of the file, but a bare `note trap "…"` writes

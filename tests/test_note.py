@@ -76,6 +76,16 @@ class NoteQuestionTests(unittest.TestCase):
             packet = (mem / "generated" / "resume-packet.md").read_text()
             self.assertIn("Surfaces in packet?", packet)
 
+    def test_duplicate_question_points_at_reopening_it(self):
+        # An answered question keeps its block, so re-asking it is how an agent
+        # rediscovers one already retired; the error has to name the way back.
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            run(["note", "question", "Gate on age?", "--project", tmp])
+            code, out = run(["note", "question", "Gate on age?", "--project", tmp, "--json"])
+            self.assertEqual(code, 1)
+            self.assertIn("crumb mark-status <id> open", json.loads(out)["error"])
+
 
 class NoteTrapTests(unittest.TestCase):
     def test_trap_is_written_and_parses_back(self):
@@ -109,6 +119,22 @@ class NoteTrapTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out)["ref"], "trap_flaky-migration-on-rotate")
+
+    def test_duplicate_slug_points_at_reopening_a_retired_trap(self):
+        # A retired trap still occupies its heading, so re-running the same
+        # `note trap` is exactly how an agent rediscovers one it retired — and
+        # the error used to offer only "pass a distinct slug", which forks the
+        # trap in two instead of reviving it. Mirrors the question path.
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            run(["note", "trap", "Flaky migration on rotate", "--project", tmp])
+            code, out = run(
+                ["note", "trap", "Flaky migration on rotate", "--project", tmp, "--json"]
+            )
+            self.assertEqual(code, 1)
+            error = json.loads(out)["error"]
+            self.assertIn("crumb mark-status trap_flaky-migration-on-rotate active", error)
+            self.assertIn("distinct slug", error)
 
     def test_derived_slug_shares_the_filename_budget(self):
         # An auto-derived slug is the whole trap text; unbounded, it turned

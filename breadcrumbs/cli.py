@@ -2838,8 +2838,9 @@ def note(
         if any(b["heading"].lower().startswith(marker) for b in load_traps(memory_dir)):
             return {
                 "ok": False,
-                "error": f"trap trap_{slug} already exists; pass a distinct slug "
-                "(--slug / fields.slug) to record a separate trap",
+                "error": f"trap trap_{slug} already exists; reopen it with "
+                f"`crumb mark-status trap_{slug} active`, or pass a distinct "
+                "slug (--slug / fields.slug) to record a separate trap",
             }
         before = path.read_text(encoding="utf-8") if path.exists() else ""
         _append_md_block(
