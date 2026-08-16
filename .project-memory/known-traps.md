@@ -31,3 +31,11 @@ a future session avoid a real, repeatable mistake._
 - Safe approach: Wrap the guard call in 'set +e' / capture $? / 'set -e', then assert the code against the verdict in the Python block — the exit-code contract gets tested instead of killing the step.
 - Verification: bash -e on the extracted step body, or: python crumb.py guard '<action>' --project fixtures/fixture-02-guard-true-positive --json; echo $?
 - Status: active
+
+## trap_agent-cannot-dispatch-workflows: An agent session cannot dispatch release.yml; the GitHub App token has no actions:write
+- Area / files: .github/workflows/release.yml
+- Symptom: POST /actions/workflows/release.yml/dispatches returns 403 'Resource not accessible by integration'; no gh CLI is available in the remote session either.
+- Why: The release is deliberately a workflow_dispatch so a human decides when a permanent PyPI version is cut. The session's token is scoped for repo contents and PRs, not actions:write, so an agent can prepare a release but never fire it.
+- Safe approach: Prepare everything (bump __version__, date the CHANGELOG, merge to main, confirm ci.yml green on that commit) and hand the run to a human: Actions -> release -> Run workflow, mode=dry-run then mode=publish. Never work around it by hand-tagging.
+- Verification: gh workflow run release.yml --ref main -f mode=dry-run, run by a human
+- Status: active
