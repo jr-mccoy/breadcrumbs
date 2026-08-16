@@ -93,20 +93,35 @@ jobs:
 
       - name: guard fixtures behave (true positive / false-positive control)
         run: |
+          # `guard` exits with its verdict (GUARD_VERDICT_EXIT_CODES: PROCEED 0,
+          # READ_FIRST 10, PAUSE 15, ASK_HUMAN 20), so the true-positive fixture
+          # *succeeding* is a non-zero exit — which `bash -e` turned into a failed
+          # step, killing this check before a single assert ran. Capture the code
+          # and assert it against the verdict instead: the exit-code contract is a
+          # documented, scriptable interface and nothing else in CI covered it.
+          set +e
           python crumb.py guard "rewrite the auth middleware to use the new session parser" \
             --files src/auth/middleware.ts \
             --project fixtures/fixture-02-guard-true-positive --json > /tmp/g2.json
+          g2_code=$?
           python crumb.py guard "refactor the pooling logic in the worker" \
             --project fixtures/fixture-03-guard-false-positive --json > /tmp/g3.json
-          python - <<'PY'
-          import json
+          g3_code=$?
+          set -e
+          python - "$g2_code" "$g3_code" <<'PY'
+          import json, sys
+          EXIT = {"PROCEED": 0, "READ_FIRST": 10, "PAUSE": 15, "ASK_HUMAN": 20}
           g2 = json.load(open("/tmp/g2.json"))
           g3 = json.load(open("/tmp/g3.json"))
           assert g2["verdict"] in ("PAUSE", "READ_FIRST"), g2["verdict"]
           assert len(g2["matches"]) <= 5
           assert g3["verdict"] == "PROCEED", g3["verdict"]
           assert g3["matches"] == [], g3["matches"]
+          assert int(sys.argv[1]) == EXIT[g2["verdict"]], (sys.argv[1], g2["verdict"])
+          assert int(sys.argv[2]) == EXIT[g3["verdict"]], (sys.argv[2], g3["verdict"])
           print("Fixtures 2/3: guard true-positive fires, false-positive control stays quiet.")
+          print(f"Exit codes track the verdict: {g2['verdict']}={sys.argv[1]}, "
+                f"{g3['verdict']}={sys.argv[2]}.")
           PY
 
       - name: fixture 12 — a speculative idea is searchable but never a verdict
@@ -116,17 +131,25 @@ jobs:
           # is the corpus split working, not a weak fixture.
           python crumb.py search "auth middleware cache" \
             --project fixtures/fixture-12-speculative-idea --json > /tmp/s12.json
+          # PROCEED exits 0, so this one does not need `set +e` today — but a
+          # regression here would raise the verdict, and the step would then die
+          # on the exit code instead of printing which verdict it got. Capture it
+          # so the assert stays the thing that reports the failure.
+          set +e
           python crumb.py guard "rewrite the auth middleware to cache parsed sessions" \
             --files src/auth/middleware.ts \
             --project fixtures/fixture-12-speculative-idea --json > /tmp/g12.json
-          python - <<'PY'
-          import json
+          g12_code=$?
+          set -e
+          python - "$g12_code" <<'PY'
+          import json, sys
           s12 = json.load(open("/tmp/s12.json"))
           g12 = json.load(open("/tmp/g12.json"))
           kinds = {m["kind"] for m in s12["matches"]}
           assert kinds == {"idea"}, s12["matches"]
           assert g12["verdict"] == "PROCEED", g12["verdict"]
           assert g12["matches"] == [], g12["matches"]
+          assert int(sys.argv[1]) == 0, sys.argv[1]
           print("Fixture 12: search sees the idea; guard's verdict never does.")
           PY
 
@@ -306,15 +329,23 @@ jobs:
           $BIN capture session --fast --next "wire resume"
           $BIN resume --json > /tmp/r.json
           $BIN search "markdown" > /dev/null
+          # Verdict-mapped exit code again: this smoke store has a decision that
+          # matches, so guard answers READ_FIRST and exits 10 — correct behavior
+          # that `bash -e` was reading as a broken install.
+          set +e
           $BIN guard "rewrite the markdown store" --json > /tmp/g.json
+          g_code=$?
+          set -e
           $BIN audit > /dev/null
           $BIN scan-secrets > /dev/null
-          python - <<'PY'
-          import json
+          python - "$g_code" <<'PY'
+          import json, sys
+          EXIT = {"PROCEED": 0, "READ_FIRST": 10, "PAUSE": 15, "ASK_HUMAN": 20}
           r = json.load(open("/tmp/r.json"))
           g = json.load(open("/tmp/g.json"))
           assert r["approx_tokens"] <= 5000, r["approx_tokens"]
-          assert g["verdict"] in ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN"), g["verdict"]
+          assert g["verdict"] in EXIT, g["verdict"]
+          assert int(sys.argv[1]) == EXIT[g["verdict"]], (sys.argv[1], g["verdict"])
           print("Installed binary: init found bundled templates; all MVP commands green.")
           PY
 
