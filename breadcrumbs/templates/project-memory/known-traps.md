@@ -15,6 +15,16 @@ a future session avoid a real, repeatable mistake._
 - Why: <mechanism, not vibes>
 - Safe approach: <what to do instead>
 - Verification: <command that proves it is OK>
+- Status: active
+
+Write one with `crumb note trap "<summary>" --area … --symptom … --why …
+--safe … --verify …`. A trap without those fields is a warning with no
+mechanism, which is the kind the next agent learns to ignore.
+
+Retire one with `crumb mark-status trap_<short-slug> stale --reason "…"`
+(or `rejected` if it was never true) — retired traps stop appearing in
+`crumb resume` and stop raising `crumb guard`, but stay findable in
+`crumb search`. A trap with no `- Status:` bullet counts as active.
 -->
 
 _No known traps yet._

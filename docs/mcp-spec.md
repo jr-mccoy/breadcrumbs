@@ -238,6 +238,14 @@ rejected (§16.6) and reverted. When superseding, pass `superseded_by` (the
 replacing record's id) — the same flow as `crumb mark-status <id> superseded
 --superseded-by <new-id>` on the CLI.
 
+A `trap_<slug>` id resolves here too. Traps are blocks inside the aggregate
+`known-traps.md` rather than one file each, so the block's `- Status:` bullet is
+edited in place (every other byte preserved) instead of frontmatter; a trap with
+no such bullet counts as `active`. Retiring a trap drops it from
+`memory://resume-packet` and the hook pre-filter and stops it driving a
+`memory_guard_before_action` verdict — it stays in that verdict's context-only
+history and stays findable through `memory_search` under its new status.
+
 ---
 
 ## Safety posture
