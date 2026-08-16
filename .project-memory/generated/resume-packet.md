@@ -1,17 +1,22 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: e6686a7 | inputs_hash: 32c4592adf5b | generated_at: 2026-08-16T02:23:10+00:00 -->
+<!-- source_commit: 5f7c317 | inputs_hash: 4efef732063f | generated_at: 2026-08-16T03:51:48+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/trap-retirement-mark-status-o64qqs` · commit `e6686a7` · 3 uncommitted file(s)
+branch `claude/trap-retirement-mark-status-o64qqs` · commit `5f7c317` · 5 uncommitted file(s)
 
 ## Current Focus
 Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
 
 ## Next Action
 Trap + question retirement both landed on claude/trap-retirement-mark-status-o64qqs (3ea2ddd, e6686a7): mark-status now resolves trap_<slug> and q:<slug> ids, and retired blocks leave the packet, the guard pre-filter, the open-blocker floor and the staleness warnings. Next: open/merge the PR, then release per RELEASING.md (bump __version__, run release.yml from main).
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 5f7c317 Merge pull request #42 from jr-mccoy/claude/trap-retirement-mark-status-o64qqs
+- c2b4348 memory: record the question-lifecycle session
 
 ## Active Decisions
 - `dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one` — The record words do not fit. The dominant way a question retires is that somebody answered it, and no lifecycle value says that — marking an answered question 'stale' records the opposite of what happened. The codebase already has this shape: a verification's outcome is deliberately not its status, for the same reason. The id decides which vocabulary applies and a mismatch is rejected by name, so the two never silently cross.
@@ -29,6 +34,7 @@ _(none recorded)_
 
 ## Known Traps
 - trap_hand-tagged-releases: Never create a git tag or GitHub Release by hand
+- trap_guard-exit-code-in-ci: A CI step that calls crumb guard dies on guard's own verdict exit code
 
 ## Open Questions / Blockers
 - Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
@@ -43,6 +49,7 @@ _(none recorded)_
 
 ## Verifications
 - `ver_20260815_release-0-1-10-blocked-by-pypi-invalid-publisher-open` — release 0.1.10 blocked by PyPI invalid-publisher: **open** · static
+- `ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed` — ci.yml guard steps survive guard's verdict exit codes: **fixed** · test
 - `ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed` — crumb mark-status can answer an open question: **fixed** · test
 - `ver_20260816_crumb-mark-status-can-retire-a-trap-fixed` — crumb mark-status can retire a trap: **fixed** · test
 - `ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence` — hook guard escalates on edits to files named by --evidence file: **fixed** · test
@@ -55,7 +62,7 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 2 commit(s) behind current HEAD.
 - 7 record(s) written on other branches than 'claude/trap-retirement-mark-status-o64qqs': dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 (on 'claude/crumb-kit-0.1.10-triage-l3qo5a'), dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword (on 'claude/crumb-kit-0.1.10-triage-l3qo5a'), dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo (on 'claude/release-run-failures-gcuil8'), dec_20260815_cut-0-1-10-as-the-agent-authorship-release (on 'claude/system-audit-viability-e2sft7'), dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store (on 'claude/system-audit-viability-e2sft7') (+2 more).
 - possible drift: `ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed` recorded "crumb mark-status can answer an open question" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260816_crumb-mark-status-can-retire-a-trap-fixed` recorded "crumb mark-status can retire a trap" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.

@@ -27,6 +27,16 @@ trains an agent to ignore the one warning that matters.
 
 ### Fixed
 
+- **CI no longer dies on `guard`'s own exit codes (P0-5).** `guard` exits its
+  verdict (`GUARD_VERDICT_EXIT_CODES`), and GitHub Actions runs `run:` blocks
+  under `bash -e` — so the moment those codes landed, every CI step that calls
+  `guard` aborted on the *correct* answer, before a single assertion ran. The
+  guard-fixture step died on the true-positive fixture returning `PAUSE`
+  (exit 15) and the installed-binary smoke test died on `READ_FIRST` (exit 10),
+  taking all six `test` matrix jobs and `package` red on `main` from the 0.1.10
+  triage merge onward. The three call sites now capture the code around
+  `set +e`/`set -e` and assert it against the verdict, so the documented
+  exit-code contract is covered by CI instead of killing it.
 - **A trap can finally be retired (P0-3).** `crumb note trap` printed an id,
   `crumb search` listed it `[active]` with a score — and `crumb mark-status
   <that exact id>` answered *no record with id*. Traps are `## trap_<slug>`
