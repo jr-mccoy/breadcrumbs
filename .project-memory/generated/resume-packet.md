@@ -1,17 +1,17 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: b84ac9a | inputs_hash: d99ac28533b5 | generated_at: 2026-08-16T03:57:36+00:00 -->
+<!-- source_commit: 12287e9 | inputs_hash: 9265ec81c271 | generated_at: 2026-08-16T04:14:39+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/trap-retirement-mark-status-o64qqs` · commit `b84ac9a` · 3 uncommitted file(s)
+branch `claude/trap-retirement-mark-status-o64qqs` · commit `12287e9` · 5 uncommitted file(s)
 
 ## Current Focus
 Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
 
 ## Next Action
-Branch claude/trap-retirement-mark-status-o64qqs is restarted from main at b84ac9a (CI fix only; the trap+question work already merged as PR #42). THREE things left, in order: (1) confirm CI run 31925269674 is green on b84ac9a — the guard exit-code fix was verified locally under bash -e but not yet in Actions; (2) open a PR for b84ac9a and merge it, then confirm main is green (main has been red since 5c861c4); (3) release 0.1.11 per RELEASING.md — bump __version__ in breadcrumbs/__init__.py (still 0.1.10), date the CHANGELOG Unreleased section (20 entries), merge to main, then run release.yml with mode=dry-run before mode=publish. Never hand-tag.
+Branch claude/trap-retirement-mark-status-o64qqs is green in CI at HEAD (runs 31925269674 on b84ac9a and 31925481738 on 12287e9, 18/18 jobs). TWO things left: (1) open a PR for this branch and merge it — that is what makes main green again, main has been red since 5c861c4; (2) release 0.1.11 per RELEASING.md — bump __version__ in breadcrumbs/__init__.py (still 0.1.10), date the CHANGELOG Unreleased section (21 entries), merge to main, run release.yml mode=dry-run then mode=publish. Never hand-tag.
 
 ## Active Decisions
 - `dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one` — The record words do not fit. The dominant way a question retires is that somebody answered it, and no lifecycle value says that — marking an answered question 'stale' records the opposite of what happened. The codebase already has this shape: a verification's outcome is deliberately not its status, for the same reason. The id decides which vocabulary applies and a mismatch is rejected by name, so the two never silently cross.
@@ -44,6 +44,7 @@ _(none recorded)_
 
 ## Verifications
 - `ver_20260815_release-0-1-10-blocked-by-pypi-invalid-publisher-open` — release 0.1.10 blocked by PyPI invalid-publisher: **open** · static
+- `ver_20260816_ci-yml-is-green-on-the-branch-after-the-guard-exit-code-fix` — ci.yml is green on the branch after the guard exit-code fix: **fixed** · runtime
 - `ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed` — ci.yml guard steps survive guard's verdict exit codes: **fixed** · test
 - `ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed` — crumb mark-status can answer an open question: **fixed** · test
 - `ver_20260816_crumb-mark-status-can-retire-a-trap-fixed` — crumb mark-status can retire a trap: **fixed** · test
@@ -59,6 +60,6 @@ _(none recorded)_
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
 - 7 record(s) written on other branches than 'claude/trap-retirement-mark-status-o64qqs': dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 (on 'claude/crumb-kit-0.1.10-triage-l3qo5a'), dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword (on 'claude/crumb-kit-0.1.10-triage-l3qo5a'), dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo (on 'claude/release-run-failures-gcuil8'), dec_20260815_cut-0-1-10-as-the-agent-authorship-release (on 'claude/system-audit-viability-e2sft7'), dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store (on 'claude/system-audit-viability-e2sft7') (+2 more).
-- possible drift: `ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed` recorded "ci.yml guard steps survive guard's verdict exit codes" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.
+- possible drift: `ver_20260816_ci-yml-is-green-on-the-branch-after-the-guard-exit-code-fix` recorded "ci.yml is green on the branch after the guard exit-code fix" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed` recorded "crumb mark-status can answer an open question" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260816_crumb-mark-status-can-retire-a-trap-fixed` recorded "crumb mark-status can retire a trap" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.
