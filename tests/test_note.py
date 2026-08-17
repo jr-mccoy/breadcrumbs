@@ -258,6 +258,55 @@ class TrapLifecycleTests(unittest.TestCase):
             self.assertEqual(code, 0, out)
             self.assertEqual(crumb.find_trap_by_id(mem, rid)["status"], "stale")
 
+    def test_a_truncated_auto_slug_round_trips_note_to_search_to_mark_status(self):
+        """The field-reported id was an *auto-derived, truncated* slug.
+
+        0.1.11 audit: the trap whose retirement failed in 0.1.10 was
+        `trap_conversations-type-and-conversation-participants-role-hold` — 101
+        slug characters cut to 60 by `truncate_slug`. Every other test here
+        either passes an explicit `--slug` or uses text short enough to escape
+        truncation, so the one path the reported bug actually travelled was
+        uncovered: any future divergence between the id `note` prints, the id
+        `search` lists, and the id `mark-status` resolves would reintroduce it,
+        and silently — `mark-status` errors while `search` keeps calling the
+        trap active, which is what cost a downstream session real work.
+        """
+        text = (
+            "conversations.type and conversation_participants.role hold "
+            "UNNORMALIZED values written by legacy code"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            code, out = run(["note", "trap", text, "--project", tmp, "--json"])
+            self.assertEqual(code, 0)
+            rid = json.loads(out)["ref"]
+            mem = Path(tmp) / crumb.MEMORY_DIRNAME
+
+            # The slug really was truncated — otherwise this test proves nothing.
+            self.assertLess(len(rid), len("trap_" + crumb.slugify(text)))
+            self.assertEqual(rid, "trap_" + crumb.truncate_slug(crumb.slugify(text)))
+
+            # All three surfaces agree on that one id.
+            matches, _ = crumb.search(
+                mem, Path(tmp), "unnormalized conversations", include_ideas=True
+            )
+            self.assertIn(rid, [m["id"] for m in matches])
+            self.assertIsNotNone(crumb.find_trap_by_id(mem, rid))
+
+            code, out = run(
+                ["mark-status", rid, "stale", "--project", tmp, "--reason", "normalized"]
+            )
+            self.assertEqual(code, 0, out)
+            self.assertEqual(crumb.find_trap_by_id(mem, rid)["status"], "stale")
+
+            # And the retirement is visible where it was silently not, before:
+            # search must stop calling it active.
+            matches, _ = crumb.search(
+                mem, Path(tmp), "unnormalized conversations", include_ideas=True
+            )
+            self.assertEqual([m["status"] for m in matches if m["id"] == rid], ["stale"], matches)
+            self.assertNotIn(rid, [t["id"] for t in crumb.active_traps(mem)])
+
     def test_a_retired_trap_stops_being_advice(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = self._trap(

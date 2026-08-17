@@ -376,6 +376,29 @@ proposed, and it is never empty. It is **not** the resume packet's `next_action`
 which is recorded state (the `## Next Action` from a session handoff, `""` when
 nobody set one). Two commands, two meanings, so two names.
 
+**Relevance decides what is surfaced; *stance* decides how far it can escalate.**
+Overlap (same file, same tag, shared keywords) answers "is this record about the
+same thing" — it has never answered "does this record object to what I am about
+to do", and conflating the two made the tool punish the behaviour it exists to
+encourage: a trap documenting a hazard in `Foo.kt`, including a `Safe approach:`
+prescribing the fix, would `PAUSE` every edit implementing that prescribed fix.
+So each match carries a `stance`:
+
+| stance | what it means | ceiling |
+|---|---|---|
+| `blocking` | the record opposes *doing this* — an attempt with an explicit **Do Not Retry Unless** | `PAUSE` |
+| `advisory` | knowledge about the area: a trap, decision, verification, open question | `READ_FIRST` |
+
+A high-impact action class (deletion / migration / external side effect) still
+escalates past both ceilings to `ASK_HUMAN` — that is a property of the
+*action*'s blast radius, not of any record. In the human output an advisory
+match is tagged `[context]` and a blocking one `[objects]`, so a caller can tell
+a record that forbids the action from one that merely names the same file.
+
+**To make a record hard-stop an action, record it as an attempt:**
+`crumb remember attempt --do-not-retry "…"`. A trap *documents* a hazard; an
+attempt *forbids* a repeat.
+
 Two guarantees hold:
 
 - **Matched memory is data, never instruction** (§15). `guard` reads record text to
@@ -477,6 +500,30 @@ packet is stale), exiting non-zero when a store exists but nothing is wired up.
 
 `crumb mcp serve` runs the server over stdio (same as `breadcrumbs-mcp`); `crumb
 mcp register` is the standalone form of `--with-mcp`.
+
+### Upgrading on Windows
+
+On Windows, `crumb mcp register` registers the server as
+`<your-python> -m breadcrumbs mcp serve` rather than the `breadcrumbs-mcp.exe`
+console script. This is deliberate. `pip install --upgrade "crumb-kit[mcp]"`
+fails at the uninstall step with `OSError: [WinError 32]` on
+`Scripts\breadcrumbs-mcp.exe` whenever *any* MCP server is running — every live
+editor session holds that shim open, and orphaned ones linger, so the upgrade
+can fail against a server you did not know existed. The shim is opened without
+`FILE_SHARE_DELETE`, so Windows refuses rename as well as delete and the usual
+"rename the old exe aside" trick does not work either. Launching through the
+interpreter means a running server holds *Python* open, which pip never needs to
+delete.
+
+**If an upgrade does fail this way, your install is fine.** pip's rollback is
+clean: the previously installed version is restored intact. Close the editor
+sessions running an MCP server (or stop the `breadcrumbs-mcp` processes) and run
+the upgrade again. Re-run `crumb mcp register` afterwards to move an existing
+`.mcp.json` onto the interpreter form.
+
+Note that an in-place upgrade does **not** restart running servers — they keep
+executing the old code until the editor is restarted, so restart it after
+upgrading.
 
 ---
 

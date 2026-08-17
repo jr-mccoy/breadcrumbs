@@ -303,6 +303,27 @@ servers:
 }
 ```
 
+**On Windows `crumb mcp register` writes the module form instead**, because a
+running server holding `Scripts\breadcrumbs-mcp.exe` open makes
+`pip install --upgrade` fail with `WinError 32` (and the shim is opened without
+`FILE_SHARE_DELETE`, so rename-aside is refused too):
+
+```jsonc
+{
+  "mcpServers": {
+    "breadcrumbs": {
+      "type": "stdio",
+      "command": "C:\\path\\to\\python.exe",
+      "args": ["-m", "breadcrumbs", "mcp", "serve"],
+      "env": { "BREADCRUMBS_PROJECT": "${CLAUDE_PROJECT_DIR:-.}" }
+    }
+  }
+}
+```
+
+Both forms reach the same server — `crumb mcp serve` is one branch of `cmd_mcp`
+and calls `mcp_server.main`, so there is no second implementation to drift.
+
 Equivalently `python -m breadcrumbs.mcp_server`. The server requires the
 `[mcp]` extra to be installed; without it the command exits non-zero with an
 install hint (graceful degradation), so a missing optional dependency never

@@ -403,5 +403,215 @@ class TaskScopedFilesTests(unittest.TestCase):
             self.assertNotIn("likely_files_note", packet)
 
 
+# --------------------------------------------------------------------------- #
+# F-4 (0.1.11 field audit) — audit's [unreachable] check, moved to write time
+# --------------------------------------------------------------------------- #
+class WriteTimeReachabilityTests(unittest.TestCase):
+    """A record with no tags and no file evidence can only ever be found by fuzzy
+    keyword overlap, so it pollutes every query and drives no verdict.
+
+    `audit` has always said so. But `audit` is discretionary and nobody runs it
+    on the day they write the record — the field audit found four verifications
+    in this state, all of which `validate` passes. The warning has to arrive
+    while the author is still there, so it is emitted at write time too. The
+    check is deliberately the *same* function, so the two can never disagree.
+    """
+
+    def test_a_verification_without_tags_or_evidence_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            code, out = run(
+                ["verify", "H-3 crash on rotate is fixed", "--status", "fixed", "--project", tmp]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("only through generic keyword overlap", out)
+
+    def test_evidence_silences_the_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            _, out = run(
+                [
+                    "verify",
+                    "H-4 leak is fixed",
+                    "--status",
+                    "fixed",
+                    "--evidence",
+                    "file",
+                    "app/Leak.kt",
+                    "--project",
+                    tmp,
+                ]
+            )
+            self.assertNotIn("generic keyword overlap", out)
+
+    def test_tags_silence_the_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            _, out = run(
+                [
+                    "verify",
+                    "H-5 is fixed",
+                    "--status",
+                    "fixed",
+                    "--tags",
+                    "persistence",
+                    "--project",
+                    tmp,
+                ]
+            )
+            self.assertNotIn("generic keyword overlap", out)
+
+    def test_a_path_named_in_the_note_silences_the_warning(self):
+        # Reachability is computed from the written record, not from the flags:
+        # `_item_from_record` mines paths out of the body, so this record IS
+        # reachable and must not be nagged.
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            _, out = run(
+                [
+                    "verify",
+                    "H-6 is fixed",
+                    "--status",
+                    "fixed",
+                    "--note",
+                    "confirmed by reading app/Foo.kt",
+                    "--project",
+                    tmp,
+                ]
+            )
+            self.assertNotIn("generic keyword overlap", out)
+
+    def test_the_hint_is_in_the_json_envelope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            _, out = run(
+                ["verify", "H-7 is fixed", "--status", "fixed", "--project", tmp, "--json"]
+            )
+            self.assertIn("generic keyword overlap", json.loads(out)["hint"])
+
+    def test_the_write_time_warning_matches_audit_exactly(self):
+        """The anti-drift test: same store, same verdict, both directions."""
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            warned, quiet = [], []
+            cases = [
+                (["verify", "alpha is fixed", "--status", "fixed"], True),
+                (
+                    [
+                        "verify",
+                        "beta is fixed",
+                        "--status",
+                        "fixed",
+                        "--evidence",
+                        "file",
+                        "app/B.kt",
+                    ],
+                    False,
+                ),
+                (["verify", "gamma is fixed", "--status", "fixed", "--tags", "ui"], False),
+                (
+                    [
+                        "remember",
+                        "decision",
+                        "--title",
+                        "adopt kotlinx serialization",
+                        "--set",
+                        "Decision",
+                        "use kotlinx",
+                        "--confidence",
+                        "low",
+                    ],
+                    True,
+                ),
+                (
+                    [
+                        "remember",
+                        "attempt",
+                        "--title",
+                        "batch the writes",
+                        "--result",
+                        "it deadlocked",
+                        "--evidence",
+                        "file",
+                        "app/W.kt",
+                    ],
+                    False,
+                ),
+            ]
+            for argv, expect_warning in cases:
+                _, out = run(argv + ["--project", tmp])
+                (warned if "generic keyword overlap" in out else quiet).append(argv[1])
+                self.assertEqual("generic keyword overlap" in out, expect_warning, f"{argv}: {out}")
+            flagged = {
+                f["path"].split("/")[-1]
+                for f in crumb.run_audit(mem, Path(tmp))
+                if f["check"] == "unreachable"
+            }
+            self.assertEqual(len(flagged), len(warned), (flagged, warned))
+            self.assertTrue(any("alpha" in f for f in flagged), flagged)
+            self.assertTrue(any("kotlinx" in f for f in flagged), flagged)
+            self.assertFalse(any("beta" in f or "gamma" in f for f in flagged), flagged)
+
+    def test_a_pathless_trap_warns_and_a_path_bearing_one_does_not(self):
+        # Traps and questions cannot carry tags at all, so a path reference is
+        # their only reachability lever.
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            _, out = run(
+                [
+                    "note",
+                    "trap",
+                    "the daemon holds a stale lock and the build fails",
+                    "--symptom",
+                    "builds hang forever",
+                    "--why",
+                    "nobody clears it",
+                    "--project",
+                    tmp,
+                ]
+            )
+            self.assertIn("generic keyword overlap", out)
+
+            _, out = run(
+                [
+                    "note",
+                    "trap",
+                    "flex window is ignored below API 26",
+                    "--area",
+                    "app/work/Sync.kt",
+                    "--symptom",
+                    "the job runs early",
+                    "--project",
+                    tmp,
+                ]
+            )
+            self.assertNotIn("generic keyword overlap", out)
+
+    def test_a_pathless_question_warns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            _, out = run(
+                ["note", "question", "should we migrate to columnar storage", "--project", tmp]
+            )
+            self.assertIn("generic keyword overlap", out)
+
+    def test_a_summary_only_trap_keeps_its_more_specific_hint(self):
+        # The existing "you used none of the five fields" hint already names the
+        # flags that fix reachability; two overlapping warnings would be noise.
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            _, out = run(["note", "trap", "some hazard with no fields", "--project", tmp])
+            self.assertIn("--symptom", out)
+            self.assertNotIn("generic keyword overlap", out)
+
+    def test_the_warning_never_blocks_the_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            code, _ = run(["verify", "delta is fixed", "--status", "fixed", "--project", tmp])
+            self.assertEqual(code, 0)
+            self.assertEqual(len(list((mem / "verifications").glob("*.md"))), 1)
+            self.assertEqual([f for f in crumb.run_validate(mem) if f["status"] == "fail"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

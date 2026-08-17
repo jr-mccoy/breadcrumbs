@@ -1071,5 +1071,53 @@ class TrustReportingTests(unittest.TestCase):
             self.assertEqual(code, 0, out)
 
 
+# --------------------------------------------------------------------------- #
+# F-7 (0.1.11 field audit) — the Windows upgrade lock is a packaging problem
+# --------------------------------------------------------------------------- #
+class WindowsMcpEntryTests(unittest.TestCase):
+    """`pip install --user --upgrade "crumb-kit[mcp]"` fails on Windows with
+    `OSError: [WinError 32]` on `Scripts\\breadcrumbs-mcp.exe` while any MCP
+    server runs — and every live editor session holds that shim open. The shim is
+    opened without FILE_SHARE_DELETE, so rename-aside does not work either.
+
+    Registering the module entry point instead makes a running server hold the
+    interpreter, which pip never needs to delete. `python -m breadcrumbs mcp
+    serve` was verified to speak stdio identically to the console script before
+    this changed.
+    """
+
+    def test_windows_registers_the_module_entry_point(self):
+        entry = crumb.mcp_server_entry(windows=True)
+        self.assertEqual(entry["command"], sys.executable)
+        self.assertEqual(entry["args"], ["-m", "breadcrumbs", "mcp", "serve"])
+        # Never the .exe shim — that is the file pip cannot delete.
+        self.assertNotIn("breadcrumbs-mcp", entry["command"])
+
+    def test_posix_keeps_the_console_script(self):
+        entry = crumb.mcp_server_entry(windows=False)
+        self.assertEqual(entry["command"], "breadcrumbs-mcp")
+        self.assertEqual(entry["args"], [])
+
+    def test_both_platforms_keep_the_project_env_and_stdio_type(self):
+        for windows in (True, False):
+            entry = crumb.mcp_server_entry(windows=windows)
+            self.assertEqual(entry["type"], "stdio")
+            self.assertEqual(entry["env"]["BREADCRUMBS_PROJECT"], "${CLAUDE_PROJECT_DIR:-.}")
+
+    def test_the_registered_argv_reaches_cmd_mcp_serve(self):
+        """`-m breadcrumbs mcp serve` must be a real parse, not a plausible string.
+
+        Parses the registered argv through the actual CLI parser and asserts it
+        dispatches to the serve branch — the SDK itself is optional, so this
+        stops at dispatch rather than starting a server.
+        """
+        args = crumb.mcp_server_entry(windows=True)["args"]
+        self.assertEqual(args[:2], ["-m", "breadcrumbs"])
+        parser = crumb.build_parser()
+        ns = parser.parse_args(args[2:])  # ["mcp", "serve"]
+        self.assertEqual(getattr(ns, "mcp_what", None), "serve")
+        self.assertIs(ns.func, crumb.cmd_mcp)
+
+
 if __name__ == "__main__":
     unittest.main()
