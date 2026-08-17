@@ -38,4 +38,13 @@ a future session avoid a real, repeatable mistake._
 - Why: an in-place upgrade on Windows requires stopping every running server, and the audit session never restarted one
 - Safe approach: run a session that exercises the MCP tools specifically before the next release; the CLI-side test suite does not cover the SDK wiring (its MCP tests skip without the extra installed)
 - Verification: python -m unittest tests.test_mcp with the [mcp] extra installed
+- Status: stale
+<!-- status: active -> stale (The parenthetical was wrong: CI has a dedicated mcp job that installs the [mcp] extra across Python 3.10-3.14 and both SDK majors, and it passed on 69f3189. Only a local run without the extra skips those tests. Replaced by a trap that states the real, narrower gap.) by claude-code at 2026-08-17T03:55:35+00:00 -->
+
+## trap_mcp-surface-unexercised-in-the-field: No mcp__breadcrumbs__* tool has been exercised by a live agent on any release since 0.1.10 — the automated MCP tests pass, but nothing proves the tools work in a real session
+- Area / files: breadcrumbs/mcp_server.py
+- Symptom: a regression in the agent-facing MCP surface would ship green: the 0.1.11 field audit had to kill the server to allow the upgrade and never restarted it
+- Why: an in-place upgrade on Windows requires stopping every running server (see the WinError 32 trap), so the audit session had no server to test against
+- Safe approach: do NOT read this as 'the MCP code is untested' — .github/workflows/ci.yml has a dedicated mcp job installing the [mcp] extra across Python 3.10-3.14 and both SDK majors, and tests/test_mcp.py runs there. The gap is live-session usage, not unit coverage. A local 'python -m unittest discover -s tests' skips those tests only because the extra is absent.
+- Verification: pip install '.[mcp]' && python -m unittest tests.test_mcp — 0 skips
 - Status: active
