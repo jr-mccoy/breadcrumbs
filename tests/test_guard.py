@@ -1090,5 +1090,201 @@ class GuardStalenessScopeTests(unittest.TestCase):
             )
 
 
+# --------------------------------------------------------------------------- #
+# F-1 / F-2 (0.1.11 field audit) — stance: relevance is not opposition
+# --------------------------------------------------------------------------- #
+class StanceTests(unittest.TestCase):
+    """A record that *documents* an area must not block *working* in it.
+
+    The 0.1.11 field audit recorded a trap on `ConversationDao.kt` whose
+    `Safe approach:` prescribed the fix, then made five edits implementing that
+    prescribed fix — and guard returned PAUSE on all five, naming that trap. The
+    verdict was driven by retrieval overlap (same file + shared keywords + title
+    match) with no model of whether the record *opposed* the action, so
+    documenting a hazard made the tool punish repairing it.
+
+    Stance separates the two: overlap still decides what is surfaced and how
+    loudly, but only a record that states opposition — an attempt with an
+    explicit "Do Not Retry Unless" — may drive PAUSE.
+    """
+
+    TRAP = (
+        "conversations.type and conversation_participants.role hold UNNORMALIZED "
+        "values written by legacy code"
+    )
+    REMEDIATION = (
+        "edit app/ConversationDao.kt: normalize conversation type and participant "
+        "role values on read with lowercase() before comparison"
+    )
+
+    def _store_with_documented_trap(self, tmp: str) -> Path:
+        root = make_repo(tmp)
+        crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        code, _ = run(
+            [
+                "note",
+                "trap",
+                self.TRAP,
+                "--project",
+                str(root),
+                "--area",
+                "app/ConversationDao.kt",
+                "--symptom",
+                "queries filtering on type silently miss rows",
+                "--why",
+                "the legacy writer never normalized before insert",
+                # The trap prescribes its own fix — this is the text the audit's
+                # five blocked edits were implementing.
+                "--safe",
+                "normalize on read in app/ConversationDao.kt via lowercase()",
+                "--verify",
+                "run ConversationDaoTest",
+            ]
+        )
+        self.assertEqual(code, 0)
+        return root
+
+    def test_a_traps_own_remediation_is_not_paused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_documented_trap(tmp)
+            res = guard_json(
+                [
+                    "guard",
+                    self.REMEDIATION,
+                    "--files",
+                    "app/ConversationDao.kt",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertEqual(res["verdict"], "READ_FIRST", res)
+            # Still surfaced — downgrading the verdict must not hide the record.
+            self.assertIn(
+                "trap_",
+                " ".join(m["id"] for m in res["matches"]),
+                "the trap must still be shown as relevant memory",
+            )
+
+    def test_every_repeated_remediation_edit_stays_advisory(self):
+        # The audit's actual shape: five edits implementing the prescribed fix.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_documented_trap(tmp)
+            for n in range(5):
+                res = guard_json(
+                    [
+                        "guard",
+                        f"{self.REMEDIATION} (call site {n})",
+                        "--files",
+                        "app/ConversationDao.kt",
+                        "--project",
+                        str(root),
+                    ]
+                )
+                self.assertNotEqual(res["verdict"], "PAUSE", f"edit {n}: {res}")
+
+    def test_an_advisory_match_carries_advisory_stance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_documented_trap(tmp)
+            res = guard_json(
+                [
+                    "guard",
+                    self.REMEDIATION,
+                    "--files",
+                    "app/ConversationDao.kt",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertEqual([m["stance"] for m in res["matches"]], ["advisory"], res)
+
+    def test_overwhelming_overlap_still_cannot_pause_on_an_advisory_record(self):
+        # Score far above GUARD_PAUSE_SCORE: file + title + many keywords. Relevance
+        # is not opposition, so the ceiling holds however high the score climbs.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_documented_trap(tmp)
+            res = guard_json(
+                [
+                    "guard",
+                    f"{self.TRAP} in app/ConversationDao.kt",
+                    "--files",
+                    "app/ConversationDao.kt",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertGreater(max(m["score"] for m in res["matches"]), cli.GUARD_PAUSE_SCORE, res)
+            self.assertEqual(res["verdict"], "READ_FIRST", res)
+
+    def test_an_attempt_with_do_not_retry_still_pauses(self):
+        # The blocking channel must survive the fix — this is what PAUSE now means.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_documented_trap(tmp)
+            code, _ = run(
+                [
+                    "remember",
+                    "attempt",
+                    "--title",
+                    "normalize ConversationDao types with a DB trigger",
+                    "--project",
+                    str(root),
+                    "--result",
+                    "the trigger deadlocked on concurrent writes",
+                    "--do-not-retry",
+                    "do not reintroduce the normalizing DB trigger",
+                    "--evidence",
+                    "file",
+                    "app/ConversationDao.kt",
+                ]
+            )
+            self.assertEqual(code, 0)
+            res = guard_json(
+                [
+                    "guard",
+                    "add a normalizing DB trigger for conversation type in app/ConversationDao.kt",
+                    "--files",
+                    "app/ConversationDao.kt",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertEqual(res["verdict"], "PAUSE", res)
+            blocking = [m for m in res["matches"] if m["stance"] == "blocking"]
+            self.assertTrue(blocking, res)
+            self.assertTrue(all(m["id"].startswith("att_") for m in blocking), res)
+
+    def test_a_high_impact_action_still_escalates_over_an_advisory_record(self):
+        # Stance caps what a *record* may demand; it must not defang the
+        # action-class escalation, which is about the action's blast radius.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_documented_trap(tmp)
+            res = guard_json(
+                [
+                    "guard",
+                    "delete app/ConversationDao.kt and drop the conversations table",
+                    "--files",
+                    "app/ConversationDao.kt",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertEqual(res["verdict"], "ASK_HUMAN", res)
+
+    def test_human_output_labels_stance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_documented_trap(tmp)
+            _, out = run(
+                [
+                    "guard",
+                    self.REMEDIATION,
+                    "--files",
+                    "app/ConversationDao.kt",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertIn("[context]", out)
+            self.assertNotIn("[objects]", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

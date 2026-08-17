@@ -1659,6 +1659,9 @@ FRONTMATTER_ORDER = [
     "branch",
     "commit",
     "dirty_files",
+    # Harness session id, on machine snapshots only — the key that lets one
+    # session's repeated Stop firings coalesce into one record (F-6).
+    "host_session",
     "confidence",
     "privacy",
     "review_status",
@@ -1959,6 +1962,56 @@ def _validate_new_file(memory_dir: Path, path: Path) -> list[dict]:
 
 
 # ---- record lookup + status mutation (shared by MCP `memory_mark_status`) --- #
+
+
+# ---- write-time guard reachability (F-4) ----------------------------------- #
+
+# `audit` has long carried an `[unreachable]` check: a record with neither tags
+# nor file references can only ever surface through generic keyword overlap, which
+# the stale/branch decay factors readily push under the noise floor. It is the
+# most precise diagnostic in the tool and it fires days too late — `audit` is
+# discretionary, nobody runs it on the day they write the record, and that is the
+# only moment fixing it is cheap. The 0.1.11 field audit (F-4) found four
+# verification records in exactly this state: `validate` passes them, they look
+# fine, and they simply never do their job.
+#
+# So run the same computation at write time. Non-fatal and non-blocking — the
+# record is already written and valid; this only tells the author, while they are
+# still around, that it will not be reachable.
+REACHABILITY_HINT = (
+    "no tags and no file evidence — `guard` can reach this record only through "
+    "generic keyword overlap; add --tags or --evidence file <path> so it can "
+    "drive a verdict"
+)
+
+BLOCK_REACHABILITY_HINT = (
+    "no file or path reference — `guard` can reach this {kind} only through "
+    "generic keyword overlap; name the file(s) it applies to so it can drive a verdict"
+)
+
+
+def _record_reachability_hint(path: Path, rtype: str) -> str | None:
+    """`audit`'s [unreachable] check, run against a record just written.
+
+    Deliberately re-derives from the file rather than from the caller's
+    arguments: `_item_from_record` also mines file paths out of the *body*, so a
+    verification whose note names `app/Foo.kt` is reachable and must not be
+    nagged. Same function `audit` uses, so the two can never disagree.
+    """
+    rec = Record.from_file(path, rtype)
+    if rec.error:
+        return None  # unparseable is validate's finding, not this one's
+    item = _item_from_record(rec)
+    return None if (item["tags"] or item["files"]) else REACHABILITY_HINT
+
+
+def _block_reachability_hint(body: str, kind: str) -> str | None:
+    """The same check for trap/question blocks, which cannot carry tags.
+
+    `_item_from_trap` / `_item_from_question` derive files only from paths in the
+    block text, so a path reference is the single reachability lever these have.
+    """
+    return None if _paths_from_text(body) else BLOCK_REACHABILITY_HINT.format(kind=kind)
 
 
 def find_record_by_id(memory_dir: Path, rid: str) -> "Record | None":
@@ -2483,6 +2536,13 @@ def cmd_remember(args: argparse.Namespace) -> int:
         "slug": meta["slug"],
         "confidence": meta["confidence"],
     }
+    # F-4: decisions and attempts are covered by audit's [unreachable] check too,
+    # so they get the same warning at the same moment. `--confidence low` is a
+    # documented way to write a decision with no evidence at all, which is exactly
+    # the record that then cannot drive a verdict.
+    hint = _record_reachability_hint(path, rtype)
+    if hint:
+        summary["hint"] = hint
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
@@ -2490,6 +2550,8 @@ def cmd_remember(args: argparse.Namespace) -> int:
         print(f"  file: {path}")
         if meta["confidence"] == "low" and not meta["evidence"]:
             print("  note: no evidence; confidence set to low.")
+        if hint:
+            print(f"  note: {hint}")
     return 0
 
 
@@ -2823,6 +2885,12 @@ def note(
             write_text_atomic(path, before)  # revert
             return {"ok": False, "error": "appended question did not parse back; reverted"}
         result = {"ok": True, "kind": "question", "ref": text, "path": str(path)}
+        hint = _block_reachability_hint(
+            "\n".join(str(fields.get(k) or "") for k in ("why", "needs")) + "\n" + text,
+            "question",
+        )
+        if hint:
+            result["hint"] = hint
 
     elif kind == "trap":
         path = memory_dir / "known-traps.md"
@@ -2870,6 +2938,20 @@ def note(
                 "Safe approach / Verification; pass --area/--symptom/--why/--safe/"
                 "--verify so the next agent gets the mechanism, not just the warning"
             )
+        else:
+            # F-4. Only when the fuller hint above did not already fire: a
+            # summary-only trap is unreachable *and* mechanism-less, and one
+            # message naming the flags to fix both beats two overlapping ones.
+            hint = _block_reachability_hint(
+                "\n".join(
+                    str(fields.get(k) or "") for k in ("area", "symptom", "why", "safe", "verify")
+                )
+                + "\n"
+                + text,
+                "trap",
+            )
+            if hint:
+                result["hint"] = hint
 
     elif kind == "idea":
         sections = dict(fields.get("sections") or {})
@@ -2887,6 +2969,9 @@ def note(
                 "error": "idea rejected by validate: " + "; ".join(f["message"] for f in fails),
             }
         result = {"ok": True, "kind": "idea", "id": meta["id"], "path": str(path)}
+        hint = _record_reachability_hint(path, "idea")
+        if hint:
+            result["hint"] = hint
 
     else:
         return {"ok": False, "error": f"unknown note kind {kind!r}; use {', '.join(NOTE_KINDS)}"}
@@ -3028,7 +3113,7 @@ def verify(
         }
 
     reindex_projections(memory_dir, project_root)
-    return {
+    out = {
         "ok": True,
         "id": meta["id"],
         "subject": subject,
@@ -3037,6 +3122,14 @@ def verify(
         "confidence": meta["confidence"],
         "path": str(path),
     }
+    # F-4: verifications are the record type this bites hardest — the audit found
+    # four unreachable ones in a single store — because `crumb verify "<claim>"
+    # --status fixed` is a complete, valid call that carries neither tags nor
+    # evidence.
+    hint = _record_reachability_hint(path, "verification")
+    if hint:
+        out["hint"] = hint
+    return out
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -3076,6 +3169,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
         print(f"  file: {result['path']}")
         if result["confidence"] == "low":
             print("  note: no evidence; confidence set to low.")
+        if result.get("hint"):
+            print(f"  note: {result['hint']}")
     return 0
 
 
@@ -3126,12 +3221,111 @@ def _newest_session_record(memory_dir: Path) -> Record | None:
     return recs[-1]
 
 
-def _last_session_commit(memory_dir: Path) -> str | None:
-    rec = _newest_session_record(memory_dir)
-    commit = rec.meta.get("commit") if rec is not None else None
+def _last_session_commit(memory_dir: Path, exclude: Path | None = None) -> str | None:
+    """Commit of the newest session record — the diff base for the next capture.
+
+    `exclude` skips one record: when a capture *coalesces into* the newest
+    snapshot (F-6), that snapshot is the record being rewritten, so using its own
+    commit as the diff base would make the window empty and erase the work the
+    earlier firings had already summarized. The previous session boundary is the
+    honest base.
+    """
+    recs = load_records(memory_dir, types=("session",))
+    if exclude is not None:
+        exclude = Path(exclude).resolve()
+        recs = [r for r in recs if r.path.resolve() != exclude]
+    recs = sorted(recs, key=lambda r: (_dt_sort_key(r.meta.get("created_at")), r.stem))
+    commit = recs[-1].meta.get("commit") if recs else None
     if commit in (None, "", NO_GIT_COMMIT):
         return None
     return commit
+
+
+# ---- F-6: one machine snapshot per host session, not per Stop ---------------- #
+
+# Claude Code's `Stop` fires at every turn boundary, so one working session
+# produced three session records in the 0.1.11 field audit (2:39, 2:58, 3:16 for
+# a session that began at 2:47) — and `audit` then flagged the resulting 101
+# records as bloat. The tool was generating its own bloat warning.
+#
+# `_hook_capture_is_redundant` already suppresses a firing where *nothing* moved.
+# The remaining case is the normal one: work moved, so a snapshot is warranted —
+# but it is the *same session's* snapshot, and should replace the previous one
+# rather than accumulate beside it. A machine snapshot is a disposable "where
+# things stand" marker; there is no value in keeping five of them from one
+# afternoon, and the stale `dirty_files` list on the older ones is actively
+# misleading.
+#
+# Only machine snapshots coalesce. A record a human or agent authored through
+# `crumb capture session` carries a real Next Action and narrative; it is never
+# rewritten.
+COALESCE_WINDOW_MINUTES = 90
+
+
+def _is_machine_snapshot(rec: Record) -> bool:
+    """True for a Stop-hook snapshot: placeholder Next Action, no narrative."""
+    if rec.error or rec.rtype != "session":
+        return False
+    return _is_placeholder(rec.sections.get("Next Action", ""))
+
+
+def _coalescible_snapshot(
+    memory_dir: Path,
+    root: Path,
+    host_session: str | None,
+    *,
+    window_minutes: int = COALESCE_WINDOW_MINUTES,
+) -> Record | None:
+    """The machine snapshot this capture should overwrite, or None to write anew.
+
+    Two ways to be "the same session", in order of confidence:
+      1. Same host session id — exact, when the harness supplies one.
+      2. Same branch, within `window_minutes` — the fallback for a payload with
+         no session id. Deliberately not keyed on commit as well: a session that
+         commits between two Stops is the *common* case, and refusing to coalesce
+         across it would leave the audit's exact complaint unfixed.
+    """
+    rec = _newest_session_record(memory_dir)
+    if rec is None or not _is_machine_snapshot(rec):
+        return None
+
+    recorded = rec.meta.get("host_session")
+    if host_session and recorded:
+        return rec if str(recorded) == str(host_session) else None
+    if recorded and not host_session:
+        # The snapshot knows which session it belongs to and this firing does
+        # not — coalescing would risk folding two sessions together.
+        return None
+
+    if (rec.meta.get("branch") or "") != git_branch(root):
+        return None
+    stamped = _parse_iso(rec.meta.get("updated_at") or rec.meta.get("created_at"))
+    if stamped is None:
+        return None
+    # Same naive-timestamp localization `_age_days` uses, so the subtraction is
+    # always tz-aware; that helper is day-resolution and this needs minutes.
+    if stamped.tzinfo is None:
+        stamped = stamped.astimezone()
+    delta = (datetime.now().astimezone() - stamped).total_seconds()
+    return rec if 0 <= delta <= window_minutes * 60 else None
+
+
+def _coalesce_into(rec: Record, sections: dict[str, str], root: Path, agent: str | None) -> Path:
+    """Rewrite an existing machine snapshot in place with fresh git state.
+
+    Identity is preserved — id, slug, filename, `created_at` and `created_by` all
+    keep naming the moment the session's first snapshot was taken, which is the
+    fact worth keeping. Only what has moved is updated.
+    """
+    meta = dict(rec.meta)
+    derived = derive_fields(root, agent=agent)
+    meta["updated_at"] = derived["created_at"]
+    meta["branch"] = derived["branch"]
+    meta["commit"] = derived["commit"]
+    meta["dirty_files"] = derived["dirty_files"]
+    text = render_frontmatter(meta) + "\n\n" + render_body("session", sections)
+    write_text_atomic(rec.path, text)
+    return rec.path
 
 
 # git's canonical empty-tree object — diff base when the window reaches the root commit.
@@ -3291,7 +3485,21 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     manifest = load_manifest(memory_dir) or {}
     tracking = manifest.get("session_tracking", "full")
 
-    since = _last_session_commit(memory_dir)
+    # F-6: only a machine snapshot coalesces, and only into the *same* session's
+    # previous snapshot. `--fast` is the Stop hook's path; an interactive or
+    # `--set`-driven capture is authored content and always gets its own record.
+    host_session = getattr(args, "host_session", None)
+    coalesce = (
+        _coalescible_snapshot(memory_dir, root, host_session)
+        if (
+            getattr(args, "fast", False)
+            and not args.set
+            and _is_placeholder(args.next_action or "")
+        )
+        else None
+    )
+
+    since = _last_session_commit(memory_dir, exclude=coalesce.path if coalesce else None)
     prefill = _git_prefill(root, since)
 
     # Manual section overrides.
@@ -3337,15 +3545,30 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         return 2
 
     title = args.title or "session"
-    path, meta = write_record(memory_dir, root, "session", title, sections, agent=args.agent)
-
-    fails = _validate_new_file(memory_dir, path)
-    if fails:
-        path.unlink()
-        _emit_error(
-            args, "new session failed validation: " + "; ".join(f["message"] for f in fails)
+    if coalesce is not None:
+        before = coalesce.path.read_text(encoding="utf-8")
+        path = _coalesce_into(coalesce, sections, root, args.agent)
+        meta = dict(coalesce.meta)
+        fails = _validate_new_file(memory_dir, path)
+        if fails:
+            write_text_atomic(path, before)  # revert — never leave a broken snapshot
+            _emit_error(
+                args, "session update failed validation: " + "; ".join(f["message"] for f in fails)
+            )
+            return 1
+    else:
+        extra = {"host_session": host_session} if host_session else None
+        path, meta = write_record(
+            memory_dir, root, "session", title, sections, agent=args.agent, extra=extra
         )
-        return 1
+
+        fails = _validate_new_file(memory_dir, path)
+        if fails:
+            path.unlink()
+            _emit_error(
+                args, "new session failed validation: " + "; ".join(f["message"] for f in fails)
+            )
+            return 1
 
     # Refresh handoff + current.
     #
@@ -3372,11 +3595,12 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         "session_tracking": tracking,
         "fast": bool(args.fast),
         "since": since,
+        "coalesced": coalesce is not None,
     }
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
-        print(f"Captured session: {meta['id']}")
+        print(f"{'Updated' if coalesce is not None else 'Captured'} session: {meta['id']}")
         print(f"  file:    {path}")
         print("  handoff: updated")
         print("  current: updated")
@@ -5010,6 +5234,28 @@ GUARD_STALE_DIST_COMMITS = 10
 # (a routine "rewrite auth middleware" should land on PAUSE/READ_FIRST, not ASK).
 GUARD_HIGH_IMPACT_CLASSES = frozenset({"deletion", "migration", "external_side_effect"})
 
+# Stance — does a matched record *oppose* the action, or merely *document* the
+# area it touches? (0.1.11 field audit, F-1/F-2.) Retrieval overlap answers
+# "is this record about the same thing"; it has never answered "does this record
+# object", and the score band spent the difference. A trap that documented a
+# hazard in ConversationDao.kt — including a `Safe approach:` prescribing the
+# fix — scored file + title + 19 keywords and PAUSEd all five edits that
+# implemented that prescribed fix. Documenting a hazard made the tool punish
+# fixing it, which is the exact behavior the store exists to encourage.
+#
+# So relevance sets how loudly a record is surfaced, and stance sets how far it
+# may raise the verdict:
+#   blocking  — the record opposes *doing this*: an attempt carrying an explicit
+#               "Do Not Retry Unless". Someone tried this and recorded why not to
+#               again; that is the one thing the schema already states as opposition.
+#   advisory  — everything else. A trap, decision, verification or open question
+#               is knowledge about the area, not a prohibition on entering it.
+#               It can demand a read; it cannot demand a stop.
+# A high-impact action class still escalates past these ceilings below — that
+# escalation is a property of the *action*'s blast radius, not of any record.
+GUARD_BLOCKING_CEILING = "PAUSE"
+GUARD_ADVISORY_CEILING = "READ_FIRST"
+
 _VERDICTS = ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN")
 _VERDICT_RANK = {v: i for i, v in enumerate(_VERDICTS)}
 
@@ -5592,6 +5838,11 @@ def _score_item(
         "raw_score": round(undecayed, 2),
         "suppressed": False,  # set by `search` when decay pushed it under the floor
         "signals": signals,
+        # Whether this record opposes the action or merely documents its area.
+        # Exported so a caller can tell the two apart without re-deriving it from
+        # `signals` — the 0.1.11 audit's F-2: the output gave a PAUSE-driving
+        # record and a merely-topical one the same shape of evidence.
+        "stance": _match_stance(signals),
         "matched_files": sorted(matched_files),
         "matched_tags": sorted(matched_tags),
         "keyword_overlap": sorted(kw_overlap),
@@ -5729,19 +5980,60 @@ def _passes_filters(item: dict, filters: dict) -> bool:
 # ---- guard verdict (§11.5–11.6) -------------------------------------------- #
 
 
+def _match_stance(signals) -> str:
+    """`blocking` if this match opposes the action, else `advisory` (see §11 stance).
+
+    Derived, never authored: the only structural statement of opposition the
+    schema has is an attempt's "Do Not Retry Unless" section, which
+    `_attempt_has_do_not_retry` already turns into the `do-not-retry` signal. To
+    make a record hard-stop an action, record it as
+    `crumb remember attempt --do-not-retry "…"` — a trap *documents* a hazard,
+    an attempt *forbids* a repeat.
+    """
+    return "blocking" if "do-not-retry" in set(signals or ()) else "advisory"
+
+
+def _score_band(score: float) -> str:
+    """The verdict a score alone argues for, before stance caps it."""
+    if score >= GUARD_PAUSE_SCORE:
+        return "PAUSE"
+    if score >= GUARD_READ_FIRST_SCORE:
+        return "READ_FIRST"
+    return "PROCEED"
+
+
+def _max_verdict(*verdicts: str) -> str:
+    return max(verdicts, key=lambda v: _VERDICT_RANK[v])
+
+
+def _min_verdict(*verdicts: str) -> str:
+    return min(verdicts, key=lambda v: _VERDICT_RANK[v])
+
+
 def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
-    """Pick one verdict from the ranked matches + action class. Deterministic."""
+    """Pick one verdict from the ranked matches + action class. Deterministic.
+
+    Per match: a kind/specificity floor and the score band both argue for a
+    verdict, and the match's *stance* caps how far either may go. The verdict is
+    the highest capped result across matches.
+
+    The band used to be computed once from the single best score in the whole
+    result set and OR-ed into the verdict — so any sufficiently *relevant*
+    record raised the verdict whether or not it objected to anything, and one
+    well-tagged trap on a busy file PAUSEd every edit to that file (F-1).
+    """
     if not top:
         return "PROCEED"
 
-    floors: list[str] = ["PROCEED"]
+    verdicts: list[str] = ["PROCEED"]
     for m in top:
         sig = set(m["signals"])
         specific = bool({"file", "tag"} & sig)
+        floor = "PROCEED"
         if "do-not-retry" in sig and specific:
-            floors.append("PAUSE")  # a failed attempt on these files/component
+            floor = "PAUSE"  # a failed attempt on these files/component
         elif m["kind"] == "decision" and specific:
-            floors.append("READ_FIRST")  # an active decision constrains this area
+            floor = "READ_FIRST"  # an active decision constrains this area
         elif m["kind"] == "trap" and specific:
             # Keyword-only trap matches used to floor READ_FIRST here, bypassing
             # the score bands — in a store whose vocabulary overlaps the codebase
@@ -5750,21 +6042,17 @@ def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
             # needs the same file/tag specificity as a decision to floor the
             # verdict; a strong keyword-only trap match can still escalate
             # through the score band like everything else.
-            floors.append("READ_FIRST")
+            floor = "READ_FIRST"
         elif m["kind"] == "verification" and specific:
-            floors.append("READ_FIRST")  # an unsettled finding on these files/component
+            floor = "READ_FIRST"  # an unsettled finding on these files/component
         elif "open-blocker" in sig:
-            floors.append("READ_FIRST")
+            floor = "READ_FIRST"
 
-    best = max(m["score"] for m in top)
-    band = "PROCEED"
-    if best >= GUARD_PAUSE_SCORE:
-        band = "PAUSE"
-    elif best >= GUARD_READ_FIRST_SCORE:
-        band = "READ_FIRST"
-    floors.append(band)
+        stance = m.get("stance") or _match_stance(m.get("signals"))
+        ceiling = GUARD_BLOCKING_CEILING if stance == "blocking" else GUARD_ADVISORY_CEILING
+        verdicts.append(_min_verdict(_max_verdict(floor, _score_band(m["score"])), ceiling))
 
-    verdict = max(floors, key=lambda v: _VERDICT_RANK[v])
+    verdict = _max_verdict(*verdicts)
 
     # ASK_HUMAN escalation: a high-impact class colliding with memory is a human's
     # call (§15). Security/refactor never auto-escalate (keeps Fixture 2 on PAUSE).
@@ -5796,10 +6084,15 @@ def _recommended_action(verdict: str, top: list[dict], by_id: dict, root: Path) 
             "Get a human to review before proceeding." + verify
         )
     if verdict == "PAUSE":
+        # Only a `blocking` match can reach PAUSE now, so this names what that
+        # actually is. It used to say "a failed attempt *or active constraint*"
+        # while firing on any topically-relevant record — including a trap whose
+        # own prescribed fix was the action being blocked (F-1).
         return (
-            f"Stop and read these records before acting: {ids}. They include a failed "
-            "attempt or active constraint on this exact area. Prefer the smallest "
-            "possible change over a rewrite." + verify
+            f"Stop and read these records before acting: {ids}. They record an attempt "
+            "that already failed here, with an explicit do-not-retry condition — check "
+            "it still applies before repeating it. Prefer the smallest possible change "
+            "over a rewrite." + verify
         )
     if verdict == "READ_FIRST":
         return (
@@ -5936,7 +6229,13 @@ def render_guard_human(result: dict) -> str:
     if result["matches"]:
         out.append("Relevant memory:")
         for i, m in enumerate(result["matches"], 1):
-            out.append(f"{i}. {m['id']} — {m['kind']}, {m['reason']}.")
+            # "objects" vs "context" is the stance, not the score: without it a
+            # record that forbids this action and one that merely names the same
+            # file read identically (F-2), so the caller could not tell which of
+            # the two kinds of PAUSE they were looking at.
+            stance = m.get("stance") or _match_stance(m.get("signals"))
+            mark = "objects" if stance == "blocking" else "context"
+            out.append(f"{i}. [{mark}] {m['id']} — {m['kind']}, {m['reason']}.")
     else:
         out.append("Relevant memory: none above the noise floor.")
     out.append("")
@@ -6754,16 +7053,48 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
 MCP_SERVER_NAME = "breadcrumbs"
 
 
-def mcp_server_entry() -> dict:
+def mcp_server_entry(*, windows: bool | None = None) -> dict:
     """The `.mcp.json` entry for the breadcrumbs server (verified Claude Code shape).
 
     The server reads $BREADCRUMBS_PROJECT to locate the store; `${CLAUDE_PROJECT_DIR}`
     is exported by Claude Code, with a `.`-fallback for other launchers.
+
+    **On Windows the module entry point is used instead of the console script**
+    (0.1.11 field audit, F-7). `pip install --upgrade "crumb-kit[mcp]"` fails at
+    the uninstall step with `OSError: [WinError 32]` on
+    `Scripts\\breadcrumbs-mcp.exe` whenever any MCP server is running, and every
+    live editor session holds that shim open — orphaned copies accumulate, so the
+    upgrade fails against servers the user does not know are running. The shim is
+    opened without `FILE_SHARE_DELETE`, so Windows blocks rename as well as
+    delete and the usual self-updater rename-aside trick does not work either;
+    the only route is to stop every server first.
+
+    Launching via `<python> -m breadcrumbs mcp serve` makes the running server
+    hold the *interpreter* open rather than a file pip needs to delete, so
+    in-place upgrades stop failing. `python -m breadcrumbs mcp serve` was
+    verified to speak stdio identically to the console script — same
+    `initialize` handshake, same 10 tools / 6 resources / 6 prompts — before this
+    was changed; the module path is `cmd_mcp`'s own `serve` branch, so there is
+    no second server implementation to drift.
+
+    POSIX keeps the console script: it has no such locking problem, and the
+    script is shorter, PATH-relative and interpreter-agnostic.
+
+    Note `sys.executable` is an absolute, machine-specific path, and `.mcp.json`
+    is usually committed. That is the deliberate trade — a portable `"python"`
+    would resolve through PATH to whichever interpreter comes first, which on the
+    `--user` installs this bug afflicts is frequently not the one holding the
+    package.
     """
+    if windows is None:
+        windows = os.name == "nt"
+    command, args = ("breadcrumbs-mcp", [])
+    if windows:
+        command, args = (sys.executable, ["-m", "breadcrumbs", "mcp", "serve"])
     return {
         "type": "stdio",
-        "command": "breadcrumbs-mcp",
-        "args": [],
+        "command": command,
+        "args": args,
         "env": {"BREADCRUMBS_PROJECT": "${CLAUDE_PROJECT_DIR:-.}"},
     }
 
@@ -6898,6 +7229,14 @@ def cmd_mcp(args: argparse.Namespace) -> int:
                 "  note: in Claude Code a committed .mcp.json server starts "
                 "'⏸ Pending approval' until you approve it once — this is expected."
             )
+            if os.name == "nt":
+                print(
+                    "  note: launching via this interpreter (-m breadcrumbs mcp serve) "
+                    "rather than the\n"
+                    "        breadcrumbs-mcp.exe shim, so `pip install --upgrade` is not "
+                    "blocked by a\n"
+                    "        running server (WinError 32)."
+                )
         return 0
 
     if what == "doctor":
@@ -8056,10 +8395,14 @@ def _extraction_reason(commits: list[str]) -> str:
     )
 
 
-def _hook_capture_snapshot(root: Path) -> None:
+def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> None:
     """The machine snapshot: the same --fast path the CLI uses (diff-stat already
     summarized). The Next Action is placeholder text (`_is_placeholder` knows
-    it), so this capture cannot clobber a Next Action / Focus a human set."""
+    it), so this capture cannot clobber a Next Action / Focus a human set.
+
+    `host_session` is the harness's session id from the Stop payload. It is what
+    lets the second and later firings of one session update the first firing's
+    snapshot instead of stacking a new record beside it (F-6)."""
     ns = argparse.Namespace(
         project=str(root),
         json=True,
@@ -8070,6 +8413,7 @@ def _hook_capture_snapshot(root: Path) -> None:
         title="session",
         set=None,
         focus=None,
+        host_session=host_session,
         # A Stop-hook capture is always a machine write, so `agent` is the floor
         # here, not `unknown` — named harness when the env names one.
         agent=detect_agent(fallback="agent"),
@@ -8095,9 +8439,10 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     # agent captured, the fresh session record reads as redundant and we stay
     # silent; if it ignored the instruction, fall back to the machine snapshot
     # so the floor is never below plain snapshot behavior.
+    host_session = str(payload.get("session_id") or "") or None
     if payload.get("stop_hook_active"):
         if not redundant:
-            _hook_capture_snapshot(root)
+            _hook_capture_snapshot(root, host_session)
         print(json.dumps({}))
         return 0
     if redundant:
@@ -8108,7 +8453,7 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
         if commits:
             print(json.dumps({"decision": "block", "reason": _extraction_reason(commits)}))
             return 0
-    _hook_capture_snapshot(root)
+    _hook_capture_snapshot(root, host_session)
     print(json.dumps({}))
     return 0
 

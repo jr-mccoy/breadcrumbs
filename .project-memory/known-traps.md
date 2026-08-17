@@ -31,3 +31,11 @@ a future session avoid a real, repeatable mistake._
 - Safe approach: Wrap the guard call in 'set +e' / capture $? / 'set -e', then assert the code against the verdict in the Python block — the exit-code contract gets tested instead of killing the step.
 - Verification: bash -e on the extracted step body, or: python crumb.py guard '<action>' --project fixtures/fixture-02-guard-true-positive --json; echo $?
 - Status: active
+
+## trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
+- Area / files: breadcrumbs/mcp_server.py
+- Symptom: MCP-only regressions can ship undetected; init, schema, prune, reindex, resume, hook and mcp serve were also untested in the field
+- Why: an in-place upgrade on Windows requires stopping every running server, and the audit session never restarted one
+- Safe approach: run a session that exercises the MCP tools specifically before the next release; the CLI-side test suite does not cover the SDK wiring (its MCP tests skip without the extra installed)
+- Verification: python -m unittest tests.test_mcp with the [mcp] extra installed
+- Status: active

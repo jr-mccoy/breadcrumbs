@@ -12,10 +12,12 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
 
@@ -254,12 +256,21 @@ class HookCaptureTests(unittest.TestCase):
             out = run_hook("capture", {"cwd": str(root)})
             self.assertEqual(out.get("decision"), "block", out)
             run_hook("capture", {"cwd": str(root), "stop_hook_active": True})
-            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 2)
+
+            # F-6: "captured" means the record reflects the work, not that a new
+            # file appeared. These firings are all one host session, so they
+            # coalesce into one record that keeps moving forward.
+            def newest(mem):
+                files = sorted((mem / "sessions").glob("*.md"))
+                self.assertEqual(len(files), 1, [f.name for f in files])
+                return crumb.Record.from_file(files[0], "session").meta
+
+            self.assertEqual(newest(mem)["commit"], crumb.git_commit(root))
             # an uncommitted edit outside the store is new work too, but not
             # commit-shaped — snapshot only, no prompt.
             (root / "h.txt").write_text("c\n")
             self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
-            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 3)
+            self.assertIn("h.txt", newest(mem).get("dirty_files") or [])
 
     def test_stop_hook_active_never_blocks_and_falls_back_to_snapshot(self):
         # A continuation of a blocked Stop must never be blocked again (that is
@@ -301,6 +312,12 @@ class ExtractionTurnTests(unittest.TestCase):
         git(root, "add", name)
         git(root, "commit", "-qm", msg)
 
+    def _snapshot(self, mem: Path) -> dict:
+        """The single machine snapshot's frontmatter (F-6: firings coalesce)."""
+        files = sorted((mem / "sessions").glob("*.md"))
+        assert len(files) == 1, [f.name for f in files]
+        return crumb.Record.from_file(files[0], "session").meta
+
     def test_new_commits_block_once_with_a_concrete_instruction(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, _ = self._store_with_baseline(tmp)
@@ -333,7 +350,9 @@ class ExtractionTurnTests(unittest.TestCase):
             root, mem = self._store_with_baseline(tmp)
             (root / "notes.txt").write_text("scratch\n")
             self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
-            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 2)
+            # F-6: the snapshot is taken, but into the same session's existing
+            # record — one working session must not leave a trail of records.
+            self.assertIn("notes.txt", self._snapshot(mem).get("dirty_files") or [])
 
     def test_manifest_kill_switch_disables_the_prompt(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -344,7 +363,9 @@ class ExtractionTurnTests(unittest.TestCase):
             )
             self._commit(root, "g.txt", "more work")
             self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
-            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 2)
+            # Snapshot taken with no prompt, coalesced into the same record (F-6):
+            # it now points at the new HEAD.
+            self.assertEqual(self._snapshot(mem)["commit"], crumb.git_commit(root))
 
     def test_commit_listing_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -598,6 +619,154 @@ class HookAdvisoryDedupeTests(unittest.TestCase):
             run_hook("guard", self._edit_payload(root, "s1"))
             state = root / crumb.MEMORY_DIRNAME / "private" / _cli._HOOK_SEEN_FILENAME
             self.assertTrue(state.is_file(), "advisory state must be machine-local")
+
+
+# --------------------------------------------------------------------------- #
+# F-6 (0.1.11 field audit) — one machine snapshot per session, not per Stop
+# --------------------------------------------------------------------------- #
+class SnapshotCoalescingTests(unittest.TestCase):
+    """Claude Code's `Stop` fires at every turn boundary, not once per session.
+
+    The field audit's store took snapshots at 2:39, 2:58 and 3:16 for a session
+    that began at 2:47 — one working session, three session records — and
+    `audit` then flagged the resulting 101 records as bloat. The tool was
+    generating its own bloat warning, and the older snapshots carried
+    `dirty_files` lists that were stale by the time the next one was written.
+
+    A machine snapshot is a disposable "where things stand" marker, so a later
+    firing of the same session replaces it rather than stacking beside it.
+    Records a human or agent authored are never touched.
+    """
+
+    def _sessions(self, mem: Path) -> list[Path]:
+        return sorted((mem / "sessions").glob("*.md"))
+
+    def _meta(self, path: Path) -> dict:
+        return crumb.Record.from_file(path, "session").meta
+
+    def test_one_session_of_repeated_firings_leaves_one_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            sid = {"cwd": str(root), "session_id": "sess-abc"}
+            run_hook("capture", sid)
+            first = self._sessions(mem)
+            self.assertEqual(len(first), 1)
+
+            # Three more turns that each move the work — the audit's shape.
+            for n in range(3):
+                (root / f"w{n}.txt").write_text("x\n")
+                run_hook("capture", {**sid, "stop_hook_active": True})
+
+            self.assertEqual([p.name for p in self._sessions(mem)], [first[0].name])
+            meta = self._meta(first[0])
+            self.assertIn("w2.txt", meta.get("dirty_files") or [])
+            self.assertEqual(meta.get("host_session"), "sess-abc")
+
+    def test_coalescing_keeps_the_first_firings_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            sid = {"cwd": str(root), "session_id": "sess-abc"}
+            run_hook("capture", sid)
+            before = self._meta(self._sessions(mem)[0])
+
+            (root / "later.txt").write_text("x\n")
+            run_hook("capture", {**sid, "stop_hook_active": True})
+            after = self._meta(self._sessions(mem)[0])
+
+            # created_at names when the session's first snapshot was taken —
+            # that is the fact worth keeping — while updated_at moves.
+            self.assertEqual(after["id"], before["id"])
+            self.assertEqual(after["created_at"], before["created_at"])
+            self.assertIn("later.txt", after.get("dirty_files") or [])
+
+    def test_a_different_host_session_starts_its_own_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            run_hook("capture", {"cwd": str(root), "session_id": "sess-one"})
+            (root / "w.txt").write_text("x\n")
+            run_hook("capture", {"cwd": str(root), "session_id": "sess-two"})
+            self.assertEqual(len(self._sessions(mem)), 2)
+            self.assertEqual(
+                sorted(self._meta(p).get("host_session") for p in self._sessions(mem)),
+                ["sess-one", "sess-two"],
+            )
+
+    def test_an_authored_capture_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            run_hook("capture", {"cwd": str(root), "session_id": "sess-abc"})
+
+            # A real capture with a real Next Action is authored content.
+            code = crumb.main(
+                [
+                    "capture",
+                    "session",
+                    "--project",
+                    str(root),
+                    "--fast",
+                    "--next",
+                    "ship the reconciler fix",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(len(self._sessions(mem)), 2)
+
+            authored = next(
+                f
+                for f in self._sessions(mem)
+                if "ship the reconciler fix" in f.read_text(encoding="utf-8")
+            )
+            frozen = authored.read_text(encoding="utf-8")
+
+            # A later Stop firing must not rewrite that authored record: the
+            # newest record is no longer a machine snapshot, so the firing
+            # starts a fresh one instead of coalescing.
+            (root / "w.txt").write_text("x\n")
+            run_hook("capture", {"cwd": str(root), "session_id": "sess-abc"})
+            self.assertEqual(authored.read_text(encoding="utf-8"), frozen)
+            self.assertIn("ship the reconciler fix", frozen)
+            self.assertEqual(len(self._sessions(mem)), 3)
+
+    def test_a_snapshot_outside_the_window_is_not_coalesced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            # No session id in the payload -> the branch + time-window fallback.
+            run_hook("capture", {"cwd": str(root)})
+            old = self._sessions(mem)[0]
+            text = old.read_text(encoding="utf-8")
+            stale = (
+                (
+                    datetime.now().astimezone()
+                    - timedelta(minutes=crumb.COALESCE_WINDOW_MINUTES + 30)
+                )
+                .replace(microsecond=0)
+                .isoformat()
+            )
+            old.write_text(
+                re.sub(r"^updated_at: .*$", f"updated_at: {stale}", text, flags=re.M),
+                encoding="utf-8",
+            )
+
+            (root / "w.txt").write_text("x\n")
+            run_hook("capture", {"cwd": str(root)})
+            self.assertEqual(len(self._sessions(mem)), 2, "a cold snapshot is a separate session")
+
+    def test_the_store_stops_growing_two_records_a_day(self):
+        # The bloat arithmetic from the audit: 101 records over ~50 days is
+        # "one or more per stop", not "one per session".
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            sid = {"cwd": str(root), "session_id": "sess-long"}
+            for n in range(12):
+                (root / f"turn{n}.txt").write_text("x\n")
+                run_hook("capture", {**sid, "stop_hook_active": True})
+            self.assertEqual(len(self._sessions(mem)), 1, self._sessions(mem))
 
 
 if __name__ == "__main__":

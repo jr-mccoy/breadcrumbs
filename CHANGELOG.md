@@ -5,6 +5,76 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
+## [Unreleased]
+
+Triage of the 0.1.11 field audit (one working session on Windows 11 / Python
+3.13, ~276-check store, 101 session records). The audit's own framing holds up:
+the findings are about **signal-to-noise in `guard`** and **write-time
+ergonomics**, not about correctness of the store.
+
+### Fixed
+
+- **`guard` no longer PAUSEs on a trap's own remediation (F-1, F-2).** The
+  verdict was driven by retrieval overlap — shared files, shared keywords, title
+  match — with no model of whether a record *opposed* the action. A trap
+  documenting a hazard in `ConversationDao.kt`, whose `Safe approach:`
+  prescribed the fix, blocked all five edits implementing that prescribed fix.
+  Documenting a hazard made the tool punish repairing it, and a `PAUSE` that is
+  routinely ignored launders the ones that matter.
+
+  Matches now carry a **stance**. `blocking` — an attempt with an explicit
+  *Do Not Retry Unless*, the one structural statement of opposition the schema
+  has — may reach `PAUSE`. `advisory` — a trap, decision, verification or open
+  question — is capped at `READ_FIRST`: it can demand a read, not a stop. The
+  score band is also applied per match rather than once from the best score in
+  the whole result set, so a record's *relevance* can no longer raise a verdict
+  no record *objected* to. A high-impact action class still escalates to
+  `ASK_HUMAN`; that is a property of the action, not of a record. To make a
+  record hard-stop an action, write it as `crumb remember attempt
+  --do-not-retry "…"`.
+
+  The human output now tags each match `[objects]` or `[context]`, and the
+  `PAUSE` recommendation names what it actually found instead of claiming "a
+  failed attempt or active constraint" for any topical match.
+
+### Added
+
+- **`audit`'s `[unreachable]` check now also runs at write time (F-4).** A
+  record with no tags and no file evidence is reachable only by generic keyword
+  overlap, so it pollutes every query and drives no verdict — `validate` passes
+  it and it silently never does its job. The check existed but only in `audit`,
+  which is discretionary and never run on the day the record is written, which
+  is the only moment fixing it is cheap. `verify`, `remember`, and `note` now
+  print a one-line, non-fatal nudge naming the flags that fix it. It is the
+  *same* function `audit` uses, deliberately re-derived from the written record
+  (so a path mined out of the body counts), and a test asserts the two agree.
+
+- **One machine session snapshot per host session, not per Stop (F-6).**
+  Claude Code's `Stop` fires at every turn boundary, so one working session
+  produced three session records (2:39, 2:58, 3:16 for a session that began at
+  2:47) and `audit` then flagged the resulting 101 records as bloat — the tool
+  generating its own bloat warning. A later firing of the same host session now
+  updates that session's snapshot in place, keyed on the harness `session_id`
+  (recorded as `host_session`) and falling back to same-branch-within-90-minutes
+  when the payload carries none. Identity is preserved: `created_at` still names
+  the session's first snapshot; only what moved is rewritten. Records with a
+  real Next Action — anything a human or agent authored — are never touched.
+
+### Changed
+
+- **`crumb mcp register` uses the module entry point on Windows (F-7).**
+  `pip install --upgrade "crumb-kit[mcp]"` fails with `OSError: [WinError 32]`
+  on `Scripts\breadcrumbs-mcp.exe` whenever any MCP server is running, and the
+  shim is opened without `FILE_SHARE_DELETE` so rename-aside is refused too.
+  `.mcp.json` on Windows now registers `<sys.executable> -m breadcrumbs mcp
+  serve`, so a running server holds the interpreter rather than a file pip must
+  delete. POSIX keeps the console script. `python -m breadcrumbs mcp serve` was
+  verified against a real MCP client first — same `initialize` handshake and the
+  same 10 tools / 6 resources / 6 prompts as `breadcrumbs-mcp` — since the audit
+  had confirmed only that the module entry point resolved, not that it spoke
+  stdio. The README documents the failure mode and that pip's rollback is clean,
+  so a failed upgrade is not a broken install.
+
 ## [0.1.11] — 2026-08-16
 
 Triage of the 0.1.10 production field test (a full working session in a real
