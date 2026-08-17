@@ -173,6 +173,27 @@ evidence:
     ref: npm test
 ```
 
+### Type-specific keys
+
+A record type may carry extra frontmatter beyond the canonical block above. These
+are **additive and optional** — a reader that does not know a key ignores it, and
+the writer preserves unknown keys on re-render (a status change never drops a key
+it did not author), so introducing one is not a `schema_version` change.
+
+| key | on | meaning |
+|---|---|---|
+| `subject`, `outcome`, `method` | verification | what was checked, what was found (`fixed`/`open`/`regressed`/`not_applicable`/`inconclusive`), and how (`static`/`runtime`/`test`) |
+| `host_session` | session | present on **machine snapshots only**: a 12-hex-character digest of the harness session id, the key that lets one host session's repeated `Stop` firings coalesce into a single record instead of one per turn |
+
+`host_session` stores a **digest, never the raw id**, and only equality is ever
+tested against it. Harness session ids are opaque high-entropy tokens; session
+records are committed under the default `full` policy; and `scan-secrets` — the
+check that gates commits — flags any 32+ character separator-free alphanumeric run
+as a possible secret. Writing the id verbatim made the tool fail its own blocking
+check on a value it had written itself, so a harness whose ids carry no `_` or `-`
+blocked every commit in the store. Keeping the harness token out of committed
+history is a fair second reason.
+
 **`evidence:` is the only evidence store.** There is no shared ledger file. Every
 consumer reads this field: `resume` derives *Likely Relevant Files* from `file`/
 `path` refs and *Verification Commands* from `command`/`test` refs, `guard` quotes

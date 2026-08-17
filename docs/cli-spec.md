@@ -282,6 +282,22 @@ Behavior (deltas from `search` — everything there applies here too):
   Until 0.1.11 a keyword-only *trap* match floored `READ_FIRST` unconditionally;
   in a store whose vocabulary overlaps the codebase that made one trap fire on
   every edit of a session (the 0.1.10 field test's 13-for-13).
+- **Stance caps what a record may demand, and the band is per match.** Each match
+  carries a `stance`: `blocking` (an attempt with an explicit *Do Not Retry
+  Unless* — the only structural statement of opposition the schema has) may reach
+  `PAUSE`; `advisory` (trap, decision, verification, open question) is capped at
+  `READ_FIRST`. The score band is evaluated per match under that ceiling rather
+  than once from the highest score in the whole result set. Before this, overlap
+  alone set the verdict for the whole result set, so a record that merely
+  *documented* an area escalated as hard as one that *opposed* the action: the
+  0.1.11 field audit's trap on `ConversationDao.kt`, whose `Safe approach:`
+  prescribed the fix, returned `PAUSE` on all five edits implementing that
+  prescribed fix. To make a record hard-stop an action, record it as
+  `crumb remember attempt --do-not-retry "…"`.
+- **A high-impact action class still escalates past both ceilings.** `deletion` /
+  `migration` / `external_side_effect` colliding with any live match escalates to
+  `ASK_HUMAN`. That is a property of the action's blast radius, not of a record,
+  so stance does not cap it.
 - **Staleness on the guard path is risks-only.** Only abnormal states — cold
   handoff (`⚠`), detached HEAD, handoff branch mismatch — ride along with a
   verdict. The routine store facts (fresh handoff age, aged records, low

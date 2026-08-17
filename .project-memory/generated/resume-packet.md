@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 69f3189 | inputs_hash: 56ac81c3dbd6 | generated_at: 2026-08-17T03:55:46+00:00 -->
+<!-- source_commit: 973a352 | inputs_hash: d95d38729353 | generated_at: 2026-08-17T15:49:32+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/crumb-kit-audit-review-x5b51n` · commit `69f3189` · 3 uncommitted file(s)
+branch `claude/crumb-kit-audit-review-x5b51n` · commit `973a352` · 5 uncommitted file(s)
 
 ## Current Focus
 Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
@@ -15,9 +15,11 @@ Decide on the two open F-1 follow-ups: (a) whether traps need an explicit blocki
 
 ## Landed Since The Handoff Was Written
 _(check Current Focus / Next Action against these before redoing work)_
+- 973a352 memory: correct the MCP coverage trap — CI does test the [mcp] extra
 - 69f3189 fix: guard stops punishing the behaviour it exists to encourage
 
 ## Active Decisions
+- `dec_20260817_host-session-stores-a-digest-of-the-harness-session-id` — Session snapshots store sha256(session_id)[:12] in host_session. Only equality is ever tested, so the raw id is never needed.
 - `dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval` — A match's stance decides its verdict ceiling: blocking (an attempt with an explicit Do Not Retry Unless) may reach PAUSE; advisory (trap, decision, verification, open question) is capped at READ_FIRST. The score band is applied per match rather than once from the best score across all matches.
 - `dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one` — The record words do not fit. The dominant way a question retires is that somebody answered it, and no lifecycle value says that — marking an answered question 'stale' records the opposite of what happened. The codebase already has this shape: a verification's outcome is deliberately not its status, for the same reason. The id decides which vocabulary applies and a mismatch is rejected by name, so the two never silently cross.
 - `dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them` — Reusing VALID_STATUS through the existing mark-status entry point keeps one vocabulary and one writer, and gives the MCP memory_mark_status tool the same reach with no new code. search already printed [active] for traps, so the vocabulary was implied by the UI before it existed in the file.
@@ -58,6 +60,7 @@ _(none recorded)_
 - `ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence` — hook guard escalates on edits to files named by --evidence file: **fixed** · test
 
 ## Verification Commands
+- python -m unittest tests.test_hooks.HostSessionDigestTests
 - python -m unittest tests.test_guard
 - python -m build --wheel
 - python crumb.py validate
@@ -65,7 +68,7 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 2 commit(s) behind current HEAD.
 - 9 record(s) written on other branches than 'claude/crumb-kit-audit-review-x5b51n': dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one (on 'claude/trap-retirement-mark-status-o64qqs'), dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them (on 'claude/trap-retirement-mark-status-o64qqs'), dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 (on 'claude/crumb-kit-0.1.10-triage-l3qo5a'), dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword (on 'claude/crumb-kit-0.1.10-triage-l3qo5a'), dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo (on 'claude/release-run-failures-gcuil8') (+4 more).
 - possible drift: `ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically` recorded "python -m breadcrumbs mcp serve speaks MCP stdio identically to the breadcrumbs-mcp console script" as **fixed** on 2026-08-17, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260816_release-0-1-10-blocked-by-pypi-invalid-publisher-fixed` recorded "release 0.1.10 blocked by PyPI invalid-publisher" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.

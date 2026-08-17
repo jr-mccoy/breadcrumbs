@@ -3261,6 +3261,29 @@ def _last_session_commit(memory_dir: Path, exclude: Path | None = None) -> str |
 # rewritten.
 COALESCE_WINDOW_MINUTES = 90
 
+# Length of the stored `host_session` digest. Coalescing only ever *compares* two
+# host session ids, never reads one back, so the raw id is stored as a short
+# digest instead of verbatim. That is not tidiness — a raw id is a correctness
+# bug. Harness session ids are opaque high-entropy tokens, session records are
+# committed under the default `full` policy, and `scan-secrets` (which gates
+# commits) flags any 32+ character separator-free alphanumeric run as a possible
+# secret. Writing the id verbatim made the tool fail its own blocking check on a
+# value it wrote itself: a harness whose ids lack a `_`/`-` would block every
+# commit in the user's store, with the fix buried in a generated field nobody
+# would think to look at. Claude Code's own `session_<24 chars>` form escapes only
+# because the underscore breaks the scanner's word boundary — an accident, not a
+# guarantee. 12 hex characters cannot reach the threshold, and keeping the harness
+# token out of committed history is a fair side benefit.
+HOST_SESSION_DIGEST_CHARS = 12
+
+
+def host_session_key(session_id: str | None) -> str | None:
+    """Stable, scan-safe equality key for a harness session id."""
+    sid = (str(session_id) if session_id is not None else "").strip()
+    if not sid:
+        return None
+    return hashlib.sha256(sid.encode("utf-8")).hexdigest()[:HOST_SESSION_DIGEST_CHARS]
+
 
 def _is_machine_snapshot(rec: Record) -> bool:
     """True for a Stop-hook snapshot: placeholder Next Action, no narrative."""
@@ -3272,14 +3295,18 @@ def _is_machine_snapshot(rec: Record) -> bool:
 def _coalescible_snapshot(
     memory_dir: Path,
     root: Path,
-    host_session: str | None,
+    session_key: str | None,
     *,
     window_minutes: int = COALESCE_WINDOW_MINUTES,
 ) -> Record | None:
     """The machine snapshot this capture should overwrite, or None to write anew.
 
+    `session_key` is a `host_session_key()` digest, not a raw harness id — the
+    stored field is a digest, so the comparison has to be made on the same side
+    of the hash.
+
     Two ways to be "the same session", in order of confidence:
-      1. Same host session id — exact, when the harness supplies one.
+      1. Same host session key — exact, when the harness supplies an id.
       2. Same branch, within `window_minutes` — the fallback for a payload with
          no session id. Deliberately not keyed on commit as well: a session that
          commits between two Stops is the *common* case, and refusing to coalesce
@@ -3290,9 +3317,9 @@ def _coalescible_snapshot(
         return None
 
     recorded = rec.meta.get("host_session")
-    if host_session and recorded:
-        return rec if str(recorded) == str(host_session) else None
-    if recorded and not host_session:
+    if session_key and recorded:
+        return rec if str(recorded) == str(session_key) else None
+    if recorded and not session_key:
         # The snapshot knows which session it belongs to and this firing does
         # not — coalescing would risk folding two sessions together.
         return None
@@ -3488,9 +3515,11 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     # F-6: only a machine snapshot coalesces, and only into the *same* session's
     # previous snapshot. `--fast` is the Stop hook's path; an interactive or
     # `--set`-driven capture is authored content and always gets its own record.
-    host_session = getattr(args, "host_session", None)
+    # Digested once, here, so the stored field and every comparison against it are
+    # the same value — and so a raw harness token never reaches a committed record.
+    session_key = host_session_key(getattr(args, "host_session", None))
     coalesce = (
-        _coalescible_snapshot(memory_dir, root, host_session)
+        _coalescible_snapshot(memory_dir, root, session_key)
         if (
             getattr(args, "fast", False)
             and not args.set
@@ -3557,7 +3586,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
             )
             return 1
     else:
-        extra = {"host_session": host_session} if host_session else None
+        extra = {"host_session": session_key} if session_key else None
         path, meta = write_record(
             memory_dir, root, "session", title, sections, agent=args.agent, extra=extra
         )
@@ -8400,9 +8429,11 @@ def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> None:
     summarized). The Next Action is placeholder text (`_is_placeholder` knows
     it), so this capture cannot clobber a Next Action / Focus a human set.
 
-    `host_session` is the harness's session id from the Stop payload. It is what
-    lets the second and later firings of one session update the first firing's
-    snapshot instead of stacking a new record beside it (F-6)."""
+    `host_session` is the harness's raw session id from the Stop payload. It is
+    what lets the second and later firings of one session update the first
+    firing's snapshot instead of stacking a new record beside it (F-6). The raw id
+    is passed through here and digested by `cmd_capture_session`; only the digest
+    is ever written to a record."""
     ns = argparse.Namespace(
         project=str(root),
         json=True,

@@ -661,7 +661,8 @@ class SnapshotCoalescingTests(unittest.TestCase):
             self.assertEqual([p.name for p in self._sessions(mem)], [first[0].name])
             meta = self._meta(first[0])
             self.assertIn("w2.txt", meta.get("dirty_files") or [])
-            self.assertEqual(meta.get("host_session"), "sess-abc")
+            # Stored as a scan-safe digest, never the raw harness token.
+            self.assertEqual(meta.get("host_session"), crumb.host_session_key("sess-abc"))
 
     def test_coalescing_keeps_the_first_firings_identity(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -691,7 +692,7 @@ class SnapshotCoalescingTests(unittest.TestCase):
             self.assertEqual(len(self._sessions(mem)), 2)
             self.assertEqual(
                 sorted(self._meta(p).get("host_session") for p in self._sessions(mem)),
-                ["sess-one", "sess-two"],
+                sorted(crumb.host_session_key(s) for s in ("sess-one", "sess-two")),
             )
 
     def test_an_authored_capture_is_never_overwritten(self):
@@ -767,6 +768,63 @@ class SnapshotCoalescingTests(unittest.TestCase):
                 (root / f"turn{n}.txt").write_text("x\n")
                 run_hook("capture", {**sid, "stop_hook_active": True})
             self.assertEqual(len(self._sessions(mem)), 1, self._sessions(mem))
+
+
+class HostSessionDigestTests(unittest.TestCase):
+    """A harness session id must never be written to a record verbatim.
+
+    Regression: `host_session` originally stored the raw id. Harness session ids
+    are opaque high-entropy tokens, session records are committed under the
+    default `full` policy, and `scan-secrets` — the check that gates commits —
+    flags any 32+ character separator-free alphanumeric run as a possible secret.
+    So the tool failed its own blocking check on a value it had written itself:
+    with a harness whose ids carry no `_` or `-`, every commit in the user's store
+    was blocked, and the cause sat in a generated field nobody would think to
+    inspect. Claude Code's own `session_<24 chars>` form escaped only because the
+    underscore breaks the scanner's word boundary — luck, not design.
+
+    Only equality is ever needed, so a short digest is stored instead.
+    """
+
+    OPAQUE = "aB3xQ9zR7mK2wL5vN8pT4yH6jF1dS0gC7bV9nM3qW5eZ"  # 44 chars, no separators
+
+    def test_the_raw_id_would_have_tripped_the_secret_scan(self):
+        # Pins the hazard itself, so the fix cannot be reverted as pointless.
+        self.assertTrue(crumb._looks_high_entropy(self.OPAQUE))
+
+    def test_the_digest_does_not(self):
+        self.assertFalse(crumb._looks_high_entropy(crumb.host_session_key(self.OPAQUE)))
+
+    def test_a_worst_case_session_id_leaves_the_store_committable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            run_hook("capture", {"cwd": str(root), "session_id": self.OPAQUE})
+
+            record = sorted((mem / "sessions").glob("*.md"))[0]
+            body = record.read_text(encoding="utf-8")
+            self.assertNotIn(self.OPAQUE, body, "the raw harness id must not be stored")
+            self.assertIn(crumb.host_session_key(self.OPAQUE), body)
+
+            # The two gates that would have blocked every commit.
+            self.assertEqual(crumb.scan_secrets(mem), [])
+            self.assertEqual(
+                [f for f in crumb.run_audit(mem, root) if f["severity"] == crumb.AUDIT_FAIL], []
+            )
+
+    def test_the_digest_is_stable_and_distinct(self):
+        self.assertEqual(crumb.host_session_key("s-1"), crumb.host_session_key("s-1"))
+        self.assertNotEqual(crumb.host_session_key("s-1"), crumb.host_session_key("s-2"))
+
+    def test_no_id_stores_no_field(self):
+        for empty in (None, "", "   "):
+            self.assertIsNone(crumb.host_session_key(empty))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            run_hook("capture", {"cwd": str(root)})  # payload with no session_id
+            record = sorted((mem / "sessions").glob("*.md"))[0]
+            self.assertNotIn("host_session:", record.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
