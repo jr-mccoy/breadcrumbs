@@ -1,17 +1,21 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: c1a4b38 | inputs_hash: 19be01b323e0 | generated_at: 2026-08-18T18:35:11+00:00 -->
+<!-- source_commit: fcc7139 | inputs_hash: b6c19c0a53e9 | generated_at: 2026-08-18T18:46:42+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/resume-portfolio-readiness-ywdfiw` · commit `c1a4b38` · 3 uncommitted file(s)
+branch `claude/resume-portfolio-readiness-ywdfiw` · commit `fcc7139` · 2 uncommitted file(s)
 
 ## Current Focus
 Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
 
 ## Next Action
 Release 0.1.12: run 'gh workflow run release.yml --ref main -f mode=dry-run' from main, confirm clean, then mode=publish. PyPI latest is still 0.1.11 while __version__ and the dated CHANGELOG section say 0.1.12. Then set the repo About homepage to the PyPI project page, and triage the four open issues (#5-#8, untouched since June).
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- fcc7139 memory: record the portfolio-readiness session handoff
 
 ## Active Decisions
 - `dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned` — A hand-maintained version literal in prose is the same defect the project already removed from pyproject.toml and cli.py; it went four releases stale precisely because nothing checked it. Badge link targets must be absolute because README.md is also the PyPI long description, where a relative href resolves to nothing. GitHub's native badge.svg endpoint could not be verified from this environment (403 through the proxy), so every badge URL used was one that returned 200 and the expected aria-label.
@@ -37,6 +41,7 @@ _(none recorded)_
 - trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
 - trap_a-record-s-remedy-fields-are-mined-for-file-paths: A record's remedy fields are mined for file paths and become its blast radius
 - trap_a-hand-written-version-literal-in-prose-drifts-silently: A hand-written version literal in prose drifts silently
+- trap_a-bare-n-in-a-commit-message-links-an-issue-but-never: A bare (#N) in a commit message links an issue but never closes it
 
 ## Open Questions / Blockers
 - Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
@@ -73,7 +78,7 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
 - 12 record(s) written on other branches than 'claude/resume-portfolio-readiness-ywdfiw': dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode (on 'claude/crumb-permission-override-pyxru7'), dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap (on 'claude/crumb-permission-override-pyxru7'), dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval (on 'claude/crumb-kit-audit-review-x5b51n'), dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one (on 'claude/trap-retirement-mark-status-o64qqs'), dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them (on 'claude/trap-retirement-mark-status-o64qqs') (+7 more).
 - possible drift: `ver_20260818_remember-set-validates-section-headings-exactly-as-capture` recorded "remember --set validates section headings exactly as capture session does" as **fixed** on 2026-08-18, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260818_crumb-mark-status-can-retire-a-trap-in-0-1-11-fixed` recorded "crumb mark-status can retire a trap in 0.1.11" as **fixed** on 2026-08-18, but Current Focus / Next Action still claims that work — re-check before redoing it.

@@ -64,7 +64,13 @@ usually wants a fixture.
 2. Make the change, add tests, and run `python -m unittest discover -s tests`
    plus `ruff check . && ruff format --check .`.
 3. Add a `CHANGELOG.md` entry under `[Unreleased]`.
-4. Open a PR describing what broke or what is now possible. CI runs the suite on
+4. **If the change fixes a tracked issue, write `Fixes #N` (or `Closes #N`) on
+   its own line in the commit message or the PR description** — not a bare
+   `(#N)`. GitHub only auto-closes on the keyword form; a parenthetical merely
+   links. Issues #5–#8 were all fixed the day after they were filed and then sat
+   open for seven weeks, advertising bugs that no longer existed, purely because
+   the fix commits wrote `(#5)` instead of `Fixes #5`.
+5. Open a PR describing what broke or what is now possible. CI runs the suite on
    Python 3.9–3.14, the MCP server against both SDK majors, and a full
    packaging/install smoke test; all of it must be green.
 
