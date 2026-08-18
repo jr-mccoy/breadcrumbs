@@ -1288,3 +1288,169 @@ class StanceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class RemedyIsNotBlastRadiusTests(unittest.TestCase):
+    """A trap's cure must not become evidence that the trap is about your action.
+
+    Stance (above) stopped a documented hazard from *blocking* its own fix. The
+    same conflation still lived one layer down, in retrieval: `_paths_from_text`
+    mined path-like tokens out of the whole trap block, so a trap whose
+    `Verification:` was `./gradlew test` and whose `Safe approach:` said
+    `withContext(Dispatchers.IO)` registered `./gradlew`, `gradlew` and
+    `Dispatchers.IO` as tracked *files* — the strongest signal guard has
+    (GUARD_W_FILE), and the one deliberately exempted from the anti-noise
+    ubiquity gate on the grounds that file references are author-curated.
+    Scraped prescriptions are not curated, and they point at the cure rather
+    than the fragile area, so every gradle invocation in the repo matched — a
+    read-only `./gradlew --status` included.
+    """
+
+    def _store(self, tmp: str) -> Path:
+        root = make_repo(tmp)
+        crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        code, _ = run(
+            [
+                "note",
+                "trap",
+                "ConversationDao writes on the main thread causing ANR",
+                "--project",
+                str(root),
+                "--area",
+                "app/src/ConversationDao.kt",
+                "--symptom",
+                "ANR on save",
+                "--why",
+                "no dispatcher",
+                "--safe",
+                "wrap in withContext(Dispatchers.IO)",
+                "--verify",
+                "./gradlew test",
+            ]
+        )
+        self.assertEqual(code, 0)
+        return root
+
+    def test_remedy_paths_are_not_file_signals(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            traps = cli.load_traps(Path(root) / crumb.MEMORY_DIRNAME)
+            self.assertEqual(len(traps), 1)
+            files = cli._item_from_trap(traps[0])["files"]
+            self.assertIn("app/src/ConversationDao.kt", files)
+            for cure in ("./gradlew", "gradlew", "Dispatchers.IO"):
+                self.assertNotIn(cure, files, f"{cure} came from the remedy, not the hazard")
+
+    def test_running_the_traps_own_verify_command_is_not_a_match(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            res = guard_json(["guard", "./gradlew --status", "--project", str(root)])
+            self.assertEqual(res["verdict"], "PROCEED", res)
+
+    def test_the_real_hazard_still_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            res = guard_json(
+                [
+                    "guard",
+                    "edit app/src/ConversationDao.kt: add a save() call",
+                    "--files",
+                    "app/src/ConversationDao.kt",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertEqual(res["verdict"], "READ_FIRST", res)
+
+    def test_a_records_own_verification_command_is_not_a_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+            code, _ = run(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "Reconciliation runs nightly",
+                    "--set",
+                    "Decision",
+                    "run the reconciler on a nightly cron",
+                    "--evidence",
+                    "file",
+                    "src/billing.py",
+                    "--evidence",
+                    "test",
+                    "pytest tests/reconcile",
+                ]
+            )
+            self.assertEqual(code, 0)
+            recs = cli.load_records(Path(root) / crumb.MEMORY_DIRNAME, types=("decision",))
+            files = cli._item_from_record(recs[0])["files"]
+            self.assertIn("src/billing.py", files)
+            self.assertNotIn("tests/reconcile", files)
+
+
+class DestructiveActionTests(unittest.TestCase):
+    """Blast radius is its own axis, and it must be able to raise a verdict.
+
+    Guard scored only retrieval overlap, so interruption frequency tracked how
+    much of the repo the store happened to cite. Measured on a real store, `rm`
+    of two cited docs escalated to a prompt while `git push --force origin main`
+    — which rewrites shared history — stayed advisory, because the keyword
+    action classes know "delete" but not the irreversible shell shapes.
+    """
+
+    def _store(self, tmp: str) -> Path:
+        root = make_repo(tmp)
+        crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        code, _ = run(
+            [
+                "remember",
+                "decision",
+                "--project",
+                str(root),
+                "--title",
+                "main is the protected release branch",
+                "--set",
+                "Decision",
+                "release tags are cut from main by the workflow",
+                "--tags",
+                "release",
+                "--evidence",
+                "file",
+                "src/release.py",
+            ]
+        )
+        self.assertEqual(code, 0)
+        return root
+
+    def test_force_push_over_recorded_memory_escalates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            res = guard_json(
+                [
+                    "guard",
+                    "git push --force origin main to redo the release",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertTrue(res["destructive"], res)
+            self.assertEqual(res["verdict"], "ASK_HUMAN", res)
+
+    def test_destructive_is_reported_independently_of_the_verdict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            # No memory collision: still destructive, but guard reports on the
+            # store and has nothing to say, so the verdict stays PROCEED.
+            res = guard_json(["guard", "rm -rf /tmp/unrelated-scratch", "--project", str(root)])
+            self.assertTrue(res["destructive"], res)
+            self.assertEqual(res["verdict"], "PROCEED", res)
+
+    def test_a_read_only_command_is_not_destructive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            res = guard_json(["guard", "git diff --stat", "--project", str(root)])
+            self.assertFalse(res["destructive"], res)

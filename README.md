@@ -453,6 +453,13 @@ piece is independent:
     allows nor denies. `PROCEED`→silent, `READ_FIRST`→the matched records as
     context with the normal permission flow untouched, `PAUSE`/`ASK_HUMAN`→ask,
     with the reason.
+
+    **It will not re-raise a prompt you have opted out of.** The hook reads the
+    session's `permission_mode`, and under `bypassPermissions`
+    (`--dangerously-skip-permissions`) or `dontAsk` it emits no permission
+    decision at all — the matched records still arrive as context, but the
+    interruption you turned off stays off. Set `CRUMB_GUARD_ADVISORY=1` to get
+    that advisory-only shape in *every* mode.
   - `Stop → crumb hook capture` snapshots a session record when the turn ends —
     once per unit of work, not once per turn: a firing is skipped when the HEAD
     commit and dirty-file set are unchanged since the newest session record, and

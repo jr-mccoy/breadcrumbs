@@ -5,14 +5,75 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
-## [Unreleased]
+## [0.1.12] — 2026-08-18
 
 Triage of the 0.1.11 field audit (one working session on Windows 11 / Python
-3.13, ~276-check store, 101 session records). The audit's own framing holds up:
-the findings are about **signal-to-noise in `guard`** and **write-time
-ergonomics**, not about correctness of the store.
+3.13, ~276-check store, 101 session records), plus a second report from the same
+downstream repo one session later. The audits' shared framing holds up: the
+findings are about **signal-to-noise in `guard`** and **write-time ergonomics**,
+not about correctness of the store. The second report adds the one finding that
+is not about noise at all — `hook guard` was overriding the user's permission
+mode — and it reached us only because the reporter went looking; the affected
+repo had already worked around it in silence.
 
 ### Fixed
+
+- **`crumb hook guard` no longer overrides the session's permission mode.** On a
+  `PAUSE`/`ASK_HUMAN` verdict the hook emitted `permissionDecision: "ask"`
+  unconditionally, and a hook-issued decision outranks the session's mode — so a
+  session deliberately started under `bypassPermissions`
+  (`--dangerously-skip-permissions`) or `dontAsk` got approval prompts back for
+  its whole life. The harness hands every hook the current mode in
+  `permission_mode`; nothing read it. Under a non-prompting mode the hook now
+  emits **no** permission decision, and the matched records arrive as
+  `additionalContext` instead: the warning survives, the interruption the user
+  turned off stays off. `acceptEdits` is deliberately not in that set — it
+  auto-accepts edits, not destructive shell commands.
+
+  This was found the hard way in a downstream repo, where the hook was wrapped
+  in a `sed` filter that stripped our decision keys back out and rewrote the
+  payload into the advisory shape — built in the wrapper rather than in
+  site-packages specifically so `pip install -U crumb-kit` could not undo it.
+  A user armouring a workaround against our upgrades is the clearest statement
+  available that the default was wrong. `CRUMB_GUARD_ADVISORY=1` now gets the
+  same advisory-only shape in every mode, so nobody has to rewrite our JSON.
+
+- **A record's own remedy is no longer scored as its blast radius.** The stance
+  fix above stopped a documented hazard from *blocking* its own fix; the same
+  conflation still lived one layer down in retrieval. `_paths_from_text` mined
+  path-like tokens out of the entire trap block, so a trap whose
+  `Verification:` was `./gradlew test` and whose `Safe approach:` said
+  `withContext(Dispatchers.IO)` registered `./gradlew`, `gradlew` **and**
+  `Dispatchers.IO` as tracked files — `GUARD_W_FILE`, the strongest signal
+  guard has, and the one deliberately exempt from the anti-noise ubiquity gate
+  on the grounds that file references are *author-curated*. Text scraped out of
+  a prescription is not curated, and it names the cure rather than the fragile
+  area, so every gradle invocation in the repo matched that trap, including a
+  read-only `./gradlew --status`. File signal for a trap is now mined from the
+  hazard half of the block only (`Area / files:`, `Symptom:`, `Why:`), and a
+  record no longer treats paths inside its own `--evidence command/test` refs as
+  file references. Keyword matching still sees the whole record: a remedy is
+  weak evidence at `GUARD_W_KEYWORD` (1), not decisive evidence at 6.
+
+- **Blast radius is scored as its own axis, and can raise a verdict.** Guard
+  ranked only retrieval overlap, so how often a human got interrupted tracked
+  how much of the repo the store happened to cite — a number that only grows and
+  that says nothing about how hard an action is to undo. Measured on a real
+  store: `rm` of two cited docs escalated to a prompt while `git push --force
+  origin main` stayed advisory, because the keyword action classes know
+  `delete`/`migrate`/`deploy` but not the irreversible shell forms. The
+  destructive-op regex that already existed as a hook *pre-filter* — and was
+  then thrown away — is now `guard()["destructive"]`, reported in the JSON and
+  folded into the `ASK_HUMAN` escalation alongside the high-impact classes.
+  It still requires an existing memory collision to escalate: guard reports on
+  the store, and an action nothing in memory touches is not guard's to judge.
+
+  Gating the *prompt* on destructiveness was tried and reverted. By the time a
+  verdict reaches `PAUSE`/`ASK_HUMAN` it is already either a `blocking` match —
+  an attempt someone wrote with an explicit *Do Not Retry Unless* — or a
+  high-impact action class. The first is an authored instruction to stop rather
+  than an inference from overlap, and suppressing it would silence the one
+  channel the schema gives an author for saying "not this again".
 
 - **`guard` no longer PAUSEs on a trap's own remediation (F-1, F-2).** The
   verdict was driven by retrieval overlap — shared files, shared keywords, title
@@ -38,6 +99,16 @@ ergonomics**, not about correctness of the store.
   failed attempt or active constraint" for any topical match.
 
 ### Added
+
+- **`crumb note question|trap|idea` accepts `--title` for the summary.** The
+  positional stays, and is still what the docs show; `--title` is now the same
+  argument by the other name. `remember` takes `--title`, `note` took a bare
+  positional, and an agent that has just written a decision reaches for
+  `--title` on the very next call — earning `unrecognized arguments: --title`,
+  a correct exit 2 that names no alternative. Passing both, or neither, is now
+  a named error that shows both spellings. The record shapes stay different on
+  purpose (a trap's fields are fixed, a decision's are open `--set` sections);
+  only the summary's name is unified.
 
 - **`audit`'s `[unreachable]` check now also runs at write time (F-4).** A
   record with no tags and no file evidence is reachable only by generic keyword

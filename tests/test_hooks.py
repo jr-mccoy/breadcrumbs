@@ -771,3 +771,93 @@ class SnapshotCoalescingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HookGuardPermissionModeTests(unittest.TestCase):
+    """The hook must never reinstate a prompt the user opted out of.
+
+    `crumb hook guard` used to emit `permissionDecision: "ask"` on every
+    PAUSE/ASK_HUMAN regardless of the session's permission mode, so a session
+    run under `bypassPermissions` got approval prompts back — a decision the
+    tool has no standing to make. The warning is still delivered; only the
+    interruption is withheld.
+    """
+
+    def _blocking_store(self, tmp: str) -> Path:
+        root = make_repo(tmp)
+        init_store(root)
+        crumb.main(
+            [
+                "remember",
+                "attempt",
+                "--project",
+                str(root),
+                "--title",
+                "Batched the billing reconciler writes",
+                "--problem",
+                "slow reconciliation",
+                "--tried",
+                "batching",
+                "--result",
+                "double-charged customers in staging",
+                "--do-not-retry",
+                "an idempotency key exists",
+                "--evidence",
+                "file",
+                "src/billing.py",
+            ]
+        )
+        return root
+
+    def _payload(self, root: Path, mode: str | None, session_id: str = "s1") -> dict:
+        p = {
+            "cwd": str(root),
+            "session_id": session_id,
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "src/billing.py"},
+        }
+        if mode is not None:
+            p["permission_mode"] = mode
+        return p
+
+    def test_default_mode_still_prompts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._blocking_store(tmp)
+            hso = run_hook("guard", self._payload(root, "default")).get("hookSpecificOutput") or {}
+            self.assertEqual(hso.get("permissionDecision"), "ask")
+
+    def test_missing_permission_mode_still_prompts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._blocking_store(tmp)
+            hso = run_hook("guard", self._payload(root, None)).get("hookSpecificOutput") or {}
+            self.assertEqual(hso.get("permissionDecision"), "ask")
+
+    def test_non_prompting_modes_downgrade_to_context(self):
+        for mode in ("bypassPermissions", "dontAsk"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                root = self._blocking_store(tmp)
+                out = run_hook("guard", self._payload(root, mode))
+                hso = out.get("hookSpecificOutput") or {}
+                self.assertIsNone(hso.get("permissionDecision"), out)
+                self.assertIsNone(hso.get("permissionDecisionReason"), out)
+                # The warning itself must survive — this is a downgrade, not a drop.
+                self.assertIn("guard", hso.get("additionalContext", ""), out)
+
+    def test_accept_edits_still_prompts(self):
+        # acceptEdits auto-accepts edits only; it is not a blanket "never ask".
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._blocking_store(tmp)
+            hso = (
+                run_hook("guard", self._payload(root, "acceptEdits")).get("hookSpecificOutput")
+                or {}
+            )
+            self.assertEqual(hso.get("permissionDecision"), "ask")
+
+    def test_advisory_env_var_downgrades_in_any_mode(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._blocking_store(tmp)
+            with mock.patch.dict("os.environ", {"CRUMB_GUARD_ADVISORY": "1"}):
+                out = run_hook("guard", self._payload(root, "default"))
+            hso = out.get("hookSpecificOutput") or {}
+            self.assertIsNone(hso.get("permissionDecision"), out)
+            self.assertIn("guard", hso.get("additionalContext", ""), out)

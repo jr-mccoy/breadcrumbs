@@ -39,3 +39,11 @@ a future session avoid a real, repeatable mistake._
 - Safe approach: run a session that exercises the MCP tools specifically before the next release; the CLI-side test suite does not cover the SDK wiring (its MCP tests skip without the extra installed)
 - Verification: python -m unittest tests.test_mcp with the [mcp] extra installed
 - Status: active
+
+## trap_a-record-s-remedy-fields-are-mined-for-file-paths: A record's remedy fields are mined for file paths and become its blast radius
+- Area / files: breadcrumbs/cli.py _item_from_trap / _item_from_record
+- Symptom: A trap fires on commands that have nothing to do with its hazard — a trap whose Verification was './gradlew test' matched every gradle invocation in the repo, read-only './gradlew --status' included.
+- Why: _paths_from_text mines path-like tokens from the WHOLE record body, including the Safe approach and Verification bullets. Those tokens then score GUARD_W_FILE (6) — the strongest signal, and the one exempted from the ubiquity gate because file references are 'author-curated'. Scraped prescriptions are not curated and name the cure, not the fragile area.
+- Safe approach: Mine file signal from the hazard half only; keep the remedy as weak keyword evidence at GUARD_W_KEYWORD (1).
+- Verification: python -m unittest tests.test_guard
+- Status: active
