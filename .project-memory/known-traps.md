@@ -47,3 +47,19 @@ a future session avoid a real, repeatable mistake._
 - Safe approach: Mine file signal from the hazard half only; keep the remedy as weak keyword evidence at GUARD_W_KEYWORD (1).
 - Verification: python -m unittest tests.test_guard
 - Status: active
+
+## trap_a-hand-written-version-literal-in-prose-drifts-silently: A hand-written version literal in prose drifts silently
+- Area / files: README.md (Status section); any doc that restates the package version
+- Symptom: README's Status section claimed the checkout was 0.1.8 while breadcrumbs/__init__.py said 0.1.12 — four releases of drift, invisible to CI, tests, validate and audit alike.
+- Why: The single-source-of-truth design covers pyproject.toml and cli.py, which READ __version__. Prose does not read anything: a version written into a sentence is a copy, and nothing in the bench compares that copy against the source. Release only bumps the one line it is told to.
+- Safe approach: Do not restate the version in prose. Point readers at 'crumb --version' and the top section of CHANGELOG.md, so the text stays true at any version.
+- Verification: grep -n '0\.1\.[0-9]' README.md # should return nothing
+- Status: active
+
+## trap_a-bare-n-in-a-commit-message-links-an-issue-but-never: A bare (#N) in a commit message links an issue but never closes it
+- Area / files: commit messages, PR descriptions; .github/ has no automation for this
+- Symptom: Issues #5-#8 were fixed on 2026-06-27, one day after being filed, by commits titled 'fix(secrets): flag labeled hex tokens (#5)' and siblings. All four stayed OPEN for seven weeks, publicly advertising bugs that no longer existed, until a portfolio review re-checked them against the code.
+- Why: GitHub auto-closes only on a closing keyword — 'Fixes #N' / 'Closes #N' / 'Resolves #N'. A parenthetical '(#N)' creates a cross-reference link and nothing more. The link makes the commit look connected, which is exactly why nobody notices the issue never closed.
+- Safe approach: Write 'Fixes #N' on its own line in the commit message or PR body. Documented in CONTRIBUTING.md under Submitting. When closing late, comment with the fix commit and what shipped rather than closing silently.
+- Verification: gh issue list --state open # every open issue should describe a bug that still reproduces
+- Status: active

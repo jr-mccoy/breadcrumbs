@@ -18,6 +18,16 @@ classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
+    # Per-version classifiers, not just ":: 3" — these are what the PyPI page and
+    # the README's pyversions badge read, and with only the bare "3" the badge
+    # rendered "python: 3" while CI was proving 3.9 through 3.14. Keep this list
+    # in step with the `test` matrix in .github/workflows/ci.yml.
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development",
     "Topic :: Utilities",
 ]
@@ -68,8 +78,13 @@ crumb = "breadcrumbs.cli:main"
 breadcrumbs-mcp = "breadcrumbs.mcp_server:main"
 
 [project.urls]
-Homepage = "https://github.com/jumbodaddystack/breadcrumbs"
-Documentation = "https://github.com/jumbodaddystack/breadcrumbs/tree/main/docs"
+# The repo moved from owner `jumbodaddystack` to `jr-mccoy` after 0.1.9. GitHub
+# redirects the old paths, but these strings are what render on the PyPI project
+# page, so they name the current owner directly rather than lean on a redirect.
+Homepage = "https://github.com/jr-mccoy/breadcrumbs"
+Documentation = "https://github.com/jr-mccoy/breadcrumbs/tree/main/docs"
+Changelog = "https://github.com/jr-mccoy/breadcrumbs/blob/main/CHANGELOG.md"
+Issues = "https://github.com/jr-mccoy/breadcrumbs/issues"
 
 [tool.setuptools.dynamic]
 # Read the version literal from breadcrumbs/__init__.py without importing the

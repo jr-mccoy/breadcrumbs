@@ -1,24 +1,24 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: add2115 | inputs_hash: d6b8cc39ceb9 | generated_at: 2026-08-18T05:00:33+00:00 -->
+<!-- source_commit: fcc7139 | inputs_hash: b6c19c0a53e9 | generated_at: 2026-08-18T18:46:42+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/crumb-permission-override-pyxru7` · commit `add2115` · 13 uncommitted file(s)
+branch `claude/resume-portfolio-readiness-ywdfiw` · commit `fcc7139` · 2 uncommitted file(s)
 
 ## Current Focus
 Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
 
 ## Next Action
-Decide on the two open F-1 follow-ups: (a) whether traps need an explicit blocking channel of their own (--blocking on note trap) or whether 'record it as an attempt --do-not-retry' is the answer; (b) whether .mcp.json should carry the absolute sys.executable path on Windows or a portable 'python'. Then triage F-3 (action class does not re-rank retrieval) and F-8 (doctor misses MCP liveness/version skew), both still open.
+Release 0.1.12: run 'gh workflow run release.yml --ref main -f mode=dry-run' from main, confirm clean, then mode=publish. PyPI latest is still 0.1.11 while __version__ and the dated CHANGELOG section say 0.1.12. Then set the repo About homepage to the PyPI project page, and triage the four open issues (#5-#8, untouched since June).
 
 ## Landed Since The Handoff Was Written
 _(check Current Focus / Next Action against these before redoing work)_
-- add2115 Merge pull request #45 from jr-mccoy/claude/crumb-kit-audit-review-x5b51n
-- 69f3189 fix: guard stops punishing the behaviour it exists to encourage
+- fcc7139 memory: record the portfolio-readiness session handoff
 
 ## Active Decisions
+- `dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned` — A hand-maintained version literal in prose is the same defect the project already removed from pyproject.toml and cli.py; it went four releases stale precisely because nothing checked it. Badge link targets must be absolute because README.md is also the PyPI long description, where a relative href resolves to nothing. GitHub's native badge.svg endpoint could not be verified from this environment (403 through the proxy), so every badge URL used was one that returned 200 and the expected aria-label.
 - `dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode` — The contract in our own source is 'memory informs; it never allows or denies on its own'. Re-raising a prompt the user explicitly turned off is deciding for them. A user armouring a workaround against our upgrades is the strongest available evidence the default was wrong.
 - `dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap` — Overlap answers 'is a record about this action'; it has never answered 'how much damage does this do'. Danger belongs on the escalation side where it can raise a verdict, not on the prompt gate where it could only suppress an authored one.
 - `dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval` — A match's stance decides its verdict ceiling: blocking (an attempt with an explicit Do Not Retry Unless) may reach PAUSE; advisory (trap, decision, verification, open question) is capped at READ_FIRST. The score band is applied per match rather than once from the best score across all matches.
@@ -40,11 +40,16 @@ _(none recorded)_
 - trap_guard-exit-code-in-ci: A CI step that calls crumb guard dies on guard's own verdict exit code
 - trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
 - trap_a-record-s-remedy-fields-are-mined-for-file-paths: A record's remedy fields are mined for file paths and become its blast radius
+- trap_a-hand-written-version-literal-in-prose-drifts-silently: A hand-written version literal in prose drifts silently
+- trap_a-bare-n-in-a-commit-message-links-an-issue-but-never: A bare (#N) in a commit message links an issue but never closes it
 
 ## Open Questions / Blockers
 - Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
 
 ## Likely Relevant Files
+- README.md
+- pyproject.toml
+- breadcrumbs/templates/project-memory/README.md
 - breadcrumbs/cli.py
 - tests/test_note.py
 - .github/workflows/release.yml:36
@@ -54,6 +59,7 @@ _(none recorded)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
+- `ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version` — README Status blurb no longer hard-codes a package version: **fixed** · static
 - `ver_20260818_remember-set-validates-section-headings-exactly-as-capture` — remember --set validates section headings exactly as capture session does: **fixed** · test
 - `ver_20260818_crumb-mark-status-can-retire-a-trap-in-0-1-11-fixed` — crumb mark-status can retire a trap in 0.1.11: **fixed** · test
 - `ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically` — python -m breadcrumbs mcp serve speaks MCP stdio identically to the breadcrumbs-mcp console script: **fixed** · runtime
@@ -64,6 +70,7 @@ _(none recorded)_
 - `ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence` — hook guard escalates on edits to files named by --evidence file: **fixed** · test
 
 ## Verification Commands
+- python -m unittest discover -s tests
 - python -m unittest tests.test_hooks
 - python -m unittest tests.test_guard
 - python -m build --wheel
@@ -71,9 +78,8 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 1 day(s) old, written 2 commit(s) behind current HEAD.
-- branch mismatch: handoff was written on 'claude/crumb-kit-audit-review-x5b51n' but HEAD is on 'claude/crumb-permission-override-pyxru7'.
-- 10 record(s) written on other branches than 'claude/crumb-permission-override-pyxru7': dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval (on 'claude/crumb-kit-audit-review-x5b51n'), dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one (on 'claude/trap-retirement-mark-status-o64qqs'), dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them (on 'claude/trap-retirement-mark-status-o64qqs'), dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 (on 'claude/crumb-kit-0.1.10-triage-l3qo5a'), dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword (on 'claude/crumb-kit-0.1.10-triage-l3qo5a') (+5 more).
+- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
+- 12 record(s) written on other branches than 'claude/resume-portfolio-readiness-ywdfiw': dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode (on 'claude/crumb-permission-override-pyxru7'), dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap (on 'claude/crumb-permission-override-pyxru7'), dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval (on 'claude/crumb-kit-audit-review-x5b51n'), dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one (on 'claude/trap-retirement-mark-status-o64qqs'), dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them (on 'claude/trap-retirement-mark-status-o64qqs') (+7 more).
+- possible drift: `ver_20260818_remember-set-validates-section-headings-exactly-as-capture` recorded "remember --set validates section headings exactly as capture session does" as **fixed** on 2026-08-18, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260818_crumb-mark-status-can-retire-a-trap-in-0-1-11-fixed` recorded "crumb mark-status can retire a trap in 0.1.11" as **fixed** on 2026-08-18, but Current Focus / Next Action still claims that work — re-check before redoing it.
-- possible drift: `ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically` recorded "python -m breadcrumbs mcp serve speaks MCP stdio identically to the breadcrumbs-mcp console script" as **fixed** on 2026-08-17, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260816_release-0-1-10-blocked-by-pypi-invalid-publisher-fixed` recorded "release 0.1.10 blocked by PyPI invalid-publisher" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.

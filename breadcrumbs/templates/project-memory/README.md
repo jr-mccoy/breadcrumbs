@@ -1,7 +1,7 @@
 # `.project-memory/` — Project Continuity Memory
 
 This directory is a repo-local, human-readable ledger of durable project state for
-human–agent software work. It is managed by [`breadcrumbs`](https://github.com/jumbodaddystack/breadcrumbs)
+human–agent software work. It is managed by [`breadcrumbs`](https://github.com/jr-mccoy/breadcrumbs)
 but is **plain files first**: any human or agent can read it without the tool.
 
 > **Memory is advisory.** Current user instruction, source code, tests, build
