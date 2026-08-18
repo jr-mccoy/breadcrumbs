@@ -2986,6 +2986,24 @@ def cmd_note(args: argparse.Namespace) -> int:
         _emit_error(args, f"specify a note kind: `crumb note {'|'.join(NOTE_KINDS)}`")
         return 2
 
+    # `remember` takes `--title` and `note` takes a positional, and an agent that
+    # has just written a decision reaches for `--title` on the very next call.
+    # The old failure was `unrecognized arguments: --title …` with an exit 2 —
+    # correct, but it named no alternative, and a multi-line body pushed the
+    # error prefix out of a truncated view. `--title` is now simply the same
+    # argument by the other name.
+    text = (getattr(args, "title", None) or getattr(args, "text", None) or "").strip()
+    if getattr(args, "title", None) and getattr(args, "text", None):
+        _emit_error(args, f"pass the {kind} summary once: either positionally or as --title")
+        return 2
+    if not text:
+        _emit_error(
+            args,
+            f"a {kind} needs a one-line summary: "
+            f'`crumb note {kind} "<summary>"` (or --title "<summary>")',
+        )
+        return 2
+
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
     if not memory_dir.is_dir():
@@ -3017,7 +3035,7 @@ def cmd_note(args: argparse.Namespace) -> int:
         memory_dir,
         root,
         kind,
-        args.text or "",
+        text,
         fields=fields,
         tags=tags,
         agent=getattr(args, "agent", None),
@@ -5256,6 +5274,41 @@ GUARD_HIGH_IMPACT_CLASSES = frozenset({"deletion", "migration", "external_side_e
 GUARD_BLOCKING_CEILING = "PAUSE"
 GUARD_ADVISORY_CEILING = "READ_FIRST"
 
+# ---- blast radius: the second axis (0.1.12 field report, issue 1) ---------- #
+# Retrieval overlap and danger are different questions, and guard answered only
+# the first. This regex already existed as `_HOOK_RISK_RE`, a *pre-filter* that
+# decided whether an action was worth scoring and was then discarded — so the
+# one danger signal in the codebase never reached a verdict or a prompt. It is
+# now a first-class output (`guard()["destructive"]`).
+#
+# Deliberately literal: it names irreversible shell shapes, not vibes. Anything
+# fuzzier belongs in the action classes, which are keyword-driven and already
+# feed the ASK_HUMAN escalation.
+_DESTRUCTIVE_OP_RE = re.compile(
+    r"(?i)(--force\b|force-push|push\s+-f\b|reset\s+--hard|rm\s+-rf|git\s+clean|"
+    r"--stop\b|drop\s+table|truncate\b|--no-verify|branch\s+-D\b)"
+)
+
+# Backwards-compatible alias: the pre-filter call site still reads as "is this
+# worth scoring", which is a different question from "is this dangerous" even
+# though one regex answers both today.
+_HOOK_RISK_RE = _DESTRUCTIVE_OP_RE
+
+
+def _is_destructive(action: str, classes: list[str]) -> bool:
+    """Is this action hard to undo, independent of what memory says about it?
+
+    True for a literal irreversible shell shape (`--force`, `rm -rf`, `reset
+    --hard`, …) or a high-impact action class (deletion / migration / external
+    side effect). Never consults the store: blast radius is a property of the
+    action, and making it depend on how much of the repo the store cites is the
+    conflation this exists to undo.
+    """
+    return bool(_DESTRUCTIVE_OP_RE.search(action or "")) or bool(
+        GUARD_HIGH_IMPACT_CLASSES & set(classes or ())
+    )
+
+
 _VERDICTS = ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN")
 _VERDICT_RANK = {v: i for i, v in enumerate(_VERDICTS)}
 
@@ -5418,6 +5471,31 @@ def _paths_from_text(text: str) -> set[str]:
     return out
 
 
+# Bullets in a trap block that hold the *remedy*, not the hazard. Mining file
+# paths out of these is what made a trap fire on its own cure: a trap whose
+# `Verification: ./gradlew test` and `Safe approach: wrap in
+# withContext(Dispatchers.IO)` registered `./gradlew`, `gradlew` and
+# `Dispatchers.IO` as tracked files scored GUARD_W_FILE (6, the strongest
+# signal) against every gradle invocation in the repo — including
+# `./gradlew --status`, a read-only status query. The file signal is exempt from
+# the anti-noise ubiquity gate on the grounds that it is *author-curated*; text
+# scraped out of a prescription is not curated, and it points at the fix rather
+# than the fragile area. `Area / files:` is where a trap names its blast radius.
+_TRAP_REMEDY_BULLET_RE = re.compile(
+    r"(?im)^\s*[-*]\s*(safe\s*approach|verification|verify|fix|workaround)\s*:.*$"
+)
+
+
+def _trap_hazard_text(body: str) -> str:
+    """A trap block with its remedy bullets removed, for file-signal mining only.
+
+    Keyword matching still sees the whole block — a remedy mentioning
+    `Dispatchers.IO` is a legitimate weak text signal at GUARD_W_KEYWORD (1).
+    Only the 6-point file signal is restricted to the hazard half.
+    """
+    return _TRAP_REMEDY_BULLET_RE.sub("", body or "")
+
+
 def _norm_files(paths) -> set[str]:
     """Normalize a set of paths to {full path, basename} for overlap matching."""
     out: set[str] = set()
@@ -5552,7 +5630,16 @@ def _attempt_has_do_not_retry(rec: Record) -> bool:
 
 
 def _item_from_record(rec: Record) -> dict:
-    files = _norm_files(set(_evidence_refs(rec, ("file", "path"))) | _paths_from_text(rec.body))
+    # Body-mined paths minus the ones that are really *commands*. A record whose
+    # evidence is `--evidence command "./gradlew test"` or `--evidence test
+    # "pytest tests/dao"` has that string in its body too, and `_paths_from_text`
+    # cannot tell `pytest tests/dao` from a file reference — so the record scored
+    # a 6-point file hit against every invocation of its own verification
+    # command. Curated `--evidence file/path` refs are unaffected; this only
+    # removes paths that the record itself already labelled as a command.
+    cmd_paths = _paths_from_text(" ".join(_evidence_refs(rec, ("command", "test"))))
+    mined = _paths_from_text(rec.body) - cmd_paths
+    files = _norm_files(set(_evidence_refs(rec, ("file", "path"))) | mined)
     tags = {str(t).lower() for t in (rec.meta.get("tags") or [])}
     text = " ".join([str(rec.meta.get("title") or ""), rec.body, " ".join(tags)])
     # For verifications the interesting "status" is the *outcome* (open/fixed/…),
@@ -5595,7 +5682,7 @@ def _item_from_trap(trap: dict) -> dict:
         "status": trap.get("status") or "active",
         "title": heading,
         "tags": set(),
-        "files": _norm_files(_paths_from_text(body)),
+        "files": _norm_files(_paths_from_text(_trap_hazard_text(body))),
         "specific": _specific(text),
         "title_specific": _specific(heading),
         "branch": None,
@@ -6010,7 +6097,7 @@ def _min_verdict(*verdicts: str) -> str:
     return min(verdicts, key=lambda v: _VERDICT_RANK[v])
 
 
-def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
+def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "") -> str:
     """Pick one verdict from the ranked matches + action class. Deterministic.
 
     Per match: a kind/specificity floor and the score band both argue for a
@@ -6054,10 +6141,23 @@ def _decide_verdict(top: list[dict], matched_classes: list[str]) -> str:
 
     verdict = _max_verdict(*verdicts)
 
-    # ASK_HUMAN escalation: a high-impact class colliding with memory is a human's
-    # call (§15). Security/refactor never auto-escalate (keeps Fixture 2 on PAUSE).
-    high_impact = GUARD_HIGH_IMPACT_CLASSES & set(matched_classes)
-    if high_impact and _VERDICT_RANK[verdict] >= _VERDICT_RANK["READ_FIRST"]:
+    # ASK_HUMAN escalation: a high-impact *action* colliding with memory is a
+    # human's call (§15). Security/refactor never auto-escalate (keeps Fixture 2
+    # on PAUSE).
+    #
+    # This is the axis retrieval overlap cannot see, and it used to read only the
+    # keyword-derived action classes — which know "delete", "migrate", "deploy"
+    # but not the irreversible shell shapes. `git push --force origin main`
+    # tokenizes to nothing high-impact, so a store that cited two docs escalated
+    # `rm` of them to a prompt while a force-push over shared history stayed
+    # advisory. `_is_destructive` folds in the literal irreversible forms, so
+    # blast radius raises the verdict whatever vocabulary the action happens to
+    # use. Still gated on an existing memory collision: guard reports on the
+    # store, and an action nothing in memory touches is not guard's to judge.
+    if (
+        _is_destructive(action, matched_classes)
+        and _VERDICT_RANK[verdict] >= _VERDICT_RANK["READ_FIRST"]
+    ):
         verdict = "ASK_HUMAN"
     return verdict
 
@@ -6169,7 +6269,7 @@ def guard(
         (active if live else history).append(m)
 
     top = active[:GUARD_MAX_WARNINGS]
-    verdict = _decide_verdict(top, classes)
+    verdict = _decide_verdict(top, classes, action)
 
     # Staleness is computed so a stale/wrong-branch handoff surfaces
     # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
@@ -6199,6 +6299,14 @@ def guard(
         "action": action,
         "action_class": primary,
         "action_classes": classes,
+        # Blast radius, scored independently of retrieval. Overlap answers "is a
+        # record about this action"; it has never answered "how much damage does
+        # this action do", and the two were conflated: a verdict driven entirely
+        # by how much of the repo the store happens to cite decided whether the
+        # human got interrupted. They are separate axes and are now reported as
+        # such — `_hook_guard` gates the permission prompt on this one and the
+        # surfaced context on the other.
+        "destructive": _is_destructive(action, classes),
         "matches": top,
         "history": history[:GUARD_MAX_WARNINGS],
         "staleness": staleness,
@@ -8069,10 +8177,6 @@ def _hook_root(payload: dict) -> Path:
 # short string, no record I/O, so the common path stays well inside the hook budget.
 # Store-specific trap shapes are NOT hardcoded here — they come from the
 # generated/ trap-token index below.
-_HOOK_RISK_RE = re.compile(
-    r"(?i)(--force\b|force-push|push\s+-f\b|reset\s+--hard|rm\s+-rf|git\s+clean|"
-    r"--stop\b|drop\s+table|truncate\b|--no-verify|branch\s+-D\b)"
-)
 
 
 def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) -> bool:
@@ -8185,6 +8289,41 @@ def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bo
     return False
 
 
+# Permission modes in which the user has already told the harness not to
+# interrupt them. `bypassPermissions` (`--dangerously-skip-permissions`) and
+# `dontAsk` are explicit standing instructions; re-raising a prompt inside them
+# overrides a choice the user made deliberately, and a memory tool has no
+# standing to do that. `acceptEdits` is NOT here: it auto-accepts *edits* only,
+# so a prompt on a destructive Bash command is still the normal flow there.
+#
+# The harness hands every hook the current mode in `permission_mode`, which is
+# exactly what the field makes possible. Nothing read it before, so
+# `crumb hook guard` reinstated approval prompts for whole sessions that had
+# opted out of them — the one report we have of this ended in a `sed` wrapper
+# stripping the decision keys back out of our JSON, deliberately built to
+# survive `pip install -U`. That is a user routing around the tool's default
+# because the default was wrong.
+_HOOK_NONPROMPTING_MODES = frozenset({"bypassPermissions", "dontAsk"})
+
+# Escape hatch for anyone who wants the advisory shape unconditionally, so the
+# answer is an env var rather than a wrapper that rewrites our output.
+_GUARD_ADVISORY_ENV = "CRUMB_GUARD_ADVISORY"
+
+
+def _hook_may_prompt(payload: dict) -> bool:
+    """May this hook escalate to a permission prompt at all?
+
+    Two independent vetoes, both the user's: the session's permission mode, and
+    an explicit `CRUMB_GUARD_ADVISORY=1`. A veto never suppresses the *warning* —
+    the matched records still reach the agent as `additionalContext`. It
+    suppresses only the interruption, which is the part the user opted out of.
+    """
+    if str(os.environ.get(_GUARD_ADVISORY_ENV, "")).strip().lower() in ("1", "true", "yes", "on"):
+        return False
+    mode = payload.get("permission_mode")
+    return not (isinstance(mode, str) and mode in _HOOK_NONPROMPTING_MODES)
+
+
 def _hook_guard_reason(result: dict) -> str:
     lines = [f"breadcrumbs guard: {result['verdict']} for this action."]
     for m in result.get("matches", [])[:3]:
@@ -8273,12 +8412,36 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         }
         print(json.dumps(out))
         return 0
-    # PAUSE / ASK_HUMAN — hand the call to the human with the reason attached.
+    # PAUSE / ASK_HUMAN — hand the call to the human with the reason attached,
+    # but only if prompting is ours to do at all.
+    #
+    # Note what is deliberately NOT a second condition here: blast radius.
+    # Gating the prompt on `destructive` as well was tried and reverted, because
+    # by the time a verdict reaches this branch it is already one of exactly two
+    # things — a match whose stance is `blocking` (an attempt someone wrote with
+    # an explicit *Do Not Retry Unless*), or a high-impact action class. The
+    # first is an authored instruction to stop, not an inference from overlap,
+    # and suppressing it would silence the one channel the schema gives an
+    # author for saying "not this again". The second is blast radius already.
+    # Danger belongs on the escalation side (`_decide_verdict`), where it can
+    # *raise* a verdict, rather than here, where it could only ever suppress an
+    # authored one.
+    if _hook_may_prompt(payload):
+        out = {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                # `ask`, never `deny`: memory informs; it never allows or denies
+                # on its own. The human still makes the call.
+                "permissionDecision": "ask",
+                "permissionDecisionReason": reason,
+            }
+        }
+        print(json.dumps(out))
+        return 0
     out = {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
-            "permissionDecision": "ask",  # memory informs; it never allows or denies on its own
-            "permissionDecisionReason": reason,
+            "additionalContext": reason,
         }
     }
     print(json.dumps(out))
@@ -8730,7 +8893,8 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     note_sub = p_note.add_subparsers(dest="note_kind", metavar="<kind>")
 
     pq = note_sub.add_parser("question", parents=[global_parser], help="record an open question")
-    pq.add_argument("text", help="the question, in one line")
+    pq.add_argument("text", nargs="?", help="the question, in one line")
+    pq.add_argument("--title", help="the question (alias for the positional, as on `remember`)")
     pq.add_argument("--why", help="why it matters / what is blocked")
     pq.add_argument("--needs", help="human input | investigation | a decision")
     pq.add_argument(
@@ -8742,7 +8906,8 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pq.set_defaults(func=cmd_note)
 
     pt = note_sub.add_parser("trap", parents=[global_parser], help="record a reusable known trap")
-    pt.add_argument("text", help="one-line trap summary")
+    pt.add_argument("text", nargs="?", help="one-line trap summary")
+    pt.add_argument("--title", help="trap summary (alias for the positional, as on `remember`)")
     pt.add_argument("--slug", help="short slug (derived from the summary if omitted)")
     pt.add_argument("--area", help="where this bites (files / area)")
     pt.add_argument("--symptom", help="what goes wrong")
@@ -8752,7 +8917,8 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pt.set_defaults(func=cmd_note)
 
     pi = note_sub.add_parser("idea", parents=[global_parser], help="record a speculative idea")
-    pi.add_argument("text", help="the idea title")
+    pi.add_argument("text", nargs="?", help="the idea title")
+    pi.add_argument("--title", help="the idea title (alias for the positional, as on `remember`)")
     pi.add_argument(
         "--set",
         nargs=2,

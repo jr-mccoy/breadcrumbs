@@ -650,3 +650,62 @@ class QuestionLifecycleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoteTitleAliasTests(unittest.TestCase):
+    """`--title` is the same argument as the positional, because agents reach for it.
+
+    `remember` takes `--title`; `note` took a bare positional. An agent that has
+    just written a decision writes `crumb note trap --title "…" --body "…"` on
+    the next call and gets `unrecognized arguments` — a correct exit 2 that names
+    no alternative. The shapes stay different (a trap's fields are fixed, a
+    decision's are open `--set` sections); only the name of the summary is
+    unified.
+    """
+
+    def _err(self, argv: list[str]) -> tuple[int, str]:
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = crumb.main(argv)
+        return code, out.getvalue() + err.getvalue()
+
+    def test_title_flag_writes_the_same_trap_as_the_positional(self):
+        for use_flag in (False, True):
+            with self.subTest(use_flag=use_flag), tempfile.TemporaryDirectory() as tmp:
+                mem = init_store(tmp)
+                summary = "Room migrations must run against a populated database"
+                argv = ["note", "trap", "--project", str(mem.parent)]
+                argv += ["--title", summary] if use_flag else [summary]
+                argv += ["--area", "app/Migrations.kt", "--symptom", "data loss"]
+                code, _ = run(argv)
+                self.assertEqual(code, 0)
+                self.assertIn(summary, (mem / "known-traps.md").read_text(encoding="utf-8"))
+
+    def test_title_flag_works_for_questions_and_ideas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            code, _ = run(
+                ["note", "question", "--project", str(mem.parent), "--title", "Cache the DAO?"]
+            )
+            self.assertEqual(code, 0)
+            self.assertIn("Cache the DAO?", (mem / "open-questions.md").read_text(encoding="utf-8"))
+            code, _ = run(
+                ["note", "idea", "--project", str(mem.parent), "--title", "Batch the writes"]
+            )
+            self.assertEqual(code, 0)
+
+    def test_passing_both_is_a_named_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            code, text = self._err(
+                ["note", "trap", "positional", "--project", str(mem.parent), "--title", "flag"]
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("once", text)
+
+    def test_omitting_the_summary_names_both_spellings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            code, text = self._err(["note", "trap", "--project", str(mem.parent), "--area", "x"])
+            self.assertEqual(code, 2)
+            self.assertIn("--title", text)
