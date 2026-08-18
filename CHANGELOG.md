@@ -98,6 +98,23 @@ repo had already worked around it in silence.
   `PAUSE` recommendation names what it actually found instead of claiming "a
   failed attempt or active constraint" for any topical match.
 
+- **Packaging metadata and the shipped store README named the old repo owner.**
+  The repo moved from `jumbodaddystack` to `jr-mccoy` after 0.1.9, but
+  `[project.urls]` still pointed at the old owner — so every link on the PyPI
+  project page relied on a GitHub redirect — and
+  `templates/project-memory/README.md` wrote that stale URL into the
+  `.project-memory/` of every project that ran `crumb init`. Both now name the
+  current owner, and the PyPI page gains `Changelog` and `Issues` links. The
+  classifiers also gained the per-version `Programming Language :: Python ::
+  3.9`–`3.14` entries: CI has proven all six for releases, but the metadata
+  claimed only a bare `:: 3`, so the PyPI page and the README's pyversions
+  badge under-reported the support matrix.
+
+- **The README's Status blurb pinned a version by hand and went stale.** It
+  claimed the checkout was 0.1.8 while `__version__` had moved four releases on.
+  It now names no version and points at `crumb --version` and `CHANGELOG.md` —
+  the same single-source-of-truth rule the rest of the project follows.
+
 ### Added
 
 - **`crumb note question|trap|idea` accepts `--title` for the summary.** The
@@ -130,6 +147,15 @@ repo had already worked around it in silence.
   when the payload carries none. Identity is preserved: `created_at` still names
   the session's first snapshot; only what moved is rewritten. Records with a
   real Next Action — anything a human or agent authored — are never touched.
+
+- **`CONTRIBUTING.md` and `SECURITY.md`.** The repo had neither, so the setup
+  the CI workflows assume (stdlib `unittest` is canonical, `python crumb.py`
+  needs no install, ruff is pinned to the `dev` extra's exact version) lived
+  only in `CLAUDE.md` and in the workflow files. `SECURITY.md` routes reports to
+  a private GitHub advisory and draws the in-scope line where
+  `docs/security.md` already draws it — memory is advisory, so a record with
+  wrong *claims* is a data-quality bug, while text that escapes that framing is
+  not. The README gains CI / PyPI / Python-version / license badges.
 
 ### Changed
 

@@ -1,5 +1,11 @@
 # Breadcrumbs
 
+[![ci](https://img.shields.io/github/actions/workflow/status/jr-mccoy/breadcrumbs/ci.yml?branch=main&label=ci)](https://github.com/jr-mccoy/breadcrumbs/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/crumb-kit.svg)](https://pypi.org/project/crumb-kit/)
+[![Python versions](https://img.shields.io/pypi/pyversions/crumb-kit.svg)](https://pypi.org/project/crumb-kit/)
+[![runtime deps: none](https://img.shields.io/badge/runtime%20deps-none-brightgreen.svg)](https://github.com/jr-mccoy/breadcrumbs/blob/main/pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/jr-mccoy/breadcrumbs/blob/main/LICENSE)
+
 **Breadcrumbs — leave a trail your future self and your agents can follow back.**
 
 A portable, repo-local, human-readable ledger of durable project state for
@@ -556,12 +562,14 @@ automatically so it stays in step.)
 
 ## Status
 
-> **Installed vs. this checkout.** The table below describes the code in this
-> repository, which is **0.1.8** — the release that carries the correctness fixes
-> to the hooks, the trust primitives and multi-machine projections that had been
-> accumulating since 0.1.7 (see `CHANGELOG.md` → `[0.1.8]`). Work landing after it
-> collects in `[Unreleased]`; whenever that section is non-empty, `pipx install
-> crumb-kit` gives you less than this checkout does.
+> **Installed vs. this checkout.** The table below describes the code in *this
+> checkout*, whose version is whatever `crumb --version` prints — the single
+> source of truth is `__version__` in `breadcrumbs/__init__.py`, and the top
+> section of `CHANGELOG.md` says what it contains. This blurb deliberately names
+> no version: it used to pin one by hand and was four releases stale before
+> anyone noticed. Work landing after the newest released version collects in
+> `CHANGELOG.md` → `[Unreleased]`; whenever that section is non-empty, `pipx
+> install crumb-kit` gives you less than this checkout does.
 
 | Command | State |
 |---|---|
