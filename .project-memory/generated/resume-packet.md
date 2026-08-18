@@ -1,25 +1,17 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 10d55da | inputs_hash: dd3790616114 | generated_at: 2026-08-18T18:34:31+00:00 -->
+<!-- source_commit: c1a4b38 | inputs_hash: 19be01b323e0 | generated_at: 2026-08-18T18:35:11+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/resume-portfolio-readiness-ywdfiw` · commit `10d55da` · 10 uncommitted file(s)
+branch `claude/resume-portfolio-readiness-ywdfiw` · commit `c1a4b38` · 3 uncommitted file(s)
 
 ## Current Focus
 Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
 
 ## Next Action
-Decide on the two open F-1 follow-ups: (a) whether traps need an explicit blocking channel of their own (--blocking on note trap) or whether 'record it as an attempt --do-not-retry' is the answer; (b) whether .mcp.json should carry the absolute sys.executable path on Windows or a portable 'python'. Then triage F-3 (action class does not re-rank retrieval) and F-8 (doctor misses MCP liveness/version skew), both still open.
-
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- 10d55da Merge pull request #46 from jr-mccoy/claude/crumb-permission-override-pyxru7
-- 4a7aec5 release: cut 0.1.12
-- ad1e307 fix: guard stops deciding for the user and stops scoring cures as hazards
-- add2115 Merge pull request #45 from jr-mccoy/claude/crumb-kit-audit-review-x5b51n
-- 69f3189 fix: guard stops punishing the behaviour it exists to encourage
+Release 0.1.12: run 'gh workflow run release.yml --ref main -f mode=dry-run' from main, confirm clean, then mode=publish. PyPI latest is still 0.1.11 while __version__ and the dated CHANGELOG section say 0.1.12. Then set the repo About homepage to the PyPI project page, and triage the four open issues (#5-#8, untouched since June).
 
 ## Active Decisions
 - `dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned` — A hand-maintained version literal in prose is the same defect the project already removed from pyproject.toml and cli.py; it went four releases stale precisely because nothing checked it. Badge link targets must be absolute because README.md is also the PyPI long description, where a relative href resolves to nothing. GitHub's native badge.svg endpoint could not be verified from this environment (403 through the proxy), so every badge URL used was one that returned 200 and the expected aria-label.
@@ -81,9 +73,8 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 1 day(s) old, written 5 commit(s) behind current HEAD.
-- branch mismatch: handoff was written on 'claude/crumb-kit-audit-review-x5b51n' but HEAD is on 'claude/resume-portfolio-readiness-ywdfiw'.
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
 - 12 record(s) written on other branches than 'claude/resume-portfolio-readiness-ywdfiw': dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode (on 'claude/crumb-permission-override-pyxru7'), dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap (on 'claude/crumb-permission-override-pyxru7'), dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval (on 'claude/crumb-kit-audit-review-x5b51n'), dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one (on 'claude/trap-retirement-mark-status-o64qqs'), dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them (on 'claude/trap-retirement-mark-status-o64qqs') (+7 more).
+- possible drift: `ver_20260818_remember-set-validates-section-headings-exactly-as-capture` recorded "remember --set validates section headings exactly as capture session does" as **fixed** on 2026-08-18, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260818_crumb-mark-status-can-retire-a-trap-in-0-1-11-fixed` recorded "crumb mark-status can retire a trap in 0.1.11" as **fixed** on 2026-08-18, but Current Focus / Next Action still claims that work — re-check before redoing it.
-- possible drift: `ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically` recorded "python -m breadcrumbs mcp serve speaks MCP stdio identically to the breadcrumbs-mcp console script" as **fixed** on 2026-08-17, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260816_release-0-1-10-blocked-by-pypi-invalid-publisher-fixed` recorded "release 0.1.10 blocked by PyPI invalid-publisher" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.
