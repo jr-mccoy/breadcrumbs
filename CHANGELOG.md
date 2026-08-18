@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
-## [Unreleased]
+## [0.1.12] — 2026-08-18
 
 Triage of the 0.1.11 field audit (one working session on Windows 11 / Python
 3.13, ~276-check store, 101 session records), plus a second report from the same

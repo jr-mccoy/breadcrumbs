@@ -21,7 +21,7 @@ from.
 #
 # >>> To cut a release: bump THIS line (and add a CHANGELOG entry). That's it.
 #     The release workflow tags the commit and publishes; do not tag by hand.
-__version__ = "0.1.11"
+__version__ = "0.1.12"
 
 __all__ = ["main", "get_version", "SCHEMA_VERSION", "__version__"]
 
