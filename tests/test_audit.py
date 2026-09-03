@@ -154,6 +154,30 @@ class HealthViewTests(unittest.TestCase):
             # placeholder branch, and that placeholder is recognized as one.)
             self.assertIn("written on other branches", warns_text(findings))
 
+    def test_records_from_a_merged_branch_are_not_a_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            base = crumb.git_branch(root)
+            git(root, "checkout", "-q", "-b", "feature-x")
+            mem = fresh_store(tmp)
+            crumb.write_record(
+                mem,
+                root,
+                "decision",
+                "keep accounts immutable",
+                {"Decision": "never drop accounts", "Rationale": "billing depends on it"},
+                tags=["accounts"],
+            )
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "memory on feature-x")
+            git(root, "checkout", "-q", base)
+            git(root, "merge", "-q", "--no-ff", "-m", "merge feature-x", "feature-x")
+            findings = crumb.run_audit(mem, root)
+            # The record still says `branch: feature-x`, and that branch has
+            # been merged into HEAD: its file is committed here, unmodified.
+            self.assertNotIn("written on other branches", warns_text(findings))
+            self.assertNotIn("branch mismatch", warns_text(findings))
+
 
 # --------------------------------------------------------------------------- #
 # Fixture 7 — instruction-like flag; guard treats it as data

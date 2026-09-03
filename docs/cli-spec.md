@@ -168,14 +168,30 @@ Behavior:
 - **Computed staleness** (not just authored): handoff **age + commit-distance**,
   **aged-unresolved** questions/decisions (> `--stale-days`), **branch mismatch**
   (incl. detached HEAD), and **expired**/**low-confidence** records.
+- **A branch mismatch is only reported for memory that has not reached HEAD.**
+  The handoff and every record carry the branch they were written on; the
+  warning exists because that branch may describe code this checkout does not
+  have. A file that is committed in HEAD's tree and unmodified in the worktree
+  has arrived here — merged, squash-merged, rebased or cherry-picked, the sha
+  history does not matter — so its `branch:` is provenance, not risk, and it
+  is not reported. In a branch-per-session workflow the old check printed a
+  handoff mismatch plus a roll-call of every record ever written, on every
+  resume, guard call and audit. An uncommitted or locally modified file from
+  another branch still warns, as does everything when there is no HEAD to
+  judge against.
 - **The focus claims are falsifiable (0.1.11, P1-5).** Age and distance say how
   *old* the handoff is, never whether its claims still hold — the field test's
   packet told a fresh session to redo two items that had already landed. Two
   checks close that gap: the packet lists the commit subjects landed since the
   handoff was written (`commits_since_handoff`, bounded, rendered as *Landed
   Since The Handoff Was Written*) so the reader can check the work-list against
-  history; and a **fixed** verification whose subject overlaps the Current
-  Focus / Next Action claims adds a warn-only `possible drift:` line. Citing a
+  history; and a **fixed** verification whose subject the Current Focus /
+  Next Action text mostly restates (two-thirds of the subject's stems, at
+  least two; digit-only tokens such as the `11` in `0.1.11` never count) adds a
+  warn-only `possible drift:` line. The first cut fired on *any* two shared
+  stems and, on this tool's own store, flagged four of nine fixed
+  verifications, all falsely — a drift line is either the first thing the
+  reader resolves or the line that teaches them to skip the section. Citing a
   commit sha or file in `--next` (the extraction prompt now asks for one) keeps
   the claim checkable.
 - **Current Focus never mirrors Next Action.** `capture session` no longer

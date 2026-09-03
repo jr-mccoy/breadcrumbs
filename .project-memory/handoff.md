@@ -1,14 +1,14 @@
 # Project Handoff
 
-_Last updated: 2026-08-18T18:35:11+00:00_
-_Branch: claude/resume-portfolio-readiness-ywdfiw_
-_Commit: c1a4b38_
+_Last updated: 2026-09-03T03:21:27+00:00_
+_Branch: claude/agentic-ai-memory-qbm4fk_
+_Commit: 95f7a72_
 
 ## Current Focus
-Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
+Signal-to-noise in the staleness warnings: branch mismatch is judged on whether the file reached HEAD, and the possible-drift line needs most of the subject. Both fixes are on this branch with 9 new tests; PyPI is at 0.1.12.
 
 ## Next Action
-Release 0.1.12: run 'gh workflow run release.yml --ref main -f mode=dry-run' from main, confirm clean, then mode=publish. PyPI latest is still 0.1.11 while __version__ and the dated CHANGELOG section say 0.1.12. Then set the repo About homepage to the PyPI project page, and triage the four open issues (#5-#8, untouched since June).
+Merge this branch, then release 0.1.13: bump __version__ in breadcrumbs/__init__.py, rename the [Unreleased] CHANGELOG section to [0.1.13] with the date, run release.yml mode=dry-run from main, then mode=publish. Evidence: dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head, breadcrumbs/cli.py HeadTree.
 
 ## Blockers / Open Questions
 

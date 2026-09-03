@@ -1,23 +1,20 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: fcc7139 | inputs_hash: b6c19c0a53e9 | generated_at: 2026-08-18T18:46:42+00:00 -->
+<!-- source_commit: 95f7a72 | inputs_hash: 5de64ed3d6bf | generated_at: 2026-09-03T03:22:07+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/resume-portfolio-readiness-ywdfiw` · commit `fcc7139` · 2 uncommitted file(s)
+branch `claude/agentic-ai-memory-qbm4fk` · commit `95f7a72` · 12 uncommitted file(s)
 
 ## Current Focus
-Field-test 0.1.10 in the Android app repo: install from PyPI, run crumb init --with-hooks, work a real session, judge extraction-prompt quality and fatigue
+Signal-to-noise in the staleness warnings: branch mismatch is judged on whether the file reached HEAD, and the possible-drift line needs most of the subject. Both fixes are on this branch with 9 new tests; PyPI is at 0.1.12.
 
 ## Next Action
-Release 0.1.12: run 'gh workflow run release.yml --ref main -f mode=dry-run' from main, confirm clean, then mode=publish. PyPI latest is still 0.1.11 while __version__ and the dated CHANGELOG section say 0.1.12. Then set the repo About homepage to the PyPI project page, and triage the four open issues (#5-#8, untouched since June).
-
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- fcc7139 memory: record the portfolio-readiness session handoff
+Merge this branch, then release 0.1.13: bump __version__ in breadcrumbs/__init__.py, rename the [Unreleased] CHANGELOG section to [0.1.13] with the date, run release.yml mode=dry-run from main, then mode=publish. Evidence: dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head, breadcrumbs/cli.py HeadTree.
 
 ## Active Decisions
+- `dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head` — A record's commit: is HEAD at write time, i.e. where the code was, so commit ancestry is unsound: a commit can be an ancestor of HEAD while the record beside it is uncommitted or on an unmerged branch. A file committed at HEAD and clean in the worktree has provably reached this history, and that test also covers squash and rebase merges, where no feature sha survives. Downgrading to a note would keep the noise. Three git calls per staleness pass regardless of store size: rev-parse --show-prefix (the project root may sit below the repo root and ls-tree/status print repo-root-relative paths), ls-tree -r -z HEAD, status --porcelain.
 - `dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned` — A hand-maintained version literal in prose is the same defect the project already removed from pyproject.toml and cli.py; it went four releases stale precisely because nothing checked it. Badge link targets must be absolute because README.md is also the PyPI long description, where a relative href resolves to nothing. GitHub's native badge.svg endpoint could not be verified from this environment (403 through the proxy), so every badge URL used was one that returned 200 and the expected aria-label.
 - `dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode` — The contract in our own source is 'memory informs; it never allows or denies on its own'. Re-raising a prompt the user explicitly turned off is deciding for them. A user armouring a workaround against our upgrades is the strongest available evidence the default was wrong.
 - `dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap` — Overlap answers 'is a record about this action'; it has never answered 'how much damage does this do'. Danger belongs on the escalation side where it can raise a verdict, not on the prompt gate where it could only suppress an authored one.
@@ -47,10 +44,10 @@ _(none recorded)_
 - Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
 
 ## Likely Relevant Files
+- breadcrumbs/cli.py
 - README.md
 - pyproject.toml
 - breadcrumbs/templates/project-memory/README.md
-- breadcrumbs/cli.py
 - tests/test_note.py
 - .github/workflows/release.yml:36
 - RELEASING.md:22
@@ -59,6 +56,7 @@ _(none recorded)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
+- `ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word` — resume's possible-drift line fires on incidental two-word overlap and version fragments: **fixed** · test
 - `ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version` — README Status blurb no longer hard-codes a package version: **fixed** · static
 - `ver_20260818_remember-set-validates-section-headings-exactly-as-capture` — remember --set validates section headings exactly as capture session does: **fixed** · test
 - `ver_20260818_crumb-mark-status-can-retire-a-trap-in-0-1-11-fixed` — crumb mark-status can retire a trap in 0.1.11: **fixed** · test
@@ -70,6 +68,8 @@ _(none recorded)_
 - `ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence` — hook guard escalates on edits to files named by --evidence file: **fixed** · test
 
 ## Verification Commands
+- tests/test_resume.py
+- tests/test_audit.py
 - python -m unittest discover -s tests
 - python -m unittest tests.test_hooks
 - python -m unittest tests.test_guard
@@ -78,8 +78,4 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
-- 12 record(s) written on other branches than 'claude/resume-portfolio-readiness-ywdfiw': dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode (on 'claude/crumb-permission-override-pyxru7'), dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap (on 'claude/crumb-permission-override-pyxru7'), dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval (on 'claude/crumb-kit-audit-review-x5b51n'), dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one (on 'claude/trap-retirement-mark-status-o64qqs'), dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them (on 'claude/trap-retirement-mark-status-o64qqs') (+7 more).
-- possible drift: `ver_20260818_remember-set-validates-section-headings-exactly-as-capture` recorded "remember --set validates section headings exactly as capture session does" as **fixed** on 2026-08-18, but Current Focus / Next Action still claims that work — re-check before redoing it.
-- possible drift: `ver_20260818_crumb-mark-status-can-retire-a-trap-in-0-1-11-fixed` recorded "crumb mark-status can retire a trap in 0.1.11" as **fixed** on 2026-08-18, but Current Focus / Next Action still claims that work — re-check before redoing it.
-- possible drift: `ver_20260816_release-0-1-10-blocked-by-pypi-invalid-publisher-fixed` recorded "release 0.1.10 blocked by PyPI invalid-publisher" as **fixed** on 2026-08-16, but Current Focus / Next Action still claims that work — re-check before redoing it.
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.

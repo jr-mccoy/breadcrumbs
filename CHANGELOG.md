@@ -5,6 +5,47 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
+## [Unreleased]
+
+Two signal-to-noise fixes in the staleness warnings, both found by reading the
+tool's own resume packet on its own store: of seven lines under *Stale / Risk
+Warnings*, six were false, and the packet had been that way on every session
+branch since the store was committed. Both fixes are the same shape as the
+0.1.10/0.1.11 guard work — an alarm that is always on is one nobody reads.
+
+### Fixed
+
+- **A branch mismatch is reported only for memory that has not reached HEAD.**
+  The handoff and every record carry the branch they were written on, and the
+  §15 warning exists because that branch may describe code this checkout does
+  not have. But in a branch-per-session workflow — every PR branch is a new
+  session — *every* record is written on some other branch, and once its PR
+  merges the file is sitting in HEAD's tree. `resume`, `guard` and `audit`
+  nevertheless printed "branch mismatch: handoff was written on '…'" plus
+  "13 record(s) written on other branches" on every run. The check now asks
+  whether the file has *arrived*: committed in HEAD's tree and unmodified in the
+  worktree means the branch it names was merged, squash-merged, rebased or
+  cherry-picked in, and its `branch:` is provenance, not risk. The test is on
+  the file, deliberately not on the record's `commit:` — that is HEAD at write
+  time, where the *code* was, and a commit can be an ancestor of HEAD while the
+  record beside it sits uncommitted or on an unmerged branch; judging the file
+  is also what makes squash merges work, where no feature sha survives. An
+  uncommitted or locally edited file from another branch still warns, and a
+  repo with no HEAD yet warns as before. Three git calls per staleness pass,
+  whatever the store size.
+- **The `possible drift` line needs most of the subject, not two words.** The
+  0.1.11 cross-check fired when a fixed verification's subject shared any two
+  stems with the Current Focus / Next Action text. On this tool's own store
+  that was four of nine fixed verifications, every one false: "crumb"+"open",
+  "sect"+"sess" (a CHANGELOG *section* and a work *session*), and the bare
+  "11" out of "0.1.11". Two shared words is what any two sentences about one
+  project have in common. The focus must now restate two-thirds of the
+  subject's stems (floor of two, or the whole subject when shorter), and
+  digit-only tokens never count — a version fragment is not a claim. The
+  intended catch (a focus that restates the verification's subject in its own
+  inflections) still fires; a paraphrase it misses has *Landed Since The
+  Handoff Was Written* to fall back on.
+
 ## [0.1.12] — 2026-08-18
 
 Triage of the 0.1.11 field audit (one working session on Windows 11 / Python
