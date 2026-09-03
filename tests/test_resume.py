@@ -289,6 +289,101 @@ class BranchMismatchTests(unittest.TestCase):
             self.assertIn("branch mismatch", out)
             self.assertIn("feature-branch", out)
 
+    def _store_committed_on_feature_branch(self, root: Path, *, squash: bool = False) -> str:
+        """Write the store on `feature-a`, land it on the original branch, return that branch."""
+        base = crumb.git_branch(root)
+        git(root, "checkout", "-q", "-b", "feature-a")
+        crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        run(["capture", "session", "--project", str(root), "--fast", "--next", "x"])
+        crumb.main(
+            [
+                "remember",
+                "decision",
+                "--project",
+                str(root),
+                "--title",
+                "written on the feature branch",
+                "--set",
+                "Decision",
+                "chosen",
+            ]
+        )
+        git(root, "add", "-A")
+        git(root, "commit", "-qm", "memory: written on feature-a")
+        git(root, "checkout", "-q", base)
+        if squash:
+            git(root, "merge", "-q", "--squash", "feature-a")
+            git(root, "commit", "-qm", "squash of feature-a")
+        else:
+            git(root, "merge", "-q", "--no-ff", "-m", "merge feature-a", "feature-a")
+        return base
+
+    def test_merged_branch_is_not_a_mismatch(self):
+        # Branch-per-session workflow: the handoff and every record name a
+        # branch that has since been merged into HEAD. The files reached this
+        # line of history, so there is nothing to warn about.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            base = self._store_committed_on_feature_branch(root)
+            text = (root / crumb.MEMORY_DIRNAME / "handoff.md").read_text()
+            self.assertIn("_Branch: feature-a_", text)  # the mismatch is real on paper
+            self.assertNotEqual(base, "feature-a")
+            _, out = run(["resume", "--project", str(root)])
+            self.assertNotIn("branch mismatch", out)
+            self.assertNotIn("written on other branches", out)
+
+    def test_squash_merged_branch_is_not_a_mismatch(self):
+        # A squash merge leaves no feature-a sha in HEAD's ancestry; the test is
+        # on the file, so it still counts as landed.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            self._store_committed_on_feature_branch(root, squash=True)
+            _, out = run(["resume", "--project", str(root)])
+            self.assertNotIn("branch mismatch", out)
+            self.assertNotIn("written on other branches", out)
+
+    def test_modified_handoff_from_merged_branch_still_warns(self):
+        # A worktree edit means the copy being read is not what HEAD holds; the
+        # branch line then describes an unknown provenance again.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            self._store_committed_on_feature_branch(root)
+            handoff = root / crumb.MEMORY_DIRNAME / "handoff.md"
+            handoff.write_text(handoff.read_text() + "\n- an uncommitted edit\n")
+            _, out = run(["resume", "--project", str(root)])
+            self.assertIn("branch mismatch", out)
+            self.assertIn("feature-a", out)
+
+    def test_guard_path_drops_the_merged_handoff_mismatch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            self._store_committed_on_feature_branch(root)
+            mem = root / crumb.MEMORY_DIRNAME
+            meta = crumb.parse_handoff_meta((mem / "handoff.md").read_text())
+            self.assertEqual(meta.get("branch"), "feature-a")
+            risks = crumb.compute_staleness(
+                root, meta, [], [], [], 30, risks_only=True, memory_dir=mem
+            )
+            self.assertEqual([w for w in risks if "branch mismatch" in w], [])
+            # Without the store location the handoff file cannot be judged, so
+            # the old unconditional report stands (callers that pass no
+            # memory_dir keep their behaviour).
+            legacy = crumb.compute_staleness(root, meta, [], [], [], 30, risks_only=True)
+            self.assertTrue(any("branch mismatch" in w for w in legacy), legacy)
+
+    def test_nested_project_root_is_resolved_against_the_repo_root(self):
+        # The project (and its store) sits below the git toplevel: ls-tree and
+        # status print repo-root-relative paths, so the prefix must be applied.
+        with tempfile.TemporaryDirectory() as tmp:
+            top = make_repo(tmp)
+            root = top / "pkg" / "app"
+            root.mkdir(parents=True)
+            base = self._store_committed_on_feature_branch(root)
+            self.assertNotEqual(base, "feature-a")
+            _, out = run(["resume", "--project", str(root)])
+            self.assertNotIn("branch mismatch", out)
+            self.assertNotIn("written on other branches", out)
+
 
 class CloudFallbackTests(unittest.TestCase):
     """§19a.7 / Fixture 9 preview: the committed packet supports CLI-less resume."""
@@ -459,6 +554,66 @@ class PacketTruthTests(unittest.TestCase):
             packet = json.loads(out)
             drift = [w for w in packet["warnings"] if "possible drift" in w]
             self.assertTrue(drift, packet["warnings"])
+            self.assertIn("flurble widget rollout", drift[0])
+
+    def _verify_fixed_then_capture(self, root: Path, subject: str, next_action: str) -> list:
+        crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        crumb.main(
+            [
+                "verify",
+                subject,
+                "--project",
+                str(root),
+                "--status",
+                "fixed",
+                "--evidence",
+                "command",
+                "make test",
+            ]
+        )
+        crumb.main(["capture", "session", "--project", str(root), "--next", next_action, "--fast"])
+        _, out = run(["resume", "--project", str(root), "--json"])
+        return [w for w in json.loads(out)["warnings"] if "possible drift" in w]
+
+    def test_two_incidental_shared_words_do_not_count_as_drift(self):
+        # Observed on the tool's own store: "remember --set validates section
+        # headings exactly as capture session does" fired against a focus that
+        # mentioned a CHANGELOG *section* and a work *session*. Two shared
+        # stems out of seven is what any two sentences about one project share.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            drift = self._verify_fixed_then_capture(
+                root,
+                "remember --set validates section headings exactly as capture session does",
+                "release: confirm the dated CHANGELOG section, then work a real session",
+            )
+            self.assertEqual(drift, [])
+
+    def test_version_fragments_do_not_count_as_drift(self):
+        # "0.1.11" tokenizes to a bare "11"; with the project's own name that
+        # made two shared stems and a drift line about a verification whose
+        # subject has nothing to do with the focus.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            drift = self._verify_fixed_then_capture(
+                root,
+                "crumb mark-status can retire a trap in 0.1.11",
+                "crumb: PyPI latest is still 0.1.11 while __version__ says 0.1.12",
+            )
+            self.assertEqual(drift, [])
+
+    def test_subject_mostly_restated_by_the_focus_is_drift(self):
+        # The intended catch survives the tighter rule: the focus restates the
+        # bulk of the subject (four of five stems, "cluster" dropped, "widgets"
+        # inflected) among unrelated words.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            drift = self._verify_fixed_then_capture(
+                root,
+                "flurble widget rollout to the staging cluster",
+                "finish the flurble widgets rollout to staging, then update the docs",
+            )
+            self.assertEqual(len(drift), 1, drift)
             self.assertIn("flurble widget rollout", drift[0])
 
     def test_open_verification_does_not_warn(self):

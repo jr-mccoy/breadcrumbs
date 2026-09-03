@@ -4371,6 +4371,76 @@ def _section_lines(handoff_sections: dict, heading: str) -> list[str]:
 # ---- staleness ------------------------------------------------------------- #
 
 
+class HeadTree:
+    """Which store files have *reached the current HEAD*: committed in HEAD's
+    tree and byte-identical to the worktree copy. Lazy — no git call until asked.
+
+    The branch-mismatch warnings (§15) exist because memory written on another
+    branch may describe code this checkout does not have. A record file that is
+    in HEAD's tree and unmodified has, by construction, reached this line of
+    history — the branch its `branch:` names was merged, squashed, rebased or
+    cherry-picked in — so the mismatch is a fact about how the record arrived,
+    not a risk to act on. In a branch-per-session workflow (every PR branch is a
+    new session) the old check printed a handoff mismatch plus a roll-call of
+    every record ever written on *every* resume, guard call and audit: an alarm
+    that is always on is one nobody reads, the same failure the guard floors
+    were rebuilt to avoid.
+
+    Judged on the **file**, never on the record's `commit:`. That field is HEAD
+    at write time — where the *code* was — and a commit can be an ancestor of
+    HEAD while the record written beside it sits uncommitted, or committed on a
+    branch nobody merged. The file test is also what makes squash and rebase
+    merges work: the file arrives whatever happened to the shas.
+
+    Three git calls in total, once per staleness pass, whatever the store size:
+    `rev-parse --show-prefix` (the project root may sit below the repo root;
+    `ls-tree --full-name` and `status --porcelain` both print repo-root-relative
+    paths), `ls-tree -r -z HEAD` (NUL-separated, so no C-quoting to undo), and
+    the `status --porcelain` `git_dirty_files` already parses.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._root = Path(root)
+        self._loaded = False
+        self._prefix = ""
+        self._tracked: frozenset[str] = frozenset()
+        self._dirty: frozenset[str] = frozenset()
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        if not is_git_repo(self._root):
+            return
+        prefix = _git_out(self._root, "rev-parse", "--show-prefix")
+        if prefix is None:
+            return
+        self._prefix = prefix.strip().replace("\\", "/")
+        # None on an unborn HEAD (repo with no commits yet): nothing has reached
+        # a HEAD that does not exist, so every mismatch stays a mismatch.
+        out = _git_out(
+            self._root, "ls-tree", "-r", "-z", "--full-name", "--name-only", "HEAD", "--", "."
+        )
+        if out is None:
+            return
+        self._tracked = frozenset(p for p in out.split("\0") if p)
+        self._dirty = frozenset(p.replace("\\", "/") for p in git_dirty_files(self._root))
+
+    def contains(self, path: Path | None) -> bool:
+        """Is `path` committed at HEAD with no worktree modification? (False when unknowable.)"""
+        if path is None:
+            return False
+        self._load()
+        if not self._tracked:
+            return False
+        try:
+            rel = Path(path).resolve().relative_to(self._root.resolve()).as_posix()
+        except (ValueError, OSError):
+            return False
+        full = self._prefix + rel
+        return full in self._tracked and full not in self._dirty
+
+
 def compute_staleness(
     root: Path,
     handoff_meta: dict,
@@ -4380,6 +4450,7 @@ def compute_staleness(
     stale_days: int,
     *,
     risks_only: bool = False,
+    memory_dir: Path | None = None,
 ) -> list[str]:
     """All computed staleness/risk warnings (§12, §15). Order: primary first.
 
@@ -4390,10 +4461,19 @@ def compute_staleness(
     confidence, other-branch records); repeating those on every guard call was
     invariant noise, so they stay in resume/doctor/audit where they are read
     once per session, not once per edit.
+
+    Branch mismatches are judged against what has *reached HEAD* (see
+    `HeadTree`): a handoff or record whose file is committed at HEAD and clean
+    in the worktree was written on a branch that has since landed here, and is
+    not reported. `memory_dir` locates `handoff.md` for that test; without it
+    the handoff mismatch is reported the old, unconditional way. Records carry
+    their own path, so they never need it.
     """
     warnings: list[str] = []
     cur_branch = git_branch(root)
     detached = is_git_repo(root) and cur_branch == "HEAD"
+    reached = HeadTree(root)
+    handoff_path = Path(memory_dir) / "handoff.md" if memory_dir is not None else None
 
     # (5) Primary signal: handoff age + commit-distance ("train of thought cold").
     age = _age_days(handoff_meta.get("updated_at"))
@@ -4427,6 +4507,7 @@ def compute_staleness(
         and not detached
         and cur_branch != NO_GIT_BRANCH
         and hb != cur_branch
+        and not reached.contains(handoff_path)
     ):
         warnings.append(
             f"branch mismatch: handoff was written on '{hb}' but HEAD is on '{cur_branch}'."
@@ -4438,6 +4519,7 @@ def compute_staleness(
             if r.meta.get("branch")
             and r.meta.get("branch") not in (NO_GIT_BRANCH, None, "")
             and r.meta.get("branch") != cur_branch
+            and not reached.contains(r.path)
         ]
         if mism:
             shown = ", ".join(mism[:5])
@@ -4514,6 +4596,20 @@ def _commits_since(root: Path, ref: str | None, limit: int) -> list[str]:
 # section with drift guesses.
 PACKET_DRIFT_CONFLICTS_MAX = 3
 
+# Share of a fixed verification's subject stems the focus text must contain
+# before the drift line fires (floor: two shared stems, or the whole subject
+# when it is shorter). The first cut fired on *any* two shared stems, and on
+# this tool's own store that was 4 of 9 fixed verifications, every one false:
+# "crumb"+"open", "sect"+"sess" (a CHANGELOG *section* and a work *session*),
+# and the bare "11" out of "0.1.11". Two words in common is what any two
+# sentences about the same project share; most of the subject is a claim.
+PACKET_DRIFT_SUBJECT_COVERAGE = 2 / 3
+
+
+def _claim_stems(text: str) -> set[str]:
+    """`_specific` minus digit-only stems: a version fragment is not a claim."""
+    return {s for s in _specific(text) if not s.isdigit()}
+
 
 def _focus_verification_conflicts(
     next_action: str, current_focus: str, verifications: list[Record]
@@ -4525,8 +4621,14 @@ def _focus_verification_conflicts(
     fixed — internally contradictory, and only a human noticed. This is the
     deterministic cross-check: token overlap between the focus claims and each
     fixed verification's subject (same stemming as guard/search), warn-only.
+
+    The overlap must cover `PACKET_DRIFT_SUBJECT_COVERAGE` of the subject's
+    stems, not merely reach two: the packet is read cold, so a drift line it
+    prints is either the one contradiction the reader must resolve first, or
+    the line that teaches them to skip the whole section. A missed paraphrase
+    still has *Landed Since The Handoff Was Written* to fall back on.
     """
-    claims = _specific(f"{next_action} {current_focus}")
+    claims = _claim_stems(f"{next_action} {current_focus}")
     if not claims:
         return []
     out: list[str] = []
@@ -4534,10 +4636,11 @@ def _focus_verification_conflicts(
         if (r.meta.get("outcome") or "open") != "fixed":
             continue
         subject = r.meta.get("subject") or r.meta.get("title", "")
-        subj = _specific(subject)
+        subj = _claim_stems(subject)
         if not subj:
             continue
-        if len(subj & claims) >= min(2, len(subj)):
+        need = max(min(2, len(subj)), math.ceil(len(subj) * PACKET_DRIFT_SUBJECT_COVERAGE))
+        if len(subj & claims) >= need:
             rid = r.meta.get("id", r.stem)
             when = r.meta.get("updated_at") or r.meta.get("created_at") or ""
             when = f" on {when[:10]}" if when else ""
@@ -4823,7 +4926,15 @@ def build_resume_packet(
         ),
         "warnings": (
             [f"⚠ {u}" for u in unreadable]
-            + compute_staleness(root, handoff_meta, decisions, attempts, questions, stale_days)
+            + compute_staleness(
+                root,
+                handoff_meta,
+                decisions,
+                attempts,
+                questions,
+                stale_days,
+                memory_dir=memory_dir,
+            )
         ),
         "omitted": {},
         "omitted_reason": {},
@@ -6292,6 +6403,7 @@ def guard(
         load_open_questions(memory_dir),
         stale_days,
         risks_only=True,
+        memory_dir=memory_dir,
     )[:GUARD_MAX_WARNINGS]
 
     return {
@@ -6974,6 +7086,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         active_attempts(memory_dir),
         load_open_questions(memory_dir),
         stale_days,
+        memory_dir=memory_dir,
     ):
         # The handoff age/distance line is emitted unconditionally; it is only a
         # *warning* when compute_staleness marked it cold (⚠). "handoff is 0

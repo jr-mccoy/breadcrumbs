@@ -319,7 +319,9 @@ actionable outcomes first), and verification commands — followed by
   in `--json` as `handoff_age_days` / `handoff_commit_distance`, separately from the
   `stale_after_days` threshold they are compared against;
 - **aged-unresolved** open questions and active decisions older than the threshold;
-- **branch mismatch** (record/handoff branch ≠ current HEAD, incl. detached HEAD);
+- **branch mismatch** (record/handoff branch ≠ current HEAD, incl. detached HEAD) —
+  only for files that have not reached HEAD; a record committed here from a
+  since-merged branch is provenance, not a warning;
 - **expired** (`expires_at`) and **low-confidence** records.
 
 Current/handoff/active-decisions are prioritized over old session observations, and
