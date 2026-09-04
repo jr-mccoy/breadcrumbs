@@ -132,6 +132,9 @@ def configure_output(stream=None) -> None:
 # pipe's status, not ours, so the text has to carry the fact by itself.
 ERROR_PREFIX = "CRUMB-ERROR:"
 
+# Same contract for the non-fatal half: input we accepted but changed.
+WARN_PREFIX = "CRUMB-WARN:"
+
 # Markers delimiting the block Breadcrumbs manages inside the project .gitignore.
 # Anything between them is rewritten by `init`; everything else is preserved.
 GITIGNORE_BEGIN = "# >>> breadcrumbs managed block (managed by `crumb init`) >>>"
@@ -764,6 +767,16 @@ def command_label(args: argparse.Namespace) -> str:
         if isinstance(value, str) and value:
             parts.append(value)
     return " ".join(parts)
+
+
+def _emit_warning(args: argparse.Namespace, message: str) -> None:
+    """A non-fatal note about input we accepted but changed (C1).
+
+    stderr, and marked, for the same reason errors are: the command succeeded, so
+    stdout carries the result and a caller parsing it must not find prose in it.
+    """
+    if not getattr(args, "json", False):
+        print(f"{WARN_PREFIX} {command_label(args)}: {message}", file=sys.stderr)
 
 
 def _emit_error(args: argparse.Namespace, message: str) -> None:
@@ -1724,6 +1737,137 @@ BODY_SECTIONS = {
     ],
 }
 
+# Where content lands when its `--set` heading matches nothing in the record
+# type's vocabulary (C1). A wrong heading used to abort the whole call — with it
+# every *other* `--set` on the command line, which for an agent writing up a long
+# session is a 1,500-word record it has to synthesise a second time, at the point
+# in the session where it has least context left to do it with. Losing authored
+# content to a typo is the worst trade available here: park it, name it, warn,
+# and let a human or a later `--set` move it.
+UNSORTED_SECTION = "Unsorted"
+
+
+def _heading_key(heading: str) -> str:
+    """Fold a heading to its comparison key: case, spacing and punctuation blind.
+
+    Three of the session headings contain spaces and one contains a slash, which
+    is a second, independent way to get the same call rejected — `Attempts /
+    Failures` vs `Attempts/Failures` vs `attempts failures` are the same heading
+    by any reading a caller has.
+    """
+    return re.sub(r"[^a-z0-9]+", " ", (heading or "").lower()).strip()
+
+
+# Obvious synonyms, per record type. Deliberately short: a guess that lands
+# content under the wrong heading is worse than parking it under `Unsorted`,
+# where it is still there and still labelled. Only wordings that mean the
+# canonical heading and nothing else belong here.
+_SECTION_ALIASES: dict[str, dict[str, str]] = {
+    "decision": {
+        "summary": "Decision",
+        "background": "Context",
+        "why": "Rationale",
+        "reasoning": "Rationale",
+        "options": "Options Considered",
+        "alternatives": "Options Considered",
+        "tradeoffs": "Options Considered",
+        "impact": "Consequences",
+        "outcome": "Consequences",
+    },
+    "attempt": {
+        "what i tried": "Tried",
+        "approach": "Tried",
+        "outcome": "Result",
+        "why": "Why It Failed / Succeeded",
+        "why it failed": "Why It Failed / Succeeded",
+        "why it succeeded": "Why It Failed / Succeeded",
+        "do not retry": "Do Not Retry Unless",
+        "related": "Related Records",
+    },
+    "session": {
+        "summary": "Work Completed",
+        "work done": "Work Completed",
+        "what happened": "Work Completed",
+        "context": "Starting Context",
+        "decisions": "Decisions Made",
+        "attempts": "Attempts / Failures",
+        "failures": "Attempts / Failures",
+        "questions": "Open Questions",
+        "blockers": "Open Questions",
+        "files": "Files Touched",
+        "files changed": "Files Touched",
+        "commands": "Commands / Verification",
+        "verification": "Commands / Verification",
+        "next": "Next Action",
+        "next steps": "Next Action",
+    },
+    "idea": {
+        "summary": "Idea",
+        "proposal": "Idea",
+        "why": "Motivation",
+        "rationale": "Motivation",
+        "design": "Sketch",
+        "questions": "Open Questions",
+    },
+    "verification": {
+        "what": "Subject",
+        "result": "Outcome",
+        "how": "Method",
+        "notes": "Notes",
+    },
+}
+
+
+def canonical_heading(rtype: str, heading: str) -> str | None:
+    """The canonical section `heading` names, or None if it names none."""
+    key = _heading_key(heading)
+    if not key:
+        return None
+    for canon in BODY_SECTIONS.get(rtype, ()):
+        if _heading_key(canon) == key:
+            return canon
+    if key == _heading_key(UNSORTED_SECTION):
+        return UNSORTED_SECTION
+    return _SECTION_ALIASES.get(rtype, {}).get(key)
+
+
+def normalize_sections(rtype: str, items) -> tuple[dict[str, str], list[str]]:
+    """Canonicalize section headings without ever dropping content (C1).
+
+    `items` is a mapping or an iterable of (heading, content) pairs. Returns the
+    canonical `{heading: content}` plus human-readable notes about anything that
+    was renamed or parked — the caller decides how loudly to say them.
+
+    Content whose heading matches nothing is kept under `## Unsorted`, tagged
+    with the heading the caller used, so the record holds everything that was
+    written and a reader can see what it was called.
+    """
+    if hasattr(items, "items"):
+        items = list(items.items())
+    sections: dict[str, str] = {}
+    parked: list[tuple[str, str]] = []
+    notes: list[str] = []
+    for heading, content in items or ():
+        canon = canonical_heading(rtype, heading)
+        if canon is None:
+            parked.append((str(heading), content))
+            notes.append(
+                f"unknown section {heading!r} for {rtype}: kept under "
+                f"`## {UNSORTED_SECTION}`. Valid: {', '.join(BODY_SECTIONS[rtype])} "
+                f"(see `crumb schema {rtype}`)"
+            )
+            continue
+        if canon != heading:
+            notes.append(f"section {heading!r} matched {canon!r}")
+        sections[canon] = content
+    if parked:
+        existing = (sections.get(UNSORTED_SECTION) or "").strip()
+        blocks = [existing] if existing else []
+        blocks += [f"### {h}\n\n{(c or '').strip()}" for h, c in parked]
+        sections[UNSORTED_SECTION] = "\n\n".join(blocks)
+    return sections, notes
+
+
 # Named flags for the fixed attempt section vocabulary: expose the
 # contract in `--help` so it is no longer discoverable only by rejection. Each maps a
 # Namespace attribute (from `--problem`, `--do-not-retry`, …) to its canonical heading.
@@ -1880,7 +2024,10 @@ def render_body(rtype: str, sections: dict[str, str]) -> str:
     human the full skeleton; the stored record only says what was recorded.
     """
     out: list[str] = []
-    for heading in BODY_SECTIONS[rtype]:
+    # `Unsorted` is appended after the vocabulary, never inside it: it is where
+    # content whose heading matched nothing lands (C1), and it must not displace
+    # a canonical section a reader is scanning for.
+    for heading in list(BODY_SECTIONS[rtype]) + [UNSORTED_SECTION]:
         content = (sections.get(heading) or "").strip()
         if not content or content == _EMPTY_SECTION:
             continue
@@ -1970,15 +2117,6 @@ def _unique_record_path(directory: Path, date: str, slug: str) -> tuple[Path, st
 # ---- the writer ------------------------------------------------------------ #
 
 
-def _canonical_heading(rtype: str, heading: str) -> str:
-    for canon in BODY_SECTIONS[rtype]:
-        if canon.lower() == heading.lower():
-            return canon
-    raise ValueError(
-        f"unknown section {heading!r} for {rtype}; valid: {', '.join(BODY_SECTIONS[rtype])}"
-    )
-
-
 def write_record(
     memory_dir: Path,
     project_root: Path,
@@ -2003,6 +2141,11 @@ def write_record(
     (e.g. a verification's subject/outcome/method) — rendered in
     canonical order when known to FRONTMATTER_ORDER, else appended.
     """
+    # Normalize here as well as in the CLI's `--set` collector: `render_body`
+    # walks the type's vocabulary, so a heading it does not recognize used to
+    # vanish without a word for every writer that does not go through the CLI —
+    # the MCP `memory_record` tool passes a raw `sections` mapping straight in.
+    sections, _notes = normalize_sections(rtype, sections or {})
     derived = derive_fields(project_root, agent=agent)
     defaults = default_fields()
     date = derived["created_at"][:10]
@@ -2515,12 +2658,14 @@ def _parse_evidence_pairs(pairs: list[list[str]] | None) -> list[dict]:
     return out
 
 
-def _collect_set_sections(rtype: str, set_pairs: list[list[str]] | None) -> dict[str, str]:
-    sections: dict[str, str] = {}
-    for pair in set_pairs or []:
-        heading = _canonical_heading(rtype, pair[0])
-        sections[heading] = pair[1]
-    return sections
+def _collect_set_sections(
+    rtype: str, set_pairs: list[list[str]] | None
+) -> tuple[dict[str, str], list[str]]:
+    """`--set HEADING TEXT` pairs as canonical sections, plus any notes to print.
+
+    Never raises on an unrecognized heading: see `normalize_sections`.
+    """
+    return normalize_sections(rtype, [(pair[0], pair[1]) for pair in set_pairs or []])
 
 
 # ---- remember decision / attempt ------------------------------------------- #
@@ -2539,11 +2684,9 @@ def cmd_remember(args: argparse.Namespace) -> int:
         return 2
 
     title = args.title
-    try:
-        sections = _collect_set_sections(rtype, args.set)
-    except ValueError as exc:
-        _emit_error(args, str(exc))
-        return 2
+    sections, section_notes = _collect_set_sections(rtype, args.set)
+    for note_text in section_notes:
+        _emit_warning(args, note_text)
     # Named attempt flags (--problem/--tried/…) override any matching --set heading.
     for attr, heading in ATTEMPT_FLAG_SECTIONS:
         val = getattr(args, attr, None)
@@ -2636,6 +2779,8 @@ def cmd_remember(args: argparse.Namespace) -> int:
     hint = _record_reachability_hint(path, rtype)
     if hint:
         summary["hint"] = hint
+    if section_notes:
+        summary["warnings"] = section_notes
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
@@ -3105,6 +3250,7 @@ def cmd_note(args: argparse.Namespace) -> int:
 
     fields: dict = {}
     tags: list[str] | None = None
+    section_notes: list[str] = []
     if kind == "question":
         fields = {"why": args.why, "needs": args.needs, "status": args.status}
     elif kind == "trap":
@@ -3117,11 +3263,10 @@ def cmd_note(args: argparse.Namespace) -> int:
             "verify": args.verify,
         }
     else:  # idea
-        try:
-            fields = {"sections": _collect_set_sections("idea", args.set)}
-        except ValueError as exc:
-            _emit_error(args, str(exc))
-            return 2
+        idea_sections, section_notes = _collect_set_sections("idea", args.set)
+        for note_text in section_notes:
+            _emit_warning(args, note_text)
+        fields = {"sections": idea_sections}
         tags = _split_tags(args.tags)
 
     result = note(
@@ -3137,6 +3282,8 @@ def cmd_note(args: argparse.Namespace) -> int:
         _emit_error(args, result.get("error", "note failed"))
         return 1
 
+    if section_notes:
+        result["warnings"] = section_notes
     if args.json:
         print(json.dumps(result, indent=2))
     else:
@@ -3614,11 +3761,9 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     prefill = _git_prefill(root, since)
 
     # Manual section overrides.
-    try:
-        overrides = _collect_set_sections("session", args.set)
-    except ValueError as exc:
-        _emit_error(args, str(exc))
-        return 2
+    overrides, section_notes = _collect_set_sections("session", args.set)
+    for note_text in section_notes:
+        _emit_warning(args, note_text)
 
     sections: dict[str, str] = dict(prefill)
     sections.update(overrides)
@@ -3708,6 +3853,8 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         "since": since,
         "coalesced": coalesce is not None,
     }
+    if section_notes:
+        summary["warnings"] = section_notes
     if args.json:
         print(json.dumps(summary, indent=2))
     else:
@@ -9052,6 +9199,22 @@ def _add_validate(sub, global_parser: argparse.ArgumentParser) -> None:
 
 
 # remember decision | attempt
+def _set_flag_help(rtype: str, verb: str = "set") -> str:
+    """`--set` help that names the vocabulary (C1).
+
+    The section list was reachable only through `crumb schema <type>` — which is
+    excellent, and is not where anyone looks — or by being rejected. Both facts a
+    caller needs (the headings, and where the full contract lives) go in the
+    help text of the flag that takes them.
+    """
+    return (
+        f"{verb} a body section (repeatable). HEADING is one of: "
+        f"{', '.join(BODY_SECTIONS[rtype])}. Matching ignores case, spacing and "
+        f"punctuation; anything else is kept under `## {UNSORTED_SECTION}` with a "
+        f"warning. Full contract: `crumb schema {rtype}`"
+    )
+
+
 def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
     p_remember = sub.add_parser(
         "remember",
@@ -9072,7 +9235,7 @@ def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
             nargs=2,
             action="append",
             metavar=("HEADING", "TEXT"),
-            help="set a body section, e.g. --set Context 'why this came up' (repeatable)",
+            help=_set_flag_help(rtype),
         )
         pr.add_argument(
             "--evidence",
@@ -9164,7 +9327,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
         nargs=2,
         action="append",
         metavar=("HEADING", "TEXT"),
-        help="set an idea body section (repeatable)",
+        help=_set_flag_help("idea"),
     )
     pi.add_argument("--tags", help="comma-separated tags")
     pi.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
@@ -9308,7 +9471,7 @@ def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
         nargs=2,
         action="append",
         metavar=("HEADING", "TEXT"),
-        help="override a session body section (repeatable)",
+        help=_set_flag_help("session", verb="override"),
     )
     p_session.add_argument(
         "--focus", help="Current Focus for handoff/current (default: keep the previous focus)"

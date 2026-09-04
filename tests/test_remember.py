@@ -272,10 +272,17 @@ class EvidenceEnforcementTests(unittest.TestCase):
 
 
 class RememberMisuseTests(unittest.TestCase):
-    def test_unknown_section_errors(self):
+    def test_unknown_section_is_parked_not_discarded(self):
+        """C1: a wrong heading must never throw away the call's other content.
+
+        The old behaviour exited 2 and wrote nothing, so every *valid* --set on
+        the same command line went with it — for an agent writing up a long
+        session, content it then has to synthesise again from a context it has
+        already spent.
+        """
         with tempfile.TemporaryDirectory() as tmp:
-            init_store(tmp)
-            code, _ = run(
+            mem = init_store(tmp)
+            code, out = run(
                 [
                     "remember",
                     "decision",
@@ -287,10 +294,45 @@ class RememberMisuseTests(unittest.TestCase):
                     "low",
                     "--set",
                     "Nonsense",
-                    "value",
+                    "parked value",
+                    "--set",
+                    "decision",
+                    "kept value",
+                    "--json",
                 ]
             )
-            self.assertEqual(code, 2)
+            self.assertEqual(code, 0, out)
+            body = next(iter((mem / "decisions").glob("*.md"))).read_text(encoding="utf-8")
+            self.assertIn("## Decision", body)  # case-folded match still lands
+            self.assertIn("kept value", body)
+            self.assertIn("## Unsorted", body)
+            self.assertIn("### Nonsense", body)
+            self.assertIn("parked value", body)
+            warnings = json.loads(out)["warnings"]
+            self.assertTrue(any("Nonsense" in w for w in warnings), warnings)
+
+    def test_section_matching_ignores_case_spacing_and_punctuation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            code, out = run(
+                [
+                    "remember",
+                    "attempt",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "X",
+                    "--confidence",
+                    "low",
+                    "--set",
+                    "why it failed/succeeded",
+                    "the reason",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            body = next(iter((mem / "attempts").glob("*.md"))).read_text(encoding="utf-8")
+            self.assertIn("## Why It Failed / Succeeded", body)
+            self.assertNotIn("## Unsorted", body)
 
     def test_no_store_errors(self):
         with tempfile.TemporaryDirectory() as tmp:
