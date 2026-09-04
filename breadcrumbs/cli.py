@@ -62,6 +62,76 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "project-memory"
 NO_GIT_BRANCH = "(no-git)"
 NO_GIT_COMMIT = "(no-git)"
 
+# --------------------------------------------------------------------------- #
+# Output safety (W1)
+# --------------------------------------------------------------------------- #
+#
+# A Windows console defaults to cp1252, which cannot encode the ✓/✗ result
+# markers. `print` then raised UnicodeEncodeError *mid-line*, so `validate` and
+# `scan-secrets` printed their summary ("12 possible secret(s) found") and lost
+# every per-item detail — the payload that says *which* twelve. The exit codes
+# were right and the diagnosis was gone, which is the worst shape a failure can
+# take: undiagnosable without knowing to re-run under PYTHONIOENCODING=utf-8.
+#
+# Two independent guards, because either alone still loses something:
+#   * `reconfigure(errors="replace")` makes any stray non-ASCII (an em dash in a
+#     record body, a path with an accent) degrade to `?` instead of raising. No
+#     line is ever lost, whatever it holds.
+#   * ASCII markers when the stream cannot encode the glyphs, so the common case
+#     reads as `[x]` / `[ok]` rather than a row of `?`.
+#
+# A tool must never lose its diagnostic payload to a decorative glyph.
+MARK_PASS = "✓"
+MARK_FAIL = "✗"
+_ASCII_MARK_PASS = "[ok]"
+_ASCII_MARK_FAIL = "[x]"
+
+
+def _stream_encodes(stream, text: str) -> bool:
+    """Can `stream` encode `text` without loss? True for str-only sinks."""
+    encoding = getattr(stream, "encoding", None)
+    if not encoding:
+        # io.StringIO (and the test suite's capture buffers) hold `str`; there is
+        # no encoding step to fail.
+        return True
+    try:
+        text.encode(encoding, errors="strict")
+    except (UnicodeEncodeError, LookupError):
+        return False
+    except Exception:  # pragma: no cover - a stream lying about its encoding
+        return False
+    return True
+
+
+def configure_output(stream=None) -> None:
+    """Make stdout total: never raise on encoding, and pick markers it can print.
+
+    Called once from `main()`. Idempotent, and safe on any stream shape — a
+    stream with no `reconfigure` (a pipe wrapper, a test buffer) just keeps the
+    marker probe.
+    """
+    global MARK_PASS, MARK_FAIL
+    stream = sys.stdout if stream is None else stream
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError, TypeError):  # pragma: no cover - stream-dependent
+            pass
+    if _stream_encodes(stream, MARK_PASS + MARK_FAIL):
+        MARK_PASS, MARK_FAIL = "✓", "✗"
+    else:
+        MARK_PASS, MARK_FAIL = _ASCII_MARK_PASS, _ASCII_MARK_FAIL
+
+
+# The first token of every error line (C2). Loud, greppable and machine-stable:
+# agents pipe output through `head`/`tail` to bound its size, which scrolls an
+# argparse usage block away and leaves the echoed prose behind, reading as
+# success. A caller can now grep one fixed string to know a run failed even when
+# it holds a truncated fragment of the output — and `$?` after a pipe is the
+# pipe's status, not ours, so the text has to carry the fact by itself.
+ERROR_PREFIX = "CRUMB-ERROR:"
+
 # Markers delimiting the block Breadcrumbs manages inside the project .gitignore.
 # Anything between them is rewritten by `init`; everything else is preserved.
 GITIGNORE_BEGIN = "# >>> breadcrumbs managed block (managed by `crumb init`) >>>"
@@ -673,11 +743,34 @@ def _emit_init_summary(args: argparse.Namespace, summary: dict) -> None:
         print("\nNext: `crumb resume` to load context; `crumb doctor` to check wiring.")
 
 
+# Namespace attributes that name the sub-position of a command, outermost first.
+# `crumb note trap --body ...` failed with a bare `crumb:` prefix, which does not
+# say which of twenty subcommands rejected the flag.
+_COMMAND_PATH_DESTS = (
+    "command",
+    "record_type",
+    "note_kind",
+    "capture_what",
+    "mcp_what",
+    "hook_event",
+)
+
+
+def command_label(args: argparse.Namespace) -> str:
+    """`crumb note trap` — the fully-qualified subcommand that is speaking."""
+    parts = ["crumb"]
+    for dest in _COMMAND_PATH_DESTS:
+        value = getattr(args, dest, None)
+        if isinstance(value, str) and value:
+            parts.append(value)
+    return " ".join(parts)
+
+
 def _emit_error(args: argparse.Namespace, message: str) -> None:
     if getattr(args, "json", False):
-        print(json.dumps({"error": message}, indent=2))
+        print(json.dumps({"ok": False, "error": message}, indent=2))
     else:
-        print(f"error: {message}", file=sys.stderr)
+        print(f"{ERROR_PREFIX} {command_label(args)}: {message}", file=sys.stderr)
 
 
 # --------------------------------------------------------------------------- #
@@ -1552,19 +1645,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(f"validate: {len(fails)} problem(s) found ({len(passes)} checks passed)\n")
         for f in fails:
             loc = f["path"] or "-"
-            print(f"  ✗ [{f['check']}] {loc}: {f['message']}")
+            print(f"  {MARK_FAIL} [{f['check']}] {loc}: {f['message']}")
         if args.verbose:
             print("\nPassed checks:")
             for f in passes:
                 loc = f["path"] or "-"
-                print(f"  ✓ [{f['check']}] {loc}: {f['message']}")
+                print(f"  {MARK_PASS} [{f['check']}] {loc}: {f['message']}")
         return 1
 
     print(f"validate: OK — {len(passes)} checks passed, 0 problems.")
     if args.verbose:
         for f in passes:
             loc = f["path"] or "-"
-            print(f"  ✓ [{f['check']}] {loc}: {f['message']}")
+            print(f"  {MARK_PASS} [{f['check']}] {loc}: {f['message']}")
     return 0
 
 
@@ -7179,7 +7272,7 @@ def render_audit_human(findings: list[dict]) -> str:
     if fails:
         out.append("Blocking (memory is NOT safe to commit until resolved):")
         for f in fails:
-            out.append(f"  ✗ [{f['check']}] {f['path'] or '-'}: {f['message']}")
+            out.append(f"  {MARK_FAIL} [{f['check']}] {f['path'] or '-'}: {f['message']}")
         out.append("")
     if warns:
         out.append("Warnings (review — these do not block):")
@@ -7254,7 +7347,7 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         for h in hits:
             where = f"{h['path']}:{h['line']}" if h["line"] else h["path"]
             detail = f" — {h['detail']}" if h.get("detail") else ""
-            print(f"  ✗ [{h['pattern']}] {where}{detail}")
+            print(f"  {MARK_FAIL} [{h['pattern']}] {where}{detail}")
         return 1
 
     print("scan-secrets: OK — no secret-like strings in committed memory.")
@@ -7478,11 +7571,11 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         else:
             print("crumb mcp doctor")
             print(
-                f"  {'✓' if sdk else '✗'} [mcp] extra: "
+                f"  {MARK_PASS if sdk else MARK_FAIL} [mcp] extra: "
                 + ("importable" if sdk else "not installed — run: pip install 'crumb-kit[mcp]'")
             )
             print(
-                f"  {'✓' if registered else '✗'} registration: "
+                f"  {MARK_PASS if registered else MARK_FAIL} registration: "
                 + (
                     f"'{MCP_SERVER_NAME}' in {mcp_path}"
                     if registered
@@ -8256,7 +8349,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print("crumb doctor — integration health")
         for c in report["checks"]:
-            mark = "✓" if c["ok"] else "✗"
+            mark = MARK_PASS if c["ok"] else MARK_FAIL
             print(f"  {mark} [{c['check']}] {c['detail']}")
         if report["store"] and not report["integrated"]:
             print("\n" + FIRST_RUN_NUDGE)
@@ -8824,7 +8917,22 @@ class _LazyVersionAction(argparse.Action):
         parser.exit()
 
 
-class _BreadcrumbsParser(argparse.ArgumentParser):
+class _CrumbParser(argparse.ArgumentParser):
+    """An argparse parser whose usage errors lead with `CRUMB-ERROR:` (C2).
+
+    argparse prints the usage block first and the reason last, so a caller that
+    bounds output with `head` keeps the usage and drops the reason — and one that
+    bounds it with `tail` keeps a line that ends in the author's own prose
+    (`unrecognized arguments: --body some long text`), which reads like output,
+    not like a rejection. Leading with the marker puts the fact that this failed
+    on the first line either way, and `self.prog` names the exact subcommand.
+    """
+
+    def error(self, message: str):  # noqa: D102 - argparse contract
+        self.exit(2, f"{ERROR_PREFIX} {self.prog}: {message}\n{self.format_usage()}")
+
+
+class _BreadcrumbsParser(_CrumbParser):
     """Top-level parser that keeps global flags working in any position."""
 
     def parse_known_args(self, args=None, namespace=None):
@@ -8833,6 +8941,25 @@ class _BreadcrumbsParser(argparse.ArgumentParser):
             if not hasattr(ns, dest):
                 setattr(ns, dest, default)
         return ns, argv
+
+    def parse_args(self, args=None, namespace=None):
+        """As argparse, but the leftover-argument error names the subcommand.
+
+        argparse checks for unconsumed argv at the *top* level, so the stock
+        message is prefixed `crumb:` however deep the rejected flag was — the
+        caller is told a flag is unknown without being told which of twenty
+        subcommands does not know it, and is then handed the top-level usage,
+        which cannot list the flags the subcommand does accept.
+        """
+        ns, argv = self.parse_known_args(args, namespace)
+        if argv:
+            label = command_label(ns)
+            self.exit(
+                2,
+                f"{ERROR_PREFIX} {label}: unrecognized arguments: {' '.join(argv)}\n"
+                f"try `{label} --help` for the flags this subcommand accepts.\n",
+            )
+        return ns
 
 
 # init
@@ -9433,11 +9560,10 @@ def build_parser(only: str | None = None) -> argparse.ArgumentParser:
         action=_LazyVersionAction,
         help="show version and record schema_version, then exit",
     )
-    # Subparsers are plain ArgumentParsers (not _BreadcrumbsParser) so the global
-    # backfill runs only once, at the top level — never in a copied-back sub-namespace.
-    sub = parser.add_subparsers(
-        dest="command", metavar="<command>", parser_class=argparse.ArgumentParser
-    )
+    # Subparsers are _CrumbParser (not _BreadcrumbsParser) so the global backfill
+    # runs only once, at the top level — never in a copied-back sub-namespace —
+    # while every usage error still leads with the CRUMB-ERROR marker.
+    sub = parser.add_subparsers(dest="command", metavar="<command>", parser_class=_CrumbParser)
     for name, add_subcommand in _SUBCOMMAND_BUILDERS.items():
         if only is None or name == only:
             add_subcommand(sub, global_parser)
@@ -9488,6 +9614,7 @@ def requested_command(argv: list[str]) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_output()
     parser = build_parser(requested_command(sys.argv[1:] if argv is None else list(argv)))
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
