@@ -2092,14 +2092,39 @@ def truncate_slug(slug: str, limit: int = SLUG_MAX_CHARS) -> str:
     return "-".join(parts)
 
 
-def _unique_record_path(directory: Path, date: str, slug: str) -> tuple[Path, str]:
+# Types whose names are made unique by construction rather than by looking at
+# the local tree (R3). `capture session` derives its disambiguating ordinal from
+# the files it can *see*, so two agents working the same day in two checkouts
+# each independently write `2026-09-04-session.md` (or `-session-3.md`, having
+# each seen two of their own). Git catches it as an add/add conflict — the good
+# outcome — but repair means rewriting the id, slug and title *inside* both
+# files, not just renaming one, and a store like this repo's routinely has five
+# concurrent sessions. Four hex characters of entropy cannot collide across
+# actors who cannot see each other, which the ordinal never could.
+UNIQUE_SUFFIX_TYPES = ("session",)
+UNIQUE_SUFFIX_BYTES = 2  # -> 4 hex characters
+
+
+def _unique_suffix() -> str:
+    return hashlib.blake2s(os.urandom(16), digest_size=UNIQUE_SUFFIX_BYTES).hexdigest()
+
+
+def _unique_record_path(
+    directory: Path, date: str, slug: str, *, suffix: str | None = None
+) -> tuple[Path, str]:
     """Pick a non-colliding `<date>-<slug>.md` (append -2, -3, … on same-day clash).
 
     The slug is capped at `SLUG_MAX_CHARS` *including* the collision suffix, so
     the disambiguated names stay inside the budget too. Truncation can make two
     long titles land on the same base — that is just another same-day clash, and
     the suffix already handles it.
+
+    `suffix` (see `UNIQUE_SUFFIX_TYPES`) is appended before any of that: it makes
+    the name unique against writers this process cannot see, where the ordinal
+    only disambiguates against files already on disk here.
     """
+    if suffix:
+        slug = truncate_slug(slug, SLUG_MAX_CHARS - len(suffix) - 1) + "-" + suffix
     base = truncate_slug(slug)
     candidate = directory / f"{date}-{base}.md"
     if not candidate.exists():
@@ -2151,7 +2176,12 @@ def write_record(
     date = derived["created_at"][:10]
     directory = Path(memory_dir) / TYPE_DIR[rtype]
     directory.mkdir(parents=True, exist_ok=True)
-    path, slug = _unique_record_path(directory, date, slugify(title))
+    path, slug = _unique_record_path(
+        directory,
+        date,
+        slugify(title),
+        suffix=_unique_suffix() if rtype in UNIQUE_SUFFIX_TYPES else None,
+    )
 
     ident = derive_identity(path.stem, rtype)
     if ident is None:  # pragma: no cover - filename is constructed canonically
@@ -2366,6 +2396,67 @@ def set_record_status(
     # back to the active set, so the projections must follow.
     reindex_projections(memory_dir)
     return {"ok": True, "id": rid, "path": str(rec.path), "from": prev, "to": status}
+
+
+def set_record_title(memory_dir: Path, rid: str, title: str, *, agent: str | None = None) -> dict:
+    """Rewrite a record's `title` in place, gated by `validate` (R1).
+
+    Repairs a corpus that was written before titles were derived: 280 of one
+    field store's 310 sessions are titled `session`, and `search` ranks on
+    title, so they are invisible to the tool that exists to find them.
+
+    Identity — id, slug, filename — is deliberately NOT rewritten. Those are what
+    every `supersedes`, `superseded_by` and evidence ref in the store points at,
+    and a rename would break each of them silently while a reader looking at the
+    old filename would see a record that no longer answers to it. The searchable
+    field is the one that was empty of information, and it is the one this fixes;
+    the id stays the durable handle it has always been.
+    """
+    memory_dir = Path(memory_dir)
+    rec = find_record_by_id(memory_dir, rid)
+    if rec is None:
+        return {
+            "ok": False,
+            "error": f"no record with id {rid!r} (traps and questions "
+            "have no separate title — edit their summary line in place)",
+        }
+    title = (title or "").strip()
+    if not title:
+        return {"ok": False, "id": rid, "error": "a title cannot be empty"}
+
+    original = rec.path.read_text(encoding="utf-8")
+    meta, body = parse_frontmatter(original)
+    previous = meta.get("title")
+    if previous == title:
+        return {"ok": True, "id": rid, "path": str(rec.path), "from": previous, "to": title}
+    meta["title"] = title
+    meta["updated_at"] = now_iso()
+    author = agent or detect_agent()
+    note = f"<!-- title: {previous!r} -> {title!r} by {author} at {meta['updated_at']} -->"
+    try:
+        rendered = render_frontmatter(meta)
+    except ValueError as exc:
+        return {"ok": False, "id": rid, "error": f"cannot re-render frontmatter: {exc}"}
+    reparsed, _ = parse_frontmatter(rendered + "\n")
+    if reparsed != meta:
+        return {
+            "ok": False,
+            "id": rid,
+            "error": "retitle refused: frontmatter would not survive a re-render "
+            "round-trip; simplify the title",
+        }
+    write_text_atomic(rec.path, rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n")
+
+    fails = _validate_new_file(memory_dir, rec.path)
+    if fails:
+        write_text_atomic(rec.path, original)  # revert
+        return {
+            "ok": False,
+            "id": rid,
+            "error": "retitle rejected by validate: " + "; ".join(f["message"] for f in fails),
+        }
+    reindex_projections(memory_dir)
+    return {"ok": True, "id": rid, "path": str(rec.path), "from": previous, "to": title}
 
 
 # ---- trap + question lifecycle (the aggregate-file half of `mark-status`) --- #
@@ -3435,6 +3526,28 @@ def cmd_verify(args: argparse.Namespace) -> int:
 # ---- mark-status ----------------------------------------------------------- #
 
 
+def cmd_retitle(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    result = set_record_title(memory_dir, args.record_id, args.title, agent=args.agent)
+    if not result.get("ok"):
+        _emit_error(args, result.get("error", "retitle failed"))
+        return 1
+    if args.json:
+        print(json.dumps(result, indent=2))
+    else:
+        print(f"Retitled {result['id']}: {result['from']!r} -> {result['to']!r}")
+        print(f"  file: {result['path']}")
+        print(
+            "  note: the id, slug and filename are unchanged — they are what "
+            "other records reference."
+        )
+    return 0
+
+
 def cmd_mark_status(args: argparse.Namespace) -> int:
     """CLI surface over `set_record_status` (already exposed via MCP).
 
@@ -3448,10 +3561,27 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
 
+    status = args.new_status or args.status_flag
+    if not status:
+        _emit_error(
+            args,
+            "a status is required: `crumb mark-status <ID> <STATUS>` or --status <STATUS>. "
+            f"Records and traps: {', '.join(VALID_STATUS)}; "
+            f"questions: {', '.join(VALID_QUESTION_STATUS)}",
+        )
+        return 2
+    if args.new_status and args.status_flag and args.new_status != args.status_flag:
+        _emit_error(
+            args,
+            f"conflicting status: {args.new_status!r} positionally and "
+            f"{args.status_flag!r} via --status; pass one",
+        )
+        return 2
+
     result = set_record_status(
         memory_dir,
         args.record_id,
-        args.new_status,
+        status,
         args.reason or "",
         agent=getattr(args, "agent", None),
         superseded_by=args.superseded_by,
@@ -3733,6 +3863,57 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     }
 
 
+# A derived session title is capped here: long enough for a real clause, short
+# enough that the filename it becomes stays readable.
+SESSION_TITLE_MAX_CHARS = 72
+SESSION_TITLE_FALLBACK = "session"
+
+# `- 4f1c2ab fix: …` — the git prefill's own commit lines. The subject is the
+# title; the sha is not.
+_TITLE_SHA_PREFIX_RE = re.compile(r"^[0-9a-f]{7,40}\s+")
+
+
+def _title_from_text(text: str) -> str:
+    """A short human title from the first meaningful line of `text`, or ''."""
+    for line in (text or "").splitlines():
+        line = line.strip().lstrip("-*#").strip().strip("`")
+        line = _TITLE_SHA_PREFIX_RE.sub("", line)
+        if not line or _is_placeholder(line):
+            continue
+        # First sentence only — a Next Action is often a paragraph.
+        line = re.split(r"(?<=[.!?])\s+", line, maxsplit=1)[0].strip().rstrip(".;:,")
+        if not line:
+            continue
+        if len(line) > SESSION_TITLE_MAX_CHARS:
+            cut = line[:SESSION_TITLE_MAX_CHARS].rsplit(" ", 1)[0]
+            line = cut or line[:SESSION_TITLE_MAX_CHARS]
+        return line
+    return ""
+
+
+def _derive_session_title(sections: dict[str, str], focus: str | None) -> str:
+    """Name a session from what the caller already said about it (R1).
+
+    `--title` was optional and fell back to the constant `session`, and an agent
+    under context pressure skips optional flags: 90% of a 310-session field
+    store was titled `session`, with the id, slug and filename carrying the same
+    nothing. `crumb search` ranks on title, so those records were effectively
+    invisible to the tool that exists to find them.
+
+    Requiring `--title` would have prevented all of them, but the caller has
+    already written the sentence we need — the Next Action is mandatory, and the
+    focus and the work summary are usually there too. Deriving beats asking for
+    the same fact twice.
+    """
+    candidates = [focus or "", sections.get("Next Action", "")]
+    candidates += [sections.get(h, "") for h in BODY_SECTIONS["session"]]
+    for text in candidates:
+        title = _title_from_text(text)
+        if title:
+            return title
+    return ""
+
+
 def cmd_capture_session(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
@@ -3800,7 +3981,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         )
         return 2
 
-    title = args.title or "session"
+    title = args.title or _derive_session_title(sections, args.focus) or SESSION_TITLE_FALLBACK
     if coalesce is not None:
         before = coalesce.path.read_text(encoding="utf-8")
         path = _coalesce_into(coalesce, sections, root, args.agent)
@@ -9389,12 +9570,25 @@ def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
         "(e.g. trap_hand-tagged-releases) or question id (e.g. q:should-we-shard) — "
         "retiring a trap or answering a question stops it raising guard",
     )
+    # Positional STATUS, with `--status` accepted for the same value (C3). This
+    # is the only place in the CLI where a vocabulary value is positional —
+    # `crumb verify` takes the same words as `--status` — and that inconsistency
+    # is the whole trap: `--status superseded` exited 2 with an argparse error
+    # naming no subcommand. Accepting both costs nothing and removes the class.
     p_mark.add_argument(
         "new_status",
         metavar="STATUS",
+        nargs="?",
         choices=MARK_STATUS_CHOICES,
         help=f"new status — records and traps: {', '.join(VALID_STATUS)}; "
         f"questions: {', '.join(VALID_QUESTION_STATUS)}",
+    )
+    p_mark.add_argument(
+        "--status",
+        dest="status_flag",
+        default=None,
+        choices=MARK_STATUS_CHOICES,
+        help="the same value as the positional STATUS, spelled as `crumb verify` spells it",
     )
     p_mark.add_argument(
         "--reason", default="", help="why the status changed (recorded as a trailing comment)"
@@ -9408,6 +9602,23 @@ def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     p_mark.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
     p_mark.set_defaults(func=cmd_mark_status)
+
+
+# retitle — repair a record whose title carries no information
+def _add_retitle(sub, global_parser: argparse.ArgumentParser) -> None:
+    p_retitle = sub.add_parser(
+        "retitle",
+        parents=[global_parser],
+        help="rewrite a record's title (id, slug and filename are left alone)",
+    )
+    p_retitle.add_argument(
+        "record_id",
+        metavar="ID",
+        help="record id, e.g. ses_20260904_session-8",
+    )
+    p_retitle.add_argument("title", metavar="TITLE", help="the new title")
+    p_retitle.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
+    p_retitle.set_defaults(func=cmd_retitle)
 
 
 # prune — explicit retention for machine session snapshots
@@ -9669,6 +9880,7 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "note": _add_note,
     "verify": _add_verify,
     "mark-status": _add_mark_status,
+    "retitle": _add_retitle,
     "prune": _add_prune,
     "reindex": _add_reindex,
     "capture": _add_capture,
