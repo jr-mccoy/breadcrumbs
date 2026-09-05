@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
-## [Unreleased]
+## [0.2.0] — 2026-09-05
 
 A field review of 0.1.11 against a 310-session production store, worked end to
 end. Sixteen findings; two (`mark-status` on trap ids, `capture session`
@@ -34,6 +34,25 @@ were both single lexical shortcuts, and both are gone.
 - **`mark-status --status <value>`** — accepted alongside the positional STATUS.
   It was the only place in the CLI where a vocabulary value was positional,
   while `crumb verify` takes the same words as a flag.
+
+### Changed
+
+Four behaviour changes a 0.1.12 consumer may notice. All are consequences of
+the fixes below; none needs action unless you script against the old behaviour.
+
+- **`scan-secrets` exits 0 on a high-entropy-only result** where 0.1.12 exited
+  1. Structured credential shapes (AWS keys, PEM blocks, bearer tokens) and an
+  unscannable file still exit 1. A CI step that gates on the exit code now
+  passes where it used to fail; read `blocking` in `--json` (or `--json`'s `ok`)
+  if you want the old strictness back, and use `.crumbignore` for shapes you
+  have already decided about.
+- **An unknown `--set` heading exits 0**, having written the content under
+  `## Unsorted`, where 0.1.12 exited 2 and wrote nothing.
+- **Session record ids and filenames carry a four-character suffix**
+  (`ses_20260905_<slug>-a3f2`). Anything parsing session filenames for an
+  ordinal will not find one. Durable record names are unchanged.
+- **A record's `dirty_files` excludes `.project-memory/`** and is capped at 25
+  paths. `capture session --include-memory` restores the old contents.
 
 ### Fixed
 

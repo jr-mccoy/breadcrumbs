@@ -1,14 +1,14 @@
 # Project Handoff
 
-_Last updated: 2026-09-05T00:30:21+00:00_
+_Last updated: 2026-09-05T01:35:59+00:00_
 _Branch: claude/artifact-388cc819-sm0ipj_
-_Commit: a5de02b_
+_Commit: 9037d68_
 
 ## Current Focus
-Working the 0.1.11 field review end to end: thirteen findings fixed on this branch, three verified already-fixed
+0.2.0 is cut and waiting on the PR #49 merge; the field-review work is done
 
 ## Next Action
-Review the diff, then release 0.1.13: bump __version__ in breadcrumbs/__init__.py, rename [Unreleased] to [0.1.13] with the date, merge to main, run release.yml mode=dry-run then mode=publish. The 0.1.12 release described in the previous handoff is already out.
+Merge PR #49 to main, then run release.yml from main: mode=dry-run first to confirm the artifact, then mode=publish. Do not hand-tag — the workflow cuts the tag and the Release on the commit it builds.
 
 ## Blockers / Open Questions
 
