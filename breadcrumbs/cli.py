@@ -2610,6 +2610,81 @@ def _apply_block_status(block: str, status: str, superseded_by: str | None, note
     return head + (core + "\n" if core else "") + note + tail
 
 
+def _set_block_bullet(block: str, key: str, value: str) -> str:
+    """Set `- <key>: <value>` inside one `## ` block, changing nothing else.
+
+    Same placement rule as the status bullet: with the block's other
+    `- key: value` fields, never below its prose.
+    """
+    pattern = re.compile(r"\s*-\s*" + re.escape(key) + r"\s*:", re.I)
+    lines = block.splitlines(keepends=True)
+    head, rest = (lines[0] if lines else ""), lines[1:]
+    if head and not head.endswith("\n"):
+        head += "\n"
+    bullet = f"- {key}: {value}\n"
+    for i, line in enumerate(rest):
+        if pattern.match(line):
+            rest[i] = bullet
+            break
+    else:
+        insert = 0
+        for i, line in enumerate(rest):
+            if re.match(r"\s*-\s+\S", line):
+                insert = i + 1
+            elif line.strip():
+                break
+        rest.insert(insert, bullet)
+    return head + "".join(rest)
+
+
+def set_trap_confirmed(memory_dir: Path, rid: str, *, when: str | None = None) -> dict:
+    """Stamp a trap's `- Last confirmed:` bullet with today's date (R6).
+
+    Traps accumulate and nothing ages out: 77 active traps, 167 KB, loaded every
+    session. Age alone cannot retire one — an old trap may be perfectly live —
+    so the store needs the fact nobody was recording: when somebody last checked
+    that this is still true. `crumb traps --stale` reads it back.
+    """
+    memory_dir = Path(memory_dir)
+    trap = find_trap_by_id(memory_dir, rid)
+    if trap is None:
+        return {"ok": False, "error": f"no trap with id {rid!r}"}
+    tid = trap["id"]
+    path = memory_dir / "known-traps.md"
+    try:
+        original = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "id": tid, "error": f"cannot read known-traps.md: {exc}"}
+    span = next(
+        (
+            (start, end)
+            for start, end, heading in _md_heading_spans(original)
+            if heading.partition(":")[0].strip().lower() == tid.lower()
+        ),
+        None,
+    )
+    if span is None:  # pragma: no cover - defensive; find_trap_by_id just found it
+        return {"ok": False, "id": tid, "error": f"could not locate the {tid} block to edit"}
+    stamp = when or now_iso()[:10]
+    start, end = span
+    new_text = (
+        original[:start]
+        + _set_block_bullet(original[start:end], TRAP_CONFIRMED_KEY, stamp)
+        + original[end:]
+    )
+    write_text_atomic(path, new_text)
+    fails = _validate_new_file(memory_dir, path)
+    if fails:
+        write_text_atomic(path, original)  # revert
+        return {
+            "ok": False,
+            "id": tid,
+            "error": "confirm rejected by validate: " + "; ".join(f["message"] for f in fails),
+        }
+    reindex_projections(memory_dir)
+    return {"ok": True, "id": tid, "path": str(path), "last_confirmed": stamp}
+
+
 def set_trap_status(
     memory_dir: Path,
     rid: str,
@@ -3299,7 +3374,15 @@ def note(
         if not any(q["question"] == text for q in load_open_questions(memory_dir)):
             write_text_atomic(path, before)  # revert
             return {"ok": False, "error": "appended question did not parse back; reverted"}
-        result = {"ok": True, "kind": "question", "ref": text, "path": str(path)}
+        # `ref` is the question itself (its identity in open-questions.md); `id`
+        # is the handle `mark-status` and `search` take.
+        result = {
+            "ok": True,
+            "kind": "question",
+            "id": question_item_id(text),
+            "ref": text,
+            "path": str(path),
+        }
         hint = _block_reachability_hint(
             "\n".join(str(fields.get(k) or "") for k in ("why", "needs")) + "\n" + text,
             "question",
@@ -3341,7 +3424,18 @@ def note(
         if not any(b["heading"].lower().startswith(marker) for b in load_traps(memory_dir)):
             write_text_atomic(path, before)  # revert
             return {"ok": False, "error": "appended trap did not parse back; reverted"}
-        result = {"ok": True, "kind": "trap", "ref": f"trap_{slug}", "path": str(path)}
+        # `id` alongside `ref`: the id is what `mark-status`, `traps --confirm`
+        # and `search` take, and a caller should not have to know that this one
+        # command calls it something else (C4). They are the same string for a
+        # trap — the printed id is the truncated slug that was stored, so
+        # `mark-status <printed id>` resolves.
+        result = {
+            "ok": True,
+            "kind": "trap",
+            "id": f"trap_{slug}",
+            "ref": f"trap_{slug}",
+            "path": str(path),
+        }
         # known-traps.md documents a five-field format at the top of the file,
         # but the writer accepts a bare summary, so the whole trap lands on the
         # heading line and the documented template goes unused. Say so at the
@@ -3610,6 +3704,90 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 # ---- mark-status ----------------------------------------------------------- #
+
+
+# The always-on context a session starts with is dominated by known-traps.md:
+# 167 KB and 77 active traps in the field store, growing monotonically because
+# nothing ever ages out. Age alone must not retire a trap, so this reports rather
+# than acts — it names the candidates and the one command that retires them.
+TRAPS_STALE_DAYS_DEFAULT = 180
+
+
+def trap_report(memory_dir: Path, *, stale_days: int | None = None, status: str | None = None):
+    """Traps with their size and staleness, oldest confirmation first (R6)."""
+    rows = []
+    for trap in load_traps(memory_dir):
+        if status and (trap.get("status") or "active") != status:
+            continue
+        confirmed = trap_last_confirmed(trap)
+        age = _age_days(confirmed) if confirmed else None
+        if stale_days is not None and (age is not None and age < stale_days):
+            continue
+        body = trap.get("content") or trap.get("body") or ""
+        rows.append(
+            {
+                "id": trap["id"],
+                "status": trap.get("status") or "active",
+                "summary": trap.get("summary") or "",
+                "last_confirmed": confirmed,
+                "age_days": age,
+                "approx_tokens": approx_tokens(trap["heading"] + "\n" + body),
+            }
+        )
+    # Never-confirmed first (age None sorts highest), then oldest confirmation.
+    rows.sort(key=lambda r: (r["age_days"] is not None, -(r["age_days"] or 0)))
+    return rows
+
+
+def cmd_traps(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+
+    if args.confirm:
+        result = set_trap_confirmed(memory_dir, args.confirm)
+        if not result.get("ok"):
+            _emit_error(args, result.get("error", "confirm failed"))
+            return 1
+        if args.json:
+            _print_json(args, result)
+        else:
+            print(f"Confirmed {result['id']}: still true as of {result['last_confirmed']}")
+            print(f"  file: {result['path']}")
+        return 0
+
+    stale_days = args.stale if args.stale is not None else None
+    rows = trap_report(memory_dir, stale_days=stale_days, status=args.status)
+    total = sum(r["approx_tokens"] for r in rows)
+    if args.json:
+        _print_json(
+            args,
+            {"traps": rows, "items": rows},
+            summary={"count": len(rows), "approx_tokens": total},
+        )
+        return 0
+
+    if not rows:
+        scope = f" not confirmed in {stale_days} day(s)" if stale_days is not None else ""
+        print(f"traps: none{scope}.")
+        return 0
+    header = f"traps: {len(rows)} trap(s), ~{total} tokens of always-on context"
+    if stale_days is not None:
+        header += f" (not confirmed in {stale_days} day(s))"
+    print(header + "\n")
+    for r in rows:
+        when = r["last_confirmed"] or "never confirmed"
+        age = f", {r['age_days']}d ago" if r["age_days"] is not None else ""
+        print(f"  [{r['status']}] {r['id']} — {when}{age}, ~{r['approx_tokens']} tokens")
+        if r["summary"]:
+            print(f"      {r['summary']}")
+    print(
+        "\nStill true? `crumb traps --confirm <id>`. "
+        'No longer? `crumb mark-status <id> resolved --reason "..."`.'
+    )
+    return 0
 
 
 def cmd_retitle(args: argparse.Namespace) -> int:
@@ -4711,6 +4889,24 @@ def _md_blocks(path: Path, head_predicate) -> list[dict]:
 _BLOCK_STATUS_LINE_RE = re.compile(r"\s*-\s*status\s*:\s*(.+)", re.I)
 _BLOCK_SUPERSEDED_LINE_RE = re.compile(r"\s*-\s*superseded[ _]by\s*:\s*(.+)", re.I)
 _BLOCK_OPENED_LINE_RE = re.compile(r"\s*-\s*opened\s*:\s*(.+)", re.I)
+# When somebody last checked that a trap is still true (R6). Authored, not
+# derived: age says a trap is old, and an old trap may be perfectly live — only
+# a person or an agent re-checking it can say it still applies.
+TRAP_CONFIRMED_KEY = "Last confirmed"
+_BLOCK_CONFIRMED_LINE_RE = re.compile(r"\s*-\s*last[ _]confirmed\s*:\s*(.+)", re.I)
+# The dated provenance comment `mark-status` appends: a fallback "last touched"
+# for a trap nobody has confirmed explicitly.
+_BLOCK_STAMP_RE = re.compile(r"at (\d{4}-\d{2}-\d{2})")
+
+
+def trap_last_confirmed(trap: dict) -> str | None:
+    """`YYYY-MM-DD` a trap was last confirmed or touched, or None if never."""
+    body = (trap.get("body") or trap.get("content") or "") if trap else ""
+    match = _BLOCK_CONFIRMED_LINE_RE.search(body)
+    if match:
+        return _strip_inline_comment(match.group(1)).strip()[:10] or None
+    stamps = _BLOCK_STAMP_RE.findall(body)
+    return max(stamps) if stamps else None
 
 
 def _block_status(body: str, default: str) -> str:
@@ -7455,6 +7651,10 @@ ADAPTER_FILENAMES = (
 )
 ADAPTER_BLOAT_CHARS = 4000  # signpost files should be small pointers, not copies
 SESSIONS_GROWTH_NOTE = 50  # session count above which audit suggests promoting + pruning
+# The always-on trap budget. Generous — a store of real traps is worth carrying —
+# but bounded, because nothing else bounds it: the field store reached 167 KB and
+# 77 active traps with no mechanism for anything to leave.
+TRAPS_TOKEN_BUDGET = 8000
 
 
 # ---- secret scan ----------------------------------------------------------- #
@@ -7799,6 +7999,28 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                         f"the breadcrumbs managed block in '{name}' is {len(block)} chars; "
                         "the signpost should be a small pointer into memory, not a large "
                         "copy (§16.13)"
+                    ),
+                }
+            )
+
+    # known-traps.md growth. Unlike the packet, nothing bounds this file: traps
+    # are appended and never age out, and every session loads all of them. The
+    # check names the report that makes retirement possible rather than asking
+    # for a rollup command that does not exist.
+    traps_path = memory_dir / "known-traps.md"
+    if traps_path.is_file():
+        traps = [t for t in load_traps(memory_dir) if (t.get("status") or "active") == "active"]
+        toks = approx_tokens(read_text_lenient(traps_path)[0])
+        if toks > TRAPS_TOKEN_BUDGET:
+            findings.append(
+                {
+                    "kind": "traps-growth",
+                    "path": "known-traps.md",
+                    "message": (
+                        f"{len(traps)} active trap(s), ~{toks} tokens of always-on context "
+                        f"(budget {TRAPS_TOKEN_BUDGET}) — `crumb traps --stale` lists the "
+                        "ones nobody has confirmed lately; retire one with "
+                        "`crumb mark-status <id> stale`"
                     ),
                 }
             )
@@ -10023,6 +10245,35 @@ def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
     p_mark.set_defaults(func=cmd_mark_status)
 
 
+# traps — what the always-on context costs, and what can be retired
+def _add_traps(sub, global_parser: argparse.ArgumentParser) -> None:
+    p_traps = sub.add_parser(
+        "traps",
+        parents=[global_parser],
+        help="list known traps with their staleness and context cost",
+    )
+    p_traps.add_argument(
+        "--stale",
+        nargs="?",
+        type=int,
+        const=TRAPS_STALE_DAYS_DEFAULT,
+        default=None,
+        metavar="DAYS",
+        help=f"only traps not confirmed in DAYS (default {TRAPS_STALE_DAYS_DEFAULT}); "
+        "never-confirmed traps always qualify",
+    )
+    p_traps.add_argument(
+        "--status", choices=VALID_STATUS, default=None, help="only traps with this status"
+    )
+    p_traps.add_argument(
+        "--confirm",
+        metavar="ID",
+        default=None,
+        help=f"stamp a trap's `- {TRAP_CONFIRMED_KEY}:` bullet with today's date",
+    )
+    p_traps.set_defaults(func=cmd_traps)
+
+
 # retitle — repair a record whose title carries no information
 def _add_retitle(sub, global_parser: argparse.ArgumentParser) -> None:
     p_retitle = sub.add_parser(
@@ -10314,6 +10565,7 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "verify": _add_verify,
     "mark-status": _add_mark_status,
     "retitle": _add_retitle,
+    "traps": _add_traps,
     "prune": _add_prune,
     "reindex": _add_reindex,
     "capture": _add_capture,
