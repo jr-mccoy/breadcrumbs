@@ -1,17 +1,25 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 95f7a72 | inputs_hash: 5de64ed3d6bf | generated_at: 2026-09-03T03:22:07+00:00 -->
+<!-- source_commit: 0578cbf | inputs_hash: 5de64ed3d6bf | generated_at: 2026-09-05T00:08:30+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-ai-memory-qbm4fk` · commit `95f7a72` · 12 uncommitted file(s)
+branch `claude/artifact-388cc819-sm0ipj` · commit `0578cbf` · 1 uncommitted file(s)
 
 ## Current Focus
 Signal-to-noise in the staleness warnings: branch mismatch is judged on whether the file reached HEAD, and the possible-drift line needs most of the subject. Both fixes are on this branch with 9 new tests; PyPI is at 0.1.12.
 
 ## Next Action
 Merge this branch, then release 0.1.13: bump __version__ in breadcrumbs/__init__.py, rename the [Unreleased] CHANGELOG section to [0.1.13] with the date, run release.yml mode=dry-run from main, then mode=publish. Evidence: dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head, breadcrumbs/cli.py HeadTree.
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 0578cbf fix: sessions get a name and an id that cannot collide
+- 836a95f fix: a wrong --set heading no longer throws the whole call away
+- f684787 fix: a failing check keeps its diagnosis, and an error says it failed
+- fe91f30 Merge pull request #48 from jr-mccoy/claude/agentic-ai-memory-qbm4fk
+- a1dc0ec fix: staleness warnings stop reporting memory that has already reached HEAD
 
 ## Active Decisions
 - `dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head` — A record's commit: is HEAD at write time, i.e. where the code was, so commit ancestry is unsound: a commit can be an ancestor of HEAD while the record beside it is uncommitted or on an unmerged branch. A file committed at HEAD and clean in the worktree has provably reached this history, and that test also covers squash and rebase merges, where no feature sha survives. Downgrading to a note would keep the noise. Three git calls per staleness pass regardless of store size: rev-parse --show-prefix (the project root may sit below the repo root and ls-tree/status print repo-root-relative paths), ls-tree -r -z HEAD, status --porcelain.
@@ -78,4 +86,4 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 1 day(s) old, written 5 commit(s) behind current HEAD.

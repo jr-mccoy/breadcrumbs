@@ -3,11 +3,6 @@
 "./gradlew",
 ".github/workflows/ci.yml",
 ".github/workflows/release.yml",
-"0.1.10",
-"0.1.11",
-"0.1.12",
-"0.1.8",
-"10/15",
 "CHANGELOG.md",
 "CONTRIBUTING.md",
 "README.md",
@@ -19,9 +14,7 @@
 "cli.py",
 "crumb.py",
 "fixtures/fixture-02-guard-true-positive",
-"pyproject.toml",
-"tests.test",
-"v0.1.5/v0.1.6"
+"pyproject.toml"
 ],
 "tokens": [
 "02",

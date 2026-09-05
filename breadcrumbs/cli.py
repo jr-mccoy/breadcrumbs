@@ -33,7 +33,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import date, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -2268,7 +2268,8 @@ def _record_reachability_hint(path: Path, rtype: str) -> str | None:
     if rec.error:
         return None  # unparseable is validate's finding, not this one's
     item = _item_from_record(rec)
-    return None if (item["tags"] or item["files"]) else REACHABILITY_HINT
+    reachable = item["tags"] or item["files"] or item["mentioned_files"]
+    return None if reachable else REACHABILITY_HINT
 
 
 def _block_reachability_hint(body: str, kind: str) -> str | None:
@@ -5759,6 +5760,12 @@ GUARD_DF_MIN_CORPUS = 8
 # scoring weights (§11.4 signals)
 GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
 GUARD_W_TAG = 4  # per overlapping tag/component
+# Per overlapping path the record only *mentions* in prose (G1). Below a tag and
+# above a keyword: a prose mention is real evidence of topicality and is not the
+# author saying "this record is about that file". It cannot open the candidate
+# gate and it cannot floor a verdict; it can only add weight to a match that
+# already qualified.
+GUARD_W_MENTION = 2
 GUARD_W_KEYWORD = 1  # per specific shared keyword
 # Bonus per shared keyword that appears in the record's own *title*. A
 # title names what the record is about; a body mention can be incidental. Scoring
@@ -5841,6 +5848,101 @@ def _is_destructive(action: str, classes: list[str]) -> bool:
     )
 
 
+# ---- the other half of blast radius: an action that cannot do damage -------- #
+#
+# Retrieval overlap is symmetric, and that made the verdict scale *invert* in the
+# 0.1.11 field test: `git status` — read-only, zero side effects — was the
+# loudest command measured, at PAUSE with five matched records, while `npm test`,
+# which executes arbitrary code, was silent at PROCEED. The mechanism is corpus
+# frequency read as relevance: `git status` shares vocabulary with the many
+# records that discuss git workflow, and an Android-heavy store shares nothing
+# with `npm test`. No amount of scoring fixes that, because it is not a scoring
+# question — it is that the command cannot do the thing being warned about.
+#
+# So classify the action first. A read-only verb caps at READ_FIRST however
+# strong the overlap: memory is still worth surfacing (a trap about *reading*
+# stale output is real), but it cannot rise to "stop and ask a human". PAUSE and
+# ASK_HUMAN are reserved for actions that write, delete, push, deploy or execute.
+GUARD_READ_ONLY_CEILING = "READ_FIRST"
+
+# Commands whose whole job is to report. Deliberately a short allowlist of the
+# unambiguous ones: `sed`, `awk` and `tee` can all write, and anything not named
+# here is simply treated as capable of side effects, which is the safe default.
+GUARD_READ_ONLY_COMMANDS = frozenset(
+    """
+    cat less more head tail nl wc
+    ls dir tree stat file du df pwd realpath basename
+    grep egrep fgrep rg ack ag find fd locate
+    diff cmp md5sum sha1sum sha256sum
+    which whereis type man whoami hostname uname date
+    echo printf uniq cut column jq yq
+    ps top uptime id groups
+    """.split()
+)
+
+# Two near-misses, deliberately absent: `env` runs an arbitrary command as its
+# argument, and `sort -o` writes a file. Neither reports for a living.
+
+# `git` is both the most-used command in any store and the one whose subcommands
+# span the whole range, so it gets its own allowlist rather than the verb alone.
+GUARD_READ_ONLY_GIT_SUBCOMMANDS = frozenset(
+    {
+        "status",
+        "log",
+        "diff",
+        "show",
+        "blame",
+        "describe",
+        "shortlog",
+        "rev-parse",
+        "rev-list",
+        "ls-files",
+        "ls-tree",
+        "ls-remote",
+        "cat-file",
+        "whatchanged",
+        "grep",
+        "reflog",
+        "annotate",
+        "count-objects",
+        "var",
+    }
+)
+
+# Flags that make an otherwise-reporting command act: `find . -delete` and
+# `find . -exec rm {} +` are the ones that matter in practice. Matched as whole
+# tokens, so an argument that merely contains one does not trip it.
+GUARD_READ_ONLY_DISQUALIFYING_ARGS = frozenset(
+    "-delete -exec -execdir -ok -okdir -fprint -fls -fprintf".split()
+)
+
+# Shell metacharacters that can turn a reporting command into a writing one
+# (`cat x > y`, `ls && rm -rf .`, `` grep `rm -rf .` ``). Their presence forfeits
+# the read-only claim outright: this cap only ever *lowers* a verdict, so the
+# conservative reading is the correct one.
+_SHELL_EFFECT_RE = re.compile(r"[>;&`]|\|\||\$\(")
+
+
+def _is_read_only_action(action: str) -> bool:
+    """True only when the action provably cannot change anything (G2).
+
+    Conservative by construction: an action this cannot recognize is treated as
+    capable of side effects, so a missed classification costs an unnecessary
+    PAUSE, never a swallowed one.
+    """
+    text = (action or "").strip()
+    if not text or _SHELL_EFFECT_RE.search(text):
+        return False
+    tokens = text.split()
+    if GUARD_READ_ONLY_DISQUALIFYING_ARGS & {t.lower() for t in tokens[1:]}:
+        return False
+    verb = PurePosixPath(tokens[0].replace("\\", "/")).name.lower()
+    if verb == "git":
+        subcommands = [t for t in tokens[1:] if not t.startswith("-")]
+        return bool(subcommands) and subcommands[0] in GUARD_READ_ONLY_GIT_SUBCOMMANDS
+    return verb in GUARD_READ_ONLY_COMMANDS
+
+
 _VERDICTS = ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN")
 _VERDICT_RANK = {v: i for i, v in enumerate(_VERDICTS)}
 
@@ -5871,10 +5973,74 @@ GUARD_STOPWORDS = frozenset(
 )
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
-# A token that looks like a file path: has a directory separator or a dotted ext.
+# Candidate path tokens in free text. This regex only *finds* things shaped like
+# a path; `_is_path_token` decides whether each one is one. Keeping the two
+# separate is the point — the old code treated the regex's own output as the
+# answer, and a regex reading "contains a dot or a slash" says yes to most of a
+# paragraph of technical prose (G1).
 _FILE_TOKEN_RE = re.compile(
     r"[A-Za-z0-9_][\w./\-]*\.[A-Za-z0-9]+|[A-Za-z0-9_./\-]+/[A-Za-z0-9_./\-]+"
 )
+
+# Extensions that make a dotted token a filename rather than an attribute access.
+# Not exhaustive and not meant to be: an unknown extension with no slash simply
+# does not qualify, which is the safe direction — an over-broad file signal is
+# the strongest wrong answer guard can give (GUARD_W_FILE is its heaviest
+# weight), and a missed one costs a keyword match instead.
+GUARD_PATH_EXTENSIONS = frozenset(
+    """
+    py pyi pyx ipynb md markdown mdx rst txt adoc
+    json yml yaml toml ini cfg conf properties env lock sum mod
+    js jsx mjs cjs ts tsx vue svelte astro css scss sass less html htm
+    java kt kts gradle groovy scala clj cljs
+    go rs rb php swift m mm c h cc cpp hpp cs fs fsx dart zig nim ex exs erl
+    sh bash zsh fish ps1 bat cmd mk cmake
+    sql graphql gql proto tf tfvars tfstate hcl
+    xml plist pro csv tsv svg png jpg jpeg gif ico webp pdf
+    r jl lua pl pm rake gemspec podspec xcconfig entitlements
+    """.split()
+)
+
+# `0.47`, `8.13.2`, `v0.1.5` — a version, not a path, however many dots it has.
+_VERSION_TOKEN_RE = re.compile(r"^v?\d+(\.\d+)+$")
+
+
+def _is_path_token(token: str) -> bool:
+    """Is `token` really a file path, as opposed to prose that looks like one?
+
+    The prefilter of a 310-session field store held 439 "paths", of which 89
+    existed: the rest were version numbers (`8.13.2`), units (`10.dp`, `AM/PM`,
+    `0xDD/255`), CLI flag lists (`--title/--set`) and Python attribute access
+    (`json.load`, `io.open`). That mattered because `same file(s)` is guard's
+    single strongest relevance signal, so a command that merely read a JSON file
+    drew a PAUSE from a screenshot-testing trap on the strength of `json.load`.
+    An agent that learns "same file(s) is noise" has lost the only precise signal
+    guard has, and will miss the true positive when it arrives.
+
+    The test is structural, not lexical: a known file extension, or a real path
+    shape. Deliberately *not* "does it exist on disk" — a record citing a file
+    that was since deleted or renamed is often exactly the trap worth raising,
+    and a store must mean the same thing in every checkout that reads it.
+    """
+    token = (token or "").strip()
+    if len(token) < 2 or token.startswith("-") or _VERSION_TOKEN_RE.match(token):
+        return False
+    basename = token.rsplit("/", 1)[-1]
+    extension = basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
+    if extension and extension in GUARD_PATH_EXTENSIONS:
+        return True
+    if "/" not in token:
+        # `json.load`, `f.get`, `tests.test`, `10.dp` — a dot alone proves nothing.
+        return False
+    segments = [seg for seg in token.split("/") if seg not in ("", ".", "..")]
+    if not segments:
+        return False
+    if not any(c.islower() for c in token):
+        return False  # `AM/PM`, `TODO/FIXME`
+    for seg in segments:
+        if seg.isdigit() or _VERSION_TOKEN_RE.match(seg):
+            return False  # `10/15`, `362/LF`, `0xDD/255`, `v0.1.5/v0.1.6`
+    return True
 
 
 def _tokenize(text: str) -> set[str]:
@@ -5996,11 +6162,8 @@ def _specific(text: str) -> set[str]:
 
 
 def _paths_from_text(text: str) -> set[str]:
-    """Path-like tokens (contain `/` or a dotted extension) found in free text."""
-    out: set[str] = set()
-    for m in _FILE_TOKEN_RE.finditer(text or ""):
-        out.add(m.group(0))
-    return out
+    """File paths found in free text — candidates that pass `_is_path_token`."""
+    return {m.group(0) for m in _FILE_TOKEN_RE.finditer(text or "") if _is_path_token(m.group(0))}
 
 
 # Bullets in a trap block that hold the *remedy*, not the hazard. Mining file
@@ -6016,6 +6179,17 @@ def _paths_from_text(text: str) -> set[str]:
 _TRAP_REMEDY_BULLET_RE = re.compile(
     r"(?im)^\s*[-*]\s*(safe\s*approach|verification|verify|fix|workaround)\s*:.*$"
 )
+
+
+# `- Area / files: app/src/Foo.kt, app/src/Bar.kt` — where a trap declares its
+# blast radius. known-traps.md documents this five-field format at the top of the
+# file, so it is a contract, not a convention.
+_TRAP_AREA_BULLET_RE = re.compile(r"(?im)^\s*[-*]\s*area\s*(?:/\s*files)?\s*:(?P<value>.*)$")
+
+
+def _trap_area_text(body: str) -> str:
+    """Just the trap's `Area / files:` bullet(s) — the author's own declaration."""
+    return "\n".join(m.group("value") for m in _TRAP_AREA_BULLET_RE.finditer(body or ""))
 
 
 def _trap_hazard_text(body: str) -> str:
@@ -6171,7 +6345,15 @@ def _item_from_record(rec: Record) -> dict:
     # removes paths that the record itself already labelled as a command.
     cmd_paths = _paths_from_text(" ".join(_evidence_refs(rec, ("command", "test"))))
     mined = _paths_from_text(rec.body) - cmd_paths
-    files = _norm_files(set(_evidence_refs(rec, ("file", "path"))) | mined)
+    # Two tiers, not one (G1). `--evidence file …` is the author *declaring*
+    # which files this record is about; a path mined out of its prose is a
+    # mention, and the two were scored, displayed and reasoned about
+    # identically. Declared paths keep the strongest signal guard has; mentions
+    # get a weaker one and say so, so an agent reading `same file(s)` can still
+    # trust it. A trap author knows which files their trap concerns — asking
+    # beats any extractor.
+    files = _norm_files(set(_evidence_refs(rec, ("file", "path"))))
+    mentioned = _norm_files(mined) - files
     tags = {str(t).lower() for t in (rec.meta.get("tags") or [])}
     text = " ".join([str(rec.meta.get("title") or ""), rec.body, " ".join(tags)])
     # For verifications the interesting "status" is the *outcome* (open/fixed/…),
@@ -6192,6 +6374,7 @@ def _item_from_record(rec: Record) -> dict:
         # meet a "migration" query); display and `tag:` filters keep the raw tag.
         "tag_stems": {_stem(t): t for t in tags},
         "files": files,
+        "mentioned_files": mentioned,
         "specific": _specific(text),
         # The title's own tokens, kept separate so `_score_item` can weight a
         # title hit above a body mention. The stem is the slug — same
@@ -6214,7 +6397,11 @@ def _item_from_trap(trap: dict) -> dict:
         "status": trap.get("status") or "active",
         "title": heading,
         "tags": set(),
-        "files": _norm_files(_paths_from_text(_trap_hazard_text(body))),
+        "files": _norm_files(_paths_from_text(_trap_area_text(body))),
+        "mentioned_files": (
+            _norm_files(_paths_from_text(_trap_hazard_text(body)))
+            - _norm_files(_paths_from_text(_trap_area_text(body)))
+        ),
         "specific": _specific(text),
         "title_specific": _specific(heading),
         "branch": None,
@@ -6252,7 +6439,10 @@ def _item_from_question(q: dict) -> dict:
         "status": (q.get("status") or "open"),
         "title": q["question"],
         "tags": set(),
-        "files": _norm_files(_paths_from_text(body)),
+        # A question has no author-declared file field; everything it names is a
+        # mention.
+        "files": set(),
+        "mentioned_files": _norm_files(_paths_from_text(body)),
         "specific": _specific(text),
         "title_specific": _specific(q["question"]),
         "branch": None,
@@ -6356,18 +6546,23 @@ def _score_item(
     ubiquitous: frozenset[str] = frozenset(),
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
+
     # _norm_files stores each file as both its full path and its bare basename,
     # so the intersection can hold both variants of one physical file. Count each
     # distinct full path once, plus any bare-basename match not already covered by
     # a matched full path. Keying on basename alone (the old approach) wrongly
     # collapsed genuinely-distinct files that share a name (src/a/x.ts, src/b/x.ts)
     # — undercounting the score and picking a hash-order-dependent survivor.
-    raw_files = item["files"] & q_files
-    full_paths = {f for f in raw_files if "/" in f}
-    covered = {f.rsplit("/", 1)[-1] for f in full_paths}
-    extra_bare = {f for f in raw_files if "/" not in f and f not in covered}
-    matched_files = sorted(full_paths | extra_bare)
-    file_count = len(full_paths) + len(extra_bare)
+    def _overlap(candidate: set[str]) -> tuple[list[str], int]:
+        raw = candidate & q_files
+        full_paths = {f for f in raw if "/" in f}
+        covered = {f.rsplit("/", 1)[-1] for f in full_paths}
+        extra_bare = {f for f in raw if "/" not in f and f not in covered}
+        return sorted(full_paths | extra_bare), len(full_paths) + len(extra_bare)
+
+    matched_files, file_count = _overlap(item["files"])
+    # Prose-mined paths, scored separately and never as "same file(s)".
+    matched_mentions, mention_count = _overlap(item.get("mentioned_files", set()) - item["files"])
     # Tag overlap is computed on stems; the display set carries the raw tags.
     tag_stems = item.get("tag_stems") or {t: t for t in item["tags"]}
     matched_tag_stems = set(tag_stems) & q_specific
@@ -6384,7 +6579,13 @@ def _score_item(
 
     # Candidate gate (anti-noise, Fixture 3): a file or tag hit always qualifies;
     # a pure-text match needs >= min_keyword specific shared tokens.
-    if not matched_files and not matched_tags and kw_count < min_keyword:
+    # A mention still opens the gate — `search --file src/auth/middleware.ts` has
+    # no keywords to fall back on, and a record that names that file in its prose
+    # is exactly what the caller asked for. What a mention no longer does is
+    # claim to be the author's own file declaration: it scores lower, it reads as
+    # `mentions:` rather than `same file(s):`, and it is not the specificity that
+    # lets a match floor a verdict.
+    if not matched_files and not matched_mentions and not matched_tags and kw_count < min_keyword:
         return None
 
     signals: list[str] = []
@@ -6392,6 +6593,9 @@ def _score_item(
     if matched_files:
         score += GUARD_W_FILE * file_count
         signals.append("file")
+    if matched_mentions:
+        score += GUARD_W_MENTION * mention_count
+        signals.append("mention")
     if matched_tags:
         score += GUARD_W_TAG * len(matched_tag_stems)
         signals.append("tag")
@@ -6463,19 +6667,27 @@ def _score_item(
         # record and a merely-topical one the same shape of evidence.
         "stance": _match_stance(signals),
         "matched_files": sorted(matched_files),
+        "matched_mentions": sorted(matched_mentions),
         "matched_tags": sorted(matched_tags),
         "keyword_overlap": sorted(kw_overlap),
         "branch_mismatch": branch_mismatch,
-        "reason": _match_reason(item["kind"], signals, matched_files, matched_tags, kw_count),
+        "reason": _match_reason(
+            item["kind"], signals, matched_files, matched_tags, kw_count, matched_mentions
+        ),
     }
 
 
-def _match_reason(kind, signals, matched_files, matched_tags, kw_count) -> str:
+def _match_reason(kind, signals, matched_files, matched_tags, kw_count, matched_mentions=()) -> str:
     """Human phrase for why a record matched. Derived facts only — never executed."""
     parts: list[str] = []
     if matched_files:
         shown = ", ".join(sorted(matched_files)[:3])
         parts.append(f"same file(s): {shown}")
+    if matched_mentions:
+        # Deliberately a different phrase. `same file(s)` is a claim the author
+        # made; this is one the extractor made, and telling them apart is what
+        # keeps the first one worth reading.
+        parts.append(f"mentions: {', '.join(sorted(matched_mentions)[:3])}")
     if matched_tags:
         parts.append(f"same component/tag: {', '.join(sorted(matched_tags))}")
     if kw_count and not matched_files and not matched_tags:
@@ -6591,7 +6803,10 @@ def _passes_filters(item: dict, filters: dict) -> bool:
     if tag and tag.lower() not in item["tags"]:
         return False
     f = filters.get("file")
-    if f and not (_norm_files({f}) & item["files"]):
+    # Declared *or* mentioned: `--file X` asks "which records concern X", and a
+    # record that names X only in its prose is one of them (G1 splits the two
+    # tiers for scoring and for what a match may claim, not for retrieval).
+    if f and not (_norm_files({f}) & (item["files"] | item.get("mentioned_files", set()))):
         return False
     return True
 
@@ -6691,6 +6906,10 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
         and _VERDICT_RANK[verdict] >= _VERDICT_RANK["READ_FIRST"]
     ):
         verdict = "ASK_HUMAN"
+
+    # Applied last, so nothing above can raise a reporting command past advisory.
+    if _is_read_only_action(action):
+        verdict = _min_verdict(verdict, GUARD_READ_ONLY_CEILING)
     return verdict
 
 
@@ -6840,6 +7059,10 @@ def guard(
         # such — `_hook_guard` gates the permission prompt on this one and the
         # surfaced context on the other.
         "destructive": _is_destructive(action, classes),
+        # The other end of the same axis: an action that cannot change anything
+        # caps at READ_FIRST however strong the retrieval overlap (G2). Reported
+        # so a caller can see *why* a loud-looking match did not raise a verdict.
+        "read_only": _is_read_only_action(action),
         "matches": top,
         "history": history[:GUARD_MAX_WARNINGS],
         "staleness": staleness,
@@ -7566,7 +7789,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         if rec.error or str(rec.meta.get("status") or "active") != "active":
             continue  # unparseable is its own finding; non-active never drives verdicts
         item = _item_from_record(rec)
-        if item["tags"] or item["files"]:
+        if item["tags"] or item["files"] or item["mentioned_files"]:
             continue
         findings.append(
             _audit_finding(
