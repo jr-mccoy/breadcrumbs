@@ -288,8 +288,17 @@ def tool_scan_secrets(root: str | Path | None = None) -> dict:
         return missing
     findings = cli.scan_secrets(mem)
     # `ok` mirrors memory_validate's semantics (safe ⇔ true); `clean` is kept for
-    # compatibility with existing consumers.
-    return {"ok": not findings, "clean": not findings, "count": len(findings), "findings": findings}
+    # compatibility with existing consumers. Only blocking findings decide `ok`:
+    # `high-entropy-string` is a heuristic and no longer gates a commit (R5), so a
+    # tool caller that acts on `ok` sees the same policy the CLI's exit code does.
+    blocking = [f for f in findings if f.get("severity", cli.AUDIT_FAIL) == cli.AUDIT_FAIL]
+    return {
+        "ok": not blocking,
+        "clean": not findings,
+        "count": len(findings),
+        "blocking": len(blocking),
+        "findings": findings,
+    }
 
 
 def tool_record(

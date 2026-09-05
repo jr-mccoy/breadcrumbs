@@ -1179,7 +1179,32 @@ def _unquote_git_path(path: str) -> str:
     return out.decode("utf-8", errors="replace")
 
 
-def git_dirty_files(root: Path) -> list[str]:
+# A record's `dirty_files` is capped here. In the field store the *shortest*
+# session record listed 32 paths and the longest 49; a list that long is not
+# read, and the tail of it is not information. The count of what was dropped is.
+DIRTY_FILES_MAX = 25
+DIRTY_FILES_OVERFLOW = "… +{n} more"
+
+
+def _cap_dirty_files(files: list[str]) -> list[str]:
+    """Keep the first `DIRTY_FILES_MAX` paths; say how many were dropped."""
+    if len(files) <= DIRTY_FILES_MAX:
+        return files
+    return files[:DIRTY_FILES_MAX] + [DIRTY_FILES_OVERFLOW.format(n=len(files) - DIRTY_FILES_MAX)]
+
+
+def git_dirty_files(root: Path, *, include_memory: bool = True) -> list[str]:
+    """Uncommitted paths, relative to the repo root.
+
+    `include_memory=False` drops the memory store's own churn (R2). Every capture
+    rewrites `.project-memory/` — a new session record, handoff.md, current.md,
+    the projections — and in a shared tree it also sees every *other* session's
+    uncommitted records. That made 76–79% of a session's `dirty_files` the tool
+    measuring its own footprint and reporting it as the session's work: one
+    session that touched three source files recorded 46 paths, 36 of them other
+    sessions' memory records. Callers that are asking about the *store* (the
+    staleness check, the Stop-hook dedupe) keep the default.
+    """
     if not is_git_repo(root):
         return []
     out = _git_out(root, "status", "--porcelain")
@@ -1195,6 +1220,8 @@ def git_dirty_files(root: Path) -> list[str]:
         path = _unquote_git_path(path)
         if path:
             files.append(path)
+    if not include_memory:
+        files = list(_work_dirty_files(files))
     return files
 
 
@@ -1242,11 +1269,14 @@ def detect_agent(fallback: str = AGENT_UNKNOWN) -> str:
     return fallback
 
 
-def derive_fields(project_root: Path, agent: str | None = None) -> dict:
+def derive_fields(
+    project_root: Path, agent: str | None = None, *, include_memory: bool = False
+) -> dict:
     """Auto-derived frontmatter fields (clock + git + environment).
 
     `agent=None` means "nobody said" — resolved by `detect_agent()`, never to
-    `human`.
+    `human`. `include_memory` re-admits the memory store's own churn to
+    `dirty_files`; the default excludes it (see `git_dirty_files`).
     """
     root = Path(project_root)
     now = now_iso()
@@ -1258,7 +1288,7 @@ def derive_fields(project_root: Path, agent: str | None = None) -> dict:
         "project": derive_project_name(root),
         "branch": git_branch(root),
         "commit": git_commit(root),
-        "dirty_files": git_dirty_files(root),
+        "dirty_files": _cap_dirty_files(git_dirty_files(root, include_memory=include_memory)),
     }
 
 
@@ -2157,6 +2187,7 @@ def write_record(
     status: str | None = None,
     agent: str | None = None,
     extra: dict | None = None,
+    include_memory: bool = False,
 ) -> tuple[Path, dict]:
     """Assemble + write a durable record; return (path, frontmatter dict).
 
@@ -2171,7 +2202,7 @@ def write_record(
     # vanish without a word for every writer that does not go through the CLI —
     # the MCP `memory_record` tool passes a raw `sections` mapping straight in.
     sections, _notes = normalize_sections(rtype, sections or {})
-    derived = derive_fields(project_root, agent=agent)
+    derived = derive_fields(project_root, agent=agent, include_memory=include_memory)
     defaults = default_fields()
     date = derived["created_at"][:10]
     directory = Path(memory_dir) / TYPE_DIR[rtype]
@@ -3699,7 +3730,14 @@ def _coalescible_snapshot(
     return rec if 0 <= delta <= window_minutes * 60 else None
 
 
-def _coalesce_into(rec: Record, sections: dict[str, str], root: Path, agent: str | None) -> Path:
+def _coalesce_into(
+    rec: Record,
+    sections: dict[str, str],
+    root: Path,
+    agent: str | None,
+    *,
+    include_memory: bool = False,
+) -> Path:
     """Rewrite an existing machine snapshot in place with fresh git state.
 
     Identity is preserved — id, slug, filename, `created_at` and `created_by` all
@@ -3707,7 +3745,7 @@ def _coalesce_into(rec: Record, sections: dict[str, str], root: Path, agent: str
     fact worth keeping. Only what has moved is updated.
     """
     meta = dict(rec.meta)
-    derived = derive_fields(root, agent=agent)
+    derived = derive_fields(root, agent=agent, include_memory=include_memory)
     meta["updated_at"] = derived["created_at"]
     meta["branch"] = derived["branch"]
     meta["commit"] = derived["commit"]
@@ -3761,7 +3799,7 @@ def _summarize_diffstat(shortstat: str | None) -> str:
     return f"{files} files changed, +{ins}/-{dels}"
 
 
-def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
+def _git_prefill(root: Path, since: str | None, *, include_memory: bool = False) -> dict[str, str]:
     """Pre-fill Work Completed / Files Touched / Commands from git.
 
     With a prior-session `since` commit no more than `GIT_PREFILL_MAX_COMMITS`
@@ -3827,7 +3865,7 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     # itself, read by the next agent as "that session did nothing". Name
     # the scope, and count the uncommitted files (count only: inlining the paths
     # is what §6.1 keeps out of committed records).
-    dirty = git_dirty_files(root)
+    dirty = git_dirty_files(root, include_memory=include_memory)
     files = _summarize_diffstat(shortstat)
     if base and shortstat and shortstat.strip():
         files = f"{files} (vs `{_short_ref(base)}`)"
@@ -3940,7 +3978,8 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     )
 
     since = _last_session_commit(memory_dir, exclude=coalesce.path if coalesce else None)
-    prefill = _git_prefill(root, since)
+    include_memory = bool(getattr(args, "include_memory", False))
+    prefill = _git_prefill(root, since, include_memory=include_memory)
 
     # Manual section overrides.
     overrides, section_notes = _collect_set_sections("session", args.set)
@@ -3985,7 +4024,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     title = args.title or _derive_session_title(sections, args.focus) or SESSION_TITLE_FALLBACK
     if coalesce is not None:
         before = coalesce.path.read_text(encoding="utf-8")
-        path = _coalesce_into(coalesce, sections, root, args.agent)
+        path = _coalesce_into(coalesce, sections, root, args.agent, include_memory=include_memory)
         meta = dict(coalesce.meta)
         fails = _validate_new_file(memory_dir, path)
         if fails:
@@ -3997,7 +4036,14 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     else:
         extra = {"host_session": host_session} if host_session else None
         path, meta = write_record(
-            memory_dir, root, "session", title, sections, agent=args.agent, extra=extra
+            memory_dir,
+            root,
+            "session",
+            title,
+            sections,
+            agent=args.agent,
+            extra=extra,
+            include_memory=include_memory,
         )
 
         fails = _validate_new_file(memory_dir, path)
@@ -7389,6 +7435,19 @@ def _segment_is_wordy(seg: str) -> bool:
     return covered >= 6 and covered * 2 >= len(seg)
 
 
+# A Firebase Realtime Database push id: 20 characters of base64url, timestamp-
+# prefixed and therefore lexicographically sortable — a public, structurally
+# recognizable document key, which is exactly what a real secret is not. Split on
+# `-`, the leading dash goes with the separator, so both lengths are accepted.
+# These are the ids that appear in a record citing a concrete production path,
+# which is to say in the most useful records a store has (R5).
+_PUSH_ID_SEGMENT_RE = _LazyPattern(r"^[A-Za-z0-9]{19,20}$")
+
+
+def _is_push_id_segment(seg: str) -> bool:
+    return bool(_PUSH_ID_SEGMENT_RE.match(seg))
+
+
 def _looks_like_path_or_identifier(tok: str) -> bool:
     """True for path- or dotted-identifier-shaped tokens that only *look* random.
 
@@ -7411,7 +7470,7 @@ def _looks_like_path_or_identifier(tok: str) -> bool:
             return False
         if _segment_is_wordy(seg):
             has_word = True
-        elif len(seg) >= 12:
+        elif len(seg) >= 12 and not _is_push_id_segment(seg):
             return False  # a long, word-free segment is a blob, not a path component
     return has_word
 
@@ -7458,6 +7517,44 @@ def _iter_committed_memory_files(memory_dir: Path):
         yield p
 
 
+CRUMBIGNORE_FILENAME = ".crumbignore"
+
+# `high-entropy-string` is a heuristic with no structure behind it, and it gated
+# every commit of the memory store. A project that has decided a given shape is
+# not a secret should be able to say so once, rather than re-deciding it — and
+# hand-overriding a gate on every commit is how a gate stops being read at all.
+SECRET_WARNING_PATTERNS = frozenset({"high-entropy-string"})
+
+
+def load_crumbignore(memory_dir: Path) -> list:
+    """Patterns from `.project-memory/.crumbignore`, newest-wins order irrelevant.
+
+    One pattern per line; `#` starts a comment. Each line is used as a regex, or
+    as a literal substring if it does not compile. A hit whose *line text*
+    matches any pattern is dropped by `scan_secrets` — the project has said, in a
+    file its reviewers can see, that this shape is not a secret here.
+    """
+    path = Path(memory_dir) / CRUMBIGNORE_FILENAME
+    if not path.is_file():
+        return []
+    text, _problem = read_text_lenient(path)
+    patterns = []
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip() if not raw.lstrip().startswith("#") else ""
+        if not line:
+            continue
+        try:
+            patterns.append(re.compile(line))
+        except re.error:
+            patterns.append(re.compile(re.escape(line)))
+    return patterns
+
+
+def _secret_severity(pattern: str) -> str:
+    """`warning` for the heuristics, `blocking` for shapes with real structure."""
+    return AUDIT_WARN if pattern in SECRET_WARNING_PATTERNS else AUDIT_FAIL
+
+
 def scan_secrets(memory_dir: Path) -> list[dict]:
     """Scan committed memory for secret-like strings.
 
@@ -7473,26 +7570,37 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
     """
     findings: list[dict] = []
     seen: set[tuple[str, str, int]] = set()
+    ignores = load_crumbignore(memory_dir)
+
+    def record(pattern: str, rel: str, i: int, **extra) -> None:
+        key = (pattern, rel, i)
+        if key in seen:
+            return
+        seen.add(key)
+        findings.append(
+            {
+                "pattern": pattern,
+                "path": rel,
+                "line": i,
+                "severity": _secret_severity(pattern),
+                **extra,
+            }
+        )
+
     for p in _iter_committed_memory_files(memory_dir):
         rel = str(p.relative_to(memory_dir))
         text, problem = read_text_lenient(p)
         if problem:
-            findings.append(
-                {"pattern": "unscannable-file", "path": rel, "line": 0, "detail": problem}
-            )
+            record("unscannable-file", rel, 0, detail=problem)
         for i, line in enumerate(text.splitlines(), 1):
+            if any(pat.search(line) for pat in ignores):
+                continue
             for name, pat in SECRET_PATTERNS:
                 if pat.search(line):
-                    key = (name, rel, i)
-                    if key not in seen:
-                        seen.add(key)
-                        findings.append({"pattern": name, "path": rel, "line": i})
+                    record(name, rel, i)
             for m in _HIGH_ENTROPY_TOKEN.finditer(line):
                 if _looks_high_entropy(m.group(0)):
-                    key = ("high-entropy-string", rel, i)
-                    if key not in seen:
-                        seen.add(key)
-                        findings.append({"pattern": "high-entropy-string", "path": rel, "line": i})
+                    record("high-entropy-string", rel, i)
     return findings
 
 
@@ -7700,13 +7808,19 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
                 )
             )
             continue
+        severity = s.get("severity", AUDIT_FAIL)
+        remedy = (
+            "must not be committed to memory; remove before any commit"
+            if severity == AUDIT_FAIL
+            else f"heuristic, not a structured credential shape — confirm, then add a "
+            f"pattern to {MEMORY_DIRNAME}/{CRUMBIGNORE_FILENAME} if it is not a secret here"
+        )
         findings.append(
             _audit_finding(
                 "secret",
-                AUDIT_FAIL,
+                severity,
                 s["path"],
-                f"possible secret ({s['pattern']}) at line {s['line']} — "
-                "must not be committed to memory; remove before any commit",
+                f"possible secret ({s['pattern']}) at line {s['line']} — {remedy}",
                 line=s["line"],
                 pattern=s["pattern"],
             )
@@ -7884,22 +7998,52 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         return 2
 
     hits = scan_secrets(memory_dir)
+    # Only a shape with real structure gates a commit (R5). An entropy heuristic
+    # with no allowlist punishes exactly the records that are most useful — the
+    # ones citing a concrete production path — and a gate that is hand-overridden
+    # every time has stopped being a gate. Warnings are still printed, and still
+    # counted; they just do not decide the exit code.
+    blocking = [h for h in hits if h.get("severity", AUDIT_FAIL) == AUDIT_FAIL]
+    warnings = [h for h in hits if h.get("severity", AUDIT_FAIL) != AUDIT_FAIL]
     if args.json:
-        print(json.dumps({"ok": not hits, "count": len(hits), "hits": hits}, indent=2))
-        return 1 if hits else 0
+        print(
+            json.dumps(
+                {
+                    "ok": not blocking,
+                    "count": len(hits),
+                    "blocking": len(blocking),
+                    "warnings": len(warnings),
+                    "hits": hits,
+                },
+                indent=2,
+            )
+        )
+        return 1 if blocking else 0
 
     if hits:
-        unscannable = [h for h in hits if h["pattern"] == "unscannable-file"]
-        secrets = [h for h in hits if h["pattern"] != "unscannable-file"]
+        unscannable = [h for h in blocking if h["pattern"] == "unscannable-file"]
+        secrets = [h for h in blocking if h["pattern"] != "unscannable-file"]
         parts = ([f"{len(secrets)} possible secret(s)"] if secrets else []) + (
             [f"{len(unscannable)} unscannable file(s)"] if unscannable else []
         )
-        print(f"scan-secrets: {' and '.join(parts)} found — DO NOT commit memory until resolved\n")
+        if blocking:
+            print(
+                f"scan-secrets: {' and '.join(parts)} found — DO NOT commit memory until resolved\n"
+            )
+        else:
+            print(f"scan-secrets: {len(warnings)} warning(s), nothing blocking\n")
         for h in hits:
             where = f"{h['path']}:{h['line']}" if h["line"] else h["path"]
             detail = f" — {h['detail']}" if h.get("detail") else ""
-            print(f"  {MARK_FAIL} [{h['pattern']}] {where}{detail}")
-        return 1
+            mark = MARK_FAIL if h.get("severity", AUDIT_FAIL) == AUDIT_FAIL else "!"
+            print(f"  {mark} [{h['pattern']}] {where}{detail}")
+        if warnings:
+            print(
+                f"\nnote: {len(warnings)} warning(s) do not block. If a shape is not a "
+                f"secret in this project, add a pattern to {MEMORY_DIRNAME}/"
+                f"{CRUMBIGNORE_FILENAME} instead of overriding this every time."
+            )
+        return 1 if blocking else 0
 
     print("scan-secrets: OK — no secret-like strings in committed memory.")
     return 0
@@ -9908,6 +10052,13 @@ def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
         help=_set_flag_help("session", verb="override"),
     )
     p_session.add_argument(
+        "--include-memory",
+        dest="include_memory",
+        action="store_true",
+        help=f"keep {MEMORY_DIRNAME}/ paths in dirty_files (default: excluded — every "
+        "capture rewrites the store, and in a shared tree it also sees other sessions')",
+    )
+    p_session.add_argument(
         "--focus", help="Current Focus for handoff/current (default: keep the previous focus)"
     )
     p_session.add_argument(
@@ -10026,6 +10177,13 @@ def _add_scan_secrets(sub, global_parser: argparse.ArgumentParser) -> None:
         "scan-secrets",
         parents=[global_parser],
         help="scan committed memory for secret-like strings (run before committing memory)",
+        description=(
+            "Scan committed memory for secret-like strings. A structured credential "
+            "shape (AWS key, PEM block, bearer token, …) exits non-zero; the "
+            "high-entropy heuristic warns without blocking. Add one regex per line to "
+            f"{MEMORY_DIRNAME}/{CRUMBIGNORE_FILENAME} to silence a shape this project "
+            "has already decided is not a secret."
+        ),
     )
     p_scan.set_defaults(func=cmd_scan_secrets)
 
