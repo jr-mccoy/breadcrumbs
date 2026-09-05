@@ -5,7 +5,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
-## [Unreleased]
+## [0.2.1] — 2026-09-05
 
 The PreToolUse guard's own context cost, measured on a real session: 41,961
 bytes of guard text (~10,490 tokens) across 49 tool calls, where one body per

@@ -1,17 +1,21 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 3edd9fa | inputs_hash: 6b6f10374846 | generated_at: 2026-09-05T03:24:13+00:00 -->
+<!-- source_commit: 025a786 | inputs_hash: 6b6f10374846 | generated_at: 2026-09-05T05:37:42+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/guard-context-bloat-wcle08` · commit `3edd9fa` · 4 uncommitted file(s)
+branch `claude/guard-context-bloat-wcle08` · commit `025a786` · 2 uncommitted file(s)
 
 ## Current Focus
 0.2.0 is cut and waiting on the PR #49 merge; the field-review work is done
 
 ## Next Action
 Open a PR for claude/guard-context-bloat-wcle08 and merge to main. The CHANGELOG entry sits under [Unreleased]; __version__ is deliberately still 0.2.0, so a release needs the bump to 0.2.1 plus retitling that section first.
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 025a786 memory: capture the guard-context-bloat session
 
 ## Active Decisions
 - `dec_20260905_a-trap-summary-is-capped-at-write-time-and-again-at-display` — Capping at write time alone fixes nothing that matters: the traps that dominate a store's always-on context are the ones already written, and no store rewrites its history. Capping at display alone would let the file keep growing summaries no reader shows. Parking rather than truncating is what makes the write-time cap safe — _block_content keeps the bullet, so guard still scores against every word the author wrote, and the file still reads in full.
@@ -87,4 +91,4 @@ _(… 1 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
