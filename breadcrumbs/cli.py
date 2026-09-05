@@ -6075,6 +6075,16 @@ GUARD_W_REVIEWED = 1
 GUARD_W_DO_NOT_RETRY = 4  # attempt carries an explicit "Do Not Retry Unless"
 GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
 
+# What a match must have, beyond shared vocabulary, to be surfaced as a warning
+# rather than as history. `mention` is here and `keyword` is not: a prose-mined
+# path is at least a claim about *this file*, where a shared stem is a claim
+# about the language the project speaks. Deliberately not the same set as the
+# specificity that lets a match raise a verdict ({file, tag}) — being worth
+# showing and being worth escalating are different bars.
+GUARD_SURFACING_SIGNALS = frozenset(
+    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker"}
+)
+
 # recency / branch de-weighting (reuses the staleness signals above)
 GUARD_BRANCH_MISMATCH_FACTOR = 0.8  # record written on another branch -> possibly stale
 GUARD_STALE_AGE_FACTOR = 0.7  # record older than stale_days
@@ -9499,9 +9509,29 @@ def _hook_may_prompt(payload: dict) -> bool:
     return not (isinstance(mode, str) and mode in _HOOK_NONPROMPTING_MODES)
 
 
-def _hook_guard_reason(result: dict) -> str:
+def _hook_surfacing_matches(result: dict) -> list[dict]:
+    """The matches worth spending the agent's context on (G2).
+
+    A match whose only signal is shared vocabulary — no file, no tag, no title
+    hit, no explicit do-not-retry, no open blocker — is what a store produces for
+    *any* action phrased in its own language. `crumb guard` still returns it as
+    context, because a caller who asked explicitly should see what was
+    considered; the hook fires on every tool call and pays for every word, so
+    there it is dropped whenever anything better is available. An advisory the
+    agent sees on every command is one it learns to skim, and then it skims the
+    one that mattered.
+
+    Empty when *every* match is keyword-only — the caller decides what to do
+    with that; see `_hook_guard`.
+    """
+    return [
+        m for m in result.get("matches", []) if GUARD_SURFACING_SIGNALS & set(m.get("signals", ()))
+    ]
+
+
+def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
     lines = [f"breadcrumbs guard: {result['verdict']} for this action."]
-    for m in result.get("matches", [])[:3]:
+    for m in (result.get("matches", []) if matches is None else matches)[:3]:
         title = m.get("title") or m.get("id") or "record"
         why = m.get("reason") or ""
         lines.append(f"- {title}" + (f" ({why})" if why else ""))
@@ -9556,7 +9586,14 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     if verdict == "PROCEED":
         print(json.dumps({}))
         return 0
-    reason = _hook_guard_reason(result)
+    # What the agent is actually shown. A keyword-only match rides along for free
+    # today: `git status` drew two advisory lines, one of them a record that
+    # shares nothing with it but the word "status". Where better matches exist,
+    # the weak ones are dropped; where they are all there is, they are still
+    # shown — a strong keyword-only match escalating through the score band is a
+    # deliberate behaviour of this tool, not something to silence from here.
+    shown = _hook_surfacing_matches(result) or result.get("matches", [])
+    reason = _hook_guard_reason(result, shown)
     if verdict == "READ_FIRST":
         # Dedupe within the host session: the same records surfacing for the
         # same file is information exactly once (P0-2b/P0-3). Keyed on the
@@ -9564,7 +9601,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         # record or a different file speaks again; scoped to READ_FIRST so a
         # PAUSE/ASK_HUMAN is never swallowed.
         target = (files or [None])[0] or result["action"]
-        key = f"{target}|" + ",".join(sorted(m["id"] for m in result.get("matches", [])))
+        key = f"{target}|" + ",".join(sorted(m["id"] for m in shown))
         session_id = str(payload.get("session_id") or "unknown")
         try:
             if _hook_guard_advisory_seen(memory_dir, session_id, key):

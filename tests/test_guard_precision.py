@@ -198,5 +198,36 @@ class ReadOnlyActionTests(unittest.TestCase):
         self.assertEqual(_cli._decide_verdict(blocking, ["routine_edit"], "npm test"), "PAUSE")
 
 
+class HookSurfacingTests(unittest.TestCase):
+    """What the agent is *shown* is a tighter bar than what guard *returns*."""
+
+    def _match(self, mid, signals):
+        return {"id": mid, "title": mid, "reason": "because", "signals": signals}
+
+    def test_a_keyword_only_match_does_not_ride_along(self):
+        result = {
+            "verdict": "READ_FIRST",
+            "matches": [
+                self._match("dec_specific", ["file", "keyword"]),
+                self._match("dec_vocabulary", ["keyword"]),
+            ],
+        }
+        shown = _cli._hook_surfacing_matches(result)
+        self.assertEqual([m["id"] for m in shown], ["dec_specific"])
+        self.assertNotIn("dec_vocabulary", _cli._hook_guard_reason(result, shown))
+
+    def test_tags_titles_and_mentions_all_qualify(self):
+        for signal in ("file", "tag", "title", "mention", "do-not-retry", "open-blocker"):
+            result = {"verdict": "READ_FIRST", "matches": [self._match("m", [signal, "keyword"])]}
+            self.assertEqual(len(_cli._hook_surfacing_matches(result)), 1, signal)
+
+    def test_an_all_keyword_result_is_still_shown(self):
+        """A strong keyword-only match escalating through the score band is a
+        deliberate behaviour of this tool; the hook does not silence it."""
+        result = {"verdict": "READ_FIRST", "matches": [self._match("trap_x", ["keyword"])]}
+        self.assertEqual(_cli._hook_surfacing_matches(result), [])
+        self.assertIn("trap_x", _cli._hook_guard_reason(result, result["matches"]))
+
+
 if __name__ == "__main__":
     unittest.main()

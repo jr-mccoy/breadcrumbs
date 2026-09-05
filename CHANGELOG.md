@@ -78,6 +78,16 @@ were both single lexical shortcuts, and both are gone.
   unrecognized — shell plumbing, `find -delete` — is treated as capable of side
   effects, so a missed classification costs an unnecessary PAUSE, never a
   swallowed one. `guard --json` reports `read_only`.
+- **A keyword-only match no longer rides along in the hook's advisory.** The
+  read-only cap lowers `git status` to READ_FIRST, but READ_FIRST still spends
+  the agent's context — and one of the two records it drew shared nothing with
+  the command but the word "status". Where a match carries something specific (a
+  file, a tag, a title hit, an explicit do-not-retry, an open blocker) the
+  vocabulary-only ones are dropped from what the hook sends. Where they are all
+  there is, they are still sent: a strong keyword-only match escalating through
+  the score band is a deliberate behaviour of this tool, not something to
+  silence from the hook. `crumb guard` is unchanged — a caller who asked
+  explicitly still sees everything that was considered.
 - **Sessions get a name.** `--title` was optional and fell back to the constant
   `session`: 280 of the field store's 310 sessions carried no information in
   their title, id, slug or filename, and `search` ranks on title. A session with
