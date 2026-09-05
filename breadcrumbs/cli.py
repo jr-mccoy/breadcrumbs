@@ -3187,6 +3187,32 @@ def _sanitize_note_text(value) -> str:
     return flat.replace("<!--", "< !--").replace("-->", "-- >")
 
 
+# A trap's summary is its heading, and the heading is what every reader prints:
+# `crumb traps`, the resume packet's Known Traps, and — once per tool call — the
+# PreToolUse guard advisory. Nothing bounded it. One field-store trap carried an
+# 1,123-character summary and surfaced 15 times in a single session: 16,845
+# bytes, 40% of that whole session's guard cost from one record. 200 characters
+# is a sentence and change; past that it is detail, and detail belongs in the
+# trap's bullets, where it still feeds keyword matching but is not re-read on
+# every tool call. The same cap is applied again at display time, because the
+# traps that cost the most are the ones already written.
+TRAP_SUMMARY_MAX_CHARS = 200
+
+# Where an over-long summary is parked. Nothing is dropped: the heading carries
+# the cap, this bullet carries the sentence the author actually wrote, and
+# `_block_content` keeps it in the text guard scores against.
+TRAP_DETAIL_KEY = "Full summary"
+
+
+def shorten_line(text: str, limit: int) -> str:
+    """`text` as one line, capped at `limit` characters on a word boundary."""
+    flat = " ".join(str(text).split())
+    if len(flat) <= limit:
+        return flat
+    cut = flat[:limit].rsplit(" ", 1)[0]
+    return (cut or flat[:limit]).rstrip(" ,;:.-—") + "…"
+
+
 def _question_block(text: str, *, why=None, needs=None, status="open") -> str:
     lines = [f"## Q: {text}", f"- Opened: {now_iso()[:10]}"]
     if why:
@@ -3209,7 +3235,10 @@ def _trap_block(
     status="active",
 ) -> str:
     slug = slug or slugify(summary)
-    lines = [f"## trap_{slug}: {summary}"]
+    short = shorten_line(summary, TRAP_SUMMARY_MAX_CHARS)
+    lines = [f"## trap_{slug}: {short}"]
+    if short != summary:
+        lines.append(f"- {TRAP_DETAIL_KEY}: {_sanitize_note_text(summary)}")
     if area:
         lines.append(f"- Area / files: {area}")
     if symptom:
@@ -3760,12 +3789,21 @@ def cmd_traps(args: argparse.Namespace) -> int:
 
     stale_days = args.stale if args.stale is not None else None
     rows = trap_report(memory_dir, stale_days=stale_days, status=args.status)
-    total = sum(r["approx_tokens"] for r in rows)
+    # A retired trap is still listed — you asked to see the traps — but it costs
+    # no always-on context, so it must not be counted as any. `approx_tokens`
+    # answers "what does this store cost every session", which is the number
+    # retiring a trap is supposed to move.
+    active_rows = [r for r in rows if r["status"] == "active"]
+    total = sum(r["approx_tokens"] for r in active_rows)
     if args.json:
         _print_json(
             args,
             {"traps": rows, "items": rows},
-            summary={"count": len(rows), "approx_tokens": total},
+            summary={
+                "count": len(rows),
+                "active": len(active_rows),
+                "approx_tokens": total,
+            },
         )
         return 0
 
@@ -3773,7 +3811,10 @@ def cmd_traps(args: argparse.Namespace) -> int:
         scope = f" not confirmed in {stale_days} day(s)" if stale_days is not None else ""
         print(f"traps: none{scope}.")
         return 0
-    header = f"traps: {len(rows)} trap(s), ~{total} tokens of always-on context"
+    header = (
+        f"traps: {len(rows)} listed, {len(active_rows)} active, "
+        f"~{total} tokens of always-on context"
+    )
     if stale_days is not None:
         header += f" (not confirmed in {stale_days} day(s))"
     print(header + "\n")
@@ -3785,7 +3826,10 @@ def cmd_traps(args: argparse.Namespace) -> int:
             print(f"      {r['summary']}")
     print(
         "\nStill true? `crumb traps --confirm <id>`. "
-        'No longer? `crumb mark-status <id> resolved --reason "..."`.'
+        # `resolved` is not in any status vocabulary — this printed a command
+        # that exits 2 with "invalid choice". The one command the tool told you
+        # to run to shrink your always-on context did not exist.
+        'No longer? `crumb mark-status <id> stale --reason "..."`.'
     )
     return 0
 
@@ -5626,7 +5670,9 @@ def build_resume_packet(
             }
             for r in attempts
         ],
-        "known_traps": [t["heading"] for t in traps],
+        # Capped here as well as at write time: the traps that dominate a
+        # store's always-on context are the ones written before the cap existed.
+        "known_traps": [shorten_line(t["heading"], TRAP_SUMMARY_MAX_CHARS) for t in traps],
         "open_questions": [q["question"] for q in questions if q["status"] == "open"],
         "likely_files": [],
         "verification": [],
@@ -8020,7 +8066,16 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
     traps_path = memory_dir / "known-traps.md"
     if traps_path.is_file():
         traps = [t for t in load_traps(memory_dir) if (t.get("status") or "active") == "active"]
-        toks = approx_tokens(read_text_lenient(traps_path)[0])
+        # Sized over the active traps, not over the file. Sizing the file counted
+        # retired traps and the retirement `--reason` notes written beside them,
+        # so retiring a trap *raised* the number this very finding prints — 90
+        # traps/42,585 tokens became 85 traps/42,991 after five retirements. A
+        # metric that gets worse when you follow its advice teaches people the
+        # advice does not work, which is how 97 traps accumulated.
+        toks = sum(
+            approx_tokens(t["heading"] + "\n" + (t.get("content") or t.get("body") or ""))
+            for t in traps
+        )
         if toks > TRAPS_TOKEN_BUDGET:
             findings.append(
                 {
@@ -9436,14 +9491,25 @@ def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] 
 _HOOK_SEEN_FILENAME = "hook-guard-seen.json"
 _HOOK_SEEN_MAX_SESSIONS = 8
 _HOOK_SEEN_MAX_KEYS = 200
+# How many already-shown ids the compressed line names. The line exists to say
+# "these still apply, you have them", not to re-list a store.
+_HOOK_REPEAT_IDS_SHOWN = 6
 
 
-def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bool:
-    """True if this advisory key already fired for this session; records it if not.
+def _hook_guard_advisory_unseen(memory_dir: Path, session_id: str, keys) -> list[str]:
+    """Which of `keys` this host session has not been shown yet; records them all.
 
-    Same records + same file ⇒ say nothing after the first time (P0-2b): a
-    READ_FIRST that repeats verbatim on every edit trains the agent to ignore
-    the one that matters. Only advisories dedupe — PAUSE/ASK_HUMAN always fire.
+    Keyed per *record id*, not per `<file-or-action>|<record-ids>` pair. The old
+    key made a repeat unrecognizable for the tool that repeats most: every Bash
+    command differs, so the key differed, so the same six warnings re-injected
+    across a whole session. One measured session: 52 distinct records, 215
+    injections, 41,961 bytes of guard text where one injection each would have
+    been 8,214 — 81% pure repetition.
+
+    Keying on the record alone is what makes the repeat visible; the caller
+    decides what to do with it, and what it does is compress rather than
+    suppress (see `_hook_guard`). Only advisories dedupe — PAUSE/ASK_HUMAN are
+    never touched by any of this.
     """
     path = memory_dir / "private" / _HOOK_SEEN_FILENAME
     try:
@@ -9458,9 +9524,11 @@ def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bo
     entry = sessions.get(session_id)
     if not isinstance(entry, dict) or not isinstance(entry.get("seen"), list):
         entry = {"seen": []}
-    if key in entry["seen"]:
-        return True
-    entry["seen"] = (entry["seen"] + [key])[-_HOOK_SEEN_MAX_KEYS:]
+    already = set(entry["seen"])
+    fresh = [k for k in dict.fromkeys(keys) if k not in already]
+    if not fresh:
+        return []
+    entry["seen"] = (entry["seen"] + fresh)[-_HOOK_SEEN_MAX_KEYS:]
     entry["updated_at"] = now_iso()
     sessions[session_id] = entry
     # Keep only the most recent sessions so the state file cannot grow unbounded.
@@ -9471,7 +9539,7 @@ def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bo
         write_text_atomic(path, json.dumps(data, indent=0, sort_keys=True) + "\n")
     except Exception:  # pragma: no cover - dedupe state is best-effort
         pass
-    return False
+    return fresh
 
 
 # Permission modes in which the user has already told the harness not to
@@ -9529,12 +9597,36 @@ def _hook_surfacing_matches(result: dict) -> list[dict]:
     ]
 
 
-def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
-    lines = [f"breadcrumbs guard: {result['verdict']} for this action."]
-    for m in (result.get("matches", []) if matches is None else matches)[:3]:
-        title = m.get("title") or m.get("id") or "record"
+def _hook_guard_reason(
+    result: dict,
+    matches: list[dict] | None = None,
+    *,
+    repeated: list[str] | None = None,
+) -> str:
+    """The advisory the agent is shown, with anything already shown compressed.
+
+    `repeated` are record ids this host session has already been given in full.
+    They are still named — the warning has not stopped applying just because it
+    has been read once — but as one line of ids rather than the bodies again.
+    """
+    verdict = result["verdict"]
+    shown = result.get("matches", []) if matches is None else matches
+    if not shown and repeated:
+        return f"breadcrumbs guard: {verdict} — already shown this session: " + ", ".join(
+            repeated[:_HOOK_REPEAT_IDS_SHOWN]
+        )
+    lines = [f"breadcrumbs guard: {verdict} for this action."]
+    for m in shown[:3]:
+        # Capped for the same reason the summary is capped at write time, and
+        # separately from it: a title written before the cap existed is exactly
+        # the one being re-read on every tool call.
+        title = shorten_line(m.get("title") or m.get("id") or "record", TRAP_SUMMARY_MAX_CHARS)
         why = m.get("reason") or ""
         lines.append(f"- {title}" + (f" ({why})" if why else ""))
+    if repeated:
+        lines.append(
+            "- already shown this session: " + ", ".join(repeated[:_HOOK_REPEAT_IDS_SHOWN])
+        )
     return "\n".join(lines)
 
 
@@ -9595,20 +9687,22 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     shown = _hook_surfacing_matches(result) or result.get("matches", [])
     reason = _hook_guard_reason(result, shown)
     if verdict == "READ_FIRST":
-        # Dedupe within the host session: the same records surfacing for the
-        # same file is information exactly once (P0-2b/P0-3). Keyed on the
-        # matched record ids + the file (or the action when no file), so a new
-        # record or a different file speaks again; scoped to READ_FIRST so a
-        # PAUSE/ASK_HUMAN is never swallowed.
-        target = (files or [None])[0] or result["action"]
-        key = f"{target}|" + ",".join(sorted(m["id"] for m in shown))
+        # Compress within the host session, per record (P0-2b/P0-3): a body the
+        # agent has already read is spent context, but silence is not the fix
+        # either — the record still applies to this call, and a warning that
+        # vanishes on the second edit of a file is a warning the agent cannot
+        # act on. So the first firing of a record carries its body and every
+        # later one carries only its id. Scoped to READ_FIRST; PAUSE and
+        # ASK_HUMAN never dedupe at all.
         session_id = str(payload.get("session_id") or "unknown")
+        ids = [m["id"] for m in shown]
         try:
-            if _hook_guard_advisory_seen(memory_dir, session_id, key):
-                print(json.dumps({}))
-                return 0
+            fresh = set(_hook_guard_advisory_unseen(memory_dir, session_id, ids))
         except Exception:  # pragma: no cover - dedupe must never block the hook
-            pass
+            fresh = set(ids)
+        first_time = [m for m in shown if m["id"] in fresh]
+        repeated = [i for i in dict.fromkeys(ids) if i not in fresh]
+        reason = _hook_guard_reason(result, first_time, repeated=repeated)
         # `permissionDecision: "allow"` is not neutral — it *auto-approves* the
         # call, skipping the prompt the user would otherwise get, and its reason
         # is shown only to the user, never to the model. Emitting it on an

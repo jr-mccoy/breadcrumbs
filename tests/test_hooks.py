@@ -536,9 +536,19 @@ class HookEditContentTests(unittest.TestCase):
 
 
 class HookAdvisoryDedupeTests(unittest.TestCase):
-    """P0-2b (0.1.10 field test): the same records surfacing for the same file
-    is information exactly once per host session. Advisories only — PAUSE and
-    ASK_HUMAN always fire."""
+    """P0-2b: a record's *body* is information exactly once per host session.
+
+    Measured on a real session: 52 distinct records produced 215 injections and
+    41,961 bytes of guard text, where one body each would have been 8,214 — 81%
+    of the guard's entire context cost was verbatim repetition. The old key was
+    `<file-or-action>|<record-ids>`, which recognizes a repeat only when the
+    command repeats byte-for-byte; for Bash, where every command differs, it
+    essentially never fired.
+
+    Keyed per record now, and a repeat compresses rather than disappears: the
+    record still applies to this call, so it is still named, as one line of ids.
+    Advisories only — PAUSE and ASK_HUMAN never dedupe.
+    """
 
     def _store_with_file_trap(self, tmp: str) -> Path:
         root = make_repo(tmp)
@@ -562,14 +572,56 @@ class HookAdvisoryDedupeTests(unittest.TestCase):
             "tool_input": {"file_path": "src/billing.py"},
         }
 
-    def test_read_first_fires_once_per_session_per_file(self):
+    def _context(self, out: dict) -> str:
+        return (out.get("hookSpecificOutput") or {}).get("additionalContext") or ""
+
+    def test_a_repeat_names_the_record_without_repeating_its_body(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._store_with_file_trap(tmp)
-            first = run_hook("guard", self._edit_payload(root, "s1"))
-            hso = first.get("hookSpecificOutput") or {}
-            self.assertTrue(hso.get("additionalContext"), first)
-            second = run_hook("guard", self._edit_payload(root, "s1"))
-            self.assertEqual(second, {}, "identical advisory must not repeat in-session")
+            first = self._context(run_hook("guard", self._edit_payload(root, "s1")))
+            self.assertIn("accrual shim must wrap ledger mutations", first)
+            second = self._context(run_hook("guard", self._edit_payload(root, "s1")))
+            # Still spoken — the trap has not stopped applying — but as an id.
+            self.assertIn("trap_accrual-shim", second)
+            self.assertNotIn("accrual shim must wrap ledger mutations", second)
+            self.assertLess(len(second), len(first))
+
+    def test_a_repeat_compresses_even_when_the_command_differs(self):
+        """The old key's blind spot: `<command>|<ids>` never matches twice for Bash."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_file_trap(tmp)
+            payloads = [
+                {
+                    "cwd": str(root),
+                    "session_id": "s1",
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": "src/billing.py", "new_string": text},
+                }
+                for text in ("first pass", "second pass", "third pass")
+            ]
+            bodies = [self._context(run_hook("guard", p)) for p in payloads]
+            self.assertIn("accrual shim must wrap ledger mutations", bodies[0])
+            for later in bodies[1:]:
+                self.assertNotIn("accrual shim must wrap ledger mutations", later)
+                self.assertIn("trap_accrual-shim", later)
+
+    def test_a_record_not_yet_shown_still_arrives_in_full(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store_with_file_trap(tmp)
+            run_hook("guard", self._edit_payload(root, "s1"))
+            kt = root / crumb.MEMORY_DIRNAME / "known-traps.md"
+            kt.write_text(
+                kt.read_text(encoding="utf-8")
+                + "\n## trap_ledger-clock: ledger writes need the frozen clock\n"
+                "- Area / files: src/billing.py\n",
+                encoding="utf-8",
+            )
+            crumb.main(["reindex", "--project", str(root)])
+            out = self._context(run_hook("guard", self._edit_payload(root, "s1")))
+            self.assertIn("ledger writes need the frozen clock", out)
+            # …and the one already shown is compressed alongside it.
+            self.assertIn("already shown this session", out)
+            self.assertNotIn("accrual shim must wrap ledger mutations", out)
 
     def test_a_new_session_hears_the_advisory_again(self):
         with tempfile.TemporaryDirectory() as tmp:

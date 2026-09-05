@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 9037d68 | inputs_hash: 9ae96adff345 | generated_at: 2026-09-05T01:35:59+00:00 -->
+<!-- source_commit: 53b5dac | inputs_hash: 715066512644 | generated_at: 2026-09-05T03:23:19+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/artifact-388cc819-sm0ipj` · commit `9037d68` · 3 uncommitted file(s)
+branch `claude/guard-context-bloat-wcle08` · commit `53b5dac` · 9 uncommitted file(s)
 
 ## Current Focus
 0.2.0 is cut and waiting on the PR #49 merge; the field-review work is done
@@ -13,7 +13,15 @@ branch `claude/artifact-388cc819-sm0ipj` · commit `9037d68` · 3 uncommitted fi
 ## Next Action
 Merge PR #49 to main, then run release.yml from main: mode=dry-run first to confirm the artifact, then mode=publish. Do not hand-tag — the workflow cuts the tag and the Release on the commit it builds.
 
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 53b5dac Merge pull request #50 from jr-mccoy/claude/artifact-388cc819-sm0ipj
+- 583963b memory: hand off the 0.2.0 release
+- abd2bfd Merge pull request #49 from jr-mccoy/claude/artifact-388cc819-sm0ipj
+
 ## Active Decisions
+- `dec_20260905_a-trap-summary-is-capped-at-write-time-and-again-at-display` — Capping at write time alone fixes nothing that matters: the traps that dominate a store's always-on context are the ones already written, and no store rewrites its history. Capping at display alone would let the file keep growing summaries no reader shows. Parking rather than truncating is what makes the write-time cap safe — _block_content keeps the bullet, so guard still scores against every word the author wrote, and the file still reads in full.
+- `dec_20260905_a-repeated-guard-advisory-compresses-to-its-ids-it-does` — Suppressing the repeat entirely was the alternative and it is cheaper by ~50 bytes a call, but the record still applies to the call being made: an advisory that vanishes on the second edit of a file is one the agent cannot act on, and the agent has no way to ask for it back. Naming the ids keeps the warning addressable (crumb search <id>) at a bounded cost. The tension this design has always had — dedupe so the agent does not learn to skim, repeat so the warning is present when it matters — is resolved by dropping the body, not the mention.
 - `dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns` — Neither is a scoring problem. Overlap is symmetric, so corpus frequency reads as relevance and no weighting fixes a command that cannot do the thing being warned about. And a gate that is hand-overridden every time has stopped being a gate — worse, it punishes exactly the records that cite a concrete path, which are the most useful ones a store has. Both classifications are conservative: an unrecognized action keeps its full verdict, and a structured credential still blocks.
 - `dec_20260905_path-extraction-is-structural-and-a-mined-path` — Existence on disk was rejected deliberately: a record citing a file that was since deleted or renamed is often exactly the trap worth raising, and a store must mean the same thing in every checkout that reads it. The shape test rejects 15 of the 16 junk tokens the review names and keeps every real path tested. Tiering is the review's own point 3 — a trap author knows which files their trap is about — without a schema change, because the declaration field already exists in both record types.
 - `dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call` — The error was accurate and the cost was everything else on the command line. Content an agent has already synthesised is the most expensive thing in the system to reproduce, and the moment it is lost is the moment the agent has least context left. A guess that lands content under the wrong heading is worse than parking it, so the synonym table stays short.
@@ -27,9 +35,7 @@ Merge PR #49 to main, then run release.yml from main: mode=dry-run first to conf
 - `dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20` — Callers could not script on verdicts at all (everything exited 0), and a Windows field-test harness rendered advisory verdicts as tool failures; documented spaced codes make 'block only on ASK_HUMAN' possible and any host-layer weirdness diagnosable.
 - `dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword` — 0.1.10 field test: the unconditional trap keyword floor fired READ_FIRST on 13/13 edits with one relevant hit; an ignored alarm is worse than no alarm.
 - `dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo` — Treat invalid-publisher as a PyPI-side config defect, never a workflow bug. The fix is to update the publisher entry at pypi.org/manage/project/crumb-kit/settings/publishing to match the OIDC claims the run prints (owner=jr-mccoy, repo=breadcrumbs, workflow=release.yml, environment=pypi), then re-run release.yml with mode=publish. Documented the failure mode in release.yml's header and in RELEASING.md (one-time setup callout + 'If a release fails' bullet), and corrected the stale owner=jumbodaddystack reference in both.
-- `dec_20260815_cut-0-1-10-as-the-agent-authorship-release` — Bump __version__ to 0.1.10 (single source of truth) and date the CHANGELOG section. Headline is the Stop-hook extraction turn; the prefilter and stemming fixes make what it writes reachable. Version bump + changelog are the ONLY manual edits — release.yml cuts the tag and Release.
-- `dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store` — Remove the blanket ignore and commit .project-memory/ in this repo, exactly as a target project would (managed block still keeps private/ and index/ local). The store is the repo's continuity ledger and its live demo.
-_(… 2 more omitted to stay within the per-section cap)_
+_(… 4 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -37,7 +43,7 @@ _(none recorded)_
 ## Known Traps
 - trap_hand-tagged-releases: Never create a git tag or GitHub Release by hand
 - trap_guard-exit-code-in-ci: A CI step that calls crumb guard dies on guard's own verdict exit code
-- trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
+- trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__*…
 - trap_a-record-s-remedy-fields-are-mined-for-file-paths: A record's remedy fields are mined for file paths and become its blast radius
 - trap_a-hand-written-version-literal-in-prose-drifts-silently: A hand-written version literal in prose drifts silently
 - trap_a-bare-n-in-a-commit-message-links-an-issue-but-never: A bare (#N) in a commit message links an issue but never closes it
@@ -47,6 +53,8 @@ _(none recorded)_
 
 ## Likely Relevant Files
 - breadcrumbs/cli.py
+- tests/test_traps.py
+- tests/test_hooks.py
 - README.md
 - pyproject.toml
 - breadcrumbs/templates/project-memory/README.md
@@ -58,6 +66,7 @@ _(none recorded)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
+- `ver_20260905_retiring-a-trap-now-lowers-the-reported-always-on-context` — retiring a trap now lowers the reported always-on context cost: **fixed**
 - `ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re` — the 16 findings of the 0.1.11 crumb-kit field review, re-checked against 0.1.12: **fixed** · static
 - `ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word` — resume's possible-drift line fires on incidental two-word overlap and version fragments: **fixed** · test
 - `ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version` — README Status blurb no longer hard-codes a package version: **fixed** · static
@@ -68,7 +77,7 @@ _(none recorded)_
 - `ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed` — ci.yml guard steps survive guard's verdict exit codes: **fixed** · test
 - `ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed` — crumb mark-status can answer an open question: **fixed** · test
 - `ver_20260816_crumb-mark-status-can-retire-a-trap-fixed` — crumb mark-status can retire a trap: **fixed** · test
-- `ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence` — hook guard escalates on edits to files named by --evidence file: **fixed** · test
+_(… 1 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
 - tests/test_secret_precision.py
@@ -84,4 +93,4 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 3 commit(s) behind current HEAD.

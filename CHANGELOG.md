@@ -5,6 +5,46 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
+## [Unreleased]
+
+The PreToolUse guard's own context cost, measured on a real session: 41,961
+bytes of guard text (~10,490 tokens) across 49 tool calls, where one body per
+record would have been 8,214 — **81% of it verbatim repetition**. Four defects
+compounded, and two of them made the remediation impossible to follow.
+
+### Fixed
+
+- **A repeat of an advisory no longer repeats its body.** The session dedupe key
+  was `<file-or-action>|<record-ids>`, which recognizes a repeat only when the
+  command repeats byte-for-byte. For `Bash`, where every command differs, it
+  essentially never matched, so the same handful of warnings re-injected on
+  every call. The key is now the record id alone, and a repeat *compresses*
+  rather than disappears: the first firing of a record carries its body, every
+  later one carries a single line naming the ids that still apply. A warning
+  that vanished on the second edit of a file would be one the agent cannot act
+  on. `PAUSE` / `ASK_HUMAN` still never dedupe.
+- **Trap summaries are capped at 200 characters.** A trap's summary is its
+  heading, and the heading is what every reader prints — `crumb traps`, the
+  resume packet, and the guard advisory on *every tool call*. Nothing bounded
+  it: one field-store trap carried an 1,123-character summary and surfaced 15
+  times in one session, 40% of that whole session's guard cost from a single
+  record. `note trap` now caps the heading and parks the author's full sentence
+  in a `- Full summary:` bullet, where it still feeds keyword matching; the same
+  cap is applied again at display time, because the traps that cost the most are
+  the ones written before the cap existed.
+- **The `traps-growth` audit finding counts only active traps.** It sized the
+  whole `known-traps.md` file, retired traps and their retirement notes
+  included, so retiring a trap *raised* the number: five retirements took a
+  field store from 90 traps / 42,585 tokens to 85 / 42,991. A metric that gets
+  worse when you follow its advice teaches people the advice does not work,
+  which is how 97 traps accumulated. `crumb traps` now reports listed count,
+  active count and the active-only token cost for the same reason.
+- **`crumb traps` printed a command that does not exist.** It advised
+  `crumb mark-status <id> resolved`; `resolved` is in no status vocabulary, so
+  the one command the tool named to shrink your always-on context exited with
+  `invalid choice`. It says `stale` now, and a test asserts every
+  `mark-status <id> <status>` the CLI prints actually parses.
+
 ## [0.2.0] — 2026-09-05
 
 A field review of 0.1.11 against a 310-session production store, worked end to
