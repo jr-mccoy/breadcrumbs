@@ -7,13 +7,121 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
-Two signal-to-noise fixes in the staleness warnings, both found by reading the
+A field review of 0.1.11 against a 310-session production store, worked end to
+end. Sixteen findings; two (`mark-status` on trap ids, `capture session`
+non-interactively) were already fixed in 0.1.12 and one (word-boundary id
+truncation) as well, so what follows is the rest. The theme the review names
+first is right: the guard's precision problem and the CLI's data-loss problems
+were both single lexical shortcuts, and both are gone.
+
+### Added
+
+- **`crumb traps`** — what the always-on trap context costs, and what can
+  retire. Lists every trap with its status, its last confirmation and its
+  approximate token cost, never-confirmed first; `--stale [DAYS]` narrows to the
+  candidates and `--confirm <id>` stamps a `- Last confirmed:` bullet in place.
+  Traps are appended to `known-traps.md` and nothing ever ages out — 77 active
+  traps and 167 KB in the field store, loaded at the start of every session —
+  and age alone cannot retire one, so the missing fact was when somebody last
+  checked. `audit` grows a `traps-growth` finding naming the report.
+- **`crumb retitle <id> "…"`** — repair a record whose title carries no
+  information. Rewrites the searchable title only: the id, slug and filename are
+  what every `supersedes`, `superseded_by` and evidence ref points at.
+- **`.project-memory/.crumbignore`** — one regex per line, to retire a known
+  secret-scan false positive once instead of re-deciding it on every commit.
+- **`capture session --include-memory`** — put the store's own churn back into
+  `dirty_files`, which no longer includes it by default.
+- **`mark-status --status <value>`** — accepted alongside the positional STATUS.
+  It was the only place in the CLI where a vocabulary value was positional,
+  while `crumb verify` takes the same words as a flag.
+
+### Fixed
+
+- **A wrong `--set` heading no longer throws the whole call away.** One
+  unrecognized heading exited 2 and wrote nothing, taking every *other* `--set`
+  on the command line with it — for an agent writing up a long session, content
+  it must then synthesise again from a context it has already spent. Matching is
+  now case-, space- and punctuation-blind (`attempts/failures` ==
+  `Attempts / Failures`) with a short table of unambiguous synonyms; anything
+  still unmatched is kept under `## Unsorted`, tagged with the heading the caller
+  used, and reported on stderr. `normalize_sections` runs inside `write_record`
+  too, because `render_body` walks the type's vocabulary and the MCP
+  `memory_record` tool passes a raw mapping — an unrecognized heading there
+  vanished with no message at all. `--set --help` now names the vocabulary.
+- **A failing check keeps its diagnosis on a non-UTF-8 console.** A Windows
+  console is cp1252 and cannot encode the `✗` marker, so `validate` and
+  `scan-secrets` raised `UnicodeEncodeError` mid-line: the exit code and the
+  summary survived, every per-item line did not. stdout is reconfigured with
+  `errors="replace"` so no line is ever lost, and the markers fall back to ASCII
+  `[x]` / `[ok]` when the stream cannot encode them.
+- **An error says it failed on its first line.** argparse leads with a usage
+  block and ends with the caller's own prose, so a run piped through `head`/
+  `tail` read like success — and `$?` after a pipe is the pipe's status, not
+  ours. Every error now leads with a fixed, greppable `CRUMB-ERROR:` token and
+  names the subcommand that rejected the input, including the leftover-argument
+  check that argparse runs at the top level.
+- **The guard's file signal means something again.** The path extractor accepted
+  any prose token containing a dot or a slash: 439 "paths" in the field store, 89
+  of which existed, the rest version numbers, units, flag lists and attribute
+  access. Since `same file(s)` is the strongest relevance signal there is, a
+  script that read a JSON file drew a PAUSE from a screenshot-testing trap on the
+  strength of `json.load`. Extraction is now structural (a known extension, or a
+  real path shape), and the signal has two tiers: `--evidence file …` and a
+  trap's `Area / files:` bullet are the author *declaring* what a record is
+  about and keep the strongest weight; a path mined from prose reads as
+  `mentions:`, scores lower, and cannot floor a verdict. Retrieval is unchanged.
+- **Verdict severity is no longer inverted.** `git status` — read-only — was the
+  loudest command in the field measurement, at PAUSE with five records, while
+  `npm test`, which executes arbitrary code, was silent: overlap is symmetric, so
+  corpus frequency was being read as relevance. Actions are classified first, and
+  a reporting command caps at READ_FIRST however strong the overlap. Anything
+  unrecognized — shell plumbing, `find -delete` — is treated as capable of side
+  effects, so a missed classification costs an unnecessary PAUSE, never a
+  swallowed one. `guard --json` reports `read_only`.
+- **A keyword-only match no longer rides along in the hook's advisory.** The
+  read-only cap lowers `git status` to READ_FIRST, but READ_FIRST still spends
+  the agent's context — and one of the two records it drew shared nothing with
+  the command but the word "status". Where a match carries something specific (a
+  file, a tag, a title hit, an explicit do-not-retry, an open blocker) the
+  vocabulary-only ones are dropped from what the hook sends. Where they are all
+  there is, they are still sent: a strong keyword-only match escalating through
+  the score band is a deliberate behaviour of this tool, not something to
+  silence from the hook. `crumb guard` is unchanged — a caller who asked
+  explicitly still sees everything that was considered.
+- **Sessions get a name.** `--title` was optional and fell back to the constant
+  `session`: 280 of the field store's 310 sessions carried no information in
+  their title, id, slug or filename, and `search` ranks on title. A session with
+  no title is now named from what the caller already said — the `--focus`, else
+  the Next Action, else the work summary.
+- **Same-day session ids cannot collide across actors.** The disambiguating
+  ordinal was derived from the files the local checkout can see, so two agents
+  working the same day each wrote `2026-09-04-session-3.md` and git met them as
+  an add/add conflict, whose repair means rewriting id, slug and title *inside*
+  both files. Session names now carry four hex characters of entropy.
+- **A session record measures the session.** 76–79% of a record's `dirty_files`
+  was the memory store's own churn — one session that touched three source files
+  recorded 46 paths, 36 of them other sessions' records. `.project-memory/` is
+  excluded by default and the list is capped at 25 with the tail summarised. The
+  callers genuinely asking about the store keep the full list.
+- **The secret gate blocks on structure, not on entropy.** Every hit in the field
+  store was a Firebase push id quoted inside a production path, and because
+  `scan-secrets` exits non-zero they blocked the memory commit and were
+  hand-overridden every time. A push-id-shaped segment no longer disqualifies a
+  path, and `high-entropy-string` is a warning: it is printed and counted, but
+  only structured shapes decide the exit code. The MCP tool's `ok` says the same.
+- **One `--json` envelope.** Every command named its result list differently —
+  `hits`, `findings`, `matches` — so every consumer needed a per-subcommand
+  adapter whose failure mode is silent: a defensive `d.get("findings", [])`
+  against `scan-secrets` reports zero problems. Every document now carries `ok`,
+  `command` and `items` (aliasing whichever list the command emits), and errors
+  take the same shape. Additive — every existing key is still there.
+
+And, from before the review, two signal-to-noise fixes in the staleness
+warnings, both found by reading the
 tool's own resume packet on its own store: of seven lines under *Stale / Risk
 Warnings*, six were false, and the packet had been that way on every session
 branch since the store was committed. Both fixes are the same shape as the
 0.1.10/0.1.11 guard work — an alarm that is always on is one nobody reads.
-
-### Fixed
 
 - **A branch mismatch is reported only for memory that has not reached HEAD.**
   The handoff and every record carry the branch they were written on, and the

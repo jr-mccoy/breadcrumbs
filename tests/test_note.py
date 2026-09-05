@@ -182,11 +182,30 @@ class NoteIdeaTests(unittest.TestCase):
             self.assertEqual(len(list((mem / "ideas").glob("*.md"))), 1)
             self.assertEqual([f for f in crumb.run_validate(mem) if f["status"] == "fail"], [])
 
-    def test_unknown_idea_section_errors(self):
+    def test_unknown_idea_section_is_parked_not_discarded(self):
         with tempfile.TemporaryDirectory() as tmp:
-            init_store(tmp)
-            code, _ = run(["note", "idea", "x", "--project", tmp, "--set", "Bogus", "y"])
-            self.assertEqual(code, 2)
+            mem = init_store(tmp)
+            code, out = run(
+                [
+                    "note",
+                    "idea",
+                    "x",
+                    "--project",
+                    tmp,
+                    "--set",
+                    "Bogus",
+                    "parked",
+                    "--set",
+                    "motivation",
+                    "kept",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            body = next(iter((mem / "ideas").glob("*.md"))).read_text(encoding="utf-8")
+            self.assertIn("## Motivation", body)
+            self.assertIn("kept", body)
+            self.assertIn("### Bogus", body)
+            self.assertIn("parked", body)
 
 
 class NoteMisuseTests(unittest.TestCase):

@@ -114,6 +114,8 @@ crumb mark-status "dec_…" stale --reason "superseded by reality"   # record li
 crumb mark-status "trap_…" stale --reason "fixed in 2.1"           # ...retire a trap the same way
 crumb mark-status "q:…" answered --reason "see dec_…"              # ...and answer an open question
 crumb note question|trap|idea    # leave a note for the next agent (no hand-editing)
+crumb retitle "ses_…" "what that session was really about"   # fix a title that says nothing
+crumb traps --stale              # traps nobody has confirmed lately, and what they cost
 crumb capture session            # record session end (git-prefilled); updates handoff + current
 crumb resume                     # print a bounded resume packet with computed staleness
 crumb reindex                    # rebuild generated/ projections (mutations reindex automatically)
@@ -175,6 +177,15 @@ status/privacy vocabularies, evidence/handoff/session requirements, generated
 markers). It performs **no** heuristic content scanning; secret and
 instruction-like-text detection live in `audit` / `scan-secrets`. Exit codes: `0`
 clean, `1` problems found, `2` no `.project-memory/` store present.
+
+**Every command speaks the same two dialects.** On failure, the first line of
+the message is `CRUMB-ERROR: <subcommand>: …` — a fixed, greppable token, so a
+run piped through `head`/`tail` still says it failed even when `$?` belongs to
+the pipe rather than to `crumb`. Under `--json`, every command returns `ok`,
+`command` and `items` (aliasing whichever list that command emits — `findings`,
+`hits`, `matches`, …, all still present under their own names), so one reader
+works across subcommands instead of a per-subcommand adapter that reports zero
+problems when it guesses the key wrong.
 
 ### `crumb remember decision | attempt`
 
@@ -290,6 +301,23 @@ crumb capture session --next "wire the parser" \
   --set "Decisions Made" "kept the projection rebuild on the write path"
 ```
 
+A `--set` heading is matched ignoring case, spacing and punctuation, and an
+unrecognized one is **never** fatal: the content is kept under `## Unsorted`,
+tagged with the heading you used, and a `CRUMB-WARN:` line on stderr names the
+valid list. One wrong heading used to discard every other `--set` on the command
+line, which is the most expensive thing this tool can do to an agent writing up
+a long session.
+
+A session with no `--title` is named from what you already said about it — the
+`--focus`, else the Next Action, else the work summary — and its filename
+carries four hex characters of entropy, so two agents capturing on the same day
+in two checkouts cannot write the same file. `crumb retitle <id> "…"` fixes a
+title written before that; it rewrites the searchable title only, since the id,
+slug and filename are what other records reference. `dirty_files` excludes
+`.project-memory/` by default (`--include-memory` puts it back) and is capped —
+a capture rewrites the store on every firing, and in a shared tree it also sees
+every other session's uncommitted records.
+
 The prefill window is bounded: `since..HEAD` from the newest session record's
 commit, or — when that is more than 20 commits back, or there is no prior record —
 the last 20 commits. Either way the record names the window it used, so a large
@@ -403,6 +431,26 @@ escalates past both ceilings to `ASK_HUMAN` — that is a property of the
 match is tagged `[context]` and a blocking one `[objects]`, so a caller can tell
 a record that forbids the action from one that merely names the same file.
 
+**Blast radius cuts both ways.** A read-only action — `cat`, `ls`, `grep`,
+`git status|log|diff`, … — caps at `READ_FIRST` however strong the overlap, and
+`guard --json` reports it as `read_only`. Without that, verdict severity
+inverts: overlap is symmetric, so `git status` (which shares vocabulary with
+every record that discusses git) outranked `npm test` (which executes arbitrary
+code and matched nothing). Anything the classifier does not recognize — shell
+plumbing, an acting flag like `find -delete` — is treated as capable of side
+effects, so a missed classification costs an unnecessary `PAUSE`, never a
+swallowed one.
+
+**A file signal says who claimed it.** `--evidence file …`, and a trap's
+`Area / files:` bullet, are the author declaring what a record is about: those
+score highest and read as `same file(s)`. A path mined out of a record's prose
+is a `mentions:` — it still retrieves (a `--file` search finds it) but it scores
+lower and cannot raise a verdict on its own. Extraction is structural, so
+`json.load`, `8.13.2`, `AM/PM` and `--title/--set` are not filenames; in one
+310-session field store 80% of the "paths" the old lexical rule harvested did
+not exist, which is how a script that read a JSON file drew a `PAUSE` from a
+screenshot-testing trap.
+
 **To make a record hard-stop an action, record it as an attempt:**
 `crumb remember attempt --do-not-retry "…"`. A trap *documents* a hazard; an
 attempt *forbids* a repeat.
@@ -424,6 +472,30 @@ named `GUARD_*` thresholds at the top of the guard section in `breadcrumbs/cli.p
 be tuned from dogfood feedback without rearchitecting.
 
 ---
+
+### `crumb scan-secrets` and `crumb traps`
+
+```bash
+python crumb.py scan-secrets                 # gate before committing memory
+python crumb.py traps --stale                # traps nobody has confirmed in 180 days
+python crumb.py traps --confirm "trap_…"     # "still true", dated, in the trap's own block
+```
+
+`scan-secrets` blocks on shapes with real structure — AWS keys, PEM blocks,
+bearer tokens, a file it could not read. The bare high-entropy heuristic
+**warns** instead: it has no structure behind it, and gating on it punished
+exactly the records that cite a concrete production path (a Firebase push id is
+public, 20 characters of base64url, timestamp-prefixed — diagnostically not a
+secret). A gate that is hand-overridden on every commit has stopped being a
+gate. Put one regex per line in `.project-memory/.crumbignore` to retire a false
+positive once, in a file your reviewers can see, instead of re-deciding it.
+
+`traps` reports what the always-on trap context costs and which traps nobody has
+confirmed lately, never-confirmed first. Age alone cannot retire a trap — an old
+trap may be perfectly live — so `--confirm` records the fact that was missing:
+when somebody last checked. Retire one with `crumb mark-status <id> stale`; it
+stays in the file for history and stops driving `guard`. `audit` raises
+`traps-growth` when the file outgrows its budget.
 
 ## Integrations — make the store actually get used
 
@@ -589,6 +661,8 @@ automatically so it stays in step.)
 | `scan-secrets` (committed-memory secret gate) | implemented |
 | `schema` (record contract introspection + template) | implemented |
 | `note question` / `note trap` / `note idea` (write-surface) | implemented |
+| `retitle` (rewrite a record's title; id/slug/filename unchanged) | implemented |
+| `traps` (staleness + always-on context cost, `--stale`, `--confirm`) | implemented |
 | `pipx`/`pip` packaging (`crumb` console script, bundled templates) | implemented |
 | MCP server (`breadcrumbs-mcp`: 8 resources, 6 prompts, 10 tools) | implemented (**optional**) |
 | Integrations: `init` bootstrapper, `doctor`, `mcp`, `hook` (adapter + `.mcp.json` + hooks) | implemented |

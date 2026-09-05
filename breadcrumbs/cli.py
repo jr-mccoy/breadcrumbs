@@ -33,7 +33,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import date, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -61,6 +61,79 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "project-memory"
 # Used everywhere git-derived fields cannot be populated.
 NO_GIT_BRANCH = "(no-git)"
 NO_GIT_COMMIT = "(no-git)"
+
+# --------------------------------------------------------------------------- #
+# Output safety (W1)
+# --------------------------------------------------------------------------- #
+#
+# A Windows console defaults to cp1252, which cannot encode the ✓/✗ result
+# markers. `print` then raised UnicodeEncodeError *mid-line*, so `validate` and
+# `scan-secrets` printed their summary ("12 possible secret(s) found") and lost
+# every per-item detail — the payload that says *which* twelve. The exit codes
+# were right and the diagnosis was gone, which is the worst shape a failure can
+# take: undiagnosable without knowing to re-run under PYTHONIOENCODING=utf-8.
+#
+# Two independent guards, because either alone still loses something:
+#   * `reconfigure(errors="replace")` makes any stray non-ASCII (an em dash in a
+#     record body, a path with an accent) degrade to `?` instead of raising. No
+#     line is ever lost, whatever it holds.
+#   * ASCII markers when the stream cannot encode the glyphs, so the common case
+#     reads as `[x]` / `[ok]` rather than a row of `?`.
+#
+# A tool must never lose its diagnostic payload to a decorative glyph.
+MARK_PASS = "✓"
+MARK_FAIL = "✗"
+_ASCII_MARK_PASS = "[ok]"
+_ASCII_MARK_FAIL = "[x]"
+
+
+def _stream_encodes(stream, text: str) -> bool:
+    """Can `stream` encode `text` without loss? True for str-only sinks."""
+    encoding = getattr(stream, "encoding", None)
+    if not encoding:
+        # io.StringIO (and the test suite's capture buffers) hold `str`; there is
+        # no encoding step to fail.
+        return True
+    try:
+        text.encode(encoding, errors="strict")
+    except (UnicodeEncodeError, LookupError):
+        return False
+    except Exception:  # pragma: no cover - a stream lying about its encoding
+        return False
+    return True
+
+
+def configure_output(stream=None) -> None:
+    """Make stdout total: never raise on encoding, and pick markers it can print.
+
+    Called once from `main()`. Idempotent, and safe on any stream shape — a
+    stream with no `reconfigure` (a pipe wrapper, a test buffer) just keeps the
+    marker probe.
+    """
+    global MARK_PASS, MARK_FAIL
+    stream = sys.stdout if stream is None else stream
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is not None:
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError, TypeError):  # pragma: no cover - stream-dependent
+            pass
+    if _stream_encodes(stream, MARK_PASS + MARK_FAIL):
+        MARK_PASS, MARK_FAIL = "✓", "✗"
+    else:
+        MARK_PASS, MARK_FAIL = _ASCII_MARK_PASS, _ASCII_MARK_FAIL
+
+
+# The first token of every error line (C2). Loud, greppable and machine-stable:
+# agents pipe output through `head`/`tail` to bound its size, which scrolls an
+# argparse usage block away and leaves the echoed prose behind, reading as
+# success. A caller can now grep one fixed string to know a run failed even when
+# it holds a truncated fragment of the output — and `$?` after a pipe is the
+# pipe's status, not ours, so the text has to carry the fact by itself.
+ERROR_PREFIX = "CRUMB-ERROR:"
+
+# Same contract for the non-fatal half: input we accepted but changed.
+WARN_PREFIX = "CRUMB-WARN:"
 
 # Markers delimiting the block Breadcrumbs manages inside the project .gitignore.
 # Anything between them is rewritten by `init`; everything else is preserved.
@@ -478,7 +551,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if getattr(args, "remove_integrations", False):
         removed = remove_integrations(root)
         if args.json:
-            print(json.dumps({"removed": removed}, indent=2))
+            _print_json(args, {"removed": removed, "items": removed})
         else:
             hooks = removed["hooks"]
             touched = removed["adapters"] or removed["mcp"] or hooks["removed"]
@@ -509,7 +582,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if getattr(args, "print_integrations", False):
         plan = resolve_integration_plan(root, args)
         if args.json:
-            print(json.dumps({"would_apply": plan}, indent=2))
+            _print_json(args, {"would_apply": plan})
         else:
             print("Integrations that would be applied:")
             print(f"  adapter signpost -> {_fmt_adapter_targets(root, plan['adapters'])}")
@@ -536,7 +609,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             # until a manual `crumb resume`.
             try_reindex_projections(memory_dir, root)
             if args.json:
-                print(json.dumps({"store": "existing", "integrations": applied}, indent=2))
+                _print_json(args, {"store": "existing", "integrations": applied})
             else:
                 print(f"{MEMORY_DIRNAME}/ already present — store left untouched.")
                 print("Applied integrations:")
@@ -645,7 +718,7 @@ def _fmt_applied_mcp(applied: dict) -> str:
 
 def _emit_init_summary(args: argparse.Namespace, summary: dict) -> None:
     if args.json:
-        print(json.dumps(summary, indent=2))
+        _print_json(args, summary)
         return
     print(f"Initialized {summary['created']}")
     print(f"  project:                       {summary['project']}")
@@ -673,11 +746,103 @@ def _emit_init_summary(args: argparse.Namespace, summary: dict) -> None:
         print("\nNext: `crumb resume` to load context; `crumb doctor` to check wiring.")
 
 
+# Namespace attributes that name the sub-position of a command, outermost first.
+# `crumb note trap --body ...` failed with a bare `crumb:` prefix, which does not
+# say which of twenty subcommands rejected the flag.
+_COMMAND_PATH_DESTS = (
+    "command",
+    "record_type",
+    "note_kind",
+    "capture_what",
+    "mcp_what",
+    "hook_event",
+)
+
+
+def command_label(args: argparse.Namespace) -> str:
+    """`crumb note trap` — the fully-qualified subcommand that is speaking."""
+    parts = ["crumb"]
+    for dest in _COMMAND_PATH_DESTS:
+        value = getattr(args, dest, None)
+        if isinstance(value, str) and value:
+            parts.append(value)
+    return " ".join(parts)
+
+
+# Keys under which commands already return their result list. `--json` grew one
+# command at a time and every command invented its own name, so two commands
+# doing the same shape of job — run N checks, report failures — disagreed on what
+# to call the answer: `scan-secrets` returns `hits`, `validate` returns
+# `findings`, `search` returns `matches`, `guard` a third shape again. Every
+# consumer needed a per-subcommand adapter, and the failure mode is silent: a
+# defensive `d.get("findings", [])` against `scan-secrets` reports zero problems
+# rather than raising. `items` now aliases whichever of these a command emits, so
+# one reader works everywhere; the original keys stay exactly where they were.
+_JSON_ITEM_ALIASES = (
+    "items",
+    "findings",
+    "hits",
+    "matches",
+    "checks",
+    "records",
+    "entries",
+    "results",
+)
+
+
+def _print_json(
+    args: argparse.Namespace,
+    payload: dict,
+    *,
+    ok: bool | None = None,
+    summary: dict | None = None,
+) -> None:
+    """Print one command's `--json` document inside the shared envelope (C4).
+
+    Additive by construction: `ok`, `command`, `summary` and `items` are added or
+    filled in, and every key the command already returned is preserved. `items`
+    is always present — an empty list when the command has no item list — so a
+    consumer can read it without knowing which command it is talking to.
+    """
+    payload = dict(payload)
+    items = payload.get("items")
+    if not isinstance(items, list):
+        items = next(
+            (payload[k] for k in _JSON_ITEM_ALIASES if isinstance(payload.get(k), list)), []
+        )
+    doc: dict = {
+        "ok": payload.pop("ok", True) if ok is None else ok,
+        "command": payload.pop("command", None) or command_label(args),
+    }
+    summary = summary if summary is not None else payload.pop("summary", None)
+    if summary is not None:
+        doc["summary"] = summary
+    doc["items"] = items
+    payload.pop("items", None)
+    doc.update(payload)
+    print(json.dumps(doc, indent=2))
+
+
+def _emit_warning(args: argparse.Namespace, message: str) -> None:
+    """A non-fatal note about input we accepted but changed (C1).
+
+    stderr, and marked, for the same reason errors are: the command succeeded, so
+    stdout carries the result and a caller parsing it must not find prose in it.
+    """
+    if not getattr(args, "json", False):
+        print(f"{WARN_PREFIX} {command_label(args)}: {message}", file=sys.stderr)
+
+
 def _emit_error(args: argparse.Namespace, message: str) -> None:
     if getattr(args, "json", False):
-        print(json.dumps({"error": message}, indent=2))
+        print(
+            json.dumps(
+                {"ok": False, "command": command_label(args), "items": [], "error": message},
+                indent=2,
+            )
+        )
     else:
-        print(f"error: {message}", file=sys.stderr)
+        print(f"{ERROR_PREFIX} {command_label(args)}: {message}", file=sys.stderr)
 
 
 # --------------------------------------------------------------------------- #
@@ -1073,7 +1238,32 @@ def _unquote_git_path(path: str) -> str:
     return out.decode("utf-8", errors="replace")
 
 
-def git_dirty_files(root: Path) -> list[str]:
+# A record's `dirty_files` is capped here. In the field store the *shortest*
+# session record listed 32 paths and the longest 49; a list that long is not
+# read, and the tail of it is not information. The count of what was dropped is.
+DIRTY_FILES_MAX = 25
+DIRTY_FILES_OVERFLOW = "… +{n} more"
+
+
+def _cap_dirty_files(files: list[str]) -> list[str]:
+    """Keep the first `DIRTY_FILES_MAX` paths; say how many were dropped."""
+    if len(files) <= DIRTY_FILES_MAX:
+        return files
+    return files[:DIRTY_FILES_MAX] + [DIRTY_FILES_OVERFLOW.format(n=len(files) - DIRTY_FILES_MAX)]
+
+
+def git_dirty_files(root: Path, *, include_memory: bool = True) -> list[str]:
+    """Uncommitted paths, relative to the repo root.
+
+    `include_memory=False` drops the memory store's own churn (R2). Every capture
+    rewrites `.project-memory/` — a new session record, handoff.md, current.md,
+    the projections — and in a shared tree it also sees every *other* session's
+    uncommitted records. That made 76–79% of a session's `dirty_files` the tool
+    measuring its own footprint and reporting it as the session's work: one
+    session that touched three source files recorded 46 paths, 36 of them other
+    sessions' memory records. Callers that are asking about the *store* (the
+    staleness check, the Stop-hook dedupe) keep the default.
+    """
     if not is_git_repo(root):
         return []
     out = _git_out(root, "status", "--porcelain")
@@ -1089,6 +1279,8 @@ def git_dirty_files(root: Path) -> list[str]:
         path = _unquote_git_path(path)
         if path:
             files.append(path)
+    if not include_memory:
+        files = list(_work_dirty_files(files))
     return files
 
 
@@ -1136,11 +1328,14 @@ def detect_agent(fallback: str = AGENT_UNKNOWN) -> str:
     return fallback
 
 
-def derive_fields(project_root: Path, agent: str | None = None) -> dict:
+def derive_fields(
+    project_root: Path, agent: str | None = None, *, include_memory: bool = False
+) -> dict:
     """Auto-derived frontmatter fields (clock + git + environment).
 
     `agent=None` means "nobody said" — resolved by `detect_agent()`, never to
-    `human`.
+    `human`. `include_memory` re-admits the memory store's own churn to
+    `dirty_files`; the default excludes it (see `git_dirty_files`).
     """
     root = Path(project_root)
     now = now_iso()
@@ -1152,7 +1347,7 @@ def derive_fields(project_root: Path, agent: str | None = None) -> dict:
         "project": derive_project_name(root),
         "branch": git_branch(root),
         "commit": git_commit(root),
-        "dirty_files": git_dirty_files(root),
+        "dirty_files": _cap_dirty_files(git_dirty_files(root, include_memory=include_memory)),
     }
 
 
@@ -1529,16 +1724,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     passes = [f for f in findings if f["status"] == "pass"]
 
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "ok": not fails,
-                    "passed": len(passes),
-                    "failed": len(fails),
-                    "findings": findings,
-                },
-                indent=2,
-            )
+        _print_json(
+            args,
+            {"passed": len(passes), "failed": len(fails), "findings": findings},
+            ok=not fails,
+            summary={"passed": len(passes), "failed": len(fails)},
         )
         return 0 if not fails else 1
 
@@ -1552,19 +1742,19 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(f"validate: {len(fails)} problem(s) found ({len(passes)} checks passed)\n")
         for f in fails:
             loc = f["path"] or "-"
-            print(f"  ✗ [{f['check']}] {loc}: {f['message']}")
+            print(f"  {MARK_FAIL} [{f['check']}] {loc}: {f['message']}")
         if args.verbose:
             print("\nPassed checks:")
             for f in passes:
                 loc = f["path"] or "-"
-                print(f"  ✓ [{f['check']}] {loc}: {f['message']}")
+                print(f"  {MARK_PASS} [{f['check']}] {loc}: {f['message']}")
         return 1
 
     print(f"validate: OK — {len(passes)} checks passed, 0 problems.")
     if args.verbose:
         for f in passes:
             loc = f["path"] or "-"
-            print(f"  ✓ [{f['check']}] {loc}: {f['message']}")
+            print(f"  {MARK_PASS} [{f['check']}] {loc}: {f['message']}")
     return 0
 
 
@@ -1630,6 +1820,137 @@ BODY_SECTIONS = {
         "Notes",
     ],
 }
+
+# Where content lands when its `--set` heading matches nothing in the record
+# type's vocabulary (C1). A wrong heading used to abort the whole call — with it
+# every *other* `--set` on the command line, which for an agent writing up a long
+# session is a 1,500-word record it has to synthesise a second time, at the point
+# in the session where it has least context left to do it with. Losing authored
+# content to a typo is the worst trade available here: park it, name it, warn,
+# and let a human or a later `--set` move it.
+UNSORTED_SECTION = "Unsorted"
+
+
+def _heading_key(heading: str) -> str:
+    """Fold a heading to its comparison key: case, spacing and punctuation blind.
+
+    Three of the session headings contain spaces and one contains a slash, which
+    is a second, independent way to get the same call rejected — `Attempts /
+    Failures` vs `Attempts/Failures` vs `attempts failures` are the same heading
+    by any reading a caller has.
+    """
+    return re.sub(r"[^a-z0-9]+", " ", (heading or "").lower()).strip()
+
+
+# Obvious synonyms, per record type. Deliberately short: a guess that lands
+# content under the wrong heading is worse than parking it under `Unsorted`,
+# where it is still there and still labelled. Only wordings that mean the
+# canonical heading and nothing else belong here.
+_SECTION_ALIASES: dict[str, dict[str, str]] = {
+    "decision": {
+        "summary": "Decision",
+        "background": "Context",
+        "why": "Rationale",
+        "reasoning": "Rationale",
+        "options": "Options Considered",
+        "alternatives": "Options Considered",
+        "tradeoffs": "Options Considered",
+        "impact": "Consequences",
+        "outcome": "Consequences",
+    },
+    "attempt": {
+        "what i tried": "Tried",
+        "approach": "Tried",
+        "outcome": "Result",
+        "why": "Why It Failed / Succeeded",
+        "why it failed": "Why It Failed / Succeeded",
+        "why it succeeded": "Why It Failed / Succeeded",
+        "do not retry": "Do Not Retry Unless",
+        "related": "Related Records",
+    },
+    "session": {
+        "summary": "Work Completed",
+        "work done": "Work Completed",
+        "what happened": "Work Completed",
+        "context": "Starting Context",
+        "decisions": "Decisions Made",
+        "attempts": "Attempts / Failures",
+        "failures": "Attempts / Failures",
+        "questions": "Open Questions",
+        "blockers": "Open Questions",
+        "files": "Files Touched",
+        "files changed": "Files Touched",
+        "commands": "Commands / Verification",
+        "verification": "Commands / Verification",
+        "next": "Next Action",
+        "next steps": "Next Action",
+    },
+    "idea": {
+        "summary": "Idea",
+        "proposal": "Idea",
+        "why": "Motivation",
+        "rationale": "Motivation",
+        "design": "Sketch",
+        "questions": "Open Questions",
+    },
+    "verification": {
+        "what": "Subject",
+        "result": "Outcome",
+        "how": "Method",
+        "notes": "Notes",
+    },
+}
+
+
+def canonical_heading(rtype: str, heading: str) -> str | None:
+    """The canonical section `heading` names, or None if it names none."""
+    key = _heading_key(heading)
+    if not key:
+        return None
+    for canon in BODY_SECTIONS.get(rtype, ()):
+        if _heading_key(canon) == key:
+            return canon
+    if key == _heading_key(UNSORTED_SECTION):
+        return UNSORTED_SECTION
+    return _SECTION_ALIASES.get(rtype, {}).get(key)
+
+
+def normalize_sections(rtype: str, items) -> tuple[dict[str, str], list[str]]:
+    """Canonicalize section headings without ever dropping content (C1).
+
+    `items` is a mapping or an iterable of (heading, content) pairs. Returns the
+    canonical `{heading: content}` plus human-readable notes about anything that
+    was renamed or parked — the caller decides how loudly to say them.
+
+    Content whose heading matches nothing is kept under `## Unsorted`, tagged
+    with the heading the caller used, so the record holds everything that was
+    written and a reader can see what it was called.
+    """
+    if hasattr(items, "items"):
+        items = list(items.items())
+    sections: dict[str, str] = {}
+    parked: list[tuple[str, str]] = []
+    notes: list[str] = []
+    for heading, content in items or ():
+        canon = canonical_heading(rtype, heading)
+        if canon is None:
+            parked.append((str(heading), content))
+            notes.append(
+                f"unknown section {heading!r} for {rtype}: kept under "
+                f"`## {UNSORTED_SECTION}`. Valid: {', '.join(BODY_SECTIONS[rtype])} "
+                f"(see `crumb schema {rtype}`)"
+            )
+            continue
+        if canon != heading:
+            notes.append(f"section {heading!r} matched {canon!r}")
+        sections[canon] = content
+    if parked:
+        existing = (sections.get(UNSORTED_SECTION) or "").strip()
+        blocks = [existing] if existing else []
+        blocks += [f"### {h}\n\n{(c or '').strip()}" for h, c in parked]
+        sections[UNSORTED_SECTION] = "\n\n".join(blocks)
+    return sections, notes
+
 
 # Named flags for the fixed attempt section vocabulary: expose the
 # contract in `--help` so it is no longer discoverable only by rejection. Each maps a
@@ -1787,7 +2108,10 @@ def render_body(rtype: str, sections: dict[str, str]) -> str:
     human the full skeleton; the stored record only says what was recorded.
     """
     out: list[str] = []
-    for heading in BODY_SECTIONS[rtype]:
+    # `Unsorted` is appended after the vocabulary, never inside it: it is where
+    # content whose heading matched nothing lands (C1), and it must not displace
+    # a canonical section a reader is scanning for.
+    for heading in list(BODY_SECTIONS[rtype]) + [UNSORTED_SECTION]:
         content = (sections.get(heading) or "").strip()
         if not content or content == _EMPTY_SECTION:
             continue
@@ -1852,14 +2176,39 @@ def truncate_slug(slug: str, limit: int = SLUG_MAX_CHARS) -> str:
     return "-".join(parts)
 
 
-def _unique_record_path(directory: Path, date: str, slug: str) -> tuple[Path, str]:
+# Types whose names are made unique by construction rather than by looking at
+# the local tree (R3). `capture session` derives its disambiguating ordinal from
+# the files it can *see*, so two agents working the same day in two checkouts
+# each independently write `2026-09-04-session.md` (or `-session-3.md`, having
+# each seen two of their own). Git catches it as an add/add conflict — the good
+# outcome — but repair means rewriting the id, slug and title *inside* both
+# files, not just renaming one, and a store like this repo's routinely has five
+# concurrent sessions. Four hex characters of entropy cannot collide across
+# actors who cannot see each other, which the ordinal never could.
+UNIQUE_SUFFIX_TYPES = ("session",)
+UNIQUE_SUFFIX_BYTES = 2  # -> 4 hex characters
+
+
+def _unique_suffix() -> str:
+    return hashlib.blake2s(os.urandom(16), digest_size=UNIQUE_SUFFIX_BYTES).hexdigest()
+
+
+def _unique_record_path(
+    directory: Path, date: str, slug: str, *, suffix: str | None = None
+) -> tuple[Path, str]:
     """Pick a non-colliding `<date>-<slug>.md` (append -2, -3, … on same-day clash).
 
     The slug is capped at `SLUG_MAX_CHARS` *including* the collision suffix, so
     the disambiguated names stay inside the budget too. Truncation can make two
     long titles land on the same base — that is just another same-day clash, and
     the suffix already handles it.
+
+    `suffix` (see `UNIQUE_SUFFIX_TYPES`) is appended before any of that: it makes
+    the name unique against writers this process cannot see, where the ordinal
+    only disambiguates against files already on disk here.
     """
+    if suffix:
+        slug = truncate_slug(slug, SLUG_MAX_CHARS - len(suffix) - 1) + "-" + suffix
     base = truncate_slug(slug)
     candidate = directory / f"{date}-{base}.md"
     if not candidate.exists():
@@ -1877,15 +2226,6 @@ def _unique_record_path(directory: Path, date: str, slug: str) -> tuple[Path, st
 # ---- the writer ------------------------------------------------------------ #
 
 
-def _canonical_heading(rtype: str, heading: str) -> str:
-    for canon in BODY_SECTIONS[rtype]:
-        if canon.lower() == heading.lower():
-            return canon
-    raise ValueError(
-        f"unknown section {heading!r} for {rtype}; valid: {', '.join(BODY_SECTIONS[rtype])}"
-    )
-
-
 def write_record(
     memory_dir: Path,
     project_root: Path,
@@ -1901,6 +2241,7 @@ def write_record(
     status: str | None = None,
     agent: str | None = None,
     extra: dict | None = None,
+    include_memory: bool = False,
 ) -> tuple[Path, dict]:
     """Assemble + write a durable record; return (path, frontmatter dict).
 
@@ -1910,12 +2251,22 @@ def write_record(
     (e.g. a verification's subject/outcome/method) — rendered in
     canonical order when known to FRONTMATTER_ORDER, else appended.
     """
-    derived = derive_fields(project_root, agent=agent)
+    # Normalize here as well as in the CLI's `--set` collector: `render_body`
+    # walks the type's vocabulary, so a heading it does not recognize used to
+    # vanish without a word for every writer that does not go through the CLI —
+    # the MCP `memory_record` tool passes a raw `sections` mapping straight in.
+    sections, _notes = normalize_sections(rtype, sections or {})
+    derived = derive_fields(project_root, agent=agent, include_memory=include_memory)
     defaults = default_fields()
     date = derived["created_at"][:10]
     directory = Path(memory_dir) / TYPE_DIR[rtype]
     directory.mkdir(parents=True, exist_ok=True)
-    path, slug = _unique_record_path(directory, date, slugify(title))
+    path, slug = _unique_record_path(
+        directory,
+        date,
+        slugify(title),
+        suffix=_unique_suffix() if rtype in UNIQUE_SUFFIX_TYPES else None,
+    )
 
     ident = derive_identity(path.stem, rtype)
     if ident is None:  # pragma: no cover - filename is constructed canonically
@@ -2002,7 +2353,8 @@ def _record_reachability_hint(path: Path, rtype: str) -> str | None:
     if rec.error:
         return None  # unparseable is validate's finding, not this one's
     item = _item_from_record(rec)
-    return None if (item["tags"] or item["files"]) else REACHABILITY_HINT
+    reachable = item["tags"] or item["files"] or item["mentioned_files"]
+    return None if reachable else REACHABILITY_HINT
 
 
 def _block_reachability_hint(body: str, kind: str) -> str | None:
@@ -2132,6 +2484,67 @@ def set_record_status(
     return {"ok": True, "id": rid, "path": str(rec.path), "from": prev, "to": status}
 
 
+def set_record_title(memory_dir: Path, rid: str, title: str, *, agent: str | None = None) -> dict:
+    """Rewrite a record's `title` in place, gated by `validate` (R1).
+
+    Repairs a corpus that was written before titles were derived: 280 of one
+    field store's 310 sessions are titled `session`, and `search` ranks on
+    title, so they are invisible to the tool that exists to find them.
+
+    Identity — id, slug, filename — is deliberately NOT rewritten. Those are what
+    every `supersedes`, `superseded_by` and evidence ref in the store points at,
+    and a rename would break each of them silently while a reader looking at the
+    old filename would see a record that no longer answers to it. The searchable
+    field is the one that was empty of information, and it is the one this fixes;
+    the id stays the durable handle it has always been.
+    """
+    memory_dir = Path(memory_dir)
+    rec = find_record_by_id(memory_dir, rid)
+    if rec is None:
+        return {
+            "ok": False,
+            "error": f"no record with id {rid!r} (traps and questions "
+            "have no separate title — edit their summary line in place)",
+        }
+    title = (title or "").strip()
+    if not title:
+        return {"ok": False, "id": rid, "error": "a title cannot be empty"}
+
+    original = rec.path.read_text(encoding="utf-8")
+    meta, body = parse_frontmatter(original)
+    previous = meta.get("title")
+    if previous == title:
+        return {"ok": True, "id": rid, "path": str(rec.path), "from": previous, "to": title}
+    meta["title"] = title
+    meta["updated_at"] = now_iso()
+    author = agent or detect_agent()
+    note = f"<!-- title: {previous!r} -> {title!r} by {author} at {meta['updated_at']} -->"
+    try:
+        rendered = render_frontmatter(meta)
+    except ValueError as exc:
+        return {"ok": False, "id": rid, "error": f"cannot re-render frontmatter: {exc}"}
+    reparsed, _ = parse_frontmatter(rendered + "\n")
+    if reparsed != meta:
+        return {
+            "ok": False,
+            "id": rid,
+            "error": "retitle refused: frontmatter would not survive a re-render "
+            "round-trip; simplify the title",
+        }
+    write_text_atomic(rec.path, rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n")
+
+    fails = _validate_new_file(memory_dir, rec.path)
+    if fails:
+        write_text_atomic(rec.path, original)  # revert
+        return {
+            "ok": False,
+            "id": rid,
+            "error": "retitle rejected by validate: " + "; ".join(f["message"] for f in fails),
+        }
+    reindex_projections(memory_dir)
+    return {"ok": True, "id": rid, "path": str(rec.path), "from": previous, "to": title}
+
+
 # ---- trap + question lifecycle (the aggregate-file half of `mark-status`) --- #
 
 
@@ -2195,6 +2608,81 @@ def _apply_block_status(block: str, status: str, superseded_by: str | None, note
     # next heading — put it back after the note so blocks stay separated.
     tail = body[len(core) :] or "\n"
     return head + (core + "\n" if core else "") + note + tail
+
+
+def _set_block_bullet(block: str, key: str, value: str) -> str:
+    """Set `- <key>: <value>` inside one `## ` block, changing nothing else.
+
+    Same placement rule as the status bullet: with the block's other
+    `- key: value` fields, never below its prose.
+    """
+    pattern = re.compile(r"\s*-\s*" + re.escape(key) + r"\s*:", re.I)
+    lines = block.splitlines(keepends=True)
+    head, rest = (lines[0] if lines else ""), lines[1:]
+    if head and not head.endswith("\n"):
+        head += "\n"
+    bullet = f"- {key}: {value}\n"
+    for i, line in enumerate(rest):
+        if pattern.match(line):
+            rest[i] = bullet
+            break
+    else:
+        insert = 0
+        for i, line in enumerate(rest):
+            if re.match(r"\s*-\s+\S", line):
+                insert = i + 1
+            elif line.strip():
+                break
+        rest.insert(insert, bullet)
+    return head + "".join(rest)
+
+
+def set_trap_confirmed(memory_dir: Path, rid: str, *, when: str | None = None) -> dict:
+    """Stamp a trap's `- Last confirmed:` bullet with today's date (R6).
+
+    Traps accumulate and nothing ages out: 77 active traps, 167 KB, loaded every
+    session. Age alone cannot retire one — an old trap may be perfectly live —
+    so the store needs the fact nobody was recording: when somebody last checked
+    that this is still true. `crumb traps --stale` reads it back.
+    """
+    memory_dir = Path(memory_dir)
+    trap = find_trap_by_id(memory_dir, rid)
+    if trap is None:
+        return {"ok": False, "error": f"no trap with id {rid!r}"}
+    tid = trap["id"]
+    path = memory_dir / "known-traps.md"
+    try:
+        original = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "id": tid, "error": f"cannot read known-traps.md: {exc}"}
+    span = next(
+        (
+            (start, end)
+            for start, end, heading in _md_heading_spans(original)
+            if heading.partition(":")[0].strip().lower() == tid.lower()
+        ),
+        None,
+    )
+    if span is None:  # pragma: no cover - defensive; find_trap_by_id just found it
+        return {"ok": False, "id": tid, "error": f"could not locate the {tid} block to edit"}
+    stamp = when or now_iso()[:10]
+    start, end = span
+    new_text = (
+        original[:start]
+        + _set_block_bullet(original[start:end], TRAP_CONFIRMED_KEY, stamp)
+        + original[end:]
+    )
+    write_text_atomic(path, new_text)
+    fails = _validate_new_file(memory_dir, path)
+    if fails:
+        write_text_atomic(path, original)  # revert
+        return {
+            "ok": False,
+            "id": tid,
+            "error": "confirm rejected by validate: " + "; ".join(f["message"] for f in fails),
+        }
+    reindex_projections(memory_dir)
+    return {"ok": True, "id": tid, "path": str(path), "last_confirmed": stamp}
 
 
 def set_trap_status(
@@ -2422,12 +2910,14 @@ def _parse_evidence_pairs(pairs: list[list[str]] | None) -> list[dict]:
     return out
 
 
-def _collect_set_sections(rtype: str, set_pairs: list[list[str]] | None) -> dict[str, str]:
-    sections: dict[str, str] = {}
-    for pair in set_pairs or []:
-        heading = _canonical_heading(rtype, pair[0])
-        sections[heading] = pair[1]
-    return sections
+def _collect_set_sections(
+    rtype: str, set_pairs: list[list[str]] | None
+) -> tuple[dict[str, str], list[str]]:
+    """`--set HEADING TEXT` pairs as canonical sections, plus any notes to print.
+
+    Never raises on an unrecognized heading: see `normalize_sections`.
+    """
+    return normalize_sections(rtype, [(pair[0], pair[1]) for pair in set_pairs or []])
 
 
 # ---- remember decision / attempt ------------------------------------------- #
@@ -2446,11 +2936,9 @@ def cmd_remember(args: argparse.Namespace) -> int:
         return 2
 
     title = args.title
-    try:
-        sections = _collect_set_sections(rtype, args.set)
-    except ValueError as exc:
-        _emit_error(args, str(exc))
-        return 2
+    sections, section_notes = _collect_set_sections(rtype, args.set)
+    for note_text in section_notes:
+        _emit_warning(args, note_text)
     # Named attempt flags (--problem/--tried/…) override any matching --set heading.
     for attr, heading in ATTEMPT_FLAG_SECTIONS:
         val = getattr(args, attr, None)
@@ -2543,8 +3031,10 @@ def cmd_remember(args: argparse.Namespace) -> int:
     hint = _record_reachability_hint(path, rtype)
     if hint:
         summary["hint"] = hint
+    if section_notes:
+        summary["warnings"] = section_notes
     if args.json:
-        print(json.dumps(summary, indent=2))
+        _print_json(args, summary)
     else:
         print(f"Recorded {rtype}: {meta['id']}")
         print(f"  file: {path}")
@@ -2638,7 +3128,7 @@ def cmd_schema(args: argparse.Namespace) -> int:
         }
 
     if args.json:
-        print(json.dumps(schema, indent=2))
+        _print_json(args, schema)
         return 0
 
     print(f"breadcrumbs record schema (schema_version {schema['schema_version']})")
@@ -2884,7 +3374,15 @@ def note(
         if not any(q["question"] == text for q in load_open_questions(memory_dir)):
             write_text_atomic(path, before)  # revert
             return {"ok": False, "error": "appended question did not parse back; reverted"}
-        result = {"ok": True, "kind": "question", "ref": text, "path": str(path)}
+        # `ref` is the question itself (its identity in open-questions.md); `id`
+        # is the handle `mark-status` and `search` take.
+        result = {
+            "ok": True,
+            "kind": "question",
+            "id": question_item_id(text),
+            "ref": text,
+            "path": str(path),
+        }
         hint = _block_reachability_hint(
             "\n".join(str(fields.get(k) or "") for k in ("why", "needs")) + "\n" + text,
             "question",
@@ -2926,7 +3424,18 @@ def note(
         if not any(b["heading"].lower().startswith(marker) for b in load_traps(memory_dir)):
             write_text_atomic(path, before)  # revert
             return {"ok": False, "error": "appended trap did not parse back; reverted"}
-        result = {"ok": True, "kind": "trap", "ref": f"trap_{slug}", "path": str(path)}
+        # `id` alongside `ref`: the id is what `mark-status`, `traps --confirm`
+        # and `search` take, and a caller should not have to know that this one
+        # command calls it something else (C4). They are the same string for a
+        # trap — the printed id is the truncated slug that was stored, so
+        # `mark-status <printed id>` resolves.
+        result = {
+            "ok": True,
+            "kind": "trap",
+            "id": f"trap_{slug}",
+            "ref": f"trap_{slug}",
+            "path": str(path),
+        }
         # known-traps.md documents a five-field format at the top of the file,
         # but the writer accepts a bare summary, so the whole trap lands on the
         # heading line and the documented template goes unused. Say so at the
@@ -3012,6 +3521,7 @@ def cmd_note(args: argparse.Namespace) -> int:
 
     fields: dict = {}
     tags: list[str] | None = None
+    section_notes: list[str] = []
     if kind == "question":
         fields = {"why": args.why, "needs": args.needs, "status": args.status}
     elif kind == "trap":
@@ -3024,11 +3534,10 @@ def cmd_note(args: argparse.Namespace) -> int:
             "verify": args.verify,
         }
     else:  # idea
-        try:
-            fields = {"sections": _collect_set_sections("idea", args.set)}
-        except ValueError as exc:
-            _emit_error(args, str(exc))
-            return 2
+        idea_sections, section_notes = _collect_set_sections("idea", args.set)
+        for note_text in section_notes:
+            _emit_warning(args, note_text)
+        fields = {"sections": idea_sections}
         tags = _split_tags(args.tags)
 
     result = note(
@@ -3044,8 +3553,10 @@ def cmd_note(args: argparse.Namespace) -> int:
         _emit_error(args, result.get("error", "note failed"))
         return 1
 
+    if section_notes:
+        result["warnings"] = section_notes
     if args.json:
-        print(json.dumps(result, indent=2))
+        _print_json(args, result)
     else:
         print(f"Noted {kind}: {result.get('id') or result.get('ref')}")
         print(f"  file: {result['path']}")
@@ -3181,7 +3692,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 1
 
     if args.json:
-        print(json.dumps(result, indent=2))
+        _print_json(args, result)
     else:
         print(f"Verified {result['subject']}: {result['outcome']}")
         print(f"  file: {result['path']}")
@@ -3193,6 +3704,112 @@ def cmd_verify(args: argparse.Namespace) -> int:
 
 
 # ---- mark-status ----------------------------------------------------------- #
+
+
+# The always-on context a session starts with is dominated by known-traps.md:
+# 167 KB and 77 active traps in the field store, growing monotonically because
+# nothing ever ages out. Age alone must not retire a trap, so this reports rather
+# than acts — it names the candidates and the one command that retires them.
+TRAPS_STALE_DAYS_DEFAULT = 180
+
+
+def trap_report(memory_dir: Path, *, stale_days: int | None = None, status: str | None = None):
+    """Traps with their size and staleness, oldest confirmation first (R6)."""
+    rows = []
+    for trap in load_traps(memory_dir):
+        if status and (trap.get("status") or "active") != status:
+            continue
+        confirmed = trap_last_confirmed(trap)
+        age = _age_days(confirmed) if confirmed else None
+        if stale_days is not None and (age is not None and age < stale_days):
+            continue
+        body = trap.get("content") or trap.get("body") or ""
+        rows.append(
+            {
+                "id": trap["id"],
+                "status": trap.get("status") or "active",
+                "summary": trap.get("summary") or "",
+                "last_confirmed": confirmed,
+                "age_days": age,
+                "approx_tokens": approx_tokens(trap["heading"] + "\n" + body),
+            }
+        )
+    # Never-confirmed first (age None sorts highest), then oldest confirmation.
+    rows.sort(key=lambda r: (r["age_days"] is not None, -(r["age_days"] or 0)))
+    return rows
+
+
+def cmd_traps(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+
+    if args.confirm:
+        result = set_trap_confirmed(memory_dir, args.confirm)
+        if not result.get("ok"):
+            _emit_error(args, result.get("error", "confirm failed"))
+            return 1
+        if args.json:
+            _print_json(args, result)
+        else:
+            print(f"Confirmed {result['id']}: still true as of {result['last_confirmed']}")
+            print(f"  file: {result['path']}")
+        return 0
+
+    stale_days = args.stale if args.stale is not None else None
+    rows = trap_report(memory_dir, stale_days=stale_days, status=args.status)
+    total = sum(r["approx_tokens"] for r in rows)
+    if args.json:
+        _print_json(
+            args,
+            {"traps": rows, "items": rows},
+            summary={"count": len(rows), "approx_tokens": total},
+        )
+        return 0
+
+    if not rows:
+        scope = f" not confirmed in {stale_days} day(s)" if stale_days is not None else ""
+        print(f"traps: none{scope}.")
+        return 0
+    header = f"traps: {len(rows)} trap(s), ~{total} tokens of always-on context"
+    if stale_days is not None:
+        header += f" (not confirmed in {stale_days} day(s))"
+    print(header + "\n")
+    for r in rows:
+        when = r["last_confirmed"] or "never confirmed"
+        age = f", {r['age_days']}d ago" if r["age_days"] is not None else ""
+        print(f"  [{r['status']}] {r['id']} — {when}{age}, ~{r['approx_tokens']} tokens")
+        if r["summary"]:
+            print(f"      {r['summary']}")
+    print(
+        "\nStill true? `crumb traps --confirm <id>`. "
+        'No longer? `crumb mark-status <id> resolved --reason "..."`.'
+    )
+    return 0
+
+
+def cmd_retitle(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    result = set_record_title(memory_dir, args.record_id, args.title, agent=args.agent)
+    if not result.get("ok"):
+        _emit_error(args, result.get("error", "retitle failed"))
+        return 1
+    if args.json:
+        _print_json(args, result)
+    else:
+        print(f"Retitled {result['id']}: {result['from']!r} -> {result['to']!r}")
+        print(f"  file: {result['path']}")
+        print(
+            "  note: the id, slug and filename are unchanged — they are what "
+            "other records reference."
+        )
+    return 0
 
 
 def cmd_mark_status(args: argparse.Namespace) -> int:
@@ -3208,10 +3825,27 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
 
+    status = args.new_status or args.status_flag
+    if not status:
+        _emit_error(
+            args,
+            "a status is required: `crumb mark-status <ID> <STATUS>` or --status <STATUS>. "
+            f"Records and traps: {', '.join(VALID_STATUS)}; "
+            f"questions: {', '.join(VALID_QUESTION_STATUS)}",
+        )
+        return 2
+    if args.new_status and args.status_flag and args.new_status != args.status_flag:
+        _emit_error(
+            args,
+            f"conflicting status: {args.new_status!r} positionally and "
+            f"{args.status_flag!r} via --status; pass one",
+        )
+        return 2
+
     result = set_record_status(
         memory_dir,
         args.record_id,
-        args.new_status,
+        status,
         args.reason or "",
         agent=getattr(args, "agent", None),
         superseded_by=args.superseded_by,
@@ -3220,7 +3854,7 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
         _emit_error(args, result.get("error", "status change failed"))
         return 1
     if args.json:
-        print(json.dumps(result, indent=2))
+        _print_json(args, result)
     else:
         print(f"Marked {result['id']}: {result['from']} -> {result['to']}")
         print(f"  file: {result['path']}")
@@ -3328,7 +3962,14 @@ def _coalescible_snapshot(
     return rec if 0 <= delta <= window_minutes * 60 else None
 
 
-def _coalesce_into(rec: Record, sections: dict[str, str], root: Path, agent: str | None) -> Path:
+def _coalesce_into(
+    rec: Record,
+    sections: dict[str, str],
+    root: Path,
+    agent: str | None,
+    *,
+    include_memory: bool = False,
+) -> Path:
     """Rewrite an existing machine snapshot in place with fresh git state.
 
     Identity is preserved — id, slug, filename, `created_at` and `created_by` all
@@ -3336,7 +3977,7 @@ def _coalesce_into(rec: Record, sections: dict[str, str], root: Path, agent: str
     fact worth keeping. Only what has moved is updated.
     """
     meta = dict(rec.meta)
-    derived = derive_fields(root, agent=agent)
+    derived = derive_fields(root, agent=agent, include_memory=include_memory)
     meta["updated_at"] = derived["created_at"]
     meta["branch"] = derived["branch"]
     meta["commit"] = derived["commit"]
@@ -3390,7 +4031,7 @@ def _summarize_diffstat(shortstat: str | None) -> str:
     return f"{files} files changed, +{ins}/-{dels}"
 
 
-def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
+def _git_prefill(root: Path, since: str | None, *, include_memory: bool = False) -> dict[str, str]:
     """Pre-fill Work Completed / Files Touched / Commands from git.
 
     With a prior-session `since` commit no more than `GIT_PREFILL_MAX_COMMITS`
@@ -3456,7 +4097,7 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     # itself, read by the next agent as "that session did nothing". Name
     # the scope, and count the uncommitted files (count only: inlining the paths
     # is what §6.1 keeps out of committed records).
-    dirty = git_dirty_files(root)
+    dirty = git_dirty_files(root, include_memory=include_memory)
     files = _summarize_diffstat(shortstat)
     if base and shortstat and shortstat.strip():
         files = f"{files} (vs `{_short_ref(base)}`)"
@@ -3493,6 +4134,57 @@ def _git_prefill(root: Path, since: str | None) -> dict[str, str]:
     }
 
 
+# A derived session title is capped here: long enough for a real clause, short
+# enough that the filename it becomes stays readable.
+SESSION_TITLE_MAX_CHARS = 72
+SESSION_TITLE_FALLBACK = "session"
+
+# `- 4f1c2ab fix: …` — the git prefill's own commit lines. The subject is the
+# title; the sha is not.
+_TITLE_SHA_PREFIX_RE = re.compile(r"^[0-9a-f]{7,40}\s+")
+
+
+def _title_from_text(text: str) -> str:
+    """A short human title from the first meaningful line of `text`, or ''."""
+    for line in (text or "").splitlines():
+        line = line.strip().lstrip("-*#").strip().strip("`")
+        line = _TITLE_SHA_PREFIX_RE.sub("", line)
+        if not line or _is_placeholder(line):
+            continue
+        # First sentence only — a Next Action is often a paragraph.
+        line = re.split(r"(?<=[.!?])\s+", line, maxsplit=1)[0].strip().rstrip(".;:,")
+        if not line:
+            continue
+        if len(line) > SESSION_TITLE_MAX_CHARS:
+            cut = line[:SESSION_TITLE_MAX_CHARS].rsplit(" ", 1)[0]
+            line = cut or line[:SESSION_TITLE_MAX_CHARS]
+        return line
+    return ""
+
+
+def _derive_session_title(sections: dict[str, str], focus: str | None) -> str:
+    """Name a session from what the caller already said about it (R1).
+
+    `--title` was optional and fell back to the constant `session`, and an agent
+    under context pressure skips optional flags: 90% of a 310-session field
+    store was titled `session`, with the id, slug and filename carrying the same
+    nothing. `crumb search` ranks on title, so those records were effectively
+    invisible to the tool that exists to find them.
+
+    Requiring `--title` would have prevented all of them, but the caller has
+    already written the sentence we need — the Next Action is mandatory, and the
+    focus and the work summary are usually there too. Deriving beats asking for
+    the same fact twice.
+    """
+    candidates = [focus or "", sections.get("Next Action", "")]
+    candidates += [sections.get(h, "") for h in BODY_SECTIONS["session"]]
+    for text in candidates:
+        title = _title_from_text(text)
+        if title:
+            return title
+    return ""
+
+
 def cmd_capture_session(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
@@ -3518,14 +4210,13 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     )
 
     since = _last_session_commit(memory_dir, exclude=coalesce.path if coalesce else None)
-    prefill = _git_prefill(root, since)
+    include_memory = bool(getattr(args, "include_memory", False))
+    prefill = _git_prefill(root, since, include_memory=include_memory)
 
     # Manual section overrides.
-    try:
-        overrides = _collect_set_sections("session", args.set)
-    except ValueError as exc:
-        _emit_error(args, str(exc))
-        return 2
+    overrides, section_notes = _collect_set_sections("session", args.set)
+    for note_text in section_notes:
+        _emit_warning(args, note_text)
 
     sections: dict[str, str] = dict(prefill)
     sections.update(overrides)
@@ -3562,10 +4253,10 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         )
         return 2
 
-    title = args.title or "session"
+    title = args.title or _derive_session_title(sections, args.focus) or SESSION_TITLE_FALLBACK
     if coalesce is not None:
         before = coalesce.path.read_text(encoding="utf-8")
-        path = _coalesce_into(coalesce, sections, root, args.agent)
+        path = _coalesce_into(coalesce, sections, root, args.agent, include_memory=include_memory)
         meta = dict(coalesce.meta)
         fails = _validate_new_file(memory_dir, path)
         if fails:
@@ -3577,7 +4268,14 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     else:
         extra = {"host_session": host_session} if host_session else None
         path, meta = write_record(
-            memory_dir, root, "session", title, sections, agent=args.agent, extra=extra
+            memory_dir,
+            root,
+            "session",
+            title,
+            sections,
+            agent=args.agent,
+            extra=extra,
+            include_memory=include_memory,
         )
 
         fails = _validate_new_file(memory_dir, path)
@@ -3615,8 +4313,10 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         "since": since,
         "coalesced": coalesce is not None,
     }
+    if section_notes:
+        summary["warnings"] = section_notes
     if args.json:
-        print(json.dumps(summary, indent=2))
+        _print_json(args, summary)
     else:
         print(f"{'Updated' if coalesce is not None else 'Captured'} session: {meta['id']}")
         print(f"  file:    {path}")
@@ -3680,7 +4380,7 @@ def cmd_prune(args: argparse.Namespace) -> int:
         return 2
     res = prune_sessions(memory_dir, root, keep=args.keep, dry_run=args.dry_run)
     if args.json:
-        print(json.dumps(res, indent=2))
+        _print_json(args, res)
         return 0
     verb = "would delete" if res["dry_run"] else "deleted"
     print(
@@ -4189,6 +4889,24 @@ def _md_blocks(path: Path, head_predicate) -> list[dict]:
 _BLOCK_STATUS_LINE_RE = re.compile(r"\s*-\s*status\s*:\s*(.+)", re.I)
 _BLOCK_SUPERSEDED_LINE_RE = re.compile(r"\s*-\s*superseded[ _]by\s*:\s*(.+)", re.I)
 _BLOCK_OPENED_LINE_RE = re.compile(r"\s*-\s*opened\s*:\s*(.+)", re.I)
+# When somebody last checked that a trap is still true (R6). Authored, not
+# derived: age says a trap is old, and an old trap may be perfectly live — only
+# a person or an agent re-checking it can say it still applies.
+TRAP_CONFIRMED_KEY = "Last confirmed"
+_BLOCK_CONFIRMED_LINE_RE = re.compile(r"\s*-\s*last[ _]confirmed\s*:\s*(.+)", re.I)
+# The dated provenance comment `mark-status` appends: a fallback "last touched"
+# for a trap nobody has confirmed explicitly.
+_BLOCK_STAMP_RE = re.compile(r"at (\d{4}-\d{2}-\d{2})")
+
+
+def trap_last_confirmed(trap: dict) -> str | None:
+    """`YYYY-MM-DD` a trap was last confirmed or touched, or None if never."""
+    body = (trap.get("body") or trap.get("content") or "") if trap else ""
+    match = _BLOCK_CONFIRMED_LINE_RE.search(body)
+    if match:
+        return _strip_inline_comment(match.group(1)).strip()[:10] or None
+    stamps = _BLOCK_STAMP_RE.findall(body)
+    return max(stamps) if stamps else None
 
 
 def _block_status(body: str, default: str) -> str:
@@ -5253,7 +5971,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             )
 
     if args.json:
-        print(json.dumps(packet, indent=2))
+        _print_json(args, packet)
     else:
         print(md)
     return 0
@@ -5277,7 +5995,7 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     if problem:
         summary["error"] = problem
     if args.json:
-        print(json.dumps(summary, indent=2))
+        _print_json(args, summary)
     elif ok:
         print(f"Reindexed projections: {summary['path']}")
     else:
@@ -5338,6 +6056,12 @@ GUARD_DF_MIN_CORPUS = 8
 # scoring weights (§11.4 signals)
 GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
 GUARD_W_TAG = 4  # per overlapping tag/component
+# Per overlapping path the record only *mentions* in prose (G1). Below a tag and
+# above a keyword: a prose mention is real evidence of topicality and is not the
+# author saying "this record is about that file". It cannot open the candidate
+# gate and it cannot floor a verdict; it can only add weight to a match that
+# already qualified.
+GUARD_W_MENTION = 2
 GUARD_W_KEYWORD = 1  # per specific shared keyword
 # Bonus per shared keyword that appears in the record's own *title*. A
 # title names what the record is about; a body mention can be incidental. Scoring
@@ -5350,6 +6074,16 @@ GUARD_W_CONFIDENCE_HIGH = 1
 GUARD_W_REVIEWED = 1
 GUARD_W_DO_NOT_RETRY = 4  # attempt carries an explicit "Do Not Retry Unless"
 GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
+
+# What a match must have, beyond shared vocabulary, to be surfaced as a warning
+# rather than as history. `mention` is here and `keyword` is not: a prose-mined
+# path is at least a claim about *this file*, where a shared stem is a claim
+# about the language the project speaks. Deliberately not the same set as the
+# specificity that lets a match raise a verdict ({file, tag}) — being worth
+# showing and being worth escalating are different bars.
+GUARD_SURFACING_SIGNALS = frozenset(
+    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker"}
+)
 
 # recency / branch de-weighting (reuses the staleness signals above)
 GUARD_BRANCH_MISMATCH_FACTOR = 0.8  # record written on another branch -> possibly stale
@@ -5420,6 +6154,101 @@ def _is_destructive(action: str, classes: list[str]) -> bool:
     )
 
 
+# ---- the other half of blast radius: an action that cannot do damage -------- #
+#
+# Retrieval overlap is symmetric, and that made the verdict scale *invert* in the
+# 0.1.11 field test: `git status` — read-only, zero side effects — was the
+# loudest command measured, at PAUSE with five matched records, while `npm test`,
+# which executes arbitrary code, was silent at PROCEED. The mechanism is corpus
+# frequency read as relevance: `git status` shares vocabulary with the many
+# records that discuss git workflow, and an Android-heavy store shares nothing
+# with `npm test`. No amount of scoring fixes that, because it is not a scoring
+# question — it is that the command cannot do the thing being warned about.
+#
+# So classify the action first. A read-only verb caps at READ_FIRST however
+# strong the overlap: memory is still worth surfacing (a trap about *reading*
+# stale output is real), but it cannot rise to "stop and ask a human". PAUSE and
+# ASK_HUMAN are reserved for actions that write, delete, push, deploy or execute.
+GUARD_READ_ONLY_CEILING = "READ_FIRST"
+
+# Commands whose whole job is to report. Deliberately a short allowlist of the
+# unambiguous ones: `sed`, `awk` and `tee` can all write, and anything not named
+# here is simply treated as capable of side effects, which is the safe default.
+GUARD_READ_ONLY_COMMANDS = frozenset(
+    """
+    cat less more head tail nl wc
+    ls dir tree stat file du df pwd realpath basename
+    grep egrep fgrep rg ack ag find fd locate
+    diff cmp md5sum sha1sum sha256sum
+    which whereis type man whoami hostname uname date
+    echo printf uniq cut column jq yq
+    ps top uptime id groups
+    """.split()
+)
+
+# Two near-misses, deliberately absent: `env` runs an arbitrary command as its
+# argument, and `sort -o` writes a file. Neither reports for a living.
+
+# `git` is both the most-used command in any store and the one whose subcommands
+# span the whole range, so it gets its own allowlist rather than the verb alone.
+GUARD_READ_ONLY_GIT_SUBCOMMANDS = frozenset(
+    {
+        "status",
+        "log",
+        "diff",
+        "show",
+        "blame",
+        "describe",
+        "shortlog",
+        "rev-parse",
+        "rev-list",
+        "ls-files",
+        "ls-tree",
+        "ls-remote",
+        "cat-file",
+        "whatchanged",
+        "grep",
+        "reflog",
+        "annotate",
+        "count-objects",
+        "var",
+    }
+)
+
+# Flags that make an otherwise-reporting command act: `find . -delete` and
+# `find . -exec rm {} +` are the ones that matter in practice. Matched as whole
+# tokens, so an argument that merely contains one does not trip it.
+GUARD_READ_ONLY_DISQUALIFYING_ARGS = frozenset(
+    "-delete -exec -execdir -ok -okdir -fprint -fls -fprintf".split()
+)
+
+# Shell metacharacters that can turn a reporting command into a writing one
+# (`cat x > y`, `ls && rm -rf .`, `` grep `rm -rf .` ``). Their presence forfeits
+# the read-only claim outright: this cap only ever *lowers* a verdict, so the
+# conservative reading is the correct one.
+_SHELL_EFFECT_RE = re.compile(r"[>;&`]|\|\||\$\(")
+
+
+def _is_read_only_action(action: str) -> bool:
+    """True only when the action provably cannot change anything (G2).
+
+    Conservative by construction: an action this cannot recognize is treated as
+    capable of side effects, so a missed classification costs an unnecessary
+    PAUSE, never a swallowed one.
+    """
+    text = (action or "").strip()
+    if not text or _SHELL_EFFECT_RE.search(text):
+        return False
+    tokens = text.split()
+    if GUARD_READ_ONLY_DISQUALIFYING_ARGS & {t.lower() for t in tokens[1:]}:
+        return False
+    verb = PurePosixPath(tokens[0].replace("\\", "/")).name.lower()
+    if verb == "git":
+        subcommands = [t for t in tokens[1:] if not t.startswith("-")]
+        return bool(subcommands) and subcommands[0] in GUARD_READ_ONLY_GIT_SUBCOMMANDS
+    return verb in GUARD_READ_ONLY_COMMANDS
+
+
 _VERDICTS = ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN")
 _VERDICT_RANK = {v: i for i, v in enumerate(_VERDICTS)}
 
@@ -5450,10 +6279,74 @@ GUARD_STOPWORDS = frozenset(
 )
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
-# A token that looks like a file path: has a directory separator or a dotted ext.
+# Candidate path tokens in free text. This regex only *finds* things shaped like
+# a path; `_is_path_token` decides whether each one is one. Keeping the two
+# separate is the point — the old code treated the regex's own output as the
+# answer, and a regex reading "contains a dot or a slash" says yes to most of a
+# paragraph of technical prose (G1).
 _FILE_TOKEN_RE = re.compile(
     r"[A-Za-z0-9_][\w./\-]*\.[A-Za-z0-9]+|[A-Za-z0-9_./\-]+/[A-Za-z0-9_./\-]+"
 )
+
+# Extensions that make a dotted token a filename rather than an attribute access.
+# Not exhaustive and not meant to be: an unknown extension with no slash simply
+# does not qualify, which is the safe direction — an over-broad file signal is
+# the strongest wrong answer guard can give (GUARD_W_FILE is its heaviest
+# weight), and a missed one costs a keyword match instead.
+GUARD_PATH_EXTENSIONS = frozenset(
+    """
+    py pyi pyx ipynb md markdown mdx rst txt adoc
+    json yml yaml toml ini cfg conf properties env lock sum mod
+    js jsx mjs cjs ts tsx vue svelte astro css scss sass less html htm
+    java kt kts gradle groovy scala clj cljs
+    go rs rb php swift m mm c h cc cpp hpp cs fs fsx dart zig nim ex exs erl
+    sh bash zsh fish ps1 bat cmd mk cmake
+    sql graphql gql proto tf tfvars tfstate hcl
+    xml plist pro csv tsv svg png jpg jpeg gif ico webp pdf
+    r jl lua pl pm rake gemspec podspec xcconfig entitlements
+    """.split()
+)
+
+# `0.47`, `8.13.2`, `v0.1.5` — a version, not a path, however many dots it has.
+_VERSION_TOKEN_RE = re.compile(r"^v?\d+(\.\d+)+$")
+
+
+def _is_path_token(token: str) -> bool:
+    """Is `token` really a file path, as opposed to prose that looks like one?
+
+    The prefilter of a 310-session field store held 439 "paths", of which 89
+    existed: the rest were version numbers (`8.13.2`), units (`10.dp`, `AM/PM`,
+    `0xDD/255`), CLI flag lists (`--title/--set`) and Python attribute access
+    (`json.load`, `io.open`). That mattered because `same file(s)` is guard's
+    single strongest relevance signal, so a command that merely read a JSON file
+    drew a PAUSE from a screenshot-testing trap on the strength of `json.load`.
+    An agent that learns "same file(s) is noise" has lost the only precise signal
+    guard has, and will miss the true positive when it arrives.
+
+    The test is structural, not lexical: a known file extension, or a real path
+    shape. Deliberately *not* "does it exist on disk" — a record citing a file
+    that was since deleted or renamed is often exactly the trap worth raising,
+    and a store must mean the same thing in every checkout that reads it.
+    """
+    token = (token or "").strip()
+    if len(token) < 2 or token.startswith("-") or _VERSION_TOKEN_RE.match(token):
+        return False
+    basename = token.rsplit("/", 1)[-1]
+    extension = basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
+    if extension and extension in GUARD_PATH_EXTENSIONS:
+        return True
+    if "/" not in token:
+        # `json.load`, `f.get`, `tests.test`, `10.dp` — a dot alone proves nothing.
+        return False
+    segments = [seg for seg in token.split("/") if seg not in ("", ".", "..")]
+    if not segments:
+        return False
+    if not any(c.islower() for c in token):
+        return False  # `AM/PM`, `TODO/FIXME`
+    for seg in segments:
+        if seg.isdigit() or _VERSION_TOKEN_RE.match(seg):
+            return False  # `10/15`, `362/LF`, `0xDD/255`, `v0.1.5/v0.1.6`
+    return True
 
 
 def _tokenize(text: str) -> set[str]:
@@ -5575,11 +6468,8 @@ def _specific(text: str) -> set[str]:
 
 
 def _paths_from_text(text: str) -> set[str]:
-    """Path-like tokens (contain `/` or a dotted extension) found in free text."""
-    out: set[str] = set()
-    for m in _FILE_TOKEN_RE.finditer(text or ""):
-        out.add(m.group(0))
-    return out
+    """File paths found in free text — candidates that pass `_is_path_token`."""
+    return {m.group(0) for m in _FILE_TOKEN_RE.finditer(text or "") if _is_path_token(m.group(0))}
 
 
 # Bullets in a trap block that hold the *remedy*, not the hazard. Mining file
@@ -5595,6 +6485,17 @@ def _paths_from_text(text: str) -> set[str]:
 _TRAP_REMEDY_BULLET_RE = re.compile(
     r"(?im)^\s*[-*]\s*(safe\s*approach|verification|verify|fix|workaround)\s*:.*$"
 )
+
+
+# `- Area / files: app/src/Foo.kt, app/src/Bar.kt` — where a trap declares its
+# blast radius. known-traps.md documents this five-field format at the top of the
+# file, so it is a contract, not a convention.
+_TRAP_AREA_BULLET_RE = re.compile(r"(?im)^\s*[-*]\s*area\s*(?:/\s*files)?\s*:(?P<value>.*)$")
+
+
+def _trap_area_text(body: str) -> str:
+    """Just the trap's `Area / files:` bullet(s) — the author's own declaration."""
+    return "\n".join(m.group("value") for m in _TRAP_AREA_BULLET_RE.finditer(body or ""))
 
 
 def _trap_hazard_text(body: str) -> str:
@@ -5750,7 +6651,15 @@ def _item_from_record(rec: Record) -> dict:
     # removes paths that the record itself already labelled as a command.
     cmd_paths = _paths_from_text(" ".join(_evidence_refs(rec, ("command", "test"))))
     mined = _paths_from_text(rec.body) - cmd_paths
-    files = _norm_files(set(_evidence_refs(rec, ("file", "path"))) | mined)
+    # Two tiers, not one (G1). `--evidence file …` is the author *declaring*
+    # which files this record is about; a path mined out of its prose is a
+    # mention, and the two were scored, displayed and reasoned about
+    # identically. Declared paths keep the strongest signal guard has; mentions
+    # get a weaker one and say so, so an agent reading `same file(s)` can still
+    # trust it. A trap author knows which files their trap concerns — asking
+    # beats any extractor.
+    files = _norm_files(set(_evidence_refs(rec, ("file", "path"))))
+    mentioned = _norm_files(mined) - files
     tags = {str(t).lower() for t in (rec.meta.get("tags") or [])}
     text = " ".join([str(rec.meta.get("title") or ""), rec.body, " ".join(tags)])
     # For verifications the interesting "status" is the *outcome* (open/fixed/…),
@@ -5771,6 +6680,7 @@ def _item_from_record(rec: Record) -> dict:
         # meet a "migration" query); display and `tag:` filters keep the raw tag.
         "tag_stems": {_stem(t): t for t in tags},
         "files": files,
+        "mentioned_files": mentioned,
         "specific": _specific(text),
         # The title's own tokens, kept separate so `_score_item` can weight a
         # title hit above a body mention. The stem is the slug — same
@@ -5793,7 +6703,11 @@ def _item_from_trap(trap: dict) -> dict:
         "status": trap.get("status") or "active",
         "title": heading,
         "tags": set(),
-        "files": _norm_files(_paths_from_text(_trap_hazard_text(body))),
+        "files": _norm_files(_paths_from_text(_trap_area_text(body))),
+        "mentioned_files": (
+            _norm_files(_paths_from_text(_trap_hazard_text(body)))
+            - _norm_files(_paths_from_text(_trap_area_text(body)))
+        ),
         "specific": _specific(text),
         "title_specific": _specific(heading),
         "branch": None,
@@ -5831,7 +6745,10 @@ def _item_from_question(q: dict) -> dict:
         "status": (q.get("status") or "open"),
         "title": q["question"],
         "tags": set(),
-        "files": _norm_files(_paths_from_text(body)),
+        # A question has no author-declared file field; everything it names is a
+        # mention.
+        "files": set(),
+        "mentioned_files": _norm_files(_paths_from_text(body)),
         "specific": _specific(text),
         "title_specific": _specific(q["question"]),
         "branch": None,
@@ -5935,18 +6852,23 @@ def _score_item(
     ubiquitous: frozenset[str] = frozenset(),
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
+
     # _norm_files stores each file as both its full path and its bare basename,
     # so the intersection can hold both variants of one physical file. Count each
     # distinct full path once, plus any bare-basename match not already covered by
     # a matched full path. Keying on basename alone (the old approach) wrongly
     # collapsed genuinely-distinct files that share a name (src/a/x.ts, src/b/x.ts)
     # — undercounting the score and picking a hash-order-dependent survivor.
-    raw_files = item["files"] & q_files
-    full_paths = {f for f in raw_files if "/" in f}
-    covered = {f.rsplit("/", 1)[-1] for f in full_paths}
-    extra_bare = {f for f in raw_files if "/" not in f and f not in covered}
-    matched_files = sorted(full_paths | extra_bare)
-    file_count = len(full_paths) + len(extra_bare)
+    def _overlap(candidate: set[str]) -> tuple[list[str], int]:
+        raw = candidate & q_files
+        full_paths = {f for f in raw if "/" in f}
+        covered = {f.rsplit("/", 1)[-1] for f in full_paths}
+        extra_bare = {f for f in raw if "/" not in f and f not in covered}
+        return sorted(full_paths | extra_bare), len(full_paths) + len(extra_bare)
+
+    matched_files, file_count = _overlap(item["files"])
+    # Prose-mined paths, scored separately and never as "same file(s)".
+    matched_mentions, mention_count = _overlap(item.get("mentioned_files", set()) - item["files"])
     # Tag overlap is computed on stems; the display set carries the raw tags.
     tag_stems = item.get("tag_stems") or {t: t for t in item["tags"]}
     matched_tag_stems = set(tag_stems) & q_specific
@@ -5963,7 +6885,13 @@ def _score_item(
 
     # Candidate gate (anti-noise, Fixture 3): a file or tag hit always qualifies;
     # a pure-text match needs >= min_keyword specific shared tokens.
-    if not matched_files and not matched_tags and kw_count < min_keyword:
+    # A mention still opens the gate — `search --file src/auth/middleware.ts` has
+    # no keywords to fall back on, and a record that names that file in its prose
+    # is exactly what the caller asked for. What a mention no longer does is
+    # claim to be the author's own file declaration: it scores lower, it reads as
+    # `mentions:` rather than `same file(s):`, and it is not the specificity that
+    # lets a match floor a verdict.
+    if not matched_files and not matched_mentions and not matched_tags and kw_count < min_keyword:
         return None
 
     signals: list[str] = []
@@ -5971,6 +6899,9 @@ def _score_item(
     if matched_files:
         score += GUARD_W_FILE * file_count
         signals.append("file")
+    if matched_mentions:
+        score += GUARD_W_MENTION * mention_count
+        signals.append("mention")
     if matched_tags:
         score += GUARD_W_TAG * len(matched_tag_stems)
         signals.append("tag")
@@ -6042,19 +6973,27 @@ def _score_item(
         # record and a merely-topical one the same shape of evidence.
         "stance": _match_stance(signals),
         "matched_files": sorted(matched_files),
+        "matched_mentions": sorted(matched_mentions),
         "matched_tags": sorted(matched_tags),
         "keyword_overlap": sorted(kw_overlap),
         "branch_mismatch": branch_mismatch,
-        "reason": _match_reason(item["kind"], signals, matched_files, matched_tags, kw_count),
+        "reason": _match_reason(
+            item["kind"], signals, matched_files, matched_tags, kw_count, matched_mentions
+        ),
     }
 
 
-def _match_reason(kind, signals, matched_files, matched_tags, kw_count) -> str:
+def _match_reason(kind, signals, matched_files, matched_tags, kw_count, matched_mentions=()) -> str:
     """Human phrase for why a record matched. Derived facts only — never executed."""
     parts: list[str] = []
     if matched_files:
         shown = ", ".join(sorted(matched_files)[:3])
         parts.append(f"same file(s): {shown}")
+    if matched_mentions:
+        # Deliberately a different phrase. `same file(s)` is a claim the author
+        # made; this is one the extractor made, and telling them apart is what
+        # keeps the first one worth reading.
+        parts.append(f"mentions: {', '.join(sorted(matched_mentions)[:3])}")
     if matched_tags:
         parts.append(f"same component/tag: {', '.join(sorted(matched_tags))}")
     if kw_count and not matched_files and not matched_tags:
@@ -6170,7 +7109,10 @@ def _passes_filters(item: dict, filters: dict) -> bool:
     if tag and tag.lower() not in item["tags"]:
         return False
     f = filters.get("file")
-    if f and not (_norm_files({f}) & item["files"]):
+    # Declared *or* mentioned: `--file X` asks "which records concern X", and a
+    # record that names X only in its prose is one of them (G1 splits the two
+    # tiers for scoring and for what a match may claim, not for retrieval).
+    if f and not (_norm_files({f}) & (item["files"] | item.get("mentioned_files", set()))):
         return False
     return True
 
@@ -6270,6 +7212,10 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
         and _VERDICT_RANK[verdict] >= _VERDICT_RANK["READ_FIRST"]
     ):
         verdict = "ASK_HUMAN"
+
+    # Applied last, so nothing above can raise a reporting command past advisory.
+    if _is_read_only_action(action):
+        verdict = _min_verdict(verdict, GUARD_READ_ONLY_CEILING)
     return verdict
 
 
@@ -6419,6 +7365,10 @@ def guard(
         # such — `_hook_guard` gates the permission prompt on this one and the
         # surfaced context on the other.
         "destructive": _is_destructive(action, classes),
+        # The other end of the same axis: an action that cannot change anything
+        # caps at READ_FIRST however strong the retrieval overlap (G2). Reported
+        # so a caller can see *why* a loud-looking match did not raise a verdict.
+        "read_only": _is_read_only_action(action),
         "matches": top,
         "history": history[:GUARD_MAX_WARNINGS],
         "staleness": staleness,
@@ -6526,7 +7476,7 @@ def cmd_search(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        print(json.dumps({"query": query, "filters": filters, "matches": matches}, indent=2))
+        _print_json(args, {"query": query, "filters": filters, "matches": matches})
         return 0
     print(render_search_human(matches, query or "(filters only)"))
     return 0
@@ -6550,7 +7500,7 @@ def cmd_guard(args: argparse.Namespace) -> int:
     result = guard(memory_dir, root, action, files=args.files, stale_days=stale_days)
 
     if args.json:
-        print(json.dumps(result, indent=2))
+        _print_json(args, result)
     else:
         print(render_guard_human(result))
     # Verdict-mapped exit codes (0.1.10 field test, P0-1) so callers can script
@@ -6711,6 +7661,10 @@ ADAPTER_FILENAMES = (
 )
 ADAPTER_BLOAT_CHARS = 4000  # signpost files should be small pointers, not copies
 SESSIONS_GROWTH_NOTE = 50  # session count above which audit suggests promoting + pruning
+# The always-on trap budget. Generous — a store of real traps is worth carrying —
+# but bounded, because nothing else bounds it: the field store reached 167 KB and
+# 77 active traps with no mechanism for anything to leave.
+TRAPS_TOKEN_BUDGET = 8000
 
 
 # ---- secret scan ----------------------------------------------------------- #
@@ -6745,6 +7699,19 @@ def _segment_is_wordy(seg: str) -> bool:
     return covered >= 6 and covered * 2 >= len(seg)
 
 
+# A Firebase Realtime Database push id: 20 characters of base64url, timestamp-
+# prefixed and therefore lexicographically sortable — a public, structurally
+# recognizable document key, which is exactly what a real secret is not. Split on
+# `-`, the leading dash goes with the separator, so both lengths are accepted.
+# These are the ids that appear in a record citing a concrete production path,
+# which is to say in the most useful records a store has (R5).
+_PUSH_ID_SEGMENT_RE = _LazyPattern(r"^[A-Za-z0-9]{19,20}$")
+
+
+def _is_push_id_segment(seg: str) -> bool:
+    return bool(_PUSH_ID_SEGMENT_RE.match(seg))
+
+
 def _looks_like_path_or_identifier(tok: str) -> bool:
     """True for path- or dotted-identifier-shaped tokens that only *look* random.
 
@@ -6767,7 +7734,7 @@ def _looks_like_path_or_identifier(tok: str) -> bool:
             return False
         if _segment_is_wordy(seg):
             has_word = True
-        elif len(seg) >= 12:
+        elif len(seg) >= 12 and not _is_push_id_segment(seg):
             return False  # a long, word-free segment is a blob, not a path component
     return has_word
 
@@ -6814,6 +7781,44 @@ def _iter_committed_memory_files(memory_dir: Path):
         yield p
 
 
+CRUMBIGNORE_FILENAME = ".crumbignore"
+
+# `high-entropy-string` is a heuristic with no structure behind it, and it gated
+# every commit of the memory store. A project that has decided a given shape is
+# not a secret should be able to say so once, rather than re-deciding it — and
+# hand-overriding a gate on every commit is how a gate stops being read at all.
+SECRET_WARNING_PATTERNS = frozenset({"high-entropy-string"})
+
+
+def load_crumbignore(memory_dir: Path) -> list:
+    """Patterns from `.project-memory/.crumbignore`, newest-wins order irrelevant.
+
+    One pattern per line; `#` starts a comment. Each line is used as a regex, or
+    as a literal substring if it does not compile. A hit whose *line text*
+    matches any pattern is dropped by `scan_secrets` — the project has said, in a
+    file its reviewers can see, that this shape is not a secret here.
+    """
+    path = Path(memory_dir) / CRUMBIGNORE_FILENAME
+    if not path.is_file():
+        return []
+    text, _problem = read_text_lenient(path)
+    patterns = []
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip() if not raw.lstrip().startswith("#") else ""
+        if not line:
+            continue
+        try:
+            patterns.append(re.compile(line))
+        except re.error:
+            patterns.append(re.compile(re.escape(line)))
+    return patterns
+
+
+def _secret_severity(pattern: str) -> str:
+    """`warning` for the heuristics, `blocking` for shapes with real structure."""
+    return AUDIT_WARN if pattern in SECRET_WARNING_PATTERNS else AUDIT_FAIL
+
+
 def scan_secrets(memory_dir: Path) -> list[dict]:
     """Scan committed memory for secret-like strings.
 
@@ -6829,26 +7834,37 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
     """
     findings: list[dict] = []
     seen: set[tuple[str, str, int]] = set()
+    ignores = load_crumbignore(memory_dir)
+
+    def record(pattern: str, rel: str, i: int, **extra) -> None:
+        key = (pattern, rel, i)
+        if key in seen:
+            return
+        seen.add(key)
+        findings.append(
+            {
+                "pattern": pattern,
+                "path": rel,
+                "line": i,
+                "severity": _secret_severity(pattern),
+                **extra,
+            }
+        )
+
     for p in _iter_committed_memory_files(memory_dir):
         rel = str(p.relative_to(memory_dir))
         text, problem = read_text_lenient(p)
         if problem:
-            findings.append(
-                {"pattern": "unscannable-file", "path": rel, "line": 0, "detail": problem}
-            )
+            record("unscannable-file", rel, 0, detail=problem)
         for i, line in enumerate(text.splitlines(), 1):
+            if any(pat.search(line) for pat in ignores):
+                continue
             for name, pat in SECRET_PATTERNS:
                 if pat.search(line):
-                    key = (name, rel, i)
-                    if key not in seen:
-                        seen.add(key)
-                        findings.append({"pattern": name, "path": rel, "line": i})
+                    record(name, rel, i)
             for m in _HIGH_ENTROPY_TOKEN.finditer(line):
                 if _looks_high_entropy(m.group(0)):
-                    key = ("high-entropy-string", rel, i)
-                    if key not in seen:
-                        seen.add(key)
-                        findings.append({"pattern": "high-entropy-string", "path": rel, "line": i})
+                    record("high-entropy-string", rel, i)
     return findings
 
 
@@ -6997,6 +8013,28 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 }
             )
 
+    # known-traps.md growth. Unlike the packet, nothing bounds this file: traps
+    # are appended and never age out, and every session loads all of them. The
+    # check names the report that makes retirement possible rather than asking
+    # for a rollup command that does not exist.
+    traps_path = memory_dir / "known-traps.md"
+    if traps_path.is_file():
+        traps = [t for t in load_traps(memory_dir) if (t.get("status") or "active") == "active"]
+        toks = approx_tokens(read_text_lenient(traps_path)[0])
+        if toks > TRAPS_TOKEN_BUDGET:
+            findings.append(
+                {
+                    "kind": "traps-growth",
+                    "path": "known-traps.md",
+                    "message": (
+                        f"{len(traps)} active trap(s), ~{toks} tokens of always-on context "
+                        f"(budget {TRAPS_TOKEN_BUDGET}) — `crumb traps --stale` lists the "
+                        "ones nobody has confirmed lately; retire one with "
+                        "`crumb mark-status <id> stale`"
+                    ),
+                }
+            )
+
     # sessions/ growth note. The advice is what a human can do today (promote the
     # durable parts, prune the rest); no rollup command exists, so telling users to
     # wait for one — as this note used to — is telling them to wait for nothing.
@@ -7056,13 +8094,19 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
                 )
             )
             continue
+        severity = s.get("severity", AUDIT_FAIL)
+        remedy = (
+            "must not be committed to memory; remove before any commit"
+            if severity == AUDIT_FAIL
+            else f"heuristic, not a structured credential shape — confirm, then add a "
+            f"pattern to {MEMORY_DIRNAME}/{CRUMBIGNORE_FILENAME} if it is not a secret here"
+        )
         findings.append(
             _audit_finding(
                 "secret",
-                AUDIT_FAIL,
+                severity,
                 s["path"],
-                f"possible secret ({s['pattern']}) at line {s['line']} — "
-                "must not be committed to memory; remove before any commit",
+                f"possible secret ({s['pattern']}) at line {s['line']} — {remedy}",
                 line=s["line"],
                 pattern=s["pattern"],
             )
@@ -7145,7 +8189,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         if rec.error or str(rec.meta.get("status") or "active") != "active":
             continue  # unparseable is its own finding; non-active never drives verdicts
         item = _item_from_record(rec)
-        if item["tags"] or item["files"]:
+        if item["tags"] or item["files"] or item["mentioned_files"]:
             continue
         findings.append(
             _audit_finding(
@@ -7179,7 +8223,7 @@ def render_audit_human(findings: list[dict]) -> str:
     if fails:
         out.append("Blocking (memory is NOT safe to commit until resolved):")
         for f in fails:
-            out.append(f"  ✗ [{f['check']}] {f['path'] or '-'}: {f['message']}")
+            out.append(f"  {MARK_FAIL} [{f['check']}] {f['path'] or '-'}: {f['message']}")
         out.append("")
     if warns:
         out.append("Warnings (review — these do not block):")
@@ -7209,17 +8253,16 @@ def cmd_audit(args: argparse.Namespace) -> int:
     exit_code = 1 if fails else 0
 
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "ok": not fails,
-                    "failed": len(fails),
-                    "warnings": len(warns),
-                    "info": len(infos),
-                    "findings": findings,
-                },
-                indent=2,
-            )
+        _print_json(
+            args,
+            {
+                "failed": len(fails),
+                "warnings": len(warns),
+                "info": len(infos),
+                "findings": findings,
+            },
+            ok=not fails,
+            summary={"passed": len(findings) - len(fails), "failed": len(fails)},
         )
         return exit_code
 
@@ -7240,22 +8283,51 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         return 2
 
     hits = scan_secrets(memory_dir)
+    # Only a shape with real structure gates a commit (R5). An entropy heuristic
+    # with no allowlist punishes exactly the records that are most useful — the
+    # ones citing a concrete production path — and a gate that is hand-overridden
+    # every time has stopped being a gate. Warnings are still printed, and still
+    # counted; they just do not decide the exit code.
+    blocking = [h for h in hits if h.get("severity", AUDIT_FAIL) == AUDIT_FAIL]
+    warnings = [h for h in hits if h.get("severity", AUDIT_FAIL) != AUDIT_FAIL]
     if args.json:
-        print(json.dumps({"ok": not hits, "count": len(hits), "hits": hits}, indent=2))
-        return 1 if hits else 0
+        _print_json(
+            args,
+            {
+                "count": len(hits),
+                "blocking": len(blocking),
+                "warnings": len(warnings),
+                "hits": hits,
+            },
+            ok=not blocking,
+            summary={"failed": len(blocking), "warnings": len(warnings)},
+        )
+        return 1 if blocking else 0
 
     if hits:
-        unscannable = [h for h in hits if h["pattern"] == "unscannable-file"]
-        secrets = [h for h in hits if h["pattern"] != "unscannable-file"]
+        unscannable = [h for h in blocking if h["pattern"] == "unscannable-file"]
+        secrets = [h for h in blocking if h["pattern"] != "unscannable-file"]
         parts = ([f"{len(secrets)} possible secret(s)"] if secrets else []) + (
             [f"{len(unscannable)} unscannable file(s)"] if unscannable else []
         )
-        print(f"scan-secrets: {' and '.join(parts)} found — DO NOT commit memory until resolved\n")
+        if blocking:
+            print(
+                f"scan-secrets: {' and '.join(parts)} found — DO NOT commit memory until resolved\n"
+            )
+        else:
+            print(f"scan-secrets: {len(warnings)} warning(s), nothing blocking\n")
         for h in hits:
             where = f"{h['path']}:{h['line']}" if h["line"] else h["path"]
             detail = f" — {h['detail']}" if h.get("detail") else ""
-            print(f"  ✗ [{h['pattern']}] {where}{detail}")
-        return 1
+            mark = MARK_FAIL if h.get("severity", AUDIT_FAIL) == AUDIT_FAIL else "!"
+            print(f"  {mark} [{h['pattern']}] {where}{detail}")
+        if warnings:
+            print(
+                f"\nnote: {len(warnings)} warning(s) do not block. If a shape is not a "
+                f"secret in this project, add a pattern to {MEMORY_DIRNAME}/"
+                f"{CRUMBIGNORE_FILENAME} instead of overriding this every time."
+            )
+        return 1 if blocking else 0
 
     print("scan-secrets: OK — no secret-like strings in committed memory.")
     return 0
@@ -7440,7 +8512,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
             "sdk_available": sdk,
         }
         if args.json:
-            print(json.dumps(summary, indent=2))
+            _print_json(args, summary)
         else:
             state = "" if changed else " (already current)"
             print(f"Registered MCP server '{MCP_SERVER_NAME}' in {path}{state}")
@@ -7474,15 +8546,15 @@ def cmd_mcp(args: argparse.Namespace) -> int:
                 registered = False
         report = {"sdk_available": sdk, "registered": registered, "config": str(mcp_path)}
         if args.json:
-            print(json.dumps(report, indent=2))
+            _print_json(args, report)
         else:
             print("crumb mcp doctor")
             print(
-                f"  {'✓' if sdk else '✗'} [mcp] extra: "
+                f"  {MARK_PASS if sdk else MARK_FAIL} [mcp] extra: "
                 + ("importable" if sdk else "not installed — run: pip install 'crumb-kit[mcp]'")
             )
             print(
-                f"  {'✓' if registered else '✗'} registration: "
+                f"  {MARK_PASS if registered else MARK_FAIL} registration: "
                 + (
                     f"'{MCP_SERVER_NAME}' in {mcp_path}"
                     if registered
@@ -8252,11 +9324,11 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
     report = doctor_report(root)
     if args.json:
-        print(json.dumps(report, indent=2))
+        _print_json(args, report)
     else:
         print("crumb doctor — integration health")
         for c in report["checks"]:
-            mark = "✓" if c["ok"] else "✗"
+            mark = MARK_PASS if c["ok"] else MARK_FAIL
             print(f"  {mark} [{c['check']}] {c['detail']}")
         if report["store"] and not report["integrated"]:
             print("\n" + FIRST_RUN_NUDGE)
@@ -8437,9 +9509,29 @@ def _hook_may_prompt(payload: dict) -> bool:
     return not (isinstance(mode, str) and mode in _HOOK_NONPROMPTING_MODES)
 
 
-def _hook_guard_reason(result: dict) -> str:
+def _hook_surfacing_matches(result: dict) -> list[dict]:
+    """The matches worth spending the agent's context on (G2).
+
+    A match whose only signal is shared vocabulary — no file, no tag, no title
+    hit, no explicit do-not-retry, no open blocker — is what a store produces for
+    *any* action phrased in its own language. `crumb guard` still returns it as
+    context, because a caller who asked explicitly should see what was
+    considered; the hook fires on every tool call and pays for every word, so
+    there it is dropped whenever anything better is available. An advisory the
+    agent sees on every command is one it learns to skim, and then it skims the
+    one that mattered.
+
+    Empty when *every* match is keyword-only — the caller decides what to do
+    with that; see `_hook_guard`.
+    """
+    return [
+        m for m in result.get("matches", []) if GUARD_SURFACING_SIGNALS & set(m.get("signals", ()))
+    ]
+
+
+def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
     lines = [f"breadcrumbs guard: {result['verdict']} for this action."]
-    for m in result.get("matches", [])[:3]:
+    for m in (result.get("matches", []) if matches is None else matches)[:3]:
         title = m.get("title") or m.get("id") or "record"
         why = m.get("reason") or ""
         lines.append(f"- {title}" + (f" ({why})" if why else ""))
@@ -8494,7 +9586,14 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     if verdict == "PROCEED":
         print(json.dumps({}))
         return 0
-    reason = _hook_guard_reason(result)
+    # What the agent is actually shown. A keyword-only match rides along for free
+    # today: `git status` drew two advisory lines, one of them a record that
+    # shares nothing with it but the word "status". Where better matches exist,
+    # the weak ones are dropped; where they are all there is, they are still
+    # shown — a strong keyword-only match escalating through the score band is a
+    # deliberate behaviour of this tool, not something to silence from here.
+    shown = _hook_surfacing_matches(result) or result.get("matches", [])
+    reason = _hook_guard_reason(result, shown)
     if verdict == "READ_FIRST":
         # Dedupe within the host session: the same records surfacing for the
         # same file is information exactly once (P0-2b/P0-3). Keyed on the
@@ -8502,7 +9601,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         # record or a different file speaks again; scoped to READ_FIRST so a
         # PAUSE/ASK_HUMAN is never swallowed.
         target = (files or [None])[0] or result["action"]
-        key = f"{target}|" + ",".join(sorted(m["id"] for m in result.get("matches", [])))
+        key = f"{target}|" + ",".join(sorted(m["id"] for m in shown))
         session_id = str(payload.get("session_id") or "unknown")
         try:
             if _hook_guard_advisory_seen(memory_dir, session_id, key):
@@ -8824,7 +9923,22 @@ class _LazyVersionAction(argparse.Action):
         parser.exit()
 
 
-class _BreadcrumbsParser(argparse.ArgumentParser):
+class _CrumbParser(argparse.ArgumentParser):
+    """An argparse parser whose usage errors lead with `CRUMB-ERROR:` (C2).
+
+    argparse prints the usage block first and the reason last, so a caller that
+    bounds output with `head` keeps the usage and drops the reason — and one that
+    bounds it with `tail` keeps a line that ends in the author's own prose
+    (`unrecognized arguments: --body some long text`), which reads like output,
+    not like a rejection. Leading with the marker puts the fact that this failed
+    on the first line either way, and `self.prog` names the exact subcommand.
+    """
+
+    def error(self, message: str):  # noqa: D102 - argparse contract
+        self.exit(2, f"{ERROR_PREFIX} {self.prog}: {message}\n{self.format_usage()}")
+
+
+class _BreadcrumbsParser(_CrumbParser):
     """Top-level parser that keeps global flags working in any position."""
 
     def parse_known_args(self, args=None, namespace=None):
@@ -8833,6 +9947,25 @@ class _BreadcrumbsParser(argparse.ArgumentParser):
             if not hasattr(ns, dest):
                 setattr(ns, dest, default)
         return ns, argv
+
+    def parse_args(self, args=None, namespace=None):
+        """As argparse, but the leftover-argument error names the subcommand.
+
+        argparse checks for unconsumed argv at the *top* level, so the stock
+        message is prefixed `crumb:` however deep the rejected flag was — the
+        caller is told a flag is unknown without being told which of twenty
+        subcommands does not know it, and is then handed the top-level usage,
+        which cannot list the flags the subcommand does accept.
+        """
+        ns, argv = self.parse_known_args(args, namespace)
+        if argv:
+            label = command_label(ns)
+            self.exit(
+                2,
+                f"{ERROR_PREFIX} {label}: unrecognized arguments: {' '.join(argv)}\n"
+                f"try `{label} --help` for the flags this subcommand accepts.\n",
+            )
+        return ns
 
 
 # init
@@ -8925,6 +10058,22 @@ def _add_validate(sub, global_parser: argparse.ArgumentParser) -> None:
 
 
 # remember decision | attempt
+def _set_flag_help(rtype: str, verb: str = "set") -> str:
+    """`--set` help that names the vocabulary (C1).
+
+    The section list was reachable only through `crumb schema <type>` — which is
+    excellent, and is not where anyone looks — or by being rejected. Both facts a
+    caller needs (the headings, and where the full contract lives) go in the
+    help text of the flag that takes them.
+    """
+    return (
+        f"{verb} a body section (repeatable). HEADING is one of: "
+        f"{', '.join(BODY_SECTIONS[rtype])}. Matching ignores case, spacing and "
+        f"punctuation; anything else is kept under `## {UNSORTED_SECTION}` with a "
+        f"warning. Full contract: `crumb schema {rtype}`"
+    )
+
+
 def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
     p_remember = sub.add_parser(
         "remember",
@@ -8945,7 +10094,7 @@ def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
             nargs=2,
             action="append",
             metavar=("HEADING", "TEXT"),
-            help="set a body section, e.g. --set Context 'why this came up' (repeatable)",
+            help=_set_flag_help(rtype),
         )
         pr.add_argument(
             "--evidence",
@@ -9037,7 +10186,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
         nargs=2,
         action="append",
         metavar=("HEADING", "TEXT"),
-        help="set an idea body section (repeatable)",
+        help=_set_flag_help("idea"),
     )
     pi.add_argument("--tags", help="comma-separated tags")
     pi.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
@@ -9099,12 +10248,25 @@ def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
         "(e.g. trap_hand-tagged-releases) or question id (e.g. q:should-we-shard) — "
         "retiring a trap or answering a question stops it raising guard",
     )
+    # Positional STATUS, with `--status` accepted for the same value (C3). This
+    # is the only place in the CLI where a vocabulary value is positional —
+    # `crumb verify` takes the same words as `--status` — and that inconsistency
+    # is the whole trap: `--status superseded` exited 2 with an argparse error
+    # naming no subcommand. Accepting both costs nothing and removes the class.
     p_mark.add_argument(
         "new_status",
         metavar="STATUS",
+        nargs="?",
         choices=MARK_STATUS_CHOICES,
         help=f"new status — records and traps: {', '.join(VALID_STATUS)}; "
         f"questions: {', '.join(VALID_QUESTION_STATUS)}",
+    )
+    p_mark.add_argument(
+        "--status",
+        dest="status_flag",
+        default=None,
+        choices=MARK_STATUS_CHOICES,
+        help="the same value as the positional STATUS, spelled as `crumb verify` spells it",
     )
     p_mark.add_argument(
         "--reason", default="", help="why the status changed (recorded as a trailing comment)"
@@ -9118,6 +10280,52 @@ def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     p_mark.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
     p_mark.set_defaults(func=cmd_mark_status)
+
+
+# traps — what the always-on context costs, and what can be retired
+def _add_traps(sub, global_parser: argparse.ArgumentParser) -> None:
+    p_traps = sub.add_parser(
+        "traps",
+        parents=[global_parser],
+        help="list known traps with their staleness and context cost",
+    )
+    p_traps.add_argument(
+        "--stale",
+        nargs="?",
+        type=int,
+        const=TRAPS_STALE_DAYS_DEFAULT,
+        default=None,
+        metavar="DAYS",
+        help=f"only traps not confirmed in DAYS (default {TRAPS_STALE_DAYS_DEFAULT}); "
+        "never-confirmed traps always qualify",
+    )
+    p_traps.add_argument(
+        "--status", choices=VALID_STATUS, default=None, help="only traps with this status"
+    )
+    p_traps.add_argument(
+        "--confirm",
+        metavar="ID",
+        default=None,
+        help=f"stamp a trap's `- {TRAP_CONFIRMED_KEY}:` bullet with today's date",
+    )
+    p_traps.set_defaults(func=cmd_traps)
+
+
+# retitle — repair a record whose title carries no information
+def _add_retitle(sub, global_parser: argparse.ArgumentParser) -> None:
+    p_retitle = sub.add_parser(
+        "retitle",
+        parents=[global_parser],
+        help="rewrite a record's title (id, slug and filename are left alone)",
+    )
+    p_retitle.add_argument(
+        "record_id",
+        metavar="ID",
+        help="record id, e.g. ses_20260904_session-8",
+    )
+    p_retitle.add_argument("title", metavar="TITLE", help="the new title")
+    p_retitle.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
+    p_retitle.set_defaults(func=cmd_retitle)
 
 
 # prune — explicit retention for machine session snapshots
@@ -9181,7 +10389,14 @@ def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
         nargs=2,
         action="append",
         metavar=("HEADING", "TEXT"),
-        help="override a session body section (repeatable)",
+        help=_set_flag_help("session", verb="override"),
+    )
+    p_session.add_argument(
+        "--include-memory",
+        dest="include_memory",
+        action="store_true",
+        help=f"keep {MEMORY_DIRNAME}/ paths in dirty_files (default: excluded — every "
+        "capture rewrites the store, and in a shared tree it also sees other sessions')",
     )
     p_session.add_argument(
         "--focus", help="Current Focus for handoff/current (default: keep the previous focus)"
@@ -9302,6 +10517,13 @@ def _add_scan_secrets(sub, global_parser: argparse.ArgumentParser) -> None:
         "scan-secrets",
         parents=[global_parser],
         help="scan committed memory for secret-like strings (run before committing memory)",
+        description=(
+            "Scan committed memory for secret-like strings. A structured credential "
+            "shape (AWS key, PEM block, bearer token, …) exits non-zero; the "
+            "high-entropy heuristic warns without blocking. Add one regex per line to "
+            f"{MEMORY_DIRNAME}/{CRUMBIGNORE_FILENAME} to silence a shape this project "
+            "has already decided is not a secret."
+        ),
     )
     p_scan.set_defaults(func=cmd_scan_secrets)
 
@@ -9379,6 +10601,8 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "note": _add_note,
     "verify": _add_verify,
     "mark-status": _add_mark_status,
+    "retitle": _add_retitle,
+    "traps": _add_traps,
     "prune": _add_prune,
     "reindex": _add_reindex,
     "capture": _add_capture,
@@ -9433,11 +10657,10 @@ def build_parser(only: str | None = None) -> argparse.ArgumentParser:
         action=_LazyVersionAction,
         help="show version and record schema_version, then exit",
     )
-    # Subparsers are plain ArgumentParsers (not _BreadcrumbsParser) so the global
-    # backfill runs only once, at the top level — never in a copied-back sub-namespace.
-    sub = parser.add_subparsers(
-        dest="command", metavar="<command>", parser_class=argparse.ArgumentParser
-    )
+    # Subparsers are _CrumbParser (not _BreadcrumbsParser) so the global backfill
+    # runs only once, at the top level — never in a copied-back sub-namespace —
+    # while every usage error still leads with the CRUMB-ERROR marker.
+    sub = parser.add_subparsers(dest="command", metavar="<command>", parser_class=_CrumbParser)
     for name, add_subcommand in _SUBCOMMAND_BUILDERS.items():
         if only is None or name == only:
             add_subcommand(sub, global_parser)
@@ -9488,6 +10711,7 @@ def requested_command(argv: list[str]) -> str | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_output()
     parser = build_parser(requested_command(sys.argv[1:] if argv is None else list(argv)))
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
