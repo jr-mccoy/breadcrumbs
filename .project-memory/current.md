@@ -3,9 +3,9 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Working the 0.1.11 field review end to end: thirteen findings fixed on this branch, three verified already-fixed
+0.2.0 is cut and waiting on the PR #49 merge; the field-review work is done
 
 ## Recently Changed
-Seven commits on claude/artifact-388cc819-sm0ipj, one per theme: output safety + error visibility (W1/C2), --set heading normalization (C1), session naming + retitle + --status alias (R1/R3/C3), guard precision (G1/G2), dirty_files and the secret gate (R2/R5), the --json envelope (C4), and crumb traps (R6). 772 tests pass (up from 682), ruff clean.
+Bumped __version__ to 0.2.0 and dated the CHANGELOG section. Chose 0.2.0 over 0.1.13 because four behaviour changes can surprise a 0.1.12 consumer (scan-secrets exit code, --set exit code, session id shape, dirty_files contents); they are collected under a Changed heading.
 
 ## Watch Out For

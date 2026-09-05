@@ -1,17 +1,17 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: a5de02b | inputs_hash: 8907dc3c87fa | generated_at: 2026-09-05T00:30:21+00:00 -->
+<!-- source_commit: 9037d68 | inputs_hash: 9ae96adff345 | generated_at: 2026-09-05T01:35:59+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/artifact-388cc819-sm0ipj` · commit `a5de02b` · 9 uncommitted file(s)
+branch `claude/artifact-388cc819-sm0ipj` · commit `9037d68` · 3 uncommitted file(s)
 
 ## Current Focus
-Working the 0.1.11 field review end to end: thirteen findings fixed on this branch, three verified already-fixed
+0.2.0 is cut and waiting on the PR #49 merge; the field-review work is done
 
 ## Next Action
-Review the diff, then release 0.1.13: bump __version__ in breadcrumbs/__init__.py, rename [Unreleased] to [0.1.13] with the date, merge to main, run release.yml mode=dry-run then mode=publish. The 0.1.12 release described in the previous handoff is already out.
+Merge PR #49 to main, then run release.yml from main: mode=dry-run first to confirm the artifact, then mode=publish. Do not hand-tag — the workflow cuts the tag and the Release on the commit it builds.
 
 ## Active Decisions
 - `dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns` — Neither is a scoring problem. Overlap is symmetric, so corpus frequency reads as relevance and no weighting fixes a command that cannot do the thing being warned about. And a gate that is hand-overridden every time has stopped being a gate — worse, it punishes exactly the records that cite a concrete path, which are the most useful ones a store has. Both classifications are conservative: an unrecognized action keeps its full verdict, and a structured credential still blocks.
