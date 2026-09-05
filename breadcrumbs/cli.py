@@ -551,7 +551,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if getattr(args, "remove_integrations", False):
         removed = remove_integrations(root)
         if args.json:
-            print(json.dumps({"removed": removed}, indent=2))
+            _print_json(args, {"removed": removed, "items": removed})
         else:
             hooks = removed["hooks"]
             touched = removed["adapters"] or removed["mcp"] or hooks["removed"]
@@ -582,7 +582,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if getattr(args, "print_integrations", False):
         plan = resolve_integration_plan(root, args)
         if args.json:
-            print(json.dumps({"would_apply": plan}, indent=2))
+            _print_json(args, {"would_apply": plan})
         else:
             print("Integrations that would be applied:")
             print(f"  adapter signpost -> {_fmt_adapter_targets(root, plan['adapters'])}")
@@ -609,7 +609,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             # until a manual `crumb resume`.
             try_reindex_projections(memory_dir, root)
             if args.json:
-                print(json.dumps({"store": "existing", "integrations": applied}, indent=2))
+                _print_json(args, {"store": "existing", "integrations": applied})
             else:
                 print(f"{MEMORY_DIRNAME}/ already present — store left untouched.")
                 print("Applied integrations:")
@@ -718,7 +718,7 @@ def _fmt_applied_mcp(applied: dict) -> str:
 
 def _emit_init_summary(args: argparse.Namespace, summary: dict) -> None:
     if args.json:
-        print(json.dumps(summary, indent=2))
+        _print_json(args, summary)
         return
     print(f"Initialized {summary['created']}")
     print(f"  project:                       {summary['project']}")
@@ -769,6 +769,60 @@ def command_label(args: argparse.Namespace) -> str:
     return " ".join(parts)
 
 
+# Keys under which commands already return their result list. `--json` grew one
+# command at a time and every command invented its own name, so two commands
+# doing the same shape of job — run N checks, report failures — disagreed on what
+# to call the answer: `scan-secrets` returns `hits`, `validate` returns
+# `findings`, `search` returns `matches`, `guard` a third shape again. Every
+# consumer needed a per-subcommand adapter, and the failure mode is silent: a
+# defensive `d.get("findings", [])` against `scan-secrets` reports zero problems
+# rather than raising. `items` now aliases whichever of these a command emits, so
+# one reader works everywhere; the original keys stay exactly where they were.
+_JSON_ITEM_ALIASES = (
+    "items",
+    "findings",
+    "hits",
+    "matches",
+    "checks",
+    "records",
+    "entries",
+    "results",
+)
+
+
+def _print_json(
+    args: argparse.Namespace,
+    payload: dict,
+    *,
+    ok: bool | None = None,
+    summary: dict | None = None,
+) -> None:
+    """Print one command's `--json` document inside the shared envelope (C4).
+
+    Additive by construction: `ok`, `command`, `summary` and `items` are added or
+    filled in, and every key the command already returned is preserved. `items`
+    is always present — an empty list when the command has no item list — so a
+    consumer can read it without knowing which command it is talking to.
+    """
+    payload = dict(payload)
+    items = payload.get("items")
+    if not isinstance(items, list):
+        items = next(
+            (payload[k] for k in _JSON_ITEM_ALIASES if isinstance(payload.get(k), list)), []
+        )
+    doc: dict = {
+        "ok": payload.pop("ok", True) if ok is None else ok,
+        "command": payload.pop("command", None) or command_label(args),
+    }
+    summary = summary if summary is not None else payload.pop("summary", None)
+    if summary is not None:
+        doc["summary"] = summary
+    doc["items"] = items
+    payload.pop("items", None)
+    doc.update(payload)
+    print(json.dumps(doc, indent=2))
+
+
 def _emit_warning(args: argparse.Namespace, message: str) -> None:
     """A non-fatal note about input we accepted but changed (C1).
 
@@ -781,7 +835,12 @@ def _emit_warning(args: argparse.Namespace, message: str) -> None:
 
 def _emit_error(args: argparse.Namespace, message: str) -> None:
     if getattr(args, "json", False):
-        print(json.dumps({"ok": False, "error": message}, indent=2))
+        print(
+            json.dumps(
+                {"ok": False, "command": command_label(args), "items": [], "error": message},
+                indent=2,
+            )
+        )
     else:
         print(f"{ERROR_PREFIX} {command_label(args)}: {message}", file=sys.stderr)
 
@@ -1665,16 +1724,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
     passes = [f for f in findings if f["status"] == "pass"]
 
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "ok": not fails,
-                    "passed": len(passes),
-                    "failed": len(fails),
-                    "findings": findings,
-                },
-                indent=2,
-            )
+        _print_json(
+            args,
+            {"passed": len(passes), "failed": len(fails), "findings": findings},
+            ok=not fails,
+            summary={"passed": len(passes), "failed": len(fails)},
         )
         return 0 if not fails else 1
 
@@ -2905,7 +2959,7 @@ def cmd_remember(args: argparse.Namespace) -> int:
     if section_notes:
         summary["warnings"] = section_notes
     if args.json:
-        print(json.dumps(summary, indent=2))
+        _print_json(args, summary)
     else:
         print(f"Recorded {rtype}: {meta['id']}")
         print(f"  file: {path}")
@@ -2999,7 +3053,7 @@ def cmd_schema(args: argparse.Namespace) -> int:
         }
 
     if args.json:
-        print(json.dumps(schema, indent=2))
+        _print_json(args, schema)
         return 0
 
     print(f"breadcrumbs record schema (schema_version {schema['schema_version']})")
@@ -3408,7 +3462,7 @@ def cmd_note(args: argparse.Namespace) -> int:
     if section_notes:
         result["warnings"] = section_notes
     if args.json:
-        print(json.dumps(result, indent=2))
+        _print_json(args, result)
     else:
         print(f"Noted {kind}: {result.get('id') or result.get('ref')}")
         print(f"  file: {result['path']}")
@@ -3544,7 +3598,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return 1
 
     if args.json:
-        print(json.dumps(result, indent=2))
+        _print_json(args, result)
     else:
         print(f"Verified {result['subject']}: {result['outcome']}")
         print(f"  file: {result['path']}")
@@ -3569,7 +3623,7 @@ def cmd_retitle(args: argparse.Namespace) -> int:
         _emit_error(args, result.get("error", "retitle failed"))
         return 1
     if args.json:
-        print(json.dumps(result, indent=2))
+        _print_json(args, result)
     else:
         print(f"Retitled {result['id']}: {result['from']!r} -> {result['to']!r}")
         print(f"  file: {result['path']}")
@@ -3622,7 +3676,7 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
         _emit_error(args, result.get("error", "status change failed"))
         return 1
     if args.json:
-        print(json.dumps(result, indent=2))
+        _print_json(args, result)
     else:
         print(f"Marked {result['id']}: {result['from']} -> {result['to']}")
         print(f"  file: {result['path']}")
@@ -4084,7 +4138,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     if section_notes:
         summary["warnings"] = section_notes
     if args.json:
-        print(json.dumps(summary, indent=2))
+        _print_json(args, summary)
     else:
         print(f"{'Updated' if coalesce is not None else 'Captured'} session: {meta['id']}")
         print(f"  file:    {path}")
@@ -4148,7 +4202,7 @@ def cmd_prune(args: argparse.Namespace) -> int:
         return 2
     res = prune_sessions(memory_dir, root, keep=args.keep, dry_run=args.dry_run)
     if args.json:
-        print(json.dumps(res, indent=2))
+        _print_json(args, res)
         return 0
     verb = "would delete" if res["dry_run"] else "deleted"
     print(
@@ -5721,7 +5775,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             )
 
     if args.json:
-        print(json.dumps(packet, indent=2))
+        _print_json(args, packet)
     else:
         print(md)
     return 0
@@ -5745,7 +5799,7 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     if problem:
         summary["error"] = problem
     if args.json:
-        print(json.dumps(summary, indent=2))
+        _print_json(args, summary)
     elif ok:
         print(f"Reindexed projections: {summary['path']}")
     else:
@@ -7216,7 +7270,7 @@ def cmd_search(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        print(json.dumps({"query": query, "filters": filters, "matches": matches}, indent=2))
+        _print_json(args, {"query": query, "filters": filters, "matches": matches})
         return 0
     print(render_search_human(matches, query or "(filters only)"))
     return 0
@@ -7240,7 +7294,7 @@ def cmd_guard(args: argparse.Namespace) -> int:
     result = guard(memory_dir, root, action, files=args.files, stale_days=stale_days)
 
     if args.json:
-        print(json.dumps(result, indent=2))
+        _print_json(args, result)
     else:
         print(render_guard_human(result))
     # Verdict-mapped exit codes (0.1.10 field test, P0-1) so callers can script
@@ -7967,17 +8021,16 @@ def cmd_audit(args: argparse.Namespace) -> int:
     exit_code = 1 if fails else 0
 
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "ok": not fails,
-                    "failed": len(fails),
-                    "warnings": len(warns),
-                    "info": len(infos),
-                    "findings": findings,
-                },
-                indent=2,
-            )
+        _print_json(
+            args,
+            {
+                "failed": len(fails),
+                "warnings": len(warns),
+                "info": len(infos),
+                "findings": findings,
+            },
+            ok=not fails,
+            summary={"passed": len(findings) - len(fails), "failed": len(fails)},
         )
         return exit_code
 
@@ -8006,17 +8059,16 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
     blocking = [h for h in hits if h.get("severity", AUDIT_FAIL) == AUDIT_FAIL]
     warnings = [h for h in hits if h.get("severity", AUDIT_FAIL) != AUDIT_FAIL]
     if args.json:
-        print(
-            json.dumps(
-                {
-                    "ok": not blocking,
-                    "count": len(hits),
-                    "blocking": len(blocking),
-                    "warnings": len(warnings),
-                    "hits": hits,
-                },
-                indent=2,
-            )
+        _print_json(
+            args,
+            {
+                "count": len(hits),
+                "blocking": len(blocking),
+                "warnings": len(warnings),
+                "hits": hits,
+            },
+            ok=not blocking,
+            summary={"failed": len(blocking), "warnings": len(warnings)},
         )
         return 1 if blocking else 0
 
@@ -8228,7 +8280,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
             "sdk_available": sdk,
         }
         if args.json:
-            print(json.dumps(summary, indent=2))
+            _print_json(args, summary)
         else:
             state = "" if changed else " (already current)"
             print(f"Registered MCP server '{MCP_SERVER_NAME}' in {path}{state}")
@@ -8262,7 +8314,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
                 registered = False
         report = {"sdk_available": sdk, "registered": registered, "config": str(mcp_path)}
         if args.json:
-            print(json.dumps(report, indent=2))
+            _print_json(args, report)
         else:
             print("crumb mcp doctor")
             print(
@@ -9040,7 +9092,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
     report = doctor_report(root)
     if args.json:
-        print(json.dumps(report, indent=2))
+        _print_json(args, report)
     else:
         print("crumb doctor — integration health")
         for c in report["checks"]:
