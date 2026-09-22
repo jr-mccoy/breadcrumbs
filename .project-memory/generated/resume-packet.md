@@ -1,17 +1,21 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: c367b90 | inputs_hash: 12bf0552484b | generated_at: 2026-09-22T18:53:06+00:00 -->
+<!-- source_commit: ce0d42f | inputs_hash: d8511d1ac907 | generated_at: 2026-09-22T19:27:04+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `c367b90` · 16 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `ce0d42f` · 7 uncommitted file(s)
 
 ## Current Focus
 Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Next Action
 Decide whether to migrate this repo's own .project-memory to schema 3 (guard said ASK_HUMAN; one `crumb migrate`). Then cut the 0.5.0 release per CLAUDE.md, or start Phase 3 (WM-30 typed TTL) from docs/roadmap-working-memory.md; read roadmap section 0.7 first.
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- ce0d42f Finish Phase 2 docs and fix inconsistencies found while writing them
 
 ## Active Decisions
 - `dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our` — Equivalence is the one rule: indexed search must return exactly the full scan's matches and scores. Our own stems make that true by construction. Computing ubiquity over only the narrowed set changed scores. _inputs_hash reads every file, which cost as much as the scan the index saves.
@@ -35,16 +39,15 @@ _(… 10 more omitted to stay within the per-section cap)_
 _(none recorded)_
 
 ## Known Traps
-- trap_hand-tagged-releases: Never create a git tag or GitHub Release by hand
-- trap_guard-exit-code-in-ci: A CI step that calls crumb guard dies on guard's own verdict exit code
-- trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
-- trap_a-record-s-remedy-fields-are-mined-for-file-paths: A record's remedy fields are mined for file paths and become its blast radius
-- trap_a-hand-written-version-literal-in-prose-drifts-silently: A hand-written version literal in prose drifts silently
 - trap_a-bare-n-in-a-commit-message-links-an-issue-but-never: A bare (#N) in a commit message links an issue but never closes it
+- trap_a-hand-written-version-literal-in-prose-drifts-silently: A hand-written version literal in prose drifts silently
+- trap_a-record-s-remedy-fields-are-mined-for-file-paths: A record's remedy fields are mined for file paths and become its blast radius
+- trap_guard-exit-code-in-ci: A CI step that calls crumb guard dies on guard's own verdict exit code
+- trap_hand-tagged-releases: Never create a git tag or GitHub Release by hand
+- trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
 
 ## Open Questions / Blockers
 - Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
-- Migrate this repo's own .project-memory store to schema 3?
 
 ## Inbox (unsorted, expires)
 _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or drop with `crumb inbox drop <id>`)_
@@ -101,7 +104,7 @@ _(… 4 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 35 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 35 days old with no update — is this still true?
 - active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 35 days old with no update — is this still true?
