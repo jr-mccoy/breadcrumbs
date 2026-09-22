@@ -61,6 +61,8 @@ _META_BULLETS = {
     "superseded_by": "superseded_by",
     "last confirmed": "last_confirmed",
     "last_confirmed": "last_confirmed",
+    "promoted to": "promoted_to",
+    "promoted_to": "promoted_to",
     "opened": "opened",
 }
 
@@ -112,6 +114,8 @@ def render_trap_body(rec: "cli.Record") -> str:
             lines.append(f"- {heading}: {value}")
     if rec.meta.get("last_confirmed"):
         lines.append(f"- {cli.TRAP_CONFIRMED_KEY}: {rec.meta['last_confirmed']}")
+    if rec.meta.get("promoted_to"):
+        lines.append(f"- Promoted to: {rec.meta['promoted_to']}")
     if rec.meta.get("superseded_by"):
         lines.append(f"- Superseded by: {rec.meta['superseded_by']}")
     lines.append(f"- Status: {rec.meta.get('status') or 'active'}")
@@ -297,6 +301,7 @@ def write_trap(
     agent: str | None = None,
     created_at: str | None = None,
     last_confirmed: str | None = None,
+    promoted_to: str | None = None,
     superseded_by: str | None = None,
     validate: bool = True,
 ) -> dict:
@@ -318,7 +323,11 @@ def write_trap(
         status=status or "active",
         agent=agent,
         created_at=created_at,
-        extra={"last_confirmed": last_confirmed, "superseded_by": superseded_by},
+        extra={
+            "last_confirmed": last_confirmed,
+            "superseded_by": superseded_by,
+            "promoted_to": promoted_to,
+        },
         validate=validate,
     )
 
@@ -614,6 +623,7 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
             status=(meta.get("status") or trap["status"] or "active").lower(),
             agent=agent,
             last_confirmed=meta.get("last_confirmed"),
+            promoted_to=meta.get("promoted_to"),
             superseded_by=meta.get("superseded_by"),
             validate=False,
         )

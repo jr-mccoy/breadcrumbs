@@ -2195,6 +2195,11 @@ FRONTMATTER_ORDER = [
     # When somebody last checked that a trap is still true (R6) — frontmatter on
     # a trap file, the `- Last confirmed:` bullet on a trap block.
     "last_confirmed",
+    # Where a record was promoted to long-term memory (WM-40), when, and the
+    # rule text if the author overrode the rendered one.
+    "promoted_to",
+    "promoted_at",
+    "promoted_rule",
     "subject",
     "outcome",
     "method",
@@ -2666,6 +2671,34 @@ def _block_item(memory_dir: Path, block: dict, kind: str, singleton: str, headin
 
 
 def set_record_status(
+    memory_dir: Path,
+    rid: str,
+    status: str,
+    reason: str,
+    *,
+    agent: str | None = None,
+    superseded_by: str | None = None,
+) -> dict:
+    """Change a record's, trap's or question's status; retiring a promoted one
+    also demotes it (WM-41) and says so in `demoted`.
+
+    A rule nobody believes any more must not stay in the instruction file every
+    session loads, and "retire it here, then remember to delete the line there"
+    is the two-step nobody completes.
+    """
+    result = _set_record_status(
+        memory_dir, rid, status, reason, agent=agent, superseded_by=superseded_by
+    )
+    if result.get("ok"):
+        from breadcrumbs import promote as _promote
+
+        demoted = _promote.auto_demote(Path(memory_dir), result.get("id") or rid, status)
+        if demoted and demoted.get("ok"):
+            result["demoted"] = demoted
+    return result
+
+
+def _set_record_status(
     memory_dir: Path,
     rid: str,
     status: str,
@@ -4562,6 +4595,9 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
     else:
         print(f"Marked {result['id']}: {result['from']} -> {result['to']}")
         print(f"  file: {result['path']}")
+        if result.get("demoted"):
+            where = ", ".join(result["demoted"].get("removed_from") or []) or "the instruction file"
+            print(f"  also demoted: its promoted rule was removed from {where}")
     return 0
 
 
@@ -5627,6 +5663,8 @@ def _md_blocks(path: Path, head_predicate) -> list[dict]:
 _BLOCK_STATUS_LINE_RE = re.compile(r"\s*-\s*status\s*:\s*(.+)", re.I)
 _BLOCK_SUPERSEDED_LINE_RE = re.compile(r"\s*-\s*superseded[ _]by\s*:\s*(.+)", re.I)
 _BLOCK_OPENED_LINE_RE = re.compile(r"\s*-\s*opened\s*:\s*(.+)", re.I)
+# Where a trap block was promoted to (WM-40) — bookkeeping, not content.
+_BLOCK_PROMOTED_LINE_RE = re.compile(r"\s*-\s*promoted[ _]to\s*:\s*(.+)", re.I)
 # When somebody last checked that a trap is still true (R6). Authored, not
 # derived: age says a trap is old, and an old trap may be perfectly live — only
 # a person or an agent re-checking it can say it still applies.
@@ -5677,6 +5715,7 @@ def _block_content(body: str) -> str:
             _BLOCK_STATUS_LINE_RE.match(ln)
             or _BLOCK_SUPERSEDED_LINE_RE.match(ln)
             or _BLOCK_OPENED_LINE_RE.match(ln)
+            or _BLOCK_PROMOTED_LINE_RE.match(ln)
         )
     )
 
@@ -6408,6 +6447,21 @@ def build_resume_packet(
     listed_decisions = [r for r in decisions if not record_expired(r.meta)]
     listed_attempts = [r for r in attempts if not record_expired(r.meta)]
     listed_verifications = [r for r in verifications if not record_expired(r.meta)]
+    # WM-40: a promoted record is already in the model's context through the
+    # instruction file; listing it again spends the packet's budget twice. Only
+    # the list sections drop it — guard, search and the warnings still see it.
+    from breadcrumbs import promote as _promote
+
+    promoted_counts = {
+        "active_decisions": sum(1 for r in listed_decisions if _promote.is_promoted_record(r)),
+        "failed_attempts": sum(1 for r in listed_attempts if _promote.is_promoted_record(r)),
+        "known_traps": sum(1 for t in traps if _promote.is_promoted_trap(t)),
+    }
+    listed_decisions_all = listed_decisions
+    listed_attempts_all = listed_attempts
+    listed_decisions = [r for r in listed_decisions if not _promote.is_promoted_record(r)]
+    listed_attempts = [r for r in listed_attempts if not _promote.is_promoted_record(r)]
+    listed_traps = [t for t in traps if not _promote.is_promoted_trap(t)]
 
     # Project snapshot (git is the live source; handoff metadata is advisory).
     dirty = git_dirty_files(root)
@@ -6472,7 +6526,8 @@ def build_resume_packet(
             }
             for r in listed_attempts
         ],
-        "known_traps": [t["heading"] for t in traps],
+        "known_traps": [t["heading"] for t in listed_traps],
+        "promoted": {k: v for k, v in promoted_counts.items() if v},
         "open_questions": [q["question"] for q in questions if q["status"] == "open"],
         # Committed jots only. A machine-local jot in this list would make the
         # committed packet differ between two checkouts of one store while
@@ -6519,8 +6574,10 @@ def build_resume_packet(
         memory_dir, root, verifications=listed_verifications, traps=traps
     )
     # WM-31: a record citing a file that is gone may describe code that is gone.
+    # Promoted records too: a standing rule citing a deleted file is exactly the
+    # one that must be rechecked.
     packet["warnings"] += _lifecycle.missing_evidence_warnings(
-        root, listed_decisions + listed_attempts + listed_verifications
+        root, listed_decisions_all + listed_attempts_all + listed_verifications
     )
     # WM-34: memory that argues with itself, worded as a question.
     packet["warnings"] += _lifecycle.conflict_warnings(memory_dir)
@@ -6710,11 +6767,18 @@ def _bound_packet(packet: dict, *, fast: bool) -> None:
 
 
 def _omitted_note(packet: dict, key: str) -> list[str]:
+    out = []
     n = packet.get("omitted", {}).get(key, 0)
-    if not n:
-        return []
-    reason = packet.get("omitted_reason", {}).get(key, "the token budget")
-    return [f"_(… {n} more omitted to stay within {reason})_"]
+    if n:
+        reason = packet.get("omitted_reason", {}).get(key, "the token budget")
+        out.append(f"_(… {n} more omitted to stay within {reason})_")
+    promoted = (packet.get("promoted") or {}).get(key, 0)
+    if promoted:
+        out.append(
+            f"_({promoted} promoted to the instruction file — see its "
+            '"Project rules promoted from memory")_'
+        )
+    return out
 
 
 def render_packet_markdown(packet: dict) -> str:
@@ -7738,6 +7802,7 @@ def _item_from_record(rec: Record) -> dict:
         "record": rec,
         "do_not_retry": rec.rtype == "attempt" and _attempt_has_do_not_retry(rec),
         "expired": record_expired(rec.meta),
+        "promoted": bool(rec.meta.get("promoted_to")),
     }
 
 
@@ -7762,6 +7827,9 @@ def _item_from_trap(trap: dict) -> dict:
         "branch": None,
         "record": None,
         "do_not_retry": False,
+        "promoted": bool(
+            _BLOCK_PROMOTED_LINE_RE.search(trap.get("body") or "") or trap.get("promoted_to")
+        ),
     }
 
 
@@ -8042,6 +8110,7 @@ def _score_item(
         "status": item["status"],
         "lifecycle": item.get("lifecycle", item["status"]),
         "expired": bool(item.get("expired")),
+        "promoted": bool(item.get("promoted")),
         "title": item["title"],
         "score": score,
         "raw_score": round(undecayed, 2),
@@ -8161,6 +8230,7 @@ def search(
                     "status": it["status"],
                     "lifecycle": it.get("lifecycle", it["status"]),
                     "expired": bool(it.get("expired")),
+                    "promoted": bool(it.get("promoted")),
                     "title": it["title"],
                     "score": float(noise_floor),
                     "raw_score": float(noise_floor),
@@ -8530,7 +8600,8 @@ def render_search_human(matches: list[dict], query: str) -> str:
     out = [f"search: {len(matches)} record(s) matched {query!r}", ""]
     for m in matches:
         out.append(
-            f"- {m['id']} — {m['kind']} [{m['status']}{', expired' if m.get('expired') else ''}] "
+            f"- {m['id']} — {m['kind']} [{m['status']}{', expired' if m.get('expired') else ''}"
+            f"{', promoted' if m.get('promoted') else ''}] "
             f"(score {m['score']}): {m['reason']}."
         )
     return "\n".join(out) + "\n"
@@ -9160,7 +9231,14 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
         if not ap.is_file():
             continue
         text = read_text_lenient(ap)[0]
-        dup = next((src for src, body in canon if len(body) >= 200 and body[:200] in text), None)
+        # The promoted-rules block (WM-40) mirrors records on purpose; only the
+        # rest of the file is judged for copying memory into it.
+        from breadcrumbs import promote as _promote
+
+        unpromoted = _promote.strip_block(text)
+        dup = next(
+            (src for src, body in canon if len(body) >= 200 and body[:200] in unpromoted), None
+        )
         if dup:
             findings.append(
                 {
@@ -9332,6 +9410,12 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
     from breadcrumbs import lifecycle as _lifecycle
 
     findings.extend(_lifecycle.audit_findings(memory_dir, root))
+    # WM-40/42/43: the promoted-rules block — its size, rules whose record is
+    # gone or retired, rules that drifted from their record, and records that
+    # have earned a place there.
+    from breadcrumbs import promote as _promote
+
+    findings.extend(_promote.audit_findings(memory_dir, root))
 
     # A (cont). Re-surface the validate-failing health conditions for the health view
     # (missing evidence, invalid status, private-path violation, id/frontmatter
@@ -10809,6 +10893,20 @@ def doctor_report(root: Path) -> dict:
                     "a full scan is fast at this size)",
                 )
 
+        # Rules promoted to long-term memory (WM-42): how many, and what they
+        # cost every session that loads the instruction file.
+        from breadcrumbs import promote as _promote
+
+        promo = _promote.doctor_summary(root)
+        if promo["rules"]:
+            where = ", ".join(
+                f"{name}: {v['rules']} rule(s), {v['chars']} chars"
+                for name, v in promo["files"].items()
+            )
+            add(
+                "promoted_rules", promo["chars"] <= ADAPTER_BLOAT_CHARS * len(promo["files"]), where
+            )
+
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))
     return {"checks": checks, "integrated": integrated, "store": store}
 
@@ -12124,6 +12222,18 @@ def _add_questions(sub, global_parser: argparse.ArgumentParser) -> None:
     lifecycle_cmds.add_questions(sub, global_parser)
 
 
+def _add_promote(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import promote
+
+    promote.add_promote(sub, global_parser)
+
+
+def _add_demote(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import promote
+
+    promote.add_demote(sub, global_parser)
+
+
 def _add_consolidate(sub, global_parser: argparse.ArgumentParser) -> None:
     from breadcrumbs import lifecycle_cmds
 
@@ -12568,6 +12678,8 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "questions": _add_questions,
     "expired": _add_expired,
     "consolidate": _add_consolidate,
+    "promote": _add_promote,
+    "demote": _add_demote,
     "prune": _add_prune,
     "rollup": _add_rollup,
     "migrate": _add_migrate,
