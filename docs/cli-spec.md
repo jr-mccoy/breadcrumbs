@@ -62,7 +62,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff (**not** ideas) | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). Exits with the verdict-mapped code — see `guard` section. | **5 (built)** |
 | `audit` | all memory + adapters | health report | Find stale / unsafe / bloated memory (incl. secret + instruction-like heuristics). Heuristic — does NOT gate `validate`. | **6 (built)** |
 | `scan-secrets` | committed memory | secret report | Scan committed memory for secret-like strings; non-zero on a hit. Run before committing memory. | **6 (built)** |
-| `mark-status <id> <status>` | one record, **one trap, or one open question** | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. A `trap_<slug>` or `q_<slug>` id (legacy `q:<slug>` accepted) resolves too. At schema 3 each is its own file, so its frontmatter `status` is edited like any record's; on a schema-2 store — or for a block somebody typed into a singleton since the last reindex — the block's `- Status:` bullet is edited in place (every other byte preserved). Retiring a trap drops it from the resume packet and the hook pre-filter and stops it driving a `guard` verdict; answering a question drops it from the packet, from `guard`'s open-blocker floor and from the aged-unresolved staleness warning. Both stay findable in `search` under their real status. Questions carry their own vocabulary (`open`/`answered`/`closed`) because the record words do not fit — the id decides which vocabulary applies, and a mismatch is rejected by name. A block with no `- Status:` bullet counts as `active` (trap) / `open` (question). | **built** |
+| `mark-status <id> <status>` | one record, **one trap, or one open question** | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. A `trap_<slug>` or `q_<slug>` id (legacy `q:<slug>` accepted) resolves too. At schema 3 each is its own file, so its frontmatter `status` is edited like any record's; on a schema-2 store — or for a block somebody typed into a singleton since the last reindex — the block's `- Status:` bullet is edited in place (every other byte preserved). Retiring a trap drops it from the resume packet and the hook pre-filter and stops it driving a `guard` verdict; answering a question drops it from the packet, from `guard`'s open-blocker floor and from the aged-unresolved staleness warning. Both stay findable in `search` under their real status. Questions carry their own vocabulary (`open`/`answered`/`closed`) because the record words do not fit — the id decides which vocabulary applies, and a mismatch is rejected by name. A block with no `- Status:` bullet counts as `active` (trap) / `open` (question). Marking a promoted decision, attempt or trap `superseded`, `stale`, `rejected` or `disputed` also demotes it (see `promote` and `demote`); the output adds `also demoted: …` and `--json` a `demoted` object. | **built** |
 | `prune sessions` | `sessions/` | deletions + reindex | Delete old **machine** session snapshots (placeholder Next Action) beyond the newest `--keep N` (default 20). Human handoffs are never candidates; `--dry-run` lists. The Stop hook creates snapshots eagerly (an interrupted session is a handoff worth keeping) — retention is this separate, explicit act. | **built** |
 | `rollup sessions --before YYYY-MM-DD` | `sessions/` | one session record, deletions + reindex | Fold the machine snapshots created before the date (at least two) into one session record that supersedes them, then delete them. Human/agent sessions are never touched; `--dry-run` lists. See `rollup sessions` below. | **built (WM-35)** |
 | `prune jots` | `inbox/`, `private/inbox/` | deletions + reindex | Delete jots that are expired or retired **and** older than 30 days. An active, unexpired jot is never deleted however old the store is: it is still waiting for somebody to promote or drop it. `--dry-run` lists. | **built (WM-03)** |
@@ -70,7 +70,9 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `questions [--aging]` | open questions | listing (read-only) | Open questions with their age, oldest first; `--aging` keeps those open longer than `ttl_question_days` (default 45). | **built (WM-30)** |
 | `consolidate [--type T]` | live records | listing (read-only) | Clusters of near-duplicate live records (connected components of the near-duplicate pairs). | **built (WM-33)** |
 | `consolidate --merge ID ID… --title "…"` | the named records | one merged record + status changes + reindex | Write one decision / attempt / verification / idea from the sources and mark every source `superseded`. See `consolidate` below. | **built (WM-33)** |
-| `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. | **built** |
+| `promote <id> [--to CLAUDE.md\|AGENTS.md] [--rule "…"]` | one decision, attempt or trap | one rule line in the instruction file's promoted-rules block + `promoted_to`/`promoted_at` on the record + reindex | Make an active record a standing rule in the long-term tier. Never creates the instruction file. See `promote` and `demote` below. | **built (WM-40)** |
+| `demote <id> [--reason "…"]` | `CLAUDE.md`, `AGENTS.md`, the record | the rule line removed + promotion fields cleared + reindex | Take a promoted rule back out; the record is otherwise unchanged. | **built (WM-41)** |
+| `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. A `promoted_rules` row (`CLAUDE.md: 3 rule(s), 612 chars`), present only when a promoted-rules block has rules, says what the long-term tier costs every session; it does not change the exit code either. | **built** |
 | `mcp serve\|register\|doctor` | `.mcp.json` | running server / registration / health | Run the MCP server, merge its `.mcp.json` entry, or report MCP wiring (`[mcp]` extra + registration). | **built** |
 | `hook session\|guard\|capture\|prompt\|compact\|subagent` | hook stdin payload | hook JSON on stdout (+ mined jots) | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve). Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). Re-running `init --with-hooks` also brings an entry **we own** up to the current matcher, which is how an existing install picked up `Task\|Agent` on the guard. The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. **Every event exits 0 and prints JSON**, whatever the payload. See the per-event table below. | **built** |
 
@@ -107,6 +109,11 @@ init --remove-integrations                          # reverse everything
 On a TTY with none specified, `init` asks once per integration; non-interactive +
 unspecified writes nothing (plus a one-line nudge). Every edit is fenced and
 reversible.
+
+`--remove-integrations` removes the signpost block only. The promoted-rules
+block that `crumb promote` writes into the same files (see `promote` and
+`demote`) is left in place: those rules are the project's instructions now, and
+`crumb demote` is how one comes out.
 
 Both lists are validated **before any filesystem mutation** — `--with-hooks` against
 `session|guard|capture`, `--with-adapter` against the known guidance filenames —
@@ -225,6 +232,14 @@ Behavior:
   and in `search`, but is dropped from the packet's list sections (the "expired
   on …" staleness line still names an expired decision or attempt). `crumb
   expired` lists them.
+- **Promoted records leave the lists (WM-40).** A decision, attempt or trap
+  promoted to `CLAUDE.md`/`AGENTS.md` is already in the model's context through
+  that file, so *Active Decisions*, *Failed Attempts To Avoid* and *Known Traps*
+  leave it out and end with `_(N promoted to the instruction file — see its
+  "Project rules promoted from memory")_`. `--json` carries the counts as
+  `promoted` (`{active_decisions, failed_attempts, known_traps}`, non-zero
+  sections only; `{}` when nothing is promoted). The missing-evidence warning
+  below still checks promoted decisions and attempts.
 - **Lifecycle warnings (WM-30, WM-31, WM-34)**, each kind capped separately:
   - an actionable verification (`open`, `regressed`, `inconclusive`) whose
     `updated_at` (else `created_at`) is at least `ttl_verification_days` (90)
@@ -499,6 +514,9 @@ Behavior:
   (`[active, expired]`, or `[fixed, expired]` for a verification, whose
   bracket shows the outcome) and every `--json` match carries an `expired`
   boolean.
+- **Promoted records are marked.** A decision, attempt or trap promoted to the
+  instruction file reads `[active, promoted]` on the human line, and every
+  `--json` match carries a `promoted` boolean.
 - `guard` is this same engine with a verdict on top plus a noise floor,
   so a `search` hit is the permissive case of a `guard` match.
 - Exit codes: `0` on success (including zero matches), `2` when no
@@ -534,6 +552,9 @@ Behavior (deltas from `search` — everything there applies here too):
 - **An expired record is history.** A match past its `expires_at` is listed
   under `history` (context only), like a superseded one, and never drives the
   verdict.
+- **A promoted record is scored at full weight.** Promotion takes a record out
+  of the packet's lists, not out of `guard`: the rule in the instruction file
+  may be read or not, and the verdict should not depend on which.
 - **Exit codes are verdict-mapped** so callers can script on the verdict
   without parsing output: `PROCEED` = 0, `READ_FIRST` = 10, `PAUSE` = 15,
   `ASK_HUMAN` = 20 (`>= 15` means a human belongs in the loop); `2` = usage
