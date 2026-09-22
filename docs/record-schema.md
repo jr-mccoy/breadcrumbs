@@ -17,8 +17,9 @@ status/privacy vocabularies, and the body templates.
 
   current.md
   handoff.md
-  open-questions.md
-  known-traps.md
+  open-questions.md           # schema 3: generated index of questions/
+  known-traps.md              # schema 3: generated index of traps/
+  # aliases.txt               — optional, hand-written: store stemmer aliases (§11)
 
   decisions/      .gitkeep
   attempts/       .gitkeep
@@ -26,12 +27,14 @@ status/privacy vocabularies, and the body templates.
   sessions/       .gitkeep
   ideas/          .gitkeep
   inbox/          .gitkeep      # committed jots (schema_version 2+)
+  traps/          .gitkeep      # one file per trap (schema_version 3+)
+  questions/      .gitkeep      # one file per question (schema_version 3+)
 
   generated/
     README.md
     resume-packet.md          # placeholder until the first resume/reindex
-    # guard-prefilter.json    — not created by `init`; written by the first
-    #                           `resume`/`reindex` (or any record write)
+    # guard-prefilter.json    — these two are not created by `init`; written by
+    # related.json            — the first `resume`/`reindex` (or any record write)
 
   private/
     README.md
@@ -41,6 +44,8 @@ status/privacy vocabularies, and the body templates.
 
   index/
     README.md
+    # search.sqlite           — disposable search index, built at reindex once
+    #                           the store has 200+ indexable records (§12)
 ```
 
 **Schema versions.** `manifest.yml` records the on-disk format version and
@@ -52,6 +57,7 @@ previous shape for one major version, so an un-migrated store keeps working.
 |---|---|
 | 1 | The original layout. |
 | 2 | `inbox/` and `private/inbox/` — the jot tier (WM-03). Both are created empty; a store that never migrates simply has no jots. |
+| 3 | `traps/` and `questions/` — one file per trap and per question (WM-22), with the ids they already had; `known-traps.md` and `open-questions.md` become generated indexes (§10). Readers decide by the manifest's `schema_version`, never by what is on disk, so a schema-2 store keeps reading and writing blocks. |
 
 ---
 
@@ -71,6 +77,10 @@ previous shape for one major version, so an un-migrated store keeps working.
 .project-memory/verifications/
 .project-memory/sessions/
 .project-memory/ideas/
+.project-memory/inbox/
+.project-memory/traps/
+.project-memory/questions/
+.project-memory/aliases.txt
 .project-memory/generated/README.md
 .project-memory/index/README.md
 ```
@@ -90,7 +100,7 @@ previous shape for one major version, so an un-migrated store keeps working.
 Recorded in `manifest.yml` so every later command stays consistent:
 
 1. **`commit_generated_projections`** (default `true`). When `true`, the generated
-   projections (`generated/resume-packet.md`, `guard-prefilter.json`) are committed — this serves the "cloud
+   projections (`generated/resume-packet.md`, `guard-prefilter.json`, `related.json`) are committed — this serves the "cloud
    agent with no CLI" user story (a read-only agent gets a pre-built catch-up
    file). Each Markdown projection carries a source commit/hash header so
    staleness is visible. Flip to `false` (`init --no-commit-generated`) to keep a
@@ -129,7 +139,7 @@ The per-project control file. Carries the schema version (so `validate` can chec
 forward-compat) and the tracking policies chosen at `init`:
 
 ```yaml
-schema_version: 2
+schema_version: 3
 created_at: 2026-06-25T14:30:00-05:00
 project: <project-name>
 # Tracking policy chosen during `crumb init`:
@@ -151,7 +161,7 @@ change what that store does:
 | `capture_corrections` | `true` | The `UserPromptSubmit` hook writes a prompt that opens like a correction to `private/inbox/`. `false` turns that off. |
 | `subagent_extraction` | `false` | **Reserved.** Whether a finished subagent may be held for its own extraction turn. Nothing reads it yet; it waits on the prompt-fatigue field test in `open-questions.md`, and it defaults off because the parent's Stop hook already asks once per unit of work. |
 
-`schema_version` is `2` for this build; see §1 for what each version changed.
+`schema_version` is `3` for this build; see §1 for what each version changed.
 `project` is auto-derived from the project root directory name. `created_at` is
 ISO-8601 with timezone.
 
@@ -185,6 +195,7 @@ reviewed_by: null
 supersedes: []
 superseded_by: null
 expires_at: null
+# last_confirmed: 2026-09-01   # traps only, optional — set by `crumb traps --confirm`
 tags:
   - memory
   - architecture
@@ -223,7 +234,20 @@ Identity is **filename-canonical**. The file's path is the single source of trut
   (`dec_99999999_My Slug!`) are not something any lookup can be expected to handle.
 - `id` = `<type-prefix>_<YYYYMMDD>_<slug>`, with type-prefixes:
   `dec` (decision), `att` (attempt), `ver` (verification), `idea`, `ses`
-  (session), `trap`, `q` (question).
+  (session), `jot`.
+- **Traps and questions are undated** (schema 3+). Their filename is the slug
+  alone and their id is prefix + slug: `traps/<slug>.md` → `trap_<slug>`,
+  `questions/<slug>.md` → `q_<slug>`. These are the ids they carried as blocks —
+  cited in decision records, commit messages and people's notes — so becoming
+  files did not change them. The slug is `[a-z0-9]` runs joined by single `-` or
+  `_` (block-era trap slugs used underscores). A question's slug is derived from
+  its text (`question_item_id`: slugified, truncated at 48 characters with a
+  6-character hash suffix when cut).
+- **Question ids used to be `q:<slug>`.** The colon was the only id that was not
+  a valid filename or a clean URI path segment, so every version that has
+  `traps/` and `questions/` prints `q_<slug>` — on a schema-2 store too. The
+  `q:<slug>` spelling is still accepted everywhere an id is read (`mark-status`,
+  `show`, the MCP resources and tools).
 
 Why filename-canonical: the filesystem cannot hold two files with the same name in
 one directory, so ID uniqueness is enforced for free and id/slug/filename cannot
@@ -284,6 +308,18 @@ degrades gracefully (age-based signals still apply).
 | `disputed` | Conflicts with another record, code, tests, docs, or user instruction. |
 | `rejected` | Considered and intentionally not used. |
 | `quarantined` | Suspected unsafe/private/poisoned; do not use for agent guidance. |
+
+Traps use this vocabulary. **Questions have their own**, because no lifecycle
+word says "somebody answered this":
+
+| Question status | Meaning |
+|---|---|
+| `open` | Unresolved. The only live status: listed by `resume`, counted by `guard`'s open-blocker floor, aged into a staleness warning. |
+| `answered` | Resolved — the answer exists (name it in `--reason`). |
+| `closed` | Retired without an answer: withdrawn, obsolete, won't pursue. |
+
+`validate` checks a question file's `status` against this list and every other
+record's against the one above.
 
 ## 9. Privacy meanings
 
