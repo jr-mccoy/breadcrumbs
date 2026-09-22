@@ -30,7 +30,9 @@ warning on aged questions and decisions, `search`/`guard` score aged records low
 Default output is human-readable Markdown / plain text.
 
 **Exit codes shared across commands:** `0` success, `1` the command failed
-(`CRUMB-ERROR: …` on stderr), `2` usage error or no `.project-memory/` store, `3`
+(`CRUMB-ERROR: …` on stderr) — including a writing command that could not take
+the store's write lock within 2 seconds, see
+[Store write lock](#store-write-lock-built-wm-51) — `2` usage error or no `.project-memory/` store, `3`
 a writer (`remember`, `note`, `verify`, `jot`) refused a **near-duplicate** of a
 live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 `guard` maps its verdicts to `0`/`10`/`15`/`20` instead (see `guard`).
@@ -45,14 +47,14 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash` such as `related.json` and `conflicts.json`) whose stamped `inputs_hash` no longer matches the live records. | **2 (built)** |
 | `remember decision` | git state, user input | decision record | Capture a durable choice. Refuses a near-duplicate of a live decision (exit 3) unless `--supersedes ID` or `--allow-duplicate`. | **3 (built)** |
 | `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. Same near-duplicate gate as `remember decision`. | **3 (built)** |
-| `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns recorded command evidence instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). Reindexes on write. | **built** |
+| `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns recorded command evidence instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). `--scope branch` makes the result apply only while the current branch is checked out (default `project`; see [Branch scope](#branch-scope-built-wm-52)). Reindexes on write. | **built** |
 | `reindex` | all canonical files | `generated/` projections, the trap/question indexes (schema 3), `index/search.sqlite` | Rebuild the generated projections from the records (mutations reindex automatically). `--search-index` builds the search index even below its size threshold — see `reindex` below. | **built** |
-| `capture session` | git state (log, status, diff --shortstat) | session record, handoff, current | Record session end; git-prefill body sections (Files Touched is a counts-only summary) over a bounded window (`since..HEAD`, capped at 20 commits) that the record names. `--fast` = git-only snapshot + one-line next action; `--next` + `--set` runs unattended without dropping narrative. | **3 (built)** |
+| `capture session` | git state (log, status, diff --shortstat) | session record, handoff, current | Record session end; git-prefill body sections (Files Touched is a counts-only summary) over a bounded window (`since..HEAD`, capped at 20 commits) that the record names. `--fast` = git-only snapshot + one-line next action; `--next` + `--set` runs unattended without dropping narrative. At schema 4, on a branch that is not the default branch, the handoff written is `handoffs/<branch-slug>.md` instead of `handoff.md` — see [Branch handoffs](#branch-handoffs-built-wm-50). | **3 (built)** |
 | `schema [<type>]` | (none) | record contract | Print body sections / vocab / rules from source constants. `--template <type>` emits a `remember` skeleton (a `verify` one for `verification`, a `crumb note …` one for `trap` and `question`). | **built** |
 | `note question\|trap\|idea` | user input, git state | a question / trap / idea record | Write-surface for the three kinds with no `remember` type; refreshes the resume packet. At schema 3 a trap is written to `traps/<slug>.md` and a question to `questions/<slug>.md`, through the same validate gate as any record; on a schema-2 store they are still blocks appended to `known-traps.md` / `open-questions.md`. Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`); an exact repeat (same question text, same trap slug) keeps its own exit-1 "reopen it" error. | **built** |
 | `show <id>` | one record, trap, question or jot | the full text (read-only) | Print the body behind a one-line mention. Takes any id the tool prints — `dec_`/`att_`/`ver_`/`idea_`/`ses_`/`jot_`, `trap_…`, `q_…` (legacy `q:…` accepted) — and adds a `See also:` line from `generated/related.json`. Exit 1 with `CRUMB-ERROR` on an unknown id. See `show` below. | **built (WM-21)** |
-| `jot "<text>"` | user input, git state | a jot under `inbox/` or `private/inbox/` | The short-term tier: one observation, a TTL (`ttl_jot_days`, or the older `jot_ttl_days`; default 14), and **no evidence rule**. `--file PATH` becomes file evidence so the note can be found again; `--local` writes to `private/inbox/`, which is never committed and is where every automatic writer must put things. A jot is searchable and never reaches a `guard` verdict. A near-verbatim repeat of a live jot (similarity ≥ 0.9) is refused with exit 3 unless `--allow-duplicate` (no `--supersedes` on a jot). | **built (WM-03)** |
-| `inbox [--all] [--expired]` | `inbox/`, `private/inbox/` | listing (read-only) | Triage queue: live jots newest first, with id, age and source. | **built (WM-03)** |
+| `jot "<text>"` | user input, git state | a jot under `inbox/` or `private/inbox/` | The short-term tier: one observation, a TTL (`ttl_jot_days`, or the older `jot_ttl_days`; default 14), and **no evidence rule**. `--file PATH` becomes file evidence so the note can be found again; `--local` writes to `private/inbox/`, which is never committed and is where every automatic writer must put things. A jot is searchable and never reaches a `guard` verdict. A near-verbatim repeat of a live jot (similarity ≥ 0.9) is refused with exit 3 unless `--allow-duplicate` (no `--supersedes` on a jot). `--scope branch` makes it apply only while the current branch is checked out (default `project`; jots the hooks write default to `branch`). | **built (WM-03)** |
+| `inbox [--all] [--expired]` | `inbox/`, `private/inbox/` | listing (read-only) | Triage queue: live jots newest first, with id, age and source. `--json` rows also carry `scope` and `branch`. | **built (WM-03)** |
 | `inbox promote <id> <type>` | one jot | a decision / attempt / verification / trap / question / idea, + the jot | Turn a jot into a durable record **through that type's normal writer**, so the evidence rule and the validate gate apply exactly as they would to a record written by hand. The jot's file evidence and tags carry over; the jot is marked `superseded` with `superseded_by`, never deleted. | **built (WM-03)** |
 | `inbox drop <id>` | one jot | status change | Retire a jot as noise (`rejected`). Kept as history; `prune jots` deletes. | **built (WM-03)** |
 | `migrate [--dry-run]` | `manifest.yml`, the store | store format + `manifest.yml` | Bring the store's on-disk format up to this build's `schema_version`. Steps are ordered and idempotent, the manifest is written after each one (so a failure halts at the last completed version), and the whole store is copied to `private/migrations/<timestamp>/` first. `validate` fails with `run \`crumb migrate\`` on an older store and `upgrade crumb-kit` on a newer one. See `migrate` below for the steps. | **built (WM-01)** |
@@ -66,6 +68,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `prune sessions` | `sessions/` | deletions + reindex | Delete old **machine** session snapshots (placeholder Next Action) beyond the newest `--keep N` (default 20). Human handoffs are never candidates; `--dry-run` lists. The Stop hook creates snapshots eagerly (an interrupted session is a handoff worth keeping) — retention is this separate, explicit act. | **built** |
 | `rollup sessions --before YYYY-MM-DD` | `sessions/` | one session record, deletions + reindex | Fold the machine snapshots created before the date (at least two) into one session record that supersedes them, then delete them. Human/agent sessions are never touched; `--dry-run` lists. See `rollup sessions` below. | **built (WM-35)** |
 | `prune jots` | `inbox/`, `private/inbox/` | deletions + reindex | Delete jots that are expired or retired **and** older than 30 days. An active, unexpired jot is never deleted however old the store is: it is still waiting for somebody to promote or drop it. `--dry-run` lists. | **built (WM-03)** |
+| `prune handoffs` | `handoffs/`, local and `origin` branches | deletions + reindex | Delete branch handoffs whose branch exists neither locally nor on `origin` **and** whose `_Last updated_` is at least 30 days old. `--dry-run` lists. See [Branch handoffs](#branch-handoffs-built-wm-50). | **built (WM-50)** |
 | `expired` | all records, both inboxes | listing (read-only) | Active records past their `expires_at`, oldest expiry first, machine-local jots included. See `expired` below. | **built (WM-30)** |
 | `questions [--aging]` | open questions | listing (read-only) | Open questions with their age, oldest first; `--aging` keeps those open longer than `ttl_question_days` (default 45). | **built (WM-30)** |
 | `consolidate [--type T]` | live records | listing (read-only) | Clusters of near-duplicate live records (connected components of the near-duplicate pairs). | **built (WM-33)** |
@@ -95,6 +98,13 @@ message that opens like a correction. Candidates become jots in
 rather than masks. Bounded at 10 per firing and deduped by fingerprint within a
 session. A cursor in `private/miner-cursor.json` stops a later firing re-mining
 what an earlier one already read.
+
+**The writing events share the store.** `capture`, `prompt`, `compact` and
+`subagent` run under the store's write lock (see
+[Store write lock](#store-write-lock-built-wm-51)). If another writer holds it
+for more than 0.5 seconds, the event prints `{}`, exits 0 and does nothing —
+that firing's snapshot, mined candidates or prompt injection are skipped rather
+than the host being blocked. `session` and `guard` never take the lock.
 
 ### Integration flags on `init`
 
@@ -175,7 +185,8 @@ Behavior:
 - Copies the bundled `breadcrumbs/templates/project-memory/` tree (shipped as
   package data, resolved package-relative) into the target's `.project-memory/`.
 - Auto-derives `project` (root dir name), `created_at` (ISO-8601 w/ tz), and sets
-  `schema_version` to this build's `SCHEMA_VERSION` (currently `3`).
+  `schema_version` to this build's `SCHEMA_VERSION` (currently `4`). The tree
+  includes `handoffs/` (with a `.gitkeep`), where branch handoffs go.
 - **Session-tracking policy:** `--session-tracking <full|distillate>`, else prompt;
   non-interactive default is `full`. Recorded in `manifest.yml`.
 - **Generated-projection policy:** default `commit_generated_projections: true`;
@@ -204,10 +215,18 @@ crumb resume --task TEXT      # resume FOR this task: scope likely-files, order 
 
 Behavior:
 
-- Assembles the §12 packet from `current.md`, `handoff.md`, active `decisions/`,
+- Assembles the §12 packet from `current.md`, the handoff, active `decisions/`,
   active `attempts/`, the traps and open questions (`traps/` and `questions/` at
   schema 3, the `known-traps.md` / `open-questions.md` blocks before), and live
   git state.
+- **The handoff is this branch's (WM-50).** At schema 4, on a branch other than
+  the default branch, the packet reads `handoffs/<branch-slug>.md` when it
+  exists and `handoff.md` otherwise, and the Project line ends with which one:
+  `· handoff: handoffs/<slug>.md`, `· handoff: handoff.md`, or `· handoff:
+  handoff.md (no branch handoff)` on a feature branch that has not captured yet.
+  `--json` carries the same label as `project.handoff`. The handoff age,
+  commit-distance and branch-mismatch warnings are computed from the file that
+  was read. See [Branch handoffs](#branch-handoffs-built-wm-50).
 - **`--task` orders by relevance, and hides nothing.** With a task, one
   `search` over the corpus (ideas excluded) scores every record against it, and
   each list section — active decisions, failed attempts, verifications, known
@@ -240,6 +259,11 @@ Behavior:
   `promoted` (`{active_decisions, failed_attempts, known_traps}`, non-zero
   sections only; `{}` when nothing is promoted). The missing-evidence warning
   below still checks promoted decisions and attempts.
+- **Branch-scoped records from another branch leave the lists (WM-52).** A
+  decision, attempt, verification or committed jot with `scope: branch` whose
+  `branch` is not the current branch is left out of *Active Decisions*,
+  *Failed Attempts To Avoid*, *Verifications* and the *Inbox*. See
+  [Branch scope](#branch-scope-built-wm-52).
 - **Lifecycle warnings (WM-30, WM-31, WM-34)**, each kind capped separately:
   - an actionable verification (`open`, `regressed`, `inconclusive`) whose
     `updated_at` (else `created_at`) is at least `ttl_verification_days` (90)
@@ -315,7 +339,9 @@ Behavior:
   `generated/related.json` and `generated/conflicts.json`, each written
   atomically (see `reindex`). `--fast`
   and `--task` are **print-only** and never overwrite them.
-- Exit codes: `0` on success, `2` when no `.project-memory/` store is present.
+- Exit codes: `0` on success, `1` when another writer holds the store's write
+  lock past the 2-second wait (`resume` is a writing command, `--fast` and
+  `--task` included), `2` when no `.project-memory/` store is present.
 
 ---
 
@@ -417,6 +443,7 @@ crumb migrate             # back the store up, then apply them in order
 |---|---|
 | 2 | Create `inbox/` and `private/inbox/` (the jot tier). |
 | 3 | Move traps and questions to one file each; `known-traps.md` and `open-questions.md` become generated indexes. |
+| 4 | Create `handoffs/` (with a `.gitkeep`) for one handoff per branch. |
 
 **Step 3** writes every `## trap_…` block to `traps/<slug>.md` and every `## Q:`
 block to `questions/<slug>.md`, keeping the id (lowercased; a trap slug that is
@@ -429,8 +456,13 @@ once; on failure they are removed and the step raises, leaving the store at
 schema 2 exactly as it was. Re-running it is a no-op apart from rewriting the
 indexes: an existing file is never overwritten.
 
+**Step 4** only creates the directory. `handoff.md` is left as it is and stays
+the default branch's handoff; a branch handoff is written the first time a
+session captures on another branch.
+
 Readers switch on the manifest's `schema_version`, never on what is on disk, so
-a schema-2 store keeps reading and writing blocks until it is migrated.
+a schema-2 store keeps reading and writing blocks until it is migrated, and a
+schema-3 store keeps one `handoff.md` for every branch.
 
 ---
 
@@ -517,6 +549,10 @@ Behavior:
 - **Promoted records are marked.** A decision, attempt or trap promoted to the
   instruction file reads `[active, promoted]` on the human line, and every
   `--json` match carries a `promoted` boolean.
+- **Branch-scoped records are always found.** A `scope: branch` record written
+  on another branch is searched like any other (the human line adds `written on
+  another branch (possibly stale)`, as for any record from another branch), and
+  every `--json` match carries `scope` (`project` or `branch`).
 - `guard` is this same engine with a verdict on top plus a noise floor,
   so a `search` hit is the permissive case of a `guard` match.
 - Exit codes: `0` on success (including zero matches), `2` when no
@@ -555,6 +591,15 @@ Behavior (deltas from `search` — everything there applies here too):
 - **A promoted record is scored at full weight.** Promotion takes a record out
   of the packet's lists only; `guard` matches and scores it like any other
   active record.
+- **A branch-scoped record from another branch is history.** A `scope: branch`
+  match whose `branch` differs from the current one (the match's
+  `branch_mismatch`) is listed under `history` and never drives the verdict. A
+  project-scoped record from another branch is still live, de-weighted as
+  before.
+- **The handoff read is this branch's**, chosen as in `resume` (see
+  [Branch handoffs](#branch-handoffs-built-wm-50)); the handoff warnings are
+  computed from it.
+- `guard` does not take the store's write lock and never waits on a writer.
 - **Exit codes are verdict-mapped** so callers can script on the verdict
   without parsing output: `PROCEED` = 0, `READ_FIRST` = 10, `PAUSE` = 15,
   `ASK_HUMAN` = 20 (`>= 15` means a human belongs in the loop); `2` = usage
@@ -593,7 +638,8 @@ carry a severity:
   leak**: a token-like string in committed memory (see `scan-secrets`). This must be
   resolved before any "commit memory" workflow.
 - **warn** — flag for human review; never changes the exit code. Covers: stale
-  handoff (age + commit-distance), branch mismatch (incl. detached HEAD),
+  handoff (age + commit-distance, measured on the handoff this branch reads —
+  see `resume`; the finding's path says `handoff.md` either way), branch mismatch (incl. detached HEAD),
   aged-unresolved questions/decisions, expired + low-confidence records,
   **instruction-like text** (override phrasing such as "ignore the tests" — flagged,
   never executed: matched memory is data, not command), **generated-packet drift**
@@ -933,6 +979,139 @@ session loads.
 through a tool call is the persistence step of a prompt injection. A person
 runs `crumb promote`, or an agent runs it where a person can see the command.
 `memory_mark_status` still auto-demotes.
+
+---
+
+## Branch handoffs (built, WM-50)
+
+```bash
+crumb capture session --next "…"   # on feature/parser-rewrite: writes handoffs/feature-parser-rewrite.md
+crumb resume                       # Project line ends: · handoff: handoffs/feature-parser-rewrite.md
+crumb prune handoffs --dry-run     # branch handoffs whose branch is gone, 30+ days old
+crumb prune handoffs [--json]
+```
+
+At schema 4 the store keeps one handoff per branch, so two sessions on two
+branches no longer overwrite each other's Next Action. A schema-3 store keeps a
+single `handoff.md` for every branch; readers and the writer decide by the
+manifest's `schema_version`.
+
+- **The default branch** is the target of `refs/remotes/origin/HEAD` when the
+  clone knows it; otherwise `main` if that local branch exists, else `master`.
+  Without git, when none of these exists, or on a detached HEAD, every capture
+  writes `handoff.md`, as before.
+- **Writing.** `capture session` — and so the Stop hook, which goes through it
+  — writes `handoff.md` on the default branch and `handoffs/<branch-slug>.md`
+  on any other. The slug is the branch name slugified (lowercased, each run of
+  characters outside `[a-z0-9]` becomes `-`) and cut to 60 characters:
+  `feature/parser-rewrite` → `handoffs/feature-parser-rewrite.md`. The file has
+  the same `_Last updated_` / `_Branch_` / `_Commit_` lines and sections as
+  `handoff.md` (see [`record-schema.md`](record-schema.md) §10). `--json`'s
+  `handoff` is the path actually written.
+- **The first write starts from `handoff.md`.** A branch handoff that does not
+  exist yet is seeded with `handoff.md`'s content, so the focus the branch was
+  cut from carries over; `--focus` and `--next` then replace *Current Focus*
+  and *Next Action* as on any capture. A capture that sets neither (a Stop-hook
+  snapshot) therefore keeps `handoff.md`'s.
+- **`current.md` stays single.** It is the project's focus, not a branch's;
+  a capture on any branch updates it.
+- **Reading.** `resume` (and the packet the `SessionStart` hook injects),
+  `guard` and `audit` read the current branch's handoff when it exists and
+  `handoff.md` otherwise; the packet's Project line and `project.handoff` say
+  which (see `resume`). Branch handoffs are inputs to `inputs_hash`, like
+  `handoff.md`.
+- **Two branch names with the same slug share a file** (`feature/x` and
+  `feature-x` both use `handoffs/feature-x.md`).
+
+**`prune handoffs`** deletes a branch handoff only when both hold:
+
+- its file name matches the slug of no local branch and no `origin/…`
+  remote-tracking branch. These are the local refs; nothing is fetched, so a
+  branch deleted on the remote still counts until `git fetch --prune` drops its
+  tracking ref;
+- its `_Last updated_` is at least 30 days old. A file without a parseable
+  timestamp is kept. A branch deleted this morning may be recreated this
+  afternoon, and its handoff is what that session wants.
+
+Without git nothing is pruned; `handoff.md` is never a candidate. `--dry-run`
+lists what would go (`- handoffs/<file> (<age>d)`); `--keep` does not apply.
+The projections are rebuilt when anything was deleted. `--json`: `{pruned:
+[{path, branch, age_days}], dry_run}` (`items` aliases `pruned`). Exit codes:
+`0`, or `2` when no store is present.
+
+---
+
+## Branch scope (built, WM-52)
+
+```bash
+crumb jot "the tokenizer test flakes on this branch" --scope branch
+crumb verify "parser suite" --status regressed --evidence command "pytest tests/parser" --scope branch
+```
+
+`scope: branch` marks a record that describes the state of the branch it was
+written on — a verification of work in progress, an observation mined mid-session
+— and applies only while that branch is checked out. The branch is the record's
+existing `branch` field, derived from git at write time.
+
+- **Where it is set.** `--scope project|branch` on `jot` and `verify`, and the
+  `scope` parameter on `memory_jot` / `memory_verify`. `crumb jot` and
+  `memory_jot` default to `project`; jots the hooks write (a captured
+  correction, mined candidates) default to `branch`. `remember --scope` takes
+  free text, as it always has; any record whose `scope` is `branch` is treated
+  the same way, and any other value counts as `project`.
+- **Elsewhere.** A record is *branch-scoped elsewhere* when its `scope` is
+  `branch`, it has a recorded branch, the current branch is known, and the two
+  differ. Such a record leaves the resume packet's *Active Decisions*, *Failed
+  Attempts To Avoid*, *Verifications* and *Inbox* sections, and `guard` lists
+  it under `history` instead of letting it drive the verdict.
+- **Never elsewhere:** without git, on a detached HEAD, or when the record has
+  no recorded branch (or `(no-git)`).
+- **Still visible:** the record stays on disk and in `search` (the `--json`
+  match carries `scope`), `show`, `crumb inbox` (`--json` rows carry `scope`
+  and `branch`) and `expired`. The `UserPromptSubmit` hook selects through
+  `search`, so it can still inject one, tagged `written on another branch`.
+  The near-duplicate gate compares against it like any live record.
+- `inbox promote` writes the durable record with the default `project` scope.
+
+---
+
+## Store write lock (built, WM-51)
+
+Parallel sessions in one checkout write the same store: two Stop hooks capture
+at once, a prompt hook jots while another session reindexes. Each file write is
+already atomic; the lock stops two read-modify-write sequences (a handoff
+rewrite, an index rebuild) from interleaving so that one silently undoes the
+other.
+
+- **The lock file** is `.project-memory/private/.write-lock` (gitignored with
+  the rest of `private/`), created with `O_CREAT | O_EXCL` and holding the
+  owner's pid and a Unix timestamp. It exists only while a writer holds it.
+  Within one process an in-process lock per store serialises threads, and the
+  lock is re-entrant within a thread.
+- **Stale locks are broken.** A lock older than 60 seconds, or — on POSIX —
+  whose pid no longer exists, is removed by the next writer that finds it.
+- **Commands that take it:** `remember`, `note`, `jot`, `inbox` (listing,
+  `promote` and `drop`), `verify`, `mark-status`, `retitle`, `traps`, `prune`,
+  `migrate`, `reindex`, `capture`, `resume`, `promote`, `demote`,
+  `consolidate` and `rollup` (`LOCKED_COMMANDS` in `breadcrumbs/cli.py`; a
+  command takes it for every form it has). Each waits up to 2 seconds, then
+  exits 1:
+
+  ```text
+  CRUMB-ERROR: crumb jot: store is locked by pid 9502; try again, or remove a stale lock
+  ```
+
+  Under `--json` that is `{ok: false, command, error}`. With no store, the
+  command runs without the lock and reports the missing store itself (exit 2).
+- **Commands that never wait:** everything else — `search`, `guard`, `show`,
+  `validate`, `audit`, `scan-secrets`, `doctor`, `usage`, `expired`,
+  `questions`, `schema`, `init`, `mcp`.
+- **Hooks** take it per event, with a 0.5-second wait, and skip rather than
+  fail (see [Hook events](#hook-events)). The MCP writers wait 2 seconds and
+  return `{ok: false, error: "store is locked by pid N; …"}` (see
+  [`mcp-spec.md`](mcp-spec.md)).
+- A lock left by a process that is still running (a hung writer) holds for up
+  to 60 seconds; deleting the file releases it.
 
 ---
 

@@ -58,7 +58,7 @@ taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual
 | Type | Purpose | Path | Lifespan | Source of truth? |
 |---|---|---|---|---|
 | Current state | What matters right now | `current.md` | days to 2 weeks | yes |
-| Handoff | What the next session does first | `handoff.md` | until resumed/superseded | yes |
+| Handoff | What the next session does first | `handoff.md` (default branch); `handoffs/<branch-slug>.md` for any other branch (schema 4) | until resumed/superseded; a branch's is prunable once its branch is gone and it is 30+ days old | yes |
 | Decision | What was decided/rejected and why | `decisions/YYYY-MM-DD-slug.md` | long-lived | yes |
 | Attempt | What was tried, outcome, do-not-retry | `attempts/YYYY-MM-DD-slug.md` | long-lived if instructive | yes |
 | Verification | A finding about reality: "I checked X; here is its state" | `verifications/YYYY-MM-DD-slug.md` | settled: expires after `ttl_verification_days` (90); actionable: until rechecked | yes |
@@ -159,6 +159,24 @@ counts, `demote-candidate` and `promoted-drift` from comparing each rule with
 its record. Promotion is CLI-only: an MCP tool that let an agent write its own
 permanent instructions would be a persistence path for a prompt injection.
 
+**Several agents, several branches, one store (Phase 5).** A store is shared
+by every session in a checkout and, through git, by every branch. Three
+mechanisms keep them from stepping on each other. *Handoffs per branch*: at
+schema 4 a capture on a branch other than the default branch writes
+`handoffs/<branch-slug>.md` rather than `handoff.md`, and a resume reads its
+own branch's handoff, falling back to `handoff.md` and saying which;
+`current.md` stays single because it is the project's focus. *Branch scope*: a
+record with `scope: branch` — a verification of work in progress, a jot a hook
+mined — applies only on the branch it was written on; elsewhere it leaves the
+packet's lists and `guard`'s live set and stays in `search`. *One writer at a
+time*: every writing command, writing hook and MCP writer takes an exclusive
+lock file, `private/.write-lock`, so two read-modify-write sequences cannot
+interleave and lose an update. The CLI and MCP wait 2 seconds and then refuse;
+a hook waits 0.5 seconds and then skips its firing, because a hook must never
+block its host. A lock older than 60 seconds, or (on POSIX) whose process is
+gone, is broken. Read paths — `search`, `guard`, the `SessionStart` and `PreToolUse`
+hooks — never wait.
+
 See [`record-schema.md`](record-schema.md) for the directory layout and the
 git-tracking policy.
 
@@ -176,7 +194,8 @@ hooks, in the order a session fires them:
 
 The baseline (plain files) must always work. Each higher layer is optional and
 must have a manual fallback to the layer below it. A read-only cloud agent that can
-only read files still resumes from `current.md`, `handoff.md`, `decisions/`,
+only read files still resumes from `current.md`, `handoff.md` (or its branch's
+`handoffs/<branch-slug>.md`), `decisions/`,
 `attempts/`, `traps/` and `questions/` (indexed by `known-traps.md` and
 `open-questions.md`). The search index sits above the CLI in the same way: a
 missing, stale or unreadable index, or a Python without `sqlite3`, means the
@@ -225,11 +244,13 @@ Everything is in the `breadcrumbs` package, standard library only.
 | `blockfiles.py` | Traps and questions as one file each (schema 3): reading them in the dict shape the block readers return, writing them, rebuilding `known-traps.md` / `open-questions.md` as indexes, adopting hand-written blocks, and migration step 3. |
 | `related.py` | `generated/related.json`: "see also" by pure overlap, written at reindex. |
 | `searchindex.py` | `index/search.sqlite`: build, freshness check, and the narrowed candidate set `search` uses when the index is fresh. |
-| `migrate.py` | Ordered, idempotent store-format steps, the manifest version write, the pre-migration backup. |
+| `migrate.py` | Ordered, idempotent store-format steps (2: inboxes, 3: trap/question files, 4: `handoffs/`), the manifest version write, the pre-migration backup. |
 | `inbox.py` | Jots: writing, listing, promotion, dropping. |
 | `lifecycle.py` | Record lifecycle (Phase 3): per-type TTLs and expiry, the packet's lifecycle and missing-evidence warnings, `verify --recheck`, near-duplicate similarity and the write gate, `supersedes` handling, clusters and `--merge`, contradiction rules and `generated/conflicts.json`, session rollup, and its `audit` findings. Reads the clock only through `cli._now()`. |
 | `lifecycle_cmds.py` | The CLI surface of `lifecycle.py`: `expired`, `questions`, `consolidate`, `rollup` and the `verify --recheck` runner, imported only when one of them runs. |
 | `promote.py` | The bridge to long-term memory (Phase 4): `promote` / `demote` and their CLI surface, the promoted-rules block in `CLAUDE.md` / `AGENTS.md` (rendering, reading, rewriting), the `promoted_*` fields and the trap-block bullet, auto-demote on retire (called from `set_record_status`), the "is it promoted" predicates the packet uses, and the `promoted-bloat` / `demote-candidate` / `promoted-drift` / `promote-candidate` audit checks and the doctor summary. |
+| `handoffs.py` | One handoff per branch (schema 4): the default-branch rule, which file a capture writes and a resume reads (and the label it reports), seeding a new branch handoff from `handoff.md`, and `prune handoffs`. |
+| `lock.py` | The store write lock: `store_lock(memory_dir, timeout)` over `private/.write-lock` (exclusive create, pid + time, stale after 60 s or a dead pid), an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts. |
 | `transcript.py` | Deterministic transcript mining into jot candidates. |
 | `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook, the `PreCompact` / `SubagentStop` hooks. |
 | `usage.py` | Local surfacing counts (`private/usage.json`). |

@@ -91,7 +91,7 @@ Seven static URIs and seven per-id templates (`STATIC_RESOURCES` /
 | URI | Returns | Backed by |
 |---|---|---|
 | `memory://current` | verbatim `current.md` | plain file |
-| `memory://handoff` | verbatim `handoff.md` | plain file |
+| `memory://handoff` | verbatim `handoff.md` — always that file, not the current branch's `handoffs/<slug>.md`; the packet names the one it read | plain file |
 | `memory://resume-packet` | rendered packet markdown (identical to `crumb resume`) | `build_resume_packet` + `render_packet_markdown` |
 | `memory://decisions` | markdown index of **active** decisions (`` `id` — title``) | `active_decisions` |
 | `memory://decisions/{id}` | verbatim text of one decision record | `find_record_by_id` |
@@ -144,9 +144,9 @@ current instruction, the code, the tests, or authoritative docs.
 |---|---|---|---|
 | `memory_search` | `(query, filters?, files?)` | `cli.search` | `{ok, query, filters, count, matches[]}` |
 | `memory_record` | `(type, payload)` | `cli.write_record` + validate gate, reindex | `{ok, id, type, path, confidence, supersedes?}` or `{ok:false, error}` |
-| `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?, allow_duplicate?, supersedes?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, expires_at, path, supersedes?}` or `{ok:false, error}` |
+| `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?, allow_duplicate?, supersedes?, scope?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, expires_at, path, supersedes?}` or `{ok:false, error}` |
 | `memory_note` | `(kind, text, fields?, tags?, allow_duplicate?, supersedes?)` | `cli.note` | `{ok, kind, ref|id, path, supersedes?}` or `{ok:false, error}` |
-| `memory_jot` | `(text, tags?, files?, local?, allow_duplicate?)` | `inbox.write_jot` + validate gate, reindex | `{ok, id, path, local, expires_at, source}` or `{ok:false, error}` |
+| `memory_jot` | `(text, tags?, files?, local?, allow_duplicate?, scope?)` | `inbox.write_jot` + validate gate, reindex | `{ok, id, path, local, expires_at, source}` or `{ok:false, error}` |
 | `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path}` or `{ok:false, error}` |
 | `memory_reindex` | `()` | `cli.reindex_projections` | `{ok, path}` |
 | `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
@@ -179,7 +179,33 @@ additionally means "healthy/safe" (`false` when problems/findings exist);
 `{ok:false, error}` too — including one the writer refuses outright (a newline in
 `title`, say), not just one the validate gate reverts. A near-duplicate refusal
 adds two keys — `{ok:false, error:"near-duplicate", duplicates, message}`; see
-below.
+*Near-duplicate refusal* below. A write refused because another writer holds
+the store is `{ok:false, error}` as well; see *Store write lock*.
+
+### Store write lock (the seven writers)
+
+`memory_record`, `memory_verify`, `memory_note`, `memory_jot`,
+`memory_inbox_promote`, `memory_mark_status` and `memory_reindex` run under the
+same store write lock as the writing CLI commands (`cli-spec.md` → *Store write
+lock*). A call waits up to 2 seconds for another writer — a CLI command, a
+hook, another MCP call in the same server — and then returns without writing:
+
+```jsonc
+{ "ok": false, "error": "store is locked by pid 4242; try again, or remove a stale lock" }
+```
+
+Retrying later is the answer. The read tools and every resource never wait.
+
+### Branch scope (`memory_jot`, `memory_verify`)
+
+`scope: "branch"` marks a jot or verification that holds only on the current
+branch (`cli-spec.md` → *Branch scope*): on any other branch it leaves the
+packet's lists and `memory_guard_before_action`'s live set (it is listed under
+`history`), and it stays in `memory_search`, whose matches carry `scope`.
+`memory_jot` defaults to `"project"`, as `crumb jot` does. A value other than
+`"project"` or `"branch"` is ignored (the default applies) rather than refused.
+`memory_record`'s `payload.scope` is free text as on `crumb remember`; the
+value `"branch"` has the same effect there.
 
 ### Near-duplicate refusal (the four writers)
 
@@ -263,6 +289,11 @@ are not the same kind of thing. Both pairs are deliberate:
 | `stale_after_days` | the **threshold** in force (default 21) |
 | `handoff_age_days` / `handoff_commit_distance` | the **measured** handoff age and commit distance; `null` when the timestamp is unparseable or there is no git repo |
 
+The handoff measured is the one the packet read: at schema 4, the current
+branch's `handoffs/<slug>.md` when it exists, else `handoff.md`.
+`project.handoff` names it — `handoffs/<slug>.md`, `handoff.md`, or
+`handoff.md (no branch handoff)` (`cli-spec.md` → *Branch handoffs*).
+
 The staleness pair was one field named `stale_days` until the round that added the
 ages: the threshold was data and the age was English inside
 a warning string. The `verification`/`verifications` pair is kept as-is — those keys
@@ -321,7 +352,7 @@ Mirrors the `remember` CLI surface:
   "confidence": "high",      // optional; omitted ⇒ "low" when no evidence; explicit
                              // medium/high without evidence is an error (validate §16.9)
   "privacy": "repo-safe",    // optional
-  "scope": "repo",           // optional
+  "scope": "project",        // optional; free text, "branch" = applies on this branch only
   "status": "active",        // optional
   "agent": "agent",          // optional; recorded in created_by/agent
   "supersedes": "dec_…",     // optional; the live record of this type it replaces
@@ -390,6 +421,9 @@ name rather than silently written.
   write-behavior — and each refreshes the `generated/` projections on success so
   the static snapshots never desync from the records. The four writers also
   share the CLI's near-duplicate gate.
+- **One writer at a time.** The writing tools take the store's write lock and
+  refuse with `{ok:false, error}` after 2 seconds rather than interleave with
+  a CLI command or hook writing the same store.
 - **Nothing runs a command.** No tool executes recorded evidence; rechecking a
   verification's commands is `crumb verify --recheck`, CLI-only.
 - **Nothing writes the agent's instructions.** No tool adds a rule to

@@ -31,6 +31,7 @@ writes outside the store.
   inbox/          .gitkeep      # committed jots (schema_version 2+)
   traps/          .gitkeep      # one file per trap (schema_version 3+)
   questions/      .gitkeep      # one file per question (schema_version 3+)
+  handoffs/       .gitkeep      # one handoff per non-default branch (schema_version 4+)
 
   generated/
     README.md
@@ -44,6 +45,7 @@ writes outside the store.
     inbox/                    # machine-local jots — never committed
     # usage.json              — local surfacing counts, written on demand
     # migrations/<stamp>/     — pre-migration store backup
+    # .write-lock             — present only while a command writes the store (WM-51)
 
   index/
     README.md
@@ -61,6 +63,7 @@ previous shape for one major version, so an un-migrated store keeps working.
 | 1 | The original layout. |
 | 2 | `inbox/` and `private/inbox/` — the jot tier (WM-03). Both are created empty; a store that never migrates simply has no jots. |
 | 3 | `traps/` and `questions/` — one file per trap and per question (WM-22), with the ids they already had; `known-traps.md` and `open-questions.md` become generated indexes (§10). Readers decide by the manifest's `schema_version`, never by what is on disk, so a schema-2 store keeps reading and writing blocks. |
+| 4 | `handoffs/` — one handoff per branch (WM-50). A capture on a branch other than the default branch writes `handoffs/<branch-slug>.md`; `handoff.md` stays the default branch's (§10). The step creates the directory only. A schema-3 store keeps one `handoff.md` for every branch. |
 
 ---
 
@@ -83,6 +86,7 @@ previous shape for one major version, so an un-migrated store keeps working.
 .project-memory/inbox/
 .project-memory/traps/
 .project-memory/questions/
+.project-memory/handoffs/
 .project-memory/aliases.txt
 .project-memory/generated/README.md
 .project-memory/index/README.md
@@ -142,7 +146,7 @@ The per-project control file. Carries the schema version (so `validate` can chec
 forward-compat) and the tracking policies chosen at `init`:
 
 ```yaml
-schema_version: 3
+schema_version: 4
 created_at: 2026-06-25T14:30:00-05:00
 project: <project-name>
 # Tracking policy chosen during `crumb init`:
@@ -181,7 +185,7 @@ Decisions and attempts have no lifespan: a decision holds until something
 supersedes it, and an attempt records something that happened. See §4 for what
 `expires_at` does to a record.
 
-`schema_version` is `3` for this build; see §1 for what each version changed.
+`schema_version` is `4` for this build; see §1 for what each version changed.
 `project` is auto-derived from the project root directory name. `created_at` is
 ISO-8601 with timezone.
 
@@ -204,7 +208,7 @@ updated_at: 2026-06-25T14:30:00-05:00
 created_by: <username>      # human username or agent label, auto-derived
 agent: unknown             # unknown | agent | human | claude-code | codex | cursor | gemini | opencode | other
 project: <project-name>    # auto-derived from repo/dir name
-scope: project             # project | feature | branch | local | private
+scope: project             # project | branch  (other text is accepted and read as project)
 branch: <current-branch>   # auto-derived from git HEAD
 commit: <short-sha>        # auto-derived from git HEAD
 dirty_files: []            # auto-derived from git status
@@ -268,6 +272,19 @@ by `crumb demote` or by retiring the record (§8, §13). Promotion is not a
 status: the record stays `active`, stays in `search` (marked `promoted`) and in
 `guard` at full weight, and leaves the resume packet's decision, attempt and
 trap lists, which count it instead. `promoted_to` is what every reader keys on.
+
+**`scope`** (WM-52) says whether a record is about the project or about the
+branch it was written on. `project` is the default. `branch` means the record
+describes that branch's state — the branch is the record's own `branch` field —
+and applies only while that branch is checked out: on any other branch it
+leaves the resume packet's decision, attempt, verification and inbox lists and
+`guard`'s live set (a match is shown under `history`), and it stays on disk and
+in `search`. Without git, on a detached HEAD, or with no recorded branch, a
+branch-scoped record counts everywhere. `crumb jot` and `crumb verify` take
+`--scope project|branch`; jots written by a hook (`source` other than `human` or
+`agent`) default to `branch`. `crumb remember --scope` accepts free text, and
+`validate` does not check the value; anything other than `branch` is read as
+`project`.
 
 ---
 
@@ -405,6 +422,7 @@ should be promoted into one. Type-specific frontmatter:
 | `expires_at` | Set automatically to `created_at + ttl_jot_days` (default 14; the older `jot_ttl_days` key is still read). An expired jot drops out of `crumb inbox` and the resume packet but stays on disk; `crumb expired` lists it. |
 | `fingerprint` | Content identity (sha1 of kind + title) for an automatically written jot, so a hook that mines the same source twice does not write the same candidate twice. Scoped per session: the same failure recurring in a *later* session is news again. Optional. |
 | `host_session` | The harness session that wrote it. What the Stop hook's extraction turn scopes its "what did this session produce" query to, so one terminal never asks an agent to triage another's findings. A subagent's candidates carry the *parent* session id, because the subagent's own id dies with it. Optional. |
+| `scope` | The standard key (§4), defaulted by `source`: `project` for a `human` or `agent` jot, `branch` for one a hook wrote. A branch-scoped jot from another branch is left out of the resume packet's *Inbox*. |
 
 A jot's `title` is its headline and its `## Note` is the body. They are the same
 string for a jot somebody typed, and different for a mined one, whose note holds
@@ -605,6 +623,22 @@ _Commit: <short-sha>_
 ## Verification Commands
 ## Stale If
 ```
+
+**Branch handoffs (schema 4, WM-50).** On a store at schema 4, `crumb capture
+session` on a branch other than the repository's default branch writes
+`handoffs/<branch-slug>.md` instead of `handoff.md`, in exactly this format.
+The default branch is `origin/HEAD`'s target when known, else a local `main`,
+else a local `master`; with none of these, without git, or on a detached HEAD,
+every capture writes `handoff.md`. The slug is the branch name slugified
+(`[a-z0-9]` runs joined by `-`) and cut to 60 characters, so
+`feature/parser-rewrite` → `handoffs/feature-parser-rewrite.md`, and two branch
+names with the same slug share one file. The first write of a branch handoff
+starts from `handoff.md`'s content, so its sections carry over until the
+capture replaces them. Readers (`resume`, `guard`, `audit`) use the current
+branch's file when it exists and `handoff.md` otherwise. Branch handoffs are
+inputs to `inputs_hash`. `current.md` has no per-branch form. `crumb prune
+handoffs` deletes one whose branch exists neither locally nor on `origin` and
+whose `_Last updated_` is at least 30 days old.
 
 ---
 

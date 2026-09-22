@@ -81,7 +81,7 @@ crumb init                      # locates bundled templates post-install
 
 **Versioning.** The package uses semantic versioning. `crumb --version`
 prints the package version *and* the **record `schema_version`** (the manifest's
-`schema_version:`, currently `3`). These are independent: the package version moves with the
+`schema_version:`, currently `4`). These are independent: the package version moves with the
 code; the record schema version moves only on a breaking change to the on-disk
 record format, and a package MAJOR bump accompanies it.
 
@@ -127,6 +127,7 @@ crumb questions --aging          # open questions older than the question TTL
 crumb verify --recheck "ver_…"   # rerun a verification's commands; record the result (asks first)
 crumb consolidate                # clusters of near-duplicate records; --merge them into one
 crumb rollup sessions --before 2026-09-01   # fold old machine session snapshots into one record
+crumb prune handoffs --dry-run   # branch handoffs whose branch is gone and which are 30+ days old
 crumb promote "dec_…"            # make a proven record a standing rule in CLAUDE.md / AGENTS.md
 crumb demote "dec_…"             # ...and take it back out (the record stays)
 crumb capture session            # record session end (git-prefilled); updates handoff + current
@@ -282,6 +283,10 @@ one. It prints each command and asks first; `--yes` skips the question, and
 without a terminal it refuses (exit 2) unless `--yes` is given. There is no MCP
 equivalent.
 
+`--scope branch` records a result that holds only on the current branch — a
+test that fails on work in progress, say. On any other branch it leaves the
+packet and `guard`'s live set; `search` still finds it.
+
 ### `crumb schema`
 
 ```bash
@@ -343,8 +348,17 @@ Completed** (`git log`), **Files Touched** (a one-line `git diff --shortstat`
 summary — `N files changed, +X/-Y`, not an inlined per-file list, so records stay
 small and the secret scanner never trips on path-shaped tokens), then asks only
 for narrative confirmation + a required **Next Action**. It writes the session record
-and refreshes `handoff.md` and `current.md`. `--fast` skips all prompts and any
+and refreshes the handoff and `current.md`. `--fast` skips all prompts and any
 LLM, writing a git snapshot + the one-line `--next`. No path requires an LLM.
+
+The handoff is per branch (schema 4): on the default branch (`origin/HEAD`, else
+`main`, else `master`) it is `handoff.md`; on any other branch it is
+`handoffs/<branch-slug>.md` — `feature/parser-rewrite` writes
+`handoffs/feature-parser-rewrite.md` — which starts from `handoff.md`'s content
+the first time. Two agents on two branches no longer overwrite each other's Next
+Action. `current.md` stays one file for the project. Without git, or with no
+`main`/`master`/`origin/HEAD` to tell branches apart, everything goes to
+`handoff.md` as before.
 
 The bare form prompts, so it needs a terminal. **To run it unattended**, supply
 every section you want on the command line — `--next` plus `--set "<heading>"
@@ -416,8 +430,13 @@ actionable outcomes first), and verification commands — followed by
   overlap heavily, written more than a week apart, neither superseding the
   other.
 
+The packet reads this branch's handoff when it has one, else `handoff.md`, and
+its Project line ends with which (`· handoff: handoffs/<slug>.md`, `· handoff:
+handoff.md`, or `· handoff: handoff.md (no branch handoff)`).
+
 A record past its `expires_at` is left out of the packet's lists (it stays on
-disk and in `search`). Current/handoff/active-decisions are prioritized over old session observations, and
+disk and in `search`), and so is a `scope: branch` record written on another
+branch. Current/handoff/active-decisions are prioritized over old session observations, and
 sections are capped then trimmed to stay within budget even with hundreds of
 records. The packet carries a source `commit`/`inputs_hash`/`generated_at` header so
 both `validate` and `audit` can detect drift. Raw transcripts are never included.
@@ -575,7 +594,9 @@ for a two-line observation — so observations at that size were simply not
 written down. A **jot** is that observation: one line, a TTL (14 days by
 default, `ttl_jot_days` in `manifest.yml` — the older `jot_ttl_days` still
 works), and no evidence rule. A near-verbatim repeat of a live jot is refused
-(exit 3) unless `--allow-duplicate`.
+(exit 3) unless `--allow-duplicate`. `--scope branch` ties it to the current
+branch: on another branch it drops out of the packet's *Inbox*. Jots the hooks
+write are branch-scoped by default; the ones you write are not.
 
 A jot is **searchable and never judged**. It rides the same corpus switch as an
 idea: `crumb search --type jot` finds it; `guard` never rests a verdict on it.
@@ -621,7 +642,30 @@ crumb-kit` — a build must never write its own format into a store that is ahea
 of it. Schema 3 moves every trap and open question out of `known-traps.md` /
 `open-questions.md` into a file of its own under `traps/` / `questions/`,
 keeping its id and every line, and turns the two files into generated indexes.
-Until a store migrates it keeps reading and writing the blocks.
+Until a store migrates it keeps reading and writing the blocks. Schema 4 adds
+`handoffs/` for one handoff per branch; a schema-3 store keeps a single
+`handoff.md`.
+
+### Branches and parallel sessions
+
+A store is shared by every session in the checkout and every branch in the
+repository. Three things keep them apart:
+
+- **One handoff per branch** (see `crumb capture session`). `crumb prune
+  handoffs [--dry-run]` deletes a branch handoff once its branch exists neither
+  locally nor on `origin` and it has not been updated for 30 days.
+- **Branch-scoped records.** `crumb jot --scope branch` and `crumb verify
+  --scope branch` (and `scope` on `memory_jot` / `memory_verify`) write a
+  record that applies only on the current branch. Elsewhere it leaves the
+  resume packet's lists and `guard`'s live set, and stays searchable.
+- **One writer at a time.** Commands that write the store take a lock file,
+  `.project-memory/private/.write-lock`. A second writer waits up to 2 seconds
+  and then exits 1 with `store is locked by pid N; try again, or remove a stale
+  lock`; a hook waits 0.5 seconds and then skips that firing rather than stall
+  the agent; an MCP writer returns `{ok: false, error}`. A lock older than 60
+  seconds, or (on POSIX) whose process is gone, is broken automatically.
+  `search`, `guard`, `show`, `validate` and `audit` never wait; `resume`,
+  `inbox` and `traps` do, because they can write.
 
 `usage` answers the question `audit`'s `[unreachable]` check cannot: not whether
 a record *could* be found, but whether it ever *was*. A record counts when it
@@ -915,8 +959,9 @@ writes `generated/resume-packet.md` and that file is **committed**, so an agent 
 cannot execute the CLI can still reorient by reading:
 
 1. `.project-memory/generated/resume-packet.md` — the pre-built bounded packet; then
-2. the plain canonical files directly — `current.md`, `handoff.md`,
-   `decisions/`, `attempts/`, `traps/`, `questions/`. `known-traps.md` and
+2. the plain canonical files directly — `current.md`, `handoff.md` (on a
+   feature branch, `handoffs/<branch-slug>.md` if it exists), `decisions/`,
+   `attempts/`, `traps/`, `questions/`. `known-traps.md` and
    `open-questions.md` are one-line-per-record indexes of the last two, each line
    naming the file to open (on a store still at `schema_version` 2 they hold the
    traps and questions themselves).
@@ -959,7 +1004,8 @@ automatically so it stays in step.)
 | `schema` (record contract introspection + template) | implemented |
 | `note question` / `note trap` / `note idea` (write-surface) | implemented |
 | `jot` / `inbox` / `inbox promote` / `inbox drop` (short-term tier) | implemented |
-| `migrate` (store-format upgrade, backed up and idempotent; schema 3 = one file per trap/question) | implemented |
+| `migrate` (store-format upgrade, backed up and idempotent; schema 3 = one file per trap/question, schema 4 = `handoffs/`) | implemented |
+| Branches and parallel sessions: one handoff per branch, `prune handoffs`, `--scope branch` on jots and verifications, the store write lock | implemented |
 | `usage` (local surfacing counts, `--never`) | implemented |
 | `retitle` (rewrite a record's title; id/slug/filename unchanged) | implemented |
 | `traps` (staleness + always-on context cost, `--stale`, `--confirm`) | implemented |
