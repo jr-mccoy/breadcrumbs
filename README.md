@@ -353,10 +353,13 @@ LLM, writing a git snapshot + the one-line `--next`. No path requires an LLM.
 
 The handoff is per branch (schema 4): on the default branch (`origin/HEAD`, else
 `main`, else `master`) it is `handoff.md`; on any other branch it is
-`handoffs/<branch-slug>.md` — `feature/parser-rewrite` writes
-`handoffs/feature-parser-rewrite.md` — which starts from `handoff.md`'s content
-the first time. Two agents on two branches no longer overwrite each other's Next
-Action. `current.md` stays one file for the project. Without git, or with no
+`handoffs/<branch-slug>.md` — `feature-x` writes `handoffs/feature-x.md`, and a
+branch whose name is not already its slug gets a short hash suffix
+(`feature/parser-rewrite` writes `handoffs/feature-parser-rewrite-<6 hex>.md`),
+so no two branches share a file. The first one on a branch starts with
+`handoff.md`'s Current Focus and nothing else. Two agents on two branches no
+longer overwrite each other's Next Action, and the output names the file
+written (`handoff: handoffs/… (updated)`). `current.md` stays one file for the project. Without git, or with no
 `main`/`master`/`origin/HEAD` to tell branches apart, everything goes to
 `handoff.md` as before.
 
@@ -646,6 +649,14 @@ Until a store migrates it keeps reading and writing the blocks. Schema 4 adds
 `handoffs/` for one handoff per branch; a schema-3 store keeps a single
 `handoff.md`.
 
+`usage` answers the question `audit`'s `[unreachable]` check cannot: not whether
+a record *could* be found, but whether it ever *was*. A record counts when it
+was shown — a packet printed or injected, a guard verdict, a hook advisory —
+and deliberately not when a write triggers a reindex, which would make the
+counts measure writes. The counts live in `private/usage.json` and are never
+committed: in frontmatter they would churn every record on every guard call, and
+in a committed file they would conflict on every merge.
+
 ### Branches and parallel sessions
 
 A store is shared by every session in the checkout and every branch in the
@@ -657,23 +668,19 @@ repository. Three things keep them apart:
 - **Branch-scoped records.** `crumb jot --scope branch` and `crumb verify
   --scope branch` (and `scope` on `memory_jot` / `memory_verify`) write a
   record that applies only on the current branch. Elsewhere it leaves the
-  resume packet's lists and `guard`'s live set, and stays searchable.
+  resume packet's lists, `guard`'s live set and the prompt hook's injections,
+  is not held against a similar record as a near-duplicate, and stays
+  searchable.
 - **One writer at a time.** Commands that write the store take a lock file,
   `.project-memory/private/.write-lock`. A second writer waits up to 2 seconds
   and then exits 1 with `store is locked by pid N; try again, or remove a stale
-  lock`; a hook waits 0.5 seconds and then skips that firing rather than stall
-  the agent; an MCP writer returns `{ok: false, error}`. A lock older than 60
-  seconds, or (on POSIX) whose process is gone, is broken automatically.
-  `search`, `guard`, `show`, `validate` and `audit` never wait; `resume`,
-  `inbox` and `traps` do, because they can write.
-
-`usage` answers the question `audit`'s `[unreachable]` check cannot: not whether
-a record *could* be found, but whether it ever *was*. A record counts when it
-was shown — a packet printed or injected, a guard verdict, a hook advisory —
-and deliberately not when a write triggers a reindex, which would make the
-counts measure writes. The counts live in `private/usage.json` and are never
-committed: in frontmatter they would churn every record on every guard call, and
-in a committed file they would conflict on every merge.
+  lock`; a hook waits 0.5 seconds and then skips its write rather than stall
+  the agent (the prompt hook still injects records); an MCP writer returns
+  `{ok: false, error}`. The holder refreshes the lock every 15 seconds; one
+  untouched for 60 seconds, or (on POSIX) whose process on this machine is
+  gone, is broken automatically. Only invocations that write wait: `resume`,
+  listings (`inbox`, `traps`, `consolidate` without `--merge`), `search`,
+  `guard`, `show`, `validate` and `audit` never do.
 
 ### `crumb scan-secrets` and `crumb traps`
 

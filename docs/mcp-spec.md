@@ -91,7 +91,7 @@ Seven static URIs and seven per-id templates (`STATIC_RESOURCES` /
 | URI | Returns | Backed by |
 |---|---|---|
 | `memory://current` | verbatim `current.md` | plain file |
-| `memory://handoff` | verbatim `handoff.md` — always that file, not the current branch's `handoffs/<slug>.md`; the packet names the one it read | plain file |
+| `memory://handoff` | the current branch's handoff, verbatim: at schema 4 on a feature branch `handoffs/<slug>.md` when it exists, else `handoff.md` — the file the packet is built from | plain file (`handoffs.read_path`) |
 | `memory://resume-packet` | rendered packet markdown (identical to `crumb resume`) | `build_resume_packet` + `render_packet_markdown` |
 | `memory://decisions` | markdown index of **active** decisions (`` `id` — title``) | `active_decisions` |
 | `memory://decisions/{id}` | verbatim text of one decision record | `find_record_by_id` |
@@ -146,7 +146,7 @@ current instruction, the code, the tests, or authoritative docs.
 | `memory_record` | `(type, payload)` | `cli.write_record` + validate gate, reindex | `{ok, id, type, path, confidence, supersedes?}` or `{ok:false, error}` |
 | `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?, allow_duplicate?, supersedes?, scope?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, expires_at, path, supersedes?}` or `{ok:false, error}` |
 | `memory_note` | `(kind, text, fields?, tags?, allow_duplicate?, supersedes?)` | `cli.note` | `{ok, kind, ref|id, path, supersedes?}` or `{ok:false, error}` |
-| `memory_jot` | `(text, tags?, files?, local?, allow_duplicate?, scope?)` | `inbox.write_jot` + validate gate, reindex | `{ok, id, path, local, expires_at, source}` or `{ok:false, error}` |
+| `memory_jot` | `(text, tags?, files?, local?, allow_duplicate?, scope?)` | `inbox.write_jot` + validate gate, reindex | `{ok, kind, id, path, local, expires_at, source, scope}` or `{ok:false, error}` |
 | `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path}` or `{ok:false, error}` |
 | `memory_reindex` | `()` | `cli.reindex_projections` | `{ok, path}` |
 | `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
@@ -194,16 +194,20 @@ hook, another MCP call in the same server — and then returns without writing:
 { "ok": false, "error": "store is locked by pid 4242; try again, or remove a stale lock" }
 ```
 
-Retrying later is the answer. The read tools and every resource never wait.
+When the holder is another MCP call in the same server process, the error
+reads `store is locked by another thread of this process; …`. Retrying later
+is the answer. The read tools and every resource never wait.
 
 ### Branch scope (`memory_jot`, `memory_verify`)
 
 `scope: "branch"` marks a jot or verification that holds only on the current
 branch (`cli-spec.md` → *Branch scope*): on any other branch it leaves the
 packet's lists and `memory_guard_before_action`'s live set (it is listed under
-`history`), and it stays in `memory_search`, whose matches carry `scope`.
-`memory_jot` defaults to `"project"`, as `crumb jot` does. A value other than
-`"project"` or `"branch"` is ignored (the default applies) rather than refused.
+`history`), is not a near-duplicate candidate for a write on that branch, and
+stays in `memory_search`, whose matches carry `scope`. `memory_jot` defaults to
+`"project"`, as `crumb jot` does, and its result echoes the `scope` written. Any
+other value is refused before anything is written:
+`{ok: false, error: "scope must be one of project, branch"}`.
 `memory_record`'s `payload.scope` is free text as on `crumb remember`; the
 value `"branch"` has the same effect there.
 
@@ -212,8 +216,8 @@ value `"branch"` has the same effect there.
 `memory_record`, `memory_verify`, `memory_note` and `memory_jot` apply the same
 gate as `crumb remember` / `verify` / `note` / `jot` (`cli-spec.md` →
 *Near-duplicate gate*): a new item whose similarity to a **live** item of the
-same type (active and unexpired; for a question, `open`) reaches 0.6 — 0.9 for a
-jot — is not written, and the call returns
+same type (active, unexpired and not scoped to another branch; for a question,
+`open`) reaches 0.6 — 0.9 for a jot — is not written, and the call returns
 
 ```jsonc
 {

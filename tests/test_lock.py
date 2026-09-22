@@ -25,6 +25,12 @@ import crumb  # noqa: E402
 from breadcrumbs import inbox, lock, mcp_core  # noqa: E402
 
 
+def _cli_module():
+    from breadcrumbs import cli
+
+    return cli
+
+
 def run(argv: list[str], stdin: str | None = None) -> tuple[int, str, str]:
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -213,25 +219,54 @@ class LockFixTests(unittest.TestCase):
                     self.assertFalse(lock._is_stale(lock.lock_path(mem)))
 
     def test_breaking_a_stale_lock_never_removes_a_fresh_one(self):
+        # The waiter judged an old lock stale, but by the time it may break it
+        # another waiter has put a fresh lock there: the re-check under the
+        # break file must leave that one alone.
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             path = lock.lock_path(mem)
             path.parent.mkdir(parents=True, exist_ok=True)
             fresh = f"{os.getppid()} {time.time():.3f} {lock._host()}\n"
             path.write_text(fresh, encoding="utf-8")
-            stale_owner = (12345, 1.0, lock._host())
-            real = lock._read_owner
-            calls = {"n": 0}
-
-            def fake(p):
-                calls["n"] += 1
-                # The waiter judged an old lock stale; by the time it moved the
-                # file aside, another waiter had put a fresh lock there.
-                return stale_owner if calls["n"] == 1 else real(p)
-
-            with mock.patch.object(lock, "_read_owner", side_effect=fake):
-                lock._break_stale(path)
+            lock._break_stale(path)
             self.assertEqual(path.read_text("utf-8"), fresh)
+            self.assertFalse(path.with_name(path.name + ".break").exists())
+
+    def test_only_one_waiter_breaks_at_a_time(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            path = lock.lock_path(mem)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            old = time.time() - 120
+            path.write_text(f"{os.getppid()} {old:.3f}\n", encoding="utf-8")
+            os.utime(path, (old, old))
+            breaker = path.with_name(path.name + ".break")
+            breaker.write_text("", encoding="utf-8")  # another waiter is breaking it
+            lock._break_stale(path)
+            self.assertTrue(path.exists(), "a second breaker must not act")
+            abandoned = time.time() - 60
+            os.utime(breaker, (abandoned, abandoned))
+            lock._break_stale(path)  # clears the abandoned break file…
+            lock._break_stale(path)  # …and the next attempt breaks the lock
+            self.assertFalse(path.exists())
+
+    def test_init_force_keeps_its_own_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            seen: list[bool] = []
+            real = _cli_module().try_reindex_projections
+
+            def spy(memory_dir, project_root):
+                seen.append(lock.lock_path(memory_dir).exists())
+                return real(memory_dir, project_root)
+
+            with mock.patch.object(_cli_module(), "try_reindex_projections", side_effect=spy):
+                code, _o, err = run(
+                    ["init", "--project", tmp, "--force", "--session-tracking", "full"]
+                )
+            self.assertEqual(code, 0, err)
+            self.assertEqual(seen, [True])
+            self.assertFalse(lock.lock_path(mem).exists(), "released at the end")
 
     def test_a_thread_timeout_does_not_blame_this_process(self):
         with tempfile.TemporaryDirectory() as tmp:

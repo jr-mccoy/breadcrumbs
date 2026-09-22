@@ -1653,7 +1653,10 @@ Four more, found while documenting it and fixed before the phase closed:
     correction write, so contention never costs the injection.
 11. **The holder heartbeats the lock and records its host.** A writer running
     past 60 s (a migration backup, a search-index build) kept losing its lock.
-    A pid is only checked on the host that wrote it.
+    A pid is only checked on the host that wrote it. Breaking a stale lock is
+    itself exclusive (a short-lived `.write-lock.break` file and a re-check
+    under it), so two waiters can never both proceed, and `init --force` keeps
+    its own lock file while it replaces the rest of the store.
 
 Notes for Phase 6: the lock means an eval harness that runs parallel sessions
 against one store will see skipped hook writes when they collide. Count them

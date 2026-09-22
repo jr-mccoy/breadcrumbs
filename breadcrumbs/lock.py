@@ -15,8 +15,10 @@ interleaving so that one silently undoes the other.
   `HEARTBEAT_SECONDS`, so a long writer (a migration backup, a search-index
   build) keeps it; a lock not touched for `STALE_SECONDS`, or whose pid is gone
   on this host (POSIX), is broken — a writer that crashed must not wedge the
-  store. Breaking is rename-then-verify, so two waiters that both judged the
-  same lock stale cannot also remove the fresh lock one of them just took.
+  store. Only one waiter at a time may break a lock (it holds a short-lived
+  `.write-lock.break` file while it re-checks and removes it), so two waiters
+  that both judged the same lock stale can never also remove the fresh lock one
+  of them has just taken.
 - **Across threads**, with an in-process lock per store.
 - **Re-entrant** within one thread: a command that takes the lock and then
   calls a writer that takes it again (every writer reindexes) does not
@@ -122,26 +124,37 @@ def _is_stale(path: Path) -> bool:
     return pid is not None and pid != os.getpid() and not _pid_alive(pid)
 
 
+# A breaker that crashed mid-break must not wedge breaking either; breaking
+# takes microseconds, so a break file this old is abandoned.
+_BREAK_STALE_SECONDS = 5.0
+
+
 def _break_stale(path: Path) -> None:
     """Remove a stale lock without ever removing a fresh one.
 
-    Two waiters can both judge the same lock stale. Rename it aside, then check
-    that what was moved is the lock that was judged; if the other waiter had
-    already replaced it with a fresh lock, put that one back.
+    Two waiters can both judge the same lock stale; if both simply deleted it,
+    the slower one would delete the fresh lock the faster one had just taken,
+    and both would proceed. So breaking is itself exclusive: a waiter must
+    create `.write-lock.break` first, then re-checks staleness *while holding
+    it* and only then removes the lock. A fresh lock taken meanwhile is seen as
+    fresh by that re-check and left alone.
     """
-    judged = _read_owner(path)
-    tomb = path.with_name(f"{path.name}.stale.{os.getpid()}.{threading.get_ident()}")
+    breaker = path.with_name(path.name + ".break")
     try:
-        os.replace(str(path), str(tomb))
-    except FileNotFoundError:
+        fd = os.open(str(breaker), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        with contextlib.suppress(OSError):
+            if time.time() - breaker.stat().st_mtime > _BREAK_STALE_SECONDS:
+                breaker.unlink()
         return
-    if _read_owner(tomb) != judged:
-        try:
-            os.link(str(tomb), str(path))
-        except OSError:
-            pass  # slot already retaken; the moved lock's owner will find it gone
-    with contextlib.suppress(FileNotFoundError):
-        tomb.unlink()
+    os.close(fd)
+    try:
+        if _is_stale(path):
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            breaker.unlink()
 
 
 def _acquire_file(path: Path, deadline: float) -> None:
@@ -152,7 +165,8 @@ def _acquire_file(path: Path, deadline: float) -> None:
         except FileExistsError:
             if _is_stale(path):
                 _break_stale(path)
-                continue
+                if not path.exists():
+                    continue  # broken (by us or another waiter): try at once
             if time.monotonic() >= deadline:
                 raise StoreLocked(_read_owner(path)[0]) from None
             time.sleep(_POLL_SECONDS)

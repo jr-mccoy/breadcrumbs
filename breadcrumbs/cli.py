@@ -547,6 +547,36 @@ def merge_json_file(path: Path, mutate) -> None:
 # --------------------------------------------------------------------------- #
 
 
+def _replace_store_contents(memory_dir: Path, staging: Path) -> None:
+    """`init --force`: replace everything in the store with `staging`'s contents,
+    except the write lock this very command is holding (WM-51).
+
+    Deleting the directory wholesale took `private/.write-lock` with it and left
+    the rest of `init` — the new scaffold, the integrations, the reindex —
+    running unlocked. The command holds the lock throughout, so the swap does
+    not need to be a single rename to be safe from other writers.
+    """
+    from breadcrumbs import lock as _lock
+
+    keep = _lock.lock_path(memory_dir)
+    for entry in list(memory_dir.iterdir()):
+        if entry == keep.parent:
+            for sub in list(entry.iterdir()):
+                if sub != keep:
+                    shutil.rmtree(sub) if sub.is_dir() else sub.unlink()
+            continue
+        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+    for entry in list(staging.iterdir()):
+        target = memory_dir / entry.name
+        if entry.is_dir() and target.is_dir():
+            for sub in list(entry.iterdir()):
+                sub.rename(target / sub.name)
+            entry.rmdir()
+        else:
+            entry.rename(target)
+    staging.rmdir()
+
+
 def copy_template_tree(dest: Path) -> None:
     """Copy templates/project-memory/** into dest."""
     if not TEMPLATE_DIR.is_dir():
@@ -712,8 +742,9 @@ def cmd_init(args: argparse.Namespace) -> int:
             shutil.rmtree(staging)
         raise
     if memory_dir.exists():
-        shutil.rmtree(memory_dir)
-    staging.rename(memory_dir)
+        _replace_store_contents(memory_dir, staging)
+    else:
+        staging.rename(memory_dir)
 
     block = gitignore_block(session_tracking, commit_generated)
     write_gitignore(root, block)

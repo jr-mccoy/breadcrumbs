@@ -278,8 +278,9 @@ branch it was written on. `project` is the default. `branch` means the record
 describes that branch's state — the branch is the record's own `branch` field —
 and applies only while that branch is checked out: on any other branch it
 leaves the resume packet's decision, attempt, verification and inbox lists and
-`guard`'s live set (a match is shown under `history`), and it stays on disk and
-in `search`. Without git, on a detached HEAD, or with no recorded branch, a
+`guard`'s live set (a match is shown under `history`), is not injected by the
+`UserPromptSubmit` hook, and is not a near-duplicate candidate for a record
+written on this branch; it stays on disk and in `search`. Without git, on a detached HEAD, or with no recorded branch, a
 branch-scoped record counts everywhere. `crumb jot` and `crumb verify` take
 `--scope project|branch`; jots written by a hook (`source` other than `human` or
 `agent`) default to `branch`. `crumb remember --scope` accepts free text, and
@@ -629,13 +630,15 @@ session` on a branch other than the repository's default branch writes
 `handoffs/<branch-slug>.md` instead of `handoff.md`, in exactly this format.
 The default branch is `origin/HEAD`'s target when known, else a local `main`,
 else a local `master`; with none of these, without git, or on a detached HEAD,
-every capture writes `handoff.md`. The slug is the branch name slugified
-(`[a-z0-9]` runs joined by `-`) and cut to 60 characters, so
-`feature/parser-rewrite` → `handoffs/feature-parser-rewrite.md`, and two branch
-names with the same slug share one file. The first write of a branch handoff
-starts from `handoff.md`'s content, so its sections carry over until the
-capture replaces them. Readers (`resume`, `guard`, `audit`) use the current
-branch's file when it exists and `handoff.md` otherwise. Branch handoffs are
+every capture writes `handoff.md`. The file name is the branch name slugified
+(`[a-z0-9]` runs joined by `-`) and cut to 60 characters — as is when that
+equals the branch name (`feature-x` → `handoffs/feature-x.md`), otherwise
+followed by `-` and the first 6 hex digits of the branch name's SHA-1
+(`feature/parser-rewrite` → `handoffs/feature-parser-rewrite-<6 hex>.md`), so
+two branches never share a file. The first write of a branch handoff carries
+over `handoff.md`'s *Current Focus* and nothing else. Readers (`resume`,
+`guard`, `audit`, `memory://handoff`) use the current branch's file when it
+exists and `handoff.md` otherwise. Branch handoffs are
 inputs to `inputs_hash`. `current.md` has no per-branch form. `crumb prune
 handoffs` deletes one whose branch exists neither locally nor on `origin` and
 whose `_Last updated_` is at least 30 days old.

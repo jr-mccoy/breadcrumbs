@@ -163,19 +163,25 @@ permanent instructions would be a persistence path for a prompt injection.
 by every session in a checkout and, through git, by every branch. Three
 mechanisms keep them from stepping on each other. *Handoffs per branch*: at
 schema 4 a capture on a branch other than the default branch writes
-`handoffs/<branch-slug>.md` rather than `handoff.md`, and a resume reads its
-own branch's handoff, falling back to `handoff.md` and saying which;
-`current.md` stays single because it is the project's focus. *Branch scope*: a
-record with `scope: branch` — a verification of work in progress, a jot a hook
-mined — applies only on the branch it was written on; elsewhere it leaves the
-packet's lists and `guard`'s live set and stays in `search`. *One writer at a
-time*: every writing command, writing hook and MCP writer takes an exclusive
+`handoffs/<branch-slug>.md` rather than `handoff.md` (a hash suffix keeps
+branches that slugify alike apart), and a resume reads its own branch's
+handoff, falling back to `handoff.md` and saying which. A new branch handoff
+inherits only `handoff.md`'s Current Focus, never another branch's Next
+Action; `current.md` stays single because it is the project's focus. *Branch
+scope*: a record with `scope: branch` — a verification of work in progress, a
+jot a hook mined — applies only on the branch it was written on; elsewhere it
+leaves the packet's lists, `guard`'s live set, the prompt hook's injection and
+the near-duplicate candidates, and stays in `search`. *One writer at a time*:
+every writing invocation — CLI, hook write, MCP writer — takes an exclusive
 lock file, `private/.write-lock`, so two read-modify-write sequences cannot
 interleave and lose an update. The CLI and MCP wait 2 seconds and then refuse;
-a hook waits 0.5 seconds and then skips its firing, because a hook must never
-block its host. A lock older than 60 seconds, or (on POSIX) whose process is
-gone, is broken. Read paths — `search`, `guard`, the `SessionStart` and `PreToolUse`
-hooks — never wait.
+a hook waits 0.5 seconds and then skips its write, because a hook must never
+block its host. The holder refreshes the file every 15 seconds; a lock
+untouched for 60 seconds, or whose process on this host is gone (POSIX), is
+broken — by one waiter at a time, holding a short break file while it re-checks,
+so two waiters cannot both take it. Read paths
+never wait: `resume`, the listings, `search`, `guard`, the `SessionStart` and
+`PreToolUse` hooks, and the prompt hook's injection.
 
 See [`record-schema.md`](record-schema.md) for the directory layout and the
 git-tracking policy.
@@ -249,8 +255,8 @@ Everything is in the `breadcrumbs` package, standard library only.
 | `lifecycle.py` | Record lifecycle (Phase 3): per-type TTLs and expiry, the packet's lifecycle and missing-evidence warnings, `verify --recheck`, near-duplicate similarity and the write gate, `supersedes` handling, clusters and `--merge`, contradiction rules and `generated/conflicts.json`, session rollup, and its `audit` findings. Reads the clock only through `cli._now()`. |
 | `lifecycle_cmds.py` | The CLI surface of `lifecycle.py`: `expired`, `questions`, `consolidate`, `rollup` and the `verify --recheck` runner, imported only when one of them runs. |
 | `promote.py` | The bridge to long-term memory (Phase 4): `promote` / `demote` and their CLI surface, the promoted-rules block in `CLAUDE.md` / `AGENTS.md` (rendering, reading, rewriting), the `promoted_*` fields and the trap-block bullet, auto-demote on retire (called from `set_record_status`), the "is it promoted" predicates the packet uses, and the `promoted-bloat` / `demote-candidate` / `promoted-drift` / `promote-candidate` audit checks and the doctor summary. |
-| `handoffs.py` | One handoff per branch (schema 4): the default-branch rule, which file a capture writes and a resume reads (and the label it reports), seeding a new branch handoff from `handoff.md`, and `prune handoffs`. |
-| `lock.py` | The store write lock: `store_lock(memory_dir, timeout)` over `private/.write-lock` (exclusive create, pid + time, stale after 60 s or a dead pid), an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts. |
+| `handoffs.py` | One handoff per branch (schema 4): the default-branch rule, the handoff file name (slug, plus a hash when the slug is not the branch name), which file a capture writes and a resume or `memory://handoff` reads (and the label it reports), seeding a new branch handoff with `handoff.md`'s Current Focus, and `prune handoffs`. |
+| `lock.py` | The store write lock: `store_lock(memory_dir, timeout)` over `private/.write-lock` (exclusive create; pid, time and host; a 15 s heartbeat; stale after 60 s untouched or a dead pid on this host; broken under an exclusive `.write-lock.break` with a re-check), an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts. Which CLI invocations take it is `cli._needs_lock`. |
 | `transcript.py` | Deterministic transcript mining into jot candidates. |
 | `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook, the `PreCompact` / `SubagentStop` hooks. |
 | `usage.py` | Local surfacing counts (`private/usage.json`). |

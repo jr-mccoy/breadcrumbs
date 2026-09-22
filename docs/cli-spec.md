@@ -86,7 +86,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `session` | `SessionStart` | — | Emits the resume packet as `additionalContext`. With `source: compact` it prepends what was in flight before the compaction: the last prompt, the records surfaced for it, and the mined candidates waiting in the inbox — and builds the packet with that last prompt as its task, so the sections are ordered by relevance to it (see `resume --task`). |
 | `guard` | `PreToolUse` | `Bash\|Edit\|Write\|MultiEdit\|Task\|Agent` | Cost-aware guard verdict. A subagent launch (`Task`/`Agent`) is scored on its launch prompt and **capped at `READ_FIRST`**: the launch is not itself irreversible, and the subagent's own calls hit this same hook. |
 | `capture` | `Stop` | — | Mines the transcript (always, as a side effect), then snapshots a session record or holds the stop once for the extraction turn. The extraction instruction includes one line saying a write refused with exit 3 is a near-duplicate, answered with `--supersedes <id>` or `--allow-duplicate`. |
-| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Captures a correction to `private/inbox/`. **Never blocks** — that would erase the prompt. |
+| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, leaving out branch-scoped records written on another branch, with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Captures a correction to `private/inbox/`. **Never blocks** — that would erase the prompt. |
 | `compact` | `PreCompact` | — | Mines the transcript and writes a marker for the next `SessionStart`. Emits nothing: this event's stdout never reaches the model. |
 | `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript, tagged `subagent` and `agent:<type>`. Does not hold the subagent. |
 
@@ -99,12 +99,14 @@ rather than masks. Bounded at 10 per firing and deduped by fingerprint within a
 session. A cursor in `private/miner-cursor.json` stops a later firing re-mining
 what an earlier one already read.
 
-**The writing events share the store.** `capture`, `prompt`, `compact` and
-`subagent` run under the store's write lock (see
+**The writing events share the store.** `capture`, `compact` and `subagent`
+run under the store's write lock (see
 [Store write lock](#store-write-lock-built-wm-51)). If another writer holds it
 for more than 0.5 seconds, the event prints `{}`, exits 0 and does nothing —
-that firing's snapshot, mined candidates or prompt injection are skipped rather
-than the host being blocked. `session` and `guard` never take the lock.
+that firing's snapshot or mined candidates are skipped rather than the host
+being blocked. `prompt` takes the lock only around its correction jot, with
+the same 0.5-second wait; on contention the correction is skipped and the
+records are still injected. `session` and `guard` never take the lock.
 
 ### Integration flags on `init`
 
@@ -339,9 +341,10 @@ Behavior:
   `generated/related.json` and `generated/conflicts.json`, each written
   atomically (see `reindex`). `--fast`
   and `--task` are **print-only** and never overwrite them.
-- Exit codes: `0` on success, `1` when another writer holds the store's write
-  lock past the 2-second wait (`resume` is a writing command, `--fast` and
-  `--task` included), `2` when no `.project-memory/` store is present.
+- **Never waits on the write lock.** `resume` only regenerates projections,
+  each replaced atomically, and a session must not fail to start because
+  another session is capturing.
+- Exit codes: `0` on success, `2` when no `.project-memory/` store is present.
 
 ---
 
@@ -639,7 +642,7 @@ carry a severity:
   resolved before any "commit memory" workflow.
 - **warn** — flag for human review; never changes the exit code. Covers: stale
   handoff (age + commit-distance, measured on the handoff this branch reads —
-  see `resume`; the finding's path says `handoff.md` either way), branch mismatch (incl. detached HEAD),
+  see `resume`; the finding's path is that file), branch mismatch (incl. detached HEAD),
   aged-unresolved questions/decisions, expired + low-confidence records,
   **instruction-like text** (override phrasing such as "ignore the tests" — flagged,
   never executed: matched memory is data, not command), **generated-packet drift**
@@ -721,7 +724,8 @@ crumb jot "…" --allow-duplicate                            # jots take no --su
 ```
 
 `remember`, `note question|trap|idea`, `verify` and `jot` refuse a new record
-that nearly repeats a **live** record of the same type — active and unexpired;
+that nearly repeats a **live** record of the same type — active, unexpired and
+not scoped to another branch (see [Branch scope](#branch-scope-built-wm-52));
 for a question, `open`. The refusal is exit **3** with
 
 ```text
@@ -985,8 +989,8 @@ runs `crumb promote`, or an agent runs it where a person can see the command.
 ## Branch handoffs (built, WM-50)
 
 ```bash
-crumb capture session --next "…"   # on feature/parser-rewrite: writes handoffs/feature-parser-rewrite.md
-crumb resume                       # Project line ends: · handoff: handoffs/feature-parser-rewrite.md
+crumb capture session --next "…"   # on feature/parser-rewrite: writes handoffs/feature-parser-rewrite-<6 hex>.md
+crumb resume                       # Project line ends: · handoff: handoffs/feature-parser-rewrite-<6 hex>.md
 crumb prune handoffs --dry-run     # branch handoffs whose branch is gone, 30+ days old
 crumb prune handoffs [--json]
 ```
@@ -1003,30 +1007,35 @@ manifest's `schema_version`.
 - **Writing.** `capture session` — and so the Stop hook, which goes through it
   — writes `handoff.md` on the default branch and `handoffs/<branch-slug>.md`
   on any other. The slug is the branch name slugified (lowercased, each run of
-  characters outside `[a-z0-9]` becomes `-`) and cut to 60 characters:
-  `feature/parser-rewrite` → `handoffs/feature-parser-rewrite.md`. The file has
-  the same `_Last updated_` / `_Branch_` / `_Commit_` lines and sections as
-  `handoff.md` (see [`record-schema.md`](record-schema.md) §10). `--json`'s
-  `handoff` is the path actually written.
-- **The first write starts from `handoff.md`.** A branch handoff that does not
-  exist yet is seeded with `handoff.md`'s content, so the focus the branch was
-  cut from carries over; `--focus` and `--next` then replace *Current Focus*
-  and *Next Action* as on any capture. A capture that sets neither (a Stop-hook
-  snapshot) therefore keeps `handoff.md`'s.
+  characters outside `[a-z0-9]` becomes `-`) and cut to 60 characters. When
+  that is exactly the branch name, it is the file name as is (`feature-x` →
+  `handoffs/feature-x.md`); otherwise the first 6 hex digits of the branch
+  name's SHA-1 are appended (`feature/parser-rewrite` →
+  `handoffs/feature-parser-rewrite-<6 hex>.md`), so branches that slugify alike
+  — `feature/parser-rewrite` and `feature-parser-rewrite`, or names differing
+  only in case — never share a file. The file has the same `_Last updated_` /
+  `_Branch_` / `_Commit_` lines and sections as `handoff.md` (see
+  [`record-schema.md`](record-schema.md) §10). The human output names it
+  (`handoff: handoffs/<slug>.md (updated)` or `handoff: handoff.md (updated)`),
+  and `--json`'s `handoff` is its absolute path.
+- **The first write carries over the focus only.** A branch handoff that does
+  not exist yet starts from `handoff.md`'s *Current Focus* and nothing else, so
+  the focus the branch was cut from survives, while another branch's Next
+  Action is never passed off under this branch's fresh date, branch and commit
+  lines. `--focus` and `--next` then apply as on any capture.
 - **`current.md` stays single.** It is the project's focus, not a branch's;
   a capture on any branch updates it.
 - **Reading.** `resume` (and the packet the `SessionStart` hook injects),
   `guard` and `audit` read the current branch's handoff when it exists and
   `handoff.md` otherwise; the packet's Project line and `project.handoff` say
-  which (see `resume`). Branch handoffs are inputs to `inputs_hash`, like
-  `handoff.md`.
-- **Two branch names with the same slug share a file** (`feature/x` and
-  `feature-x` both use `handoffs/feature-x.md`).
+  which (see `resume`), and so does `memory://handoff`. Branch handoffs are
+  inputs to `inputs_hash`, like `handoff.md`.
 
 **`prune handoffs`** deletes a branch handoff only when both hold:
 
-- its file name matches the slug of no local branch and no `origin/…`
-  remote-tracking branch. These are the local refs; nothing is fetched, so a
+- its file name is the handoff name (as above, hash suffix included) of no
+  local branch and no `origin/…` remote-tracking branch. These are the local
+  refs; nothing is fetched, so a
   branch deleted on the remote still counts until `git fetch --prune` drops its
   tracking ref;
 - its `_Last updated_` is at least 30 days old. A file without a parseable
@@ -1061,16 +1070,19 @@ existing `branch` field, derived from git at write time.
   the same way, and any other value counts as `project`.
 - **Elsewhere.** A record is *branch-scoped elsewhere* when its `scope` is
   `branch`, it has a recorded branch, the current branch is known, and the two
-  differ. Such a record leaves the resume packet's *Active Decisions*, *Failed
-  Attempts To Avoid*, *Verifications* and *Inbox* sections, and `guard` lists
-  it under `history` instead of letting it drive the verdict.
+  differ. Such a record:
+  - leaves the resume packet's *Active Decisions*, *Failed Attempts To Avoid*,
+    *Verifications* and *Inbox* sections;
+  - is listed by `guard` under `history` instead of driving the verdict;
+  - is not injected by the `UserPromptSubmit` hook;
+  - is not a near-duplicate candidate: a similar record written on this branch
+    is not refused because of it, and nobody is told to supersede another
+    branch's record.
 - **Never elsewhere:** without git, on a detached HEAD, or when the record has
   no recorded branch (or `(no-git)`).
 - **Still visible:** the record stays on disk and in `search` (the `--json`
   match carries `scope`), `show`, `crumb inbox` (`--json` rows carry `scope`
-  and `branch`) and `expired`. The `UserPromptSubmit` hook selects through
-  `search`, so it can still inject one, tagged `written on another branch`.
-  The near-duplicate gate compares against it like any live record.
+  and `branch`) and `expired`. `jot --json` echoes the `scope` written.
 - `inbox promote` writes the durable record with the default `project` scope.
 
 ---
@@ -1085,33 +1097,50 @@ other.
 
 - **The lock file** is `.project-memory/private/.write-lock` (gitignored with
   the rest of `private/`), created with `O_CREAT | O_EXCL` and holding the
-  owner's pid and a Unix timestamp. It exists only while a writer holds it.
-  Within one process an in-process lock per store serialises threads, and the
-  lock is re-entrant within a thread.
-- **Stale locks are broken.** A lock older than 60 seconds, or — on POSIX —
-  whose pid no longer exists, is removed by the next writer that finds it.
-- **Commands that take it:** `remember`, `note`, `jot`, `inbox` (listing,
-  `promote` and `drop`), `verify`, `mark-status`, `retitle`, `traps`, `prune`,
-  `migrate`, `reindex`, `capture`, `resume`, `promote`, `demote`,
-  `consolidate` and `rollup` (`LOCKED_COMMANDS` in `breadcrumbs/cli.py`; a
-  command takes it for every form it has). Each waits up to 2 seconds, then
-  exits 1:
+  owner's pid, a Unix timestamp and the host name. It exists only while a
+  writer holds it. Within one process an in-process lock per store serialises
+  threads, and the lock is re-entrant within a thread.
+- **The holder keeps it fresh.** A heartbeat thread touches the file every 15
+  seconds while the lock is held, so a long writer (a migration backup, a
+  search-index build) keeps it.
+- **Stale locks are broken.** A lock is stale when its file has not been
+  touched (mtime, or the timestamp inside) for 60 seconds, or — only for a lock
+  written on this host, and only on POSIX — when its pid no longer exists. A
+  lock from another host (a store on a shared filesystem) is judged by age
+  alone. Breaking is exclusive: a waiter first creates
+  `private/.write-lock.break`, re-checks that the lock is still stale while
+  holding it, and only then removes it. A fresh lock another waiter took
+  meanwhile passes that re-check and is left alone, so two waiters cannot both
+  proceed. A break file left by a crashed waiter is ignored after 5 seconds.
+- **`init --force`** keeps its own lock file while it replaces everything else
+  in the store, so the rest of `init` (scaffold, integrations, reindex) still
+  runs locked.
+- **Which invocations take it** is decided per invocation (`_needs_lock` over
+  `LOCKED_COMMANDS` in `breadcrumbs/cli.py`): `init` (when a store exists),
+  `remember`, `note`, `jot`, `inbox promote` and `inbox drop`, `verify`,
+  `mark-status`, `retitle`, `traps --confirm`, `prune`, `migrate`, `reindex`,
+  `capture`, `promote`, `demote`, `consolidate --merge` and `rollup`. Each
+  waits up to 2 seconds, then exits 1:
 
   ```text
   CRUMB-ERROR: crumb jot: store is locked by pid 9502; try again, or remove a stale lock
   ```
 
-  Under `--json` that is `{ok: false, command, error}`. With no store, the
-  command runs without the lock and reports the missing store itself (exit 2).
-- **Commands that never wait:** everything else — `search`, `guard`, `show`,
+  Under `--json` that is `{ok: false, command, error}`. When the holder is
+  another thread of the same process, the message says `store is locked by
+  another thread of this process; …`. With no store, the command runs without
+  the lock and reports the missing store itself (exit 2).
+- **Invocations that never wait:** everything else — `resume` (see `resume`),
+  the `inbox`, `traps` and `consolidate` listings, `search`, `guard`, `show`,
   `validate`, `audit`, `scan-secrets`, `doctor`, `usage`, `expired`,
-  `questions`, `schema`, `init`, `mcp`.
-- **Hooks** take it per event, with a 0.5-second wait, and skip rather than
-  fail (see [Hook events](#hook-events)). The MCP writers wait 2 seconds and
-  return `{ok: false, error: "store is locked by pid N; …"}` (see
+  `questions`, `schema`, `mcp`.
+- **Hooks** skip rather than fail, after a 0.5-second wait: `capture`,
+  `compact` and `subagent` per event, `prompt` only for its correction jot (see
+  [Hook events](#hook-events)). The MCP writers wait 2 seconds and return
+  `{ok: false, error: "store is locked by pid N; …"}` (see
   [`mcp-spec.md`](mcp-spec.md)).
-- A lock left by a process that is still running (a hung writer) holds for up
-  to 60 seconds; deleting the file releases it.
+- A lock held by a process that is still running but stuck keeps its
+  heartbeat and is not broken; deleting the file releases it.
 
 ---
 
