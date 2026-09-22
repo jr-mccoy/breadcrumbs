@@ -14,8 +14,8 @@ taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual
 2. **Typed records over transcript sludge.** Memory is structured enough to
    validate, search, audit, and guard against.
 3. **Generated projections are not source of truth.** Resume packets, guard
-   pre-filters, related-record maps, search indexes, and vector stores are
-   rebuildable artifacts.
+   pre-filters, related-record maps, conflict lists, search indexes, and vector
+   stores are rebuildable artifacts.
 4. **Memory is advisory.** Current user instruction, code, tests, build output, and
    authoritative docs outrank memory.
 5. **Status beats silent edits.** Use `active`, `superseded`, `stale`, `disputed`,
@@ -44,7 +44,8 @@ taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual
 6. If memory conflicts with reality, mark it `disputed` or `stale` and link
    evidence.
 7. If a decision changes, create a **new** decision and set the old one to
-   `superseded` (with `superseded_by`).
+   `superseded` (with `superseded_by`). `--supersedes <old-id>` on the writer
+   does both in one step.
 8. If a failed attempt becomes newly viable, update its status or create a new
    attempt/decision explaining why conditions changed.
 
@@ -58,18 +59,19 @@ taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual
 | Handoff | What the next session does first | `handoff.md` | until resumed/superseded | yes |
 | Decision | What was decided/rejected and why | `decisions/YYYY-MM-DD-slug.md` | long-lived | yes |
 | Attempt | What was tried, outcome, do-not-retry | `attempts/YYYY-MM-DD-slug.md` | long-lived if instructive | yes |
-| Verification | A finding about reality: "I checked X; here is its state" | `verifications/YYYY-MM-DD-slug.md` | until the subject changes | yes |
-| Trap | Reusable warning about fragile areas | `traps/slug.md` (schema 3; a block in `known-traps.md` before) | long-lived, reviewed | yes |
-| Open question | Unresolved ambiguity or blocker | `questions/slug.md` (schema 3; a block in `open-questions.md` before) | until resolved | yes |
+| Verification | A finding about reality: "I checked X; here is its state" | `verifications/YYYY-MM-DD-slug.md` | settled: expires after `ttl_verification_days` (90); actionable: until rechecked | yes |
+| Trap | Reusable warning about fragile areas | `traps/slug.md` (schema 3; a block in `known-traps.md` before) | long-lived; confirm within `ttl_trap_days` (180) | yes |
+| Open question | Unresolved ambiguity or blocker | `questions/slug.md` (schema 3; a block in `open-questions.md` before) | until resolved; aging after `ttl_question_days` (45) | yes |
 | Idea | Potential future direction | `ideas/YYYY-MM-DD-slug.md` | reviewed periodically | yes |
 | Session | What happened in one work session | `sessions/YYYY-MM-DD-tool-topic.md` | historical | yes (lower priority) |
 | Evidence | Pointers to commits/tests/docs/issues/PRs | each record's `evidence:` frontmatter | with its record | yes |
-| Jot | A short-term observation with a TTL: one line, no evidence rule | `inbox/YYYY-MM-DD-slug-xxxx.md` | `jot_ttl_days` (default 14) | yes, until promoted |
+| Jot | A short-term observation with a TTL: one line, no evidence rule | `inbox/YYYY-MM-DD-slug-xxxx.md` | `ttl_jot_days` (default 14) | yes, until promoted |
 | Mined candidate | A jot a hook wrote from a transcript or prompt — unconfirmed | `private/inbox/` | same TTL | **no** — a candidate, never source of truth until promoted |
 | Private note | Local-only personal/sensitive context | `private/` | local policy | local-only |
 | Resume packet | Bounded generated boot summary | `generated/resume-packet.md` | regenerated | no |
 | Guard pre-filter | Token/path index the `PreToolUse` hook reads before a risky call | `generated/guard-prefilter.json` | regenerated | no |
 | Related records | Up to three "see also" ids per live item, by shared files/tags/stems | `generated/related.json` | regenerated | no |
+| Possible contradictions | Pairs of live records that may argue with each other | `generated/conflicts.json` | regenerated | no |
 | Trap / question index | One line per trap or question, for a reader without the CLI | `known-traps.md`, `open-questions.md` (schema 3) | regenerated | no |
 | Search index | Inverted index that narrows `search`'s candidate set | `index/search.sqlite` | regenerated; machine-local | no |
 | Store aliases | The project's synonyms for the stemmer | `aliases.txt` | hand-maintained | yes (configuration) |
@@ -116,6 +118,25 @@ deliberately absent from `guard`'s: an idea is a proposal, exempt from the
 evidence rule, and `guard`'s scoring band is kind-agnostic, so a speculative note
 naming the right files would otherwise gate a real edit. See `cli-spec.md` →
 `search`, and Fixture 12.
+
+**Memory decays, and heuristics only ask (Phase 3).** Deciding that a claim is
+wrong is the author's job, so the lifecycle code hides, warns or refuses and
+never retires a record on its own. *Decay*: each type has a lifespan
+(`ttl_<type>_days` in the manifest). A jot or a settled verification carries an
+`expires_at`; past it the record keeps `status: active` and stays in `search`,
+but leaves the packet's lists and `guard`'s live set (it is shown as history).
+Things that must not silently vanish — an actionable verification, a trap, an
+open question, `current.md` — never expire; age turns them into a packet
+warning or an `--aging` listing instead. A cited file that is neither on disk
+nor in HEAD is another warning, never a scoring input. *Dedup*: the writers
+refuse a record that nearly repeats a live one of the same type (exit 3), and
+the author answers with `--supersedes <id>` or `--allow-duplicate`; `audit`
+and `consolidate` find the pairs that predate the gate, and `consolidate
+--merge` replaces them only when somebody names the ids. *Conflict*: two
+overlap rules write `generated/conflicts.json` at reindex, from `created_at`
+dates rather than the clock so every clone computes the same file, and the
+packet and `audit` word each hit as a question. The one deletion is `rollup
+sessions`, which folds machine snapshots into a single session record.
 
 See [`record-schema.md`](record-schema.md) for the directory layout and the
 git-tracking policy.
@@ -185,6 +206,8 @@ Everything is in the `breadcrumbs` package, standard library only.
 | `searchindex.py` | `index/search.sqlite`: build, freshness check, and the narrowed candidate set `search` uses when the index is fresh. |
 | `migrate.py` | Ordered, idempotent store-format steps, the manifest version write, the pre-migration backup. |
 | `inbox.py` | Jots: writing, listing, promotion, dropping. |
+| `lifecycle.py` | Record lifecycle (Phase 3): per-type TTLs and expiry, the packet's lifecycle and missing-evidence warnings, `verify --recheck`, near-duplicate similarity and the write gate, `supersedes` handling, clusters and `--merge`, contradiction rules and `generated/conflicts.json`, session rollup, and its `audit` findings. Reads the clock only through `cli._now()`. |
+| `lifecycle_cmds.py` | The CLI surface of `lifecycle.py`: `expired`, `questions`, `consolidate`, `rollup` and the `verify --recheck` runner, imported only when one of them runs. |
 | `transcript.py` | Deterministic transcript mining into jot candidates. |
 | `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook, the `PreCompact` / `SubagentStop` hooks. |
 | `usage.py` | Local surfacing counts (`private/usage.json`). |

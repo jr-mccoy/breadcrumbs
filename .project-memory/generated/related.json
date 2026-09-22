@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "9141409585b0",
+ "inputs_hash": "488a58914c14",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -105,7 +105,7 @@
   "dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps": [
    "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim",
    "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35"
   ],
   "dec_20260922_related-records-use-a-pure-overlap-score-so-the-committed": [
    "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
@@ -204,13 +204,13 @@
   ],
   "ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically": [
    "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re",
-   "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+   "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call"
   ],
   "ver_20260818_crumb-mark-status-can-retire-a-trap-in-0-1-11-fixed": [
    "ver_20260816_crumb-mark-status-can-retire-a-trap-fixed",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
   ],
   "ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
@@ -224,8 +224,8 @@
   ],
   "ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
-   "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call",
-   "dec_20260905_path-extraction-is-structural-and-a-mined-path"
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path",
+   "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call"
   ],
   "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re": [
    "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
@@ -233,8 +233,8 @@
    "ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically"
   ],
   "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02": [
-   "ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16",
    "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25"
   ],
   "ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16": [
@@ -243,9 +243,14 @@
    "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25"
   ],
   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25": [
+   "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35",
    "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+  ],
+  "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35": [
+   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+   "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim"
   ]
  },
  "skipped": null

@@ -143,10 +143,10 @@ current instruction, the code, the tests, or authoritative docs.
 | Tool | Signature | Wraps | Output |
 |---|---|---|---|
 | `memory_search` | `(query, filters?, files?)` | `cli.search` | `{ok, query, filters, count, matches[]}` |
-| `memory_record` | `(type, payload)` | `cli.write_record` + validate gate, reindex | `{ok, id, type, path, confidence}` or `{ok:false, error}` |
-| `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, path}` or `{ok:false, error}` |
-| `memory_note` | `(kind, text, fields?, tags?)` | `cli.note` | `{ok, kind, ref|id, path}` or `{ok:false, error}` |
-| `memory_jot` | `(text, tags?, files?, local?)` | `inbox.write_jot` + validate gate, reindex | `{ok, id, path, local, expires_at, source}` or `{ok:false, error}` |
+| `memory_record` | `(type, payload)` | `cli.write_record` + validate gate, reindex | `{ok, id, type, path, confidence, supersedes?}` or `{ok:false, error}` |
+| `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?, allow_duplicate?, supersedes?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, expires_at, path, supersedes?}` or `{ok:false, error}` |
+| `memory_note` | `(kind, text, fields?, tags?, allow_duplicate?, supersedes?)` | `cli.note` | `{ok, kind, ref|id, path, supersedes?}` or `{ok:false, error}` |
+| `memory_jot` | `(text, tags?, files?, local?, allow_duplicate?)` | `inbox.write_jot` + validate gate, reindex | `{ok, id, path, local, expires_at, source}` or `{ok:false, error}` |
 | `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path}` or `{ok:false, error}` |
 | `memory_reindex` | `()` | `cli.reindex_projections` | `{ok, path}` |
 | `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
@@ -177,7 +177,55 @@ a verdict. Do not "fix" the asymmetry by passing `include_ideas=True` into
 additionally means "healthy/safe" (`false` when problems/findings exist);
 `clean` is kept on the scan result for compatibility. A rejected write is
 `{ok:false, error}` too — including one the writer refuses outright (a newline in
-`title`, say), not just one the validate gate reverts.
+`title`, say), not just one the validate gate reverts. A near-duplicate refusal
+adds two keys — `{ok:false, error:"near-duplicate", duplicates, message}`; see
+below.
+
+### Near-duplicate refusal (the four writers)
+
+`memory_record`, `memory_verify`, `memory_note` and `memory_jot` apply the same
+gate as `crumb remember` / `verify` / `note` / `jot` (`cli-spec.md` →
+*Near-duplicate gate*): a new item whose similarity to a **live** item of the
+same type (active and unexpired; for a question, `open`) reaches 0.6 — 0.9 for a
+jot — is not written, and the call returns
+
+```jsonc
+{
+  "ok": false,
+  "error": "near-duplicate",
+  "duplicates": [ { "id": "dec_…", "title": "…", "similarity": 0.71 } ],  // up to 3, most similar first
+  "message": "looks like dec_… (0.71 similar) — pass --supersedes dec_… to replace it, or --allow-duplicate to write anyway"
+}
+```
+
+The message is the CLI's, flag spellings included. Over MCP the answers are:
+
+| Tool | Replace the duplicate | Write both |
+|---|---|---|
+| `memory_record` | `payload.supersedes: "<id>"` | `payload.allow_duplicate: true` |
+| `memory_verify` | `supersedes: "<id>"` | `allow_duplicate: true` |
+| `memory_note` | `supersedes: "<id>"` | `allow_duplicate: true` |
+| `memory_jot` | — | `allow_duplicate: true` |
+
+`supersedes` must name a live item of the same type; anything else is
+`{ok:false, error}` before anything is written. On success the new record
+carries `supersedes: [id]` (trap and question files do not carry the key), the
+old one is marked `superseded` with `superseded_by` (a question: `closed`), and
+the result echoes `supersedes`. An exact repeat of a question's text or a
+trap's slug keeps its own error (reopen the existing one with
+`memory_mark_status`). `memory_inbox_promote` is not gated: it goes through the
+internal writers, which write what they are given.
+
+**No lifecycle-command tools.** `crumb verify --recheck` has no MCP
+equivalent, on purpose: it runs shell commands taken from the store, which is a
+human-confirmed, CLI-only act. `crumb expired`, `crumb questions`, `crumb
+consolidate` and `crumb rollup sessions` are CLI-only too. What they surface
+reaches an MCP client through the packet: `memory_build_resume_packet` and
+`memory://resume-packet` carry the lifecycle warnings (old actionable
+verifications, unconfirmed traps, an untouched `current.md`, cited files
+missing from HEAD, possible contradictions) and leave expired records out of
+their lists. `memory_search` matches carry an `expired` boolean, and
+`memory_guard_before_action` lists an expired match under `history`.
 
 **Paths are store-relative.** Every `path` a tool returns is relative to
 `.project-memory/` — `decisions/2026-07-24-x.md`, `open-questions.md`,
@@ -223,7 +271,12 @@ F1) — instead of mis-filing it as a decision/attempt. `status` is the **outcom
 outcome lives in an `outcome` frontmatter field. Searchable via
 `{type:"verification", status:"open"}` (the `status` filter matches the outcome)
 and surfaced in the resume packet's **Verifications** section. Goes through the
-same validate gate as `memory_record`, and reindexes on write.
+same validate gate as `memory_record`, and reindexes on write. A settled outcome
+(`fixed`, `not_applicable`) comes back with an `expires_at`
+(`ttl_verification_days`, default 90); an actionable one with `null`.
+Re-verifying a subject that already has a live verification is often refused
+as a near-duplicate: pass `supersedes` with the old verification's id so the new
+result replaces it.
 
 ### `memory_note`
 
@@ -236,7 +289,8 @@ write their own file (`questions/<slug>.md` / `traps/<slug>.md`, id `q_<slug>` /
 singleton index is rebuilt; on a schema-2 store they append a parse-verified
 block to the singleton file. idea passes the same validate gate as
 `memory_record`. Each call refreshes `generated/resume-packet.md`. Invalid writes
-are reverted.
+are reverted. `allow_duplicate` and `supersedes` answer a near-duplicate
+refusal as on the other writers; superseding a question closes the old one.
 
 ### `memory_record` payload
 
@@ -253,7 +307,9 @@ Mirrors the `remember` CLI surface:
   "privacy": "repo-safe",    // optional
   "scope": "repo",           // optional
   "status": "active",        // optional
-  "agent": "agent"           // optional; recorded in created_by/agent
+  "agent": "agent",          // optional; recorded in created_by/agent
+  "supersedes": "dec_…",     // optional; the live record of this type it replaces
+  "allow_duplicate": false   // optional; write despite a near-duplicate
 }
 ```
 
@@ -306,7 +362,10 @@ name rather than silently written.
 - **Writes go through validate.** `memory_record`, `memory_verify`, and
   `memory_mark_status` reuse the exact validate gate `remember` uses — one
   write-behavior — and each refreshes the `generated/` projections on success so
-  the static snapshots never desync from the records.
+  the static snapshots never desync from the records. The four writers also
+  share the CLI's near-duplicate gate.
+- **Nothing runs a command.** No tool executes recorded evidence; rechecking a
+  verification's commands is `crumb verify --recheck`, CLI-only.
 - **Secret-scan before commit.** `memory_scan_secrets` is available so an agent
   can check before any "commit memory" step (§2.6, §15, Fixture 6).
 - **No new identity scheme.** `find_record_by_id` and `find_item` use the same

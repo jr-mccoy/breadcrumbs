@@ -29,6 +29,12 @@ warning on aged questions and decisions, `search`/`guard` score aged records low
 
 Default output is human-readable Markdown / plain text.
 
+**Exit codes shared across commands:** `0` success, `1` the command failed
+(`CRUMB-ERROR: …` on stderr), `2` usage error or no `.project-memory/` store, `3`
+a writer (`remember`, `note`, `verify`, `jot`) refused a **near-duplicate** of a
+live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
+`guard` maps its verdicts to `0`/`10`/`15`/`20` instead (see `guard`).
+
 ---
 
 ## Command table
@@ -36,16 +42,16 @@ Default output is human-readable Markdown / plain text.
 | Command | Reads | Writes | Purpose | Phase |
 |---|---|---|---|---|
 | `init` | project root | `.project-memory/`, `manifest.yml`, `.gitignore` edits | Install memory layout; record session + generated-projection policy in `manifest.yml`. | **1 (built)** |
-| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash` such as `related.json`) whose stamped `inputs_hash` no longer matches the live records. | **2 (built)** |
-| `remember decision` | git state, user input | decision record | Capture a durable choice. | **3 (built)** |
-| `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. | **3 (built)** |
-| `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. Reindexes on write. | **built** |
+| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash` such as `related.json` and `conflicts.json`) whose stamped `inputs_hash` no longer matches the live records. | **2 (built)** |
+| `remember decision` | git state, user input | decision record | Capture a durable choice. Refuses a near-duplicate of a live decision (exit 3) unless `--supersedes ID` or `--allow-duplicate`. | **3 (built)** |
+| `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. Same near-duplicate gate as `remember decision`. | **3 (built)** |
+| `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns recorded command evidence instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). Reindexes on write. | **built** |
 | `reindex` | all canonical files | `generated/` projections, the trap/question indexes (schema 3), `index/search.sqlite` | Rebuild the generated projections from the records (mutations reindex automatically). `--search-index` builds the search index even below its size threshold — see `reindex` below. | **built** |
 | `capture session` | git state (log, status, diff --shortstat) | session record, handoff, current | Record session end; git-prefill body sections (Files Touched is a counts-only summary) over a bounded window (`since..HEAD`, capped at 20 commits) that the record names. `--fast` = git-only snapshot + one-line next action; `--next` + `--set` runs unattended without dropping narrative. | **3 (built)** |
 | `schema [<type>]` | (none) | record contract | Print body sections / vocab / rules from source constants. `--template <type>` emits a `remember` skeleton (a `verify` one for `verification`, a `crumb note …` one for `trap` and `question`). | **built** |
-| `note question\|trap\|idea` | user input, git state | a question / trap / idea record | Write-surface for the three kinds with no `remember` type; refreshes the resume packet. At schema 3 a trap is written to `traps/<slug>.md` and a question to `questions/<slug>.md`, through the same validate gate as any record; on a schema-2 store they are still blocks appended to `known-traps.md` / `open-questions.md`. | **built** |
+| `note question\|trap\|idea` | user input, git state | a question / trap / idea record | Write-surface for the three kinds with no `remember` type; refreshes the resume packet. At schema 3 a trap is written to `traps/<slug>.md` and a question to `questions/<slug>.md`, through the same validate gate as any record; on a schema-2 store they are still blocks appended to `known-traps.md` / `open-questions.md`. Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`); an exact repeat (same question text, same trap slug) keeps its own exit-1 "reopen it" error. | **built** |
 | `show <id>` | one record, trap, question or jot | the full text (read-only) | Print the body behind a one-line mention. Takes any id the tool prints — `dec_`/`att_`/`ver_`/`idea_`/`ses_`/`jot_`, `trap_…`, `q_…` (legacy `q:…` accepted) — and adds a `See also:` line from `generated/related.json`. Exit 1 with `CRUMB-ERROR` on an unknown id. See `show` below. | **built (WM-21)** |
-| `jot "<text>"` | user input, git state | a jot under `inbox/` or `private/inbox/` | The short-term tier: one observation, a TTL (`jot_ttl_days`, default 14), and **no evidence rule**. `--file PATH` becomes file evidence so the note can be found again; `--local` writes to `private/inbox/`, which is never committed and is where every automatic writer must put things. A jot is searchable and never reaches a `guard` verdict. | **built (WM-03)** |
+| `jot "<text>"` | user input, git state | a jot under `inbox/` or `private/inbox/` | The short-term tier: one observation, a TTL (`ttl_jot_days`, or the older `jot_ttl_days`; default 14), and **no evidence rule**. `--file PATH` becomes file evidence so the note can be found again; `--local` writes to `private/inbox/`, which is never committed and is where every automatic writer must put things. A jot is searchable and never reaches a `guard` verdict. A near-verbatim repeat of a live jot (similarity ≥ 0.9) is refused with exit 3 unless `--allow-duplicate` (no `--supersedes` on a jot). | **built (WM-03)** |
 | `inbox [--all] [--expired]` | `inbox/`, `private/inbox/` | listing (read-only) | Triage queue: live jots newest first, with id, age and source. | **built (WM-03)** |
 | `inbox promote <id> <type>` | one jot | a decision / attempt / verification / trap / question / idea, + the jot | Turn a jot into a durable record **through that type's normal writer**, so the evidence rule and the validate gate apply exactly as they would to a record written by hand. The jot's file evidence and tags carry over; the jot is marked `superseded` with `superseded_by`, never deleted. | **built (WM-03)** |
 | `inbox drop <id>` | one jot | status change | Retire a jot as noise (`rejected`). Kept as history; `prune jots` deletes. | **built (WM-03)** |
@@ -58,7 +64,12 @@ Default output is human-readable Markdown / plain text.
 | `scan-secrets` | committed memory | secret report | Scan committed memory for secret-like strings; non-zero on a hit. Run before committing memory. | **6 (built)** |
 | `mark-status <id> <status>` | one record, **one trap, or one open question** | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. A `trap_<slug>` or `q_<slug>` id (legacy `q:<slug>` accepted) resolves too. At schema 3 each is its own file, so its frontmatter `status` is edited like any record's; on a schema-2 store — or for a block somebody typed into a singleton since the last reindex — the block's `- Status:` bullet is edited in place (every other byte preserved). Retiring a trap drops it from the resume packet and the hook pre-filter and stops it driving a `guard` verdict; answering a question drops it from the packet, from `guard`'s open-blocker floor and from the aged-unresolved staleness warning. Both stay findable in `search` under their real status. Questions carry their own vocabulary (`open`/`answered`/`closed`) because the record words do not fit — the id decides which vocabulary applies, and a mismatch is rejected by name. A block with no `- Status:` bullet counts as `active` (trap) / `open` (question). | **built** |
 | `prune sessions` | `sessions/` | deletions + reindex | Delete old **machine** session snapshots (placeholder Next Action) beyond the newest `--keep N` (default 20). Human handoffs are never candidates; `--dry-run` lists. The Stop hook creates snapshots eagerly (an interrupted session is a handoff worth keeping) — retention is this separate, explicit act. | **built** |
+| `rollup sessions --before YYYY-MM-DD` | `sessions/` | one session record, deletions + reindex | Fold the machine snapshots created before the date (at least two) into one session record that supersedes them, then delete them. Human/agent sessions are never touched; `--dry-run` lists. See `rollup sessions` below. | **built (WM-35)** |
 | `prune jots` | `inbox/`, `private/inbox/` | deletions + reindex | Delete jots that are expired or retired **and** older than 30 days. An active, unexpired jot is never deleted however old the store is: it is still waiting for somebody to promote or drop it. `--dry-run` lists. | **built (WM-03)** |
+| `expired` | all records, both inboxes | listing (read-only) | Active records past their `expires_at`, oldest expiry first, machine-local jots included. See `expired` below. | **built (WM-30)** |
+| `questions [--aging]` | open questions | listing (read-only) | Open questions with their age, oldest first; `--aging` keeps those open longer than `ttl_question_days` (default 45). | **built (WM-30)** |
+| `consolidate [--type T]` | live records | listing (read-only) | Clusters of near-duplicate live records (connected components of the near-duplicate pairs). | **built (WM-33)** |
+| `consolidate --merge ID ID… --title "…"` | the named records | one merged record + status changes + reindex | Write one decision / attempt / verification / idea from the sources and mark every source `superseded`. See `consolidate` below. | **built (WM-33)** |
 | `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. | **built** |
 | `mcp serve\|register\|doctor` | `.mcp.json` | running server / registration / health | Run the MCP server, merge its `.mcp.json` entry, or report MCP wiring (`[mcp]` extra + registration). | **built** |
 | `hook session\|guard\|capture\|prompt\|compact\|subagent` | hook stdin payload | hook JSON on stdout (+ mined jots) | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve). Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). Re-running `init --with-hooks` also brings an entry **we own** up to the current matcher, which is how an existing install picked up `Task\|Agent` on the guard. The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. **Every event exits 0 and prints JSON**, whatever the payload. See the per-event table below. | **built** |
@@ -69,7 +80,7 @@ Default output is human-readable Markdown / plain text.
 |---|---|---|---|
 | `session` | `SessionStart` | — | Emits the resume packet as `additionalContext`. With `source: compact` it prepends what was in flight before the compaction: the last prompt, the records surfaced for it, and the mined candidates waiting in the inbox — and builds the packet with that last prompt as its task, so the sections are ordered by relevance to it (see `resume --task`). |
 | `guard` | `PreToolUse` | `Bash\|Edit\|Write\|MultiEdit\|Task\|Agent` | Cost-aware guard verdict. A subagent launch (`Task`/`Agent`) is scored on its launch prompt and **capped at `READ_FIRST`**: the launch is not itself irreversible, and the subagent's own calls hit this same hook. |
-| `capture` | `Stop` | — | Mines the transcript (always, as a side effect), then snapshots a session record or holds the stop once for the extraction turn. |
+| `capture` | `Stop` | — | Mines the transcript (always, as a side effect), then snapshots a session record or holds the stop once for the extraction turn. The extraction instruction includes one line saying a write refused with exit 3 is a near-duplicate, answered with `--supersedes <id>` or `--allow-duplicate`. |
 | `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Captures a correction to `private/inbox/`. **Never blocks** — that would erase the prompt. |
 | `compact` | `PreCompact` | — | Mines the transcript and writes a marker for the next `SessionStart`. Emits nothing: this event's stdout never reaches the model. |
 | `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript, tagged `subagent` and `agent:<type>`. Does not hold the subagent. |
@@ -132,7 +143,7 @@ namespaced enough to make a collision implausible.
 a later version might take, not as work in progress:
 
 ```text
-supersede <old-id> <new-id>   # sugar over `mark-status --superseded-by` (which is built)
+supersede <old-id> <new-id>   # sugar over `mark-status --superseded-by` / a writer's `--supersedes` (both built)
 dashboard | recent | where-was-i
 ```
 
@@ -209,6 +220,30 @@ Behavior:
 - **Computed staleness** (not just authored): handoff **age + commit-distance**,
   **aged-unresolved** questions/decisions (> `--stale-days`), **branch mismatch**
   (incl. detached HEAD), and **expired**/**low-confidence** records.
+- **Expired records leave the lists (WM-30).** A decision, attempt or
+  verification past its `expires_at` keeps `status: active` and stays on disk
+  and in `search`, but is dropped from the packet's list sections (the "expired
+  on …" staleness line still names an expired decision or attempt). `crumb
+  expired` lists them.
+- **Lifecycle warnings (WM-30, WM-31, WM-34)**, each kind capped separately:
+  - an actionable verification (`open`, `regressed`, `inconclusive`) whose
+    `updated_at` (else `created_at`) is at least `ttl_verification_days` (90)
+    old — `verification <id> is N days old; recheck it (\`crumb verify --recheck
+    <id>\`).` (up to 3);
+  - an active trap not confirmed — or, for a trap file never confirmed, not
+    written — within `ttl_trap_days` (180), pointing at `crumb traps --confirm`
+    and `crumb mark-status <id> stale` (up to 3);
+  - `current.md` unchanged for `ttl_current_days` (14). The age is taken from
+    the last git commit that touched the file (`0` when it has uncommitted
+    changes), or from its mtime when the store is not in git — a checkout
+    rewrites every mtime, so on a fresh clone mtime would say "today";
+  - a listed decision, attempt or verification citing `file`/`path` evidence
+    that is neither on disk nor in HEAD — `<id> cites <ref>, which is not in
+    HEAD — verify the record still applies.` (up to 5, then `(+N more …)`).
+    A `:line` suffix is stripped first; URLs, globs, absolute and `~` paths are
+    skipped. `guard` scoring does not use this;
+  - a possible contradiction from `generated/conflicts.json`'s rules (see
+    `reindex`), worded as a question (up to 3, then `(+N more …)`).
 - **A branch mismatch is only reported for memory that has not reached HEAD.**
   The handoff and every record carry the branch they were written on; the
   warning exists because that branch may describe code this checkout does not
@@ -261,8 +296,9 @@ Behavior:
   author's absolute host path.
 - Refreshes the store-global projections through the same reindex every mutation
   uses — `generated/resume-packet.md` (the committed cloud-fallback artifact under
-  the default policy), `generated/guard-prefilter.json` and
-  `generated/related.json`, each written atomically (see `reindex`). `--fast`
+  the default policy), `generated/guard-prefilter.json`,
+  `generated/related.json` and `generated/conflicts.json`, each written
+  atomically (see `reindex`). `--fast`
   and `--task` are **print-only** and never overwrite them.
 - Exit codes: `0` on success, `2` when no `.project-memory/` store is present.
 
@@ -327,7 +363,21 @@ Every mutation runs the same reindex; this command runs it on demand. In order:
    two clones would compute different relations for identical records. Stamped
    with `inputs_hash`, so `validate` and `audit` detect it going stale. Above
    2000 items the map is empty and `skipped` names the reason.
-4. **`index/search.sqlite`** — the disposable search index (see `search`). Built
+4. **`generated/conflicts.json`** (WM-34) — pairs of live records that may
+   argue with each other, `{_generated, inputs_hash, conflicts: [{rule, ids,
+   similarity, message}]}`. Two rules:
+   - `retry-after-do-not-retry` — an active attempt with a *Do Not Retry
+     Unless* section, and an active decision created after it whose *Decision*
+     section is at least 0.5 Jaccard-similar to the attempt's *Tried* section
+     (over specific stems), or that shares a declared file with it;
+   - `overlapping-decisions` — two active decisions at least 0.7 similar (the
+     near-duplicate measure, see below), created more than 7 days apart,
+     neither listing the other in `supersedes`.
+
+   Expired records take no part. It reads `created_at`, never the clock, so
+   every clone computes the same file. Stamped with `inputs_hash`, so
+   `validate` and `audit` detect it going stale, like `related.json`.
+5. **`index/search.sqlite`** — the disposable search index (see `search`). Built
    only when the indexable corpus (decisions, attempts, verifications, ideas and
    committed jots, in directories the freshness hash covers) holds at least
    `INDEX_MIN_CORPUS` (200) records; below that, a leftover index is deleted.
@@ -444,6 +494,11 @@ Behavior:
   fingerprint first, `inputs_hash` when that differs); a stale, absent or
   unreadable index — or a Python without `sqlite3` — is never used, and search
   falls back to the full scan.
+- **Expired records are still found.** A record past its `expires_at` keeps
+  its status and is searched like any other; the human line marks it
+  (`[active, expired]`, or `[fixed, expired]` for a verification, whose
+  bracket shows the outcome) and every `--json` match carries an `expired`
+  boolean.
 - `guard` is this same engine with a verdict on top plus a noise floor,
   so a `search` hit is the permissive case of a `guard` match.
 - Exit codes: `0` on success (including zero matches), `2` when no
@@ -476,6 +531,9 @@ Behavior (deltas from `search` — everything there applies here too):
   verdict. The routine store facts (fresh handoff age, aged records, low
   confidence, other-branch record lists) are read once per session in
   `resume`/`doctor`/`audit`, not once per edit.
+- **An expired record is history.** A match past its `expires_at` is listed
+  under `history` (context only), like a superseded one, and never drives the
+  verdict.
 - **Exit codes are verdict-mapped** so callers can script on the verdict
   without parsing output: `PROCEED` = 0, `READ_FIRST` = 10, `PAUSE` = 15,
   `ASK_HUMAN` = 20 (`>= 15` means a human belongs in the loop); `2` = usage
@@ -518,16 +576,28 @@ carry a severity:
   aged-unresolved questions/decisions, expired + low-confidence records,
   **instruction-like text** (override phrasing such as "ignore the tests" — flagged,
   never executed: matched memory is data, not command), **generated-packet drift**
-  (a committed projection — `generated/*.md`, or `related.json` — whose stamped
+  (a committed projection — `generated/*.md`, `related.json` or `conflicts.json` — whose stamped
   `inputs_hash` no longer matches the canonical inputs → regenerate), bloat
   (adapter files duplicating memory; over-budget packet), the validate-failing
   health conditions re-surfaced for one health view (missing evidence, invalid
   status, private-path violation, id/frontmatter disagreement),
   **`unadopted-block`** (at schema 3, a hand-written trap/question block in a
   singleton whose id already has a file with different content — merge it into
-  the file by hand, then delete the block), and **`aliases`** (a malformed line in
-  `aliases.txt`, which is ignored).
-- **info** — context note (e.g. `sessions/` growth → consider a rollup).
+  the file by hand, then delete the block), **`aliases`** (a malformed line in
+  `aliases.txt`, which is ignored), and three lifecycle checks over live
+  (active, unexpired) records:
+  - **`evidence-missing-file`** — a decision, attempt or verification cites
+    `file`/`path` evidence that is neither on disk nor in HEAD (same rules as
+    the packet warning in `resume`; up to 20 findings);
+  - **`possible-contradiction`** — a pair from the two `conflicts.json` rules
+    (see `reindex`; up to 10);
+  - **`near-duplicates`** — two live records of the same type at or above the
+    near-duplicate threshold (0.6; 0.9 for jots), with the commands to
+    supersede one or merge them (up to 10 pairs). A pair already reported as a
+    possible contradiction is not reported again here. A type with more than
+    2000 live items is not swept.
+- **info** — context note (e.g. `sessions/` growth → the note names `crumb
+  rollup sessions --before YYYY-MM-DD`, and `crumb prune sessions`).
 
 Exit codes: `1` when any **fail** finding is present (a secret), else `0`; `2` when no
 `.project-memory/` store is present.
@@ -552,6 +622,172 @@ false-positive controls (git SHAs, record ids, path- and CamelCase-shaped tokens
 are pinned by `tests/test_secrets.py`; known gaps are listed in
 [`security.md`](security.md) §2. Exit codes: `1` on any hit, `0` when clean, `2`
 when no store is present.
+
+---
+
+## Near-duplicate gate (built, WM-32)
+
+```bash
+crumb remember decision --title "…" … --supersedes dec_…   # replace that record
+crumb note trap "…" --allow-duplicate                      # write both
+crumb jot "…" --allow-duplicate                            # jots take no --supersedes
+```
+
+`remember`, `note question|trap|idea`, `verify` and `jot` refuse a new record
+that nearly repeats a **live** record of the same type — active and unexpired;
+for a question, `open`. The refusal is exit **3** with
+
+```text
+CRUMB-ERROR: crumb remember decision: looks like <id> (0.71 similar) — pass --supersedes <id> to replace it, or --allow-duplicate to write anyway
+```
+
+(a jot's says only `--allow-duplicate`). Up to three matches are named, most
+similar first. Under `--json` the refusal is `{ok: false, command, error:
+"near-duplicate", message, duplicates: [{id, title, similarity}], items}`
+(`items` aliases `duplicates`).
+
+- **Similarity** is Jaccard over the specific stems (the vocabulary `search`
+  scores on) of the title plus the section content (plus tags) — `0` unless the
+  two share at least 3 stems or have identical stem sets — plus 0.15 per
+  shared declared file and 0.1 per shared tag, that bonus capped at 0.2; the
+  total capped at 1.0. The threshold is 0.6 (0.9 for jots — a repeated
+  observation is itself a signal, so only a near-verbatim repeat is refused).
+  Sessions are never compared.
+- **`--supersedes ID`** names a live record of the same type that the new one
+  replaces, and skips the similarity check. The new record gets `supersedes:
+  [ID]` (decisions, attempts, verifications, ideas — trap and question files do
+  not carry the key), and the old one is marked `superseded` with
+  `superseded_by`; a question is marked `closed` with `superseded_by`, because
+  the question vocabulary has no `superseded`. An id that is unknown, of
+  another type, or already retired is refused before anything is written, with
+  exit 2 (a usage error) on every writer.
+- **`--allow-duplicate`** writes the record anyway.
+- An **exact repeat** — the same question text, the same trap slug — keeps its
+  existing exit-1 error (`… reopen it with \`crumb mark-status <id> open\``).
+- Internal writers (`inbox promote`, migrations, the transcript miner) are not
+  gated. The MCP writers are: see [`mcp-spec.md`](mcp-spec.md).
+
+Records that predate the gate are found by `audit` (`near-duplicates`) and
+grouped by `consolidate`.
+
+---
+
+## `verify --recheck` (built, WM-31)
+
+```bash
+crumb verify --recheck ver_20260801_unit-suite-open          # asks y/N per record
+crumb verify --recheck ver_… --recheck ver_… --yes           # runs without asking
+crumb verify --all --yes                                     # every active verification with a command
+```
+
+Reruns the `command`/`test` evidence a verification recorded and writes the
+result as a **new** verification. Each record's commands are printed first;
+without `--yes`, a terminal is asked `run these? [y/N]` per record, and with no
+terminal the command exits 2 having run nothing. There is no MCP equivalent, on
+purpose: running commands taken from the store is a human-confirmed, CLI-only
+act.
+
+- Each command runs with `shell=True` in the project root, with a 300-second
+  timeout.
+- The new verification has the same subject, `method: runtime`, outcome `fixed`
+  when every command exited 0 and `open` otherwise, the commands as `command`
+  evidence, and a `Notes` section with each command's exit code and its last 3
+  non-empty output lines — a line that looks like a secret is replaced by
+  `[line dropped: looked like a secret]`. The old record is marked `superseded`
+  by it. The near-duplicate gate does not apply.
+- `--all` takes every active verification that names a command. A named id that
+  is not a verification or has no command evidence is reported with a
+  `CRUMB-WARN` line and skipped.
+- Exit codes: `0` all recorded (a declined record counts as skipped, not
+  failed), `1` nothing to recheck or a new record could not be written, `2` no
+  store or no terminal without `--yes`. `--json` returns `{rechecked: [{ok, id,
+  new_id, outcome, runs: [{command, exit_code, tail}]}], summary: {rechecked,
+  fixed, open, skipped}}`.
+
+---
+
+## `expired` and `questions` (built, WM-30)
+
+```bash
+crumb expired [--json]              # active records past expires_at
+crumb questions [--aging] [--json]  # open questions with their age
+```
+
+Every type has a lifespan, set per store with `ttl_<type>_days` keys in
+`manifest.yml` (see [`record-schema.md`](record-schema.md) §3): jots 14 days,
+questions 45, verifications 90, traps 180, `current.md` 14. What reaching it
+does differs by type: a jot or a settled verification carries an `expires_at`;
+an actionable verification, a trap and `current.md` raise packet warnings (see
+`resume`); a question shows up under `questions --aging`. Decisions and attempts
+have no lifespan. Every age is measured through one clock, `cli._now()`.
+
+- **`expired`** lists every record whose `status` is still `active` and whose
+  `expires_at` has passed, oldest expiry first — including machine-local jots,
+  since it is a local listing. Expiry is decay, not retirement: the record stays
+  on disk and in `search`, and leaves the packet's lists and `guard`'s live set.
+  Still true? Record it again. No longer true? `crumb mark-status <id> stale`.
+  `--json`: `{expired: [{id, kind, title, expires_at, days_ago, path}]}`.
+- **`questions`** lists open questions, oldest first, marking those open longer
+  than `ttl_question_days` as `AGING`; `--aging` keeps only those. `--json`:
+  `{questions: [{id, question, opened, age_days, aging}], ttl_days}`.
+- Both are read-only. Exit codes: `0`, or `2` when no store is present.
+
+---
+
+## `consolidate` (built, WM-33)
+
+```bash
+crumb consolidate [--type decision] [--json]         # list clusters
+crumb consolidate --merge dec_… dec_… --title "…" [--set Rationale "…"] [--agent …]
+```
+
+Without `--merge`, lists clusters of near-duplicates: connected components of
+the pairs `audit`'s `near-duplicates` check finds, biggest first, with each
+pair's similarity (`--json`: `{clusters: [{kind, ids, titles, pairs}]}`).
+Nothing is merged automatically.
+
+`--merge` writes one record that replaces the named ones:
+
+- Only decisions, attempts, verifications and ideas, all of one type. Mixed
+  types, any other type, an unknown id, or a source that is already retired →
+  exit 2; fewer than two ids or no `--title` → exit 2.
+- Each body section is every source's non-empty text for that heading, in
+  created order, each prefixed `_(from <id>)_`. `--set HEADING TEXT`
+  (repeatable) replaces a heading outright.
+- Evidence and tags are the unions, `confidence` the lowest, and `supersedes`
+  lists every source. For verifications, `subject` is the title and
+  `outcome`/`method` come from the newest source.
+- The record passes the validate gate (exit 1 and nothing kept if it fails);
+  every source is then marked `superseded` with `superseded_by`, and the
+  projections are rebuilt. The output reminds you that the merged body is a
+  starting point to edit.
+
+---
+
+## `rollup sessions` (built, WM-35)
+
+```bash
+crumb rollup sessions --before 2026-09-01 --dry-run   # list what would be folded
+crumb rollup sessions --before 2026-09-01             # fold and delete
+```
+
+Folds the **machine snapshots** (sessions whose Next Action is the Stop hook's
+placeholder) created before the date into one session record, then deletes
+them. A session with a real Next Action — written by a person or an agent — is
+never a candidate, and neither is an earlier rollup. Fewer than two candidates
+is a no-op.
+
+- The record is titled `rollup: <first date>..<last date> (<N> sessions)`; its
+  *Work Completed* has one `- <date>: <text>` line per source, its *Next
+  Action* is `(rolled up)`, and `supersedes` lists the source ids.
+- It is dated and pinned — `created_at`, `updated_at`, `branch`, `commit` — to
+  the last snapshot it replaces. Stamped "now" it would become the newest
+  session record, which the Stop hook diffs from, and the commits since the last
+  kept snapshot would drop out of the next capture.
+- Exit codes: `0` (including nothing to roll up), `1` the record failed
+  validation (nothing deleted), `2` a `--before` that is not a `YYYY-MM-DD`
+  date, or no store. `--json`: `{rolled_up, ids, dry_run, id, path}` (`title`
+  instead of `id`/`path` on a dry run).
 
 ---
 

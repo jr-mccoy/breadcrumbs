@@ -126,11 +126,12 @@ def run_recheck(args: argparse.Namespace, memory_dir: Path, root: Path) -> int:
     """
     ids = None if args.recheck_all else list(args.recheck or [])
     targets, problems = lifecycle.recheck_targets(memory_dir, ids)
+    if not targets:
+        why = "; ".join(problems) or "no active verification names a command to rerun"
+        cli._emit_error(args, f"nothing to recheck: {why}")
+        return 1
     for problem in problems:
         cli._emit_warning(args, problem)
-    if not targets:
-        cli._emit_error(args, "nothing to recheck: no verification names a command to rerun")
-        return 1
     if not args.yes and not cli._interactive():
         cli._emit_error(
             args,

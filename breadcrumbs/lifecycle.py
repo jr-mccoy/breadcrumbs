@@ -333,6 +333,11 @@ def recheck_targets(memory_dir: Path, ids: list[str] | None) -> tuple[list, list
         if rec is None or rec.error or rec.rtype != "verification":
             problems.append(f"{rid}: no verification with that id")
             continue
+        if (rec.meta.get("status") or "active") != "active":
+            problems.append(
+                f"{rid}: already {rec.meta.get('status')} — recheck the record that replaced it"
+            )
+            continue
         if not cli._evidence_refs(rec, ("command", "test")):
             problems.append(f"{rid}: names no command evidence to rerun")
             continue
@@ -395,7 +400,11 @@ def recheck(memory_dir: Path, root: Path, rec, *, agent: str | None = None) -> d
         status="fixed" if ok else "open",
         method="runtime",
         note="\n".join(note_lines),
-        evidence=[{"type": "command", "ref": c} for c in commands],
+        evidence=[
+            e
+            for e in (rec.meta.get("evidence") or [])
+            if isinstance(e, dict) and e.get("type") in ("command", "test")
+        ],
         tags=[str(t) for t in (rec.meta.get("tags") or [])],
         agent=agent,
         supersedes=old_id,
@@ -572,8 +581,12 @@ def check_supersedes(memory_dir: Path, rtype: str, old_id: str | None) -> str | 
         return f"--supersedes {old_id}: no record with that id"
     if item["kind"] != rtype:
         return f"--supersedes {old_id}: that is a {item['kind']}, not a {rtype}"
+    # `find_item` reports the lifecycle status for every kind (a verification's
+    # outcome lives in `outcome`), so one check covers all: superseding an
+    # already-retired record would overwrite its `superseded_by` and orphan the
+    # record that replaced it first.
     live = ("open",) if rtype == "question" else ("active",)
-    if (item.get("status") or "") not in live and item["kind"] != "verification":
+    if (item.get("status") or "") not in live:
         return f"--supersedes {old_id}: already {item['status']}"
     return None
 

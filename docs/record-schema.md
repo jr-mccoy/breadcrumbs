@@ -34,8 +34,9 @@ projections and search index.
   generated/
     README.md
     resume-packet.md          # placeholder until the first resume/reindex
-    # guard-prefilter.json    — these two are not created by `init`; written by
+    # guard-prefilter.json    — these three are not created by `init`; written by
     # related.json            — the first `resume`/`reindex` (or any record write)
+    # conflicts.json
 
   private/
     README.md
@@ -101,7 +102,7 @@ previous shape for one major version, so an un-migrated store keeps working.
 Recorded in `manifest.yml` so every later command stays consistent:
 
 1. **`commit_generated_projections`** (default `true`). When `true`, the generated
-   projections (`generated/resume-packet.md`, `guard-prefilter.json`, `related.json`) are committed — this serves the "cloud
+   projections (`generated/resume-packet.md`, `guard-prefilter.json`, `related.json`, `conflicts.json`) are committed — this serves the "cloud
    agent with no CLI" user story (a read-only agent gets a pre-built catch-up
    file). Each Markdown projection carries a source commit/hash header so
    staleness is visible. Flip to `false` (`init --no-commit-generated`) to keep a
@@ -158,9 +159,26 @@ change what that store does:
 | Key | Default | Effect |
 |---|---|---|
 | `extraction_prompt` | `true` | The Stop hook may hold the stop once to ask for records. `false` leaves only the silent machine snapshot — it stops the *prompt*, not the transcript mining. |
-| `jot_ttl_days` | `14` | Days a jot stays listed before it expires. Unparseable values fall back to the default rather than failing a write. |
+| `jot_ttl_days` | `14` | The older spelling of `ttl_jot_days` (below). Still read; when both are set, `ttl_jot_days` wins. |
 | `capture_corrections` | `true` | The `UserPromptSubmit` hook writes a prompt that opens like a correction to `private/inbox/`. `false` turns that off. |
 | `subagent_extraction` | `false` | **Reserved.** Whether a finished subagent may be held for its own extraction turn. Nothing reads it yet; it waits on the prompt-fatigue field test in `open-questions.md`, and it defaults off because the parent's Stop hook already asks once per unit of work. |
+
+**Lifespans (WM-30).** One flat key per type, `ttl_<type>_days` (flat because
+the manifest reader parses flat `key: value` lines). A value that is
+unparseable, zero or negative falls back to the default rather than disabling
+decay or failing a write.
+
+| Key | Default | What reaching it does |
+|---|---|---|
+| `ttl_jot_days` | `14` | A jot's `expires_at` is set to `created_at` + this at write; an expired jot drops out of `crumb inbox` and the resume packet. |
+| `ttl_question_days` | `45` | An open question older than this is `AGING` in `crumb questions` (`--aging` lists only those). It stays open and listed. |
+| `ttl_verification_days` | `90` | A **settled** verification (`fixed`, `not_applicable`) gets `expires_at` = `created_at` + this at write. An actionable one (`open`, `regressed`, `inconclusive`) never expires; once its `updated_at` (else `created_at`) is this old the packet asks for a recheck. |
+| `ttl_trap_days` | `180` | An active trap not confirmed (`last_confirmed`) — or, never confirmed, not written — within this raises a packet warning. |
+| `ttl_current_days` | `14` | `current.md` unchanged this long raises a packet warning. The age is the last git commit touching it (`0` when it has uncommitted changes), or its mtime outside git. |
+
+Decisions and attempts have no lifespan: a decision holds until something
+supersedes it, and an attempt records something that happened. See §4 for what
+`expires_at` does to a record.
 
 `schema_version` is `3` for this build; see §1 for what each version changed.
 `project` is auto-derived from the project root directory name. `created_at` is
@@ -217,6 +235,26 @@ than given a writer — a second, hand-maintained copy of these pointers would h
 had no validator, no consumer, and no way to detect a dangling reference. Stores
 created by an older version can delete the file; nothing looks for it.
 
+**`supersedes` / `superseded_by`** link a record to the ones it replaces and
+back. `superseded_by` is set whenever a record is marked `superseded` (§8).
+`supersedes` is written by `--supersedes <id>` on `remember`, `note idea` and
+`verify` and the matching MCP parameters (the answer to a near-duplicate
+refusal; see `cli-spec.md` → *Near-duplicate gate*), by `verify --recheck`
+(the new verification supersedes the one it reran), by `consolidate --merge`
+(every source) and by `rollup sessions` (every folded snapshot). Trap and
+question files do not carry `supersedes`; the replaced one still gets
+`superseded_by`. WM-34's `overlapping-decisions` rule treats two decisions
+linked by `supersedes` as settled, not as a conflict.
+
+**`expires_at`** is when a record decays (WM-30). It is set at write for jots
+(`ttl_jot_days`) and for verifications with a settled outcome
+(`ttl_verification_days`), and is `null` otherwise. A record past it keeps
+`status: active` and stays on disk and findable by `search` (marked
+`expired`), but leaves the resume packet's list sections and `guard`'s live set
+— a match is shown under `history` instead of driving the verdict. `crumb
+expired` lists such records. Expiry is not a status and nothing rewrites the
+file: record the claim again if it still holds, or `mark-status` it `stale`.
+
 ---
 
 ## 5. Record identity (filename-canonical)
@@ -264,7 +302,7 @@ Most fields are machine-filled so a human is asked for almost nothing.
 | Population | Fields | Source |
 |---|---|---|
 | **Auto-derived** | `id`, `slug`, `created_at`, `updated_at`, `created_by`, `agent`, `project`, `branch`, `commit`, `dirty_files` | filename, system clock, git, environment |
-| **Defaulted** (overridable) | `status: active`, `confidence: medium`, `privacy: repo-safe`, `review_status: unreviewed`, `scope: project`, `tags: []`, `supersedes/superseded_by/expires_at: null` | constants |
+| **Defaulted** (overridable) | `status: active`, `confidence: medium`, `privacy: repo-safe`, `review_status: unreviewed`, `scope: project`, `tags: []`, `supersedes/superseded_by/expires_at: null` | constants; `expires_at` is computed for jots and settled verifications, `supersedes` from `--supersedes` and the lifecycle commands (§4) |
 | **Prompted** | `title`, the record body sections, optionally `tags` and `evidence` | interactive input |
 
 A routine `remember`/`capture` requires only a title and a few body lines.
@@ -346,7 +384,7 @@ should be promoted into one. Type-specific frontmatter:
 | Key | Meaning |
 |---|---|
 | `source` | Who or what wrote it: `human`, `agent`, `prompt`, `transcript`, `hook`. **Required** (validate §16.9c) — a hook-written candidate and a note somebody typed are read very differently by whoever triages the inbox. |
-| `expires_at` | Set automatically to `created_at + jot_ttl_days` (default 14). An expired jot drops out of `crumb inbox` and the resume packet but stays on disk. |
+| `expires_at` | Set automatically to `created_at + ttl_jot_days` (default 14; the older `jot_ttl_days` key is still read). An expired jot drops out of `crumb inbox` and the resume packet but stays on disk; `crumb expired` lists it. |
 | `fingerprint` | Content identity (sha1 of kind + title) for an automatically written jot, so a hook that mines the same source twice does not write the same candidate twice. Scoped per session: the same failure recurring in a *later* session is news again. Optional. |
 | `host_session` | The harness session that wrote it. What the Stop hook's extraction turn scopes its "what did this session produce" query to, so one terminal never asks an agent to triage another's findings. A subagent's candidates carry the *parent* session id, because the subagent's own id dies with it. Optional. |
 
@@ -424,6 +462,14 @@ or `--confidence low` (§16.9). It appears in the resume packet's **Verification
 section (actionable outcomes first) and is searchable with `crumb search --type
 verification --status open` (here `--status` filters on the outcome).
 
+**A settled verification expires; an actionable one asks to be rechecked.**
+`fixed` and `not_applicable` get `expires_at` = `created_at` +
+`ttl_verification_days` (90) at write — they are the findings that silently go
+stale. `open`, `regressed` and `inconclusive` never expire; once one is that
+old the packet warns and points at `crumb verify --recheck <id>`, which reruns
+its `command`/`test` evidence and writes a new verification (`method: runtime`,
+outcome `fixed` or `open`) that supersedes it.
+
 ### Trap record (`traps/<slug>.md`, schema_version 3+)
 
 ```markdown
@@ -438,7 +484,9 @@ verification --status open` (here `--status` filters on the outcome).
 Standard frontmatter with `type: trap` and the record status vocabulary (§8).
 One type-specific key, optional: **`last_confirmed`** (a date, placed after
 `expires_at`), the last time somebody checked the trap still holds — written by
-`crumb traps --confirm <id>`, read by `crumb traps --stale`. Write one with
+`crumb traps --confirm <id>`, read by `crumb traps --stale` and by the
+packet's `ttl_trap_days` warning (§3), which falls back to `created_at` for a
+trap never confirmed. Write one with
 `crumb note trap "<summary>" --area … --symptom … --why … --safe … --verify …`;
 `crumb schema trap --template` prints that skeleton. Only filled sections are
 written.
@@ -454,7 +502,10 @@ written.
 
 Standard frontmatter with `type: question` and the question vocabulary (§8,
 `open` by default). Write one with `crumb note question "<question>" --why …
---needs …` (`crumb schema question --template`).
+--needs …` (`crumb schema question --template`). An open question never
+expires; one open longer than `ttl_question_days` (45) is listed as aging by
+`crumb questions --aging`. Superseding a question (`--supersedes q_…`) marks
+the old one `closed` with `superseded_by`.
 
 Neither type is under the §16.9 evidence rule. The sections are the bullets
 the block format always had, one heading each; `Notes` holds whatever a
@@ -499,6 +550,15 @@ record — a summary line, not a per-file listing, so a large session cannot blo
 the record)
 and edited by the human. A `--fast` capture writes a minimal session record (git
 snapshot + "Next Action" only) and defers the narrative sections.
+
+**Rollup record (WM-35).** `crumb rollup sessions --before <date>` replaces two
+or more machine snapshots (placeholder Next Action) with one session record
+titled `rollup: <first date>..<last date> (<N> sessions)`: *Work Completed* holds
+one `- <date>: <text>` line per snapshot, *Next Action* is `(rolled up)`, and
+`supersedes` lists the snapshot ids, which are deleted. Its `created_at`,
+`updated_at`, `branch` and `commit` are copied from the last snapshot it
+replaces (the filename date is the day it was written), so it never becomes the
+newest session record the Stop hook diffs from.
 
 ### Handoff file
 
@@ -557,6 +617,7 @@ Rebuilt by every reindex; never a source of truth.
 | `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header. |
 | `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads. Unstamped. |
 | `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null \| reason}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
+| `generated/conflicts.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "conflicts": [{"rule", "ids", "similarity", "message"}]}` — pairs of live records that may contradict each other (WM-34). |
 | `index/search.sqlite` | never (gitignored) | The disposable search index. |
 
 **`related.json`** relates live items (status `active`; for questions, `open`)
@@ -567,6 +628,19 @@ machine-independent (no branch, clock or commit-distance decay), so every clone
 computes the same file. Above 2000 live items `related` is empty and `skipped`
 names the reason. `validate` and `audit` check its `inputs_hash` like the
 packet's.
+
+**`conflicts.json`** holds what two rules find among active, unexpired
+records. `retry-after-do-not-retry`: an attempt with a *Do Not Retry Unless*
+section and a decision created after it whose *Decision* section is at least 0.5
+similar to the attempt's *Tried* section (Jaccard over specific stems), or
+shares a declared file with it; `ids` is `[decision, attempt]`.
+`overlapping-decisions`: two decisions at least 0.7 similar by the
+near-duplicate measure, created more than 7 days apart, neither listing the
+other in `supersedes`. `similarity` is the text overlap (rule 1) or the
+near-duplicate score (rule 2). The file reads `created_at` dates and never the
+clock, so every clone computes the same file; `validate` and `audit` check its
+`inputs_hash`. The resume packet renders the first three as warnings and
+`audit` reports up to ten as `possible-contradiction`.
 
 **`index/search.sqlite`** is a plain SQLite inverted index (postings of specific
 stems, tag stems and files per record) over decisions, attempts, verifications,

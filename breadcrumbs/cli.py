@@ -3845,7 +3845,7 @@ def note(
     fields = fields or {}
     problem = _lifecycle.check_supersedes(memory_dir, kind, supersedes)
     if problem:
-        return {"ok": False, "error": problem}
+        return {"ok": False, "error": problem, "usage": True}
     # An exact repeat (same question text, same trap slug) has its own, more
     # useful refusal in `_note_write` — "reopen it with mark-status" — so the
     # similarity gate stands aside for it.
@@ -4154,7 +4154,7 @@ def cmd_note(args: argparse.Namespace) -> int:
         return _emit_duplicate(args, result)
     if not result.get("ok"):
         _emit_error(args, result.get("error", "note failed"))
-        return 1
+        return 2 if result.get("usage") else 1
 
     if section_notes:
         result["warnings"] = section_notes
@@ -4223,7 +4223,7 @@ def verify(
 
     problem = _lifecycle.check_supersedes(memory_dir, "verification", supersedes)
     if problem:
-        return {"ok": False, "error": problem}
+        return {"ok": False, "error": problem, "usage": True}
     if dedupe and not supersedes:
         dups = _lifecycle.find_near_duplicates(
             memory_dir,
@@ -4346,7 +4346,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return _emit_duplicate(args, result)
     if not result.get("ok"):
         _emit_error(args, result.get("error", "verify failed"))
-        return 1
+        return 2 if result.get("usage") else 1
 
     if args.json:
         _print_json(args, result)
@@ -4416,6 +4416,10 @@ def cmd_traps(args: argparse.Namespace) -> int:
         return 0
 
     stale_days = args.stale if args.stale is not None else None
+    if stale_days == -1:
+        from breadcrumbs import lifecycle as _lifecycle
+
+        stale_days = _lifecycle.ttl_days(memory_dir, "trap")
     rows = trap_report(memory_dir, stale_days=stale_days, status=args.status)
     total = sum(r["approx_tokens"] for r in rows)
     if args.json:
@@ -9190,8 +9194,8 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
 
     # known-traps.md growth. Unlike the packet, nothing bounds this file: traps
     # are appended and never age out, and every session loads all of them. The
-    # check names the report that makes retirement possible rather than asking
-    # for a rollup command that does not exist.
+    # check names the report that makes retirement possible — traps are
+    # retired one by one, never rolled up.
     # From schema 3 the file is a one-line-per-trap index, so measure what the
     # packet and the hooks actually carry: the active traps' own text.
     from breadcrumbs import blockfiles as _blockfiles
@@ -9217,9 +9221,9 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 }
             )
 
-    # sessions/ growth note. The advice is what a human can do today (promote the
-    # durable parts, prune the rest); no rollup command exists, so telling users to
-    # wait for one — as this note used to — is telling them to wait for nothing.
+    # sessions/ growth note. The advice is what a human can do today: promote the
+    # durable parts, then fold old machine snapshots into one record with
+    # `crumb rollup sessions` (WM-35) or drop them with `crumb prune sessions`.
     sess = memory_dir / "sessions"
     n = len(list(sess.glob("*.md"))) if sess.is_dir() else 0
     if n > SESSIONS_GROWTH_NOTE:
@@ -12073,11 +12077,11 @@ def _add_traps(sub, global_parser: argparse.ArgumentParser) -> None:
         "--stale",
         nargs="?",
         type=int,
-        const=TRAPS_STALE_DAYS_DEFAULT,
+        const=-1,  # "no DAYS given": the store's ttl_trap_days (WM-30)
         default=None,
         metavar="DAYS",
-        help=f"only traps not confirmed in DAYS (default {TRAPS_STALE_DAYS_DEFAULT}); "
-        "never-confirmed traps always qualify",
+        help=f"only traps not confirmed in DAYS (default: the store's ttl_trap_days, "
+        f"{TRAPS_STALE_DAYS_DEFAULT} unless set); never-confirmed traps always qualify",
     )
     p_traps.add_argument(
         "--status", choices=VALID_STATUS, default=None, help="only traps with this status"

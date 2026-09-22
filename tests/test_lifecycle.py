@@ -473,6 +473,75 @@ class NearDuplicateTests(unittest.TestCase):
                 self.assertEqual(lifecycle.near_duplicate_pairs(mem), [])
 
 
+class SupersedeGuardTests(unittest.TestCase):
+    def test_an_already_superseded_verification_cannot_be_superseded_again(self):
+        # It would overwrite `superseded_by` and orphan the first replacement.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            first = crumb.verify(mem, Path(tmp), "cache eviction", status="open")["id"]
+            second = crumb.verify(
+                mem, Path(tmp), "cache eviction", status="fixed", supersedes=first
+            )["id"]
+            code, _out, err = run_err(
+                [
+                    "verify",
+                    "cache eviction",
+                    "--status",
+                    "fixed",
+                    "--supersedes",
+                    first,
+                    "--project",
+                    tmp,
+                ]
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("already superseded", err)
+            self.assertEqual(crumb.find_record_by_id(mem, first).meta["superseded_by"], second)
+
+    def test_a_bad_supersedes_is_usage_error_on_every_writer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            for argv in (
+                ["note", "trap", "x y z", "--supersedes", "trap_nope"],
+                ["verify", "x", "--status", "fixed", "--supersedes", "ver_20200101_nope"],
+                [
+                    "remember",
+                    "decision",
+                    "--title",
+                    "x",
+                    "--confidence",
+                    "low",
+                    "--supersedes",
+                    "dec_20200101_nope",
+                ],
+            ):
+                with self.subTest(cmd=argv[0]):
+                    code, _out, _err = run_err([*argv, "--project", tmp])
+                    self.assertEqual(code, 2)
+
+    def test_recheck_of_a_retired_verification_names_the_reason(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            ev = [{"type": "command", "ref": "true"}]
+            first = crumb.verify(mem, Path(tmp), "suite passes", status="fixed", evidence=ev)["id"]
+            crumb.verify(
+                mem, Path(tmp), "suite passes", status="fixed", evidence=ev, supersedes=first
+            )
+            code, _out, err = run_err(["verify", "--recheck", first, "--yes", "--project", tmp])
+            self.assertEqual(code, 1)
+            self.assertIn("already superseded", err)
+
+    def test_traps_stale_uses_the_store_ttl(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            tid = crumb.note(mem, Path(tmp), "trap", "the daemon holds a lock")["id"]
+            _cli.set_trap_confirmed(mem, tid)
+            set_manifest(mem, "ttl_trap_days", "5")
+            with days_later(6):
+                code, out = run(["traps", "--stale", "--project", tmp, "--json"])
+                self.assertEqual([r["id"] for r in json.loads(out)["items"]], [tid])
+
+
 # --------------------------------------------------------------------------- #
 # WM-33 consolidation
 # --------------------------------------------------------------------------- #

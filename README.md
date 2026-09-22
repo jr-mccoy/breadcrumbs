@@ -121,6 +121,11 @@ crumb migrate                    # bring an older store up to this build's schem
 crumb usage --never              # which records nothing has ever surfaced
 crumb retitle "ses_…" "what that session was really about"   # fix a title that says nothing
 crumb traps --stale              # traps nobody has confirmed lately, and what they cost
+crumb expired                    # records past their expires_at (still on disk, out of the packet)
+crumb questions --aging          # open questions older than the question TTL
+crumb verify --recheck "ver_…"   # rerun a verification's commands; record the result (asks first)
+crumb consolidate                # clusters of near-duplicate records; --merge them into one
+crumb rollup sessions --before 2026-09-01   # fold old machine session snapshots into one record
 crumb capture session            # record session end (git-prefilled); updates handoff + current
 crumb resume                     # print a bounded resume packet with computed staleness
 crumb reindex                    # rebuild generated/ projections (mutations reindex automatically)
@@ -228,6 +233,15 @@ per-name limit. The full text stays in the record's `title` frontmatter, so
 nothing is lost. Records already on disk with longer names keep working — the
 cap applies when a name is generated, never when one is read.
 
+**A near-duplicate is refused.** `remember`, `note`, `verify` and `jot` compare
+a new record with the live records of its type (shared specific words, files and
+tags). One that nearly repeats an existing record is not written: the command
+exits **3** with `CRUMB-ERROR: … looks like <id> (0.71 similar) — pass
+--supersedes <id> to replace it, or --allow-duplicate to write anyway`.
+`--supersedes <id>` writes the new record and marks the old one `superseded`
+by it; `--allow-duplicate` keeps both (a jot takes only `--allow-duplicate`).
+The MCP writers take the same two options. `crumb audit` reports near-duplicates already in the store.
+
 The record's `agent` frontmatter says who wrote it. Without `--agent`, the CLI
 reads the environment (`CLAUDECODE`, `CURSOR_AGENT`, `CODEX_SANDBOX`, …) and
 records the harness it finds, or **`unknown`** when it finds none — it will not
@@ -253,6 +267,17 @@ and pollute those categories. `--status` is the outcome
 section (actionable outcomes first) and are searchable with `crumb search --type
 verification --status open` (here `--status` filters on the outcome). Mirrored
 over MCP as `memory_verify`.
+
+A `fixed` or `not_applicable` result expires after 90 days
+(`ttl_verification_days`): it leaves the packet's list and `guard`'s live set,
+and stays searchable. An actionable one never expires; after 90 days the packet
+asks for a recheck. `crumb verify --recheck <id>` (repeatable) or `--all`
+reruns the recorded `command`/`test` evidence in the project root and writes the
+result as a new verification (`fixed` if every command exited 0, else `open`,
+with exit codes and the last output lines in its notes) that supersedes the old
+one. It prints each command and asks first; `--yes` skips the question, and
+without a terminal it refuses (exit 2) unless `--yes` is given. There is no MCP
+equivalent.
 
 ### `crumb schema`
 
@@ -377,9 +402,19 @@ actionable outcomes first), and verification commands — followed by
 - **branch mismatch** (record/handoff branch ≠ current HEAD, incl. detached HEAD) —
   only for files that have not reached HEAD; a record committed here from a
   since-merged branch is provenance, not a warning;
-- **expired** (`expires_at`) and **low-confidence** records.
+- **expired** (`expires_at`) and **low-confidence** records;
+- **lifecycle nudges**: an actionable verification older than 90 days, a trap
+  nobody has confirmed in 180, a `current.md` unchanged for 14 (each
+  configurable, see *Lifecycle* below);
+- a record citing a file that is **neither on disk nor in HEAD** — it may
+  describe code that no longer exists;
+- **possible contradictions**: a decision written after an attempt that said
+  "do not retry" and doing much the same thing, or two live decisions that
+  overlap heavily, written more than a week apart, neither superseding the
+  other.
 
-Current/handoff/active-decisions are prioritized over old session observations, and
+A record past its `expires_at` is left out of the packet's lists (it stays on
+disk and in `search`). Current/handoff/active-decisions are prioritized over old session observations, and
 sections are capped then trimmed to stay within budget even with hundreds of
 records. The packet carries a source `commit`/`inputs_hash`/`generated_at` header so
 both `validate` and `audit` can detect drift. Raw transcripts are never included.
@@ -399,7 +434,8 @@ Mutations (`remember`, `note`, `verify`, `capture session`, `mark-status`, and
 their MCP equivalents) **reindex on write**, so `generated/resume-packet.md`
 never silently desyncs from the records. `crumb resume` and `crumb reindex` go
 through that same reindex — every projection (`resume-packet.md`, the hook's
-`guard-prefilter.json`, and `related.json`), each written atomically — and
+`guard-prefilter.json`, `related.json` and `conflicts.json`), each written
+atomically — and
 `crumb validate` **fails** on a stale projection with a `Run \`crumb reindex\``
 hint, so the trust primitive no longer certifies drift.
 
@@ -511,8 +547,8 @@ Two guarantees hold:
   stop-word filter strips generic tokens and a pure-text match needs at least two
   *specific* shared keywords; only file-path or tag/component hits qualify on their own.
 
-Superseded/rejected/stale records and resolved questions are demoted to a **history**
-note (mentioned, never treated as active). A stale or wrong-branch handoff surfaces the
+Superseded/rejected/stale records, records past their `expires_at`, and resolved
+questions are demoted to a **history** note (mentioned, never treated as active). A stale or wrong-branch handoff surfaces the
 same computed staleness warnings `resume` shows. Verdict aggressiveness is governed by
 named `GUARD_*` thresholds at the top of the guard section in `breadcrumbs/cli.py`, so it can
 be tuned from dogfood feedback without rearchitecting.
@@ -534,7 +570,9 @@ Every durable write asks for a title, body sections, and evidence or an explicit
 `--confidence low`. That is the right price for a decision and the wrong price
 for a two-line observation — so observations at that size were simply not
 written down. A **jot** is that observation: one line, a TTL (14 days by
-default, `jot_ttl_days` in `manifest.yml`), and no evidence rule.
+default, `ttl_jot_days` in `manifest.yml` — the older `jot_ttl_days` still
+works), and no evidence rule. A near-verbatim repeat of a live jot is refused
+(exit 3) unless `--allow-duplicate`.
 
 A jot is **searchable and never judged**. It rides the same corpus switch as an
 idea: `crumb search --type jot` finds it; `guard` never rests a verdict on it.
@@ -594,7 +632,7 @@ in a committed file they would conflict on every merge.
 
 ```bash
 python crumb.py scan-secrets                 # gate before committing memory
-python crumb.py traps --stale                # traps nobody has confirmed in 180 days
+python crumb.py traps --stale                # traps nobody has confirmed within ttl_trap_days (180)
 python crumb.py traps --confirm "trap_…"     # "still true", dated, in the trap's own file
 ```
 
@@ -615,6 +653,49 @@ confirmed:` bullet on a schema-2 store). Retire one with `crumb mark-status <id>
 stale`; it stays on disk for history and stops driving `guard`. `audit` raises
 `traps-growth` when the active traps' text outgrows its budget (on a schema-2
 store, the whole of `known-traps.md`).
+
+### Lifecycle: `crumb expired`, `questions`, `consolidate`, `rollup`
+
+```bash
+python crumb.py expired                          # active records past their expires_at
+python crumb.py questions --aging                # open questions older than 45 days
+python crumb.py consolidate                      # clusters of near-duplicates
+python crumb.py consolidate --merge dec_… dec_… --title "One account of the auth choice"
+python crumb.py rollup sessions --before 2026-09-01 --dry-run
+```
+
+Records go stale. Nothing is retired or merged automatically — expiry hides a
+record from the packet and `guard`, the rest are warnings — and the only
+command that deletes files is `rollup`, which only touches machine snapshots.
+
+**Every type has a lifespan**, set per store in `manifest.yml`:
+`ttl_jot_days` (14), `ttl_question_days` (45), `ttl_verification_days` (90),
+`ttl_trap_days` (180), `ttl_current_days` (14). A jot or a settled verification
+gets an `expires_at`; once past it, the record keeps its status and stays in
+`search`, but leaves the packet's lists and `guard`'s live set. `crumb expired`
+lists those. An actionable verification, an unconfirmed trap and an untouched
+`current.md` never expire — the packet warns about them instead. `crumb
+questions --aging` lists open questions past their lifespan. Decisions and
+attempts have no lifespan.
+
+**`consolidate`** groups near-duplicates `audit` finds into clusters.
+`--merge <id> <id>… --title "…"` writes one decision, attempt, verification or
+idea whose sections are each source's text in date order, tagged
+`_(from <id>)_` (`--set HEADING TEXT` replaces a section), with the sources'
+evidence and tags combined and their lowest confidence; every source is marked
+`superseded`. Edit the merged body before relying on it.
+
+**Contradictions** are reported, never resolved: a decision written after an
+attempt that said "do not retry" and doing much the same thing, or two live
+decisions that overlap heavily and were written more than a week apart. They
+are written to `generated/conflicts.json` at reindex and shown in the packet
+and in `audit` (`possible-contradiction`).
+
+**`rollup sessions --before <date>`** folds the machine session snapshots
+(placeholder Next Action) created before the date into one session record — a
+one-line summary per snapshot — and deletes them. Sessions somebody wrote are
+never touched. The rollup takes the date and commit of the last snapshot it
+replaces, so the Stop hook's next capture still diffs from the right commit.
 
 ## Integrations — make the store actually get used
 
@@ -820,7 +901,7 @@ automatically so it stays in step.)
 | `search` (deterministic keyword/tag/file, store aliases, `--explain`, disposable index past 200 records) | implemented |
 | `show` (full text of any id, with "see also") | implemented |
 | `guard` (deterministic ranking, §11 verdicts) | implemented |
-| `audit` (heuristic: secrets, instruction-like, drift, staleness, bloat) | implemented (**MVP-trust**) |
+| `audit` (heuristic: secrets, instruction-like, drift, staleness, bloat, missing cited files, near-duplicates, possible contradictions) | implemented (**MVP-trust**) |
 | `scan-secrets` (committed-memory secret gate) | implemented |
 | `schema` (record contract introspection + template) | implemented |
 | `note question` / `note trap` / `note idea` (write-surface) | implemented |
@@ -829,6 +910,7 @@ automatically so it stays in step.)
 | `usage` (local surfacing counts, `--never`) | implemented |
 | `retitle` (rewrite a record's title; id/slug/filename unchanged) | implemented |
 | `traps` (staleness + always-on context cost, `--stale`, `--confirm`) | implemented |
+| Lifecycle: per-type TTLs, `expired`, `questions --aging`, `verify --recheck`, near-duplicate gate (exit 3), `consolidate`, contradiction warnings, `rollup sessions` | implemented |
 | `pipx`/`pip` packaging (`crumb` console script, bundled templates) | implemented |
 | MCP server (`breadcrumbs-mcp`: 14 resources, 6 prompts, 13 tools) | implemented (**optional**) |
 | Integrations: `init` bootstrapper, `doctor`, `mcp`, `hook` (adapter + `.mcp.json` + hooks) | implemented |
