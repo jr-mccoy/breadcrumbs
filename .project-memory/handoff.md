@@ -1,14 +1,14 @@
 # Project Handoff
 
-_Last updated: 2026-09-22T17:51:34+00:00_
+_Last updated: 2026-09-22T18:53:06+00:00_
 _Branch: claude/agentic-memory-system-mybkpi_
-_Commit: 1669a96_
+_Commit: c367b90_
 
 ## Current Focus
 Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Next Action
-Start Phase 2 of docs/roadmap-working-memory.md with WM-20 (relevance-ordered resume packet), then WM-21 (crumb show) — the prompt hook's footer still points at 'crumb search --json' and should name 'crumb show' once it exists. Read §0.5 and §0.6 first: they list the fourteen places Phases 0 and 1 departed from the plan.
+Decide whether to migrate this repo's own .project-memory to schema 3 (guard said ASK_HUMAN; one `crumb migrate`). Then cut the 0.5.0 release per CLAUDE.md, or start Phase 3 (WM-30 typed TTL) from docs/roadmap-working-memory.md; read roadmap section 0.7 first.
 
 ## Blockers / Open Questions
 

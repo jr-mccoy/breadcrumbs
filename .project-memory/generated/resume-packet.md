@@ -1,21 +1,17 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 1f3ee4d | inputs_hash: 6b4fb99d24e1 | generated_at: 2026-09-22T18:43:57+00:00 -->
+<!-- source_commit: c367b90 | inputs_hash: 12bf0552484b | generated_at: 2026-09-22T18:53:06+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `1f3ee4d` · 99 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `c367b90` · 16 uncommitted file(s)
 
 ## Current Focus
 Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Next Action
-Start Phase 2 of docs/roadmap-working-memory.md with WM-20 (relevance-ordered resume packet), then WM-21 (crumb show) — the prompt hook's footer still points at 'crumb search --json' and should name 'crumb show' once it exists. Read §0.5 and §0.6 first: they list the fourteen places Phases 0 and 1 departed from the plan.
-
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- 1f3ee4d feat: phase 1 of the working-memory roadmap (capture everywhere)
+Decide whether to migrate this repo's own .project-memory to schema 3 (guard said ASK_HUMAN; one `crumb migrate`). Then cut the 0.5.0 release per CLAUDE.md, or start Phase 3 (WM-30 typed TTL) from docs/roadmap-working-memory.md; read roadmap section 0.7 first.
 
 ## Active Decisions
 - `dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our` — Equivalence is the one rule: indexed search must return exactly the full scan's matches and scores. Our own stems make that true by construction. Computing ubiquity over only the narrowed set changed scores. _inputs_hash reads every file, which cost as much as the scan the index saves.
@@ -105,7 +101,7 @@ _(… 4 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 35 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 35 days old with no update — is this still true?
 - active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 35 days old with no update — is this still true?
@@ -121,3 +117,4 @@ _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 38 days old with no update — is this still true?
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 38 days — did this ever get resolved?
 - possible drift: `ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25` recorded "Phase 2 of the working-memory roadmap (WM-20 to WM-25) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
+- possible drift: `ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02` recorded "Phase 0 of the working-memory roadmap (WM-01 migration, WM-02 usage, WM-03 inbox)" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.

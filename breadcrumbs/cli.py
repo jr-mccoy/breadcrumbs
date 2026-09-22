@@ -2636,8 +2636,8 @@ def set_record_status(
     rid = normalize_question_id(rid)
     rec = find_record_by_id(memory_dir, rid)
     if rec is None:
-        # Traps and open questions are `## ` blocks inside aggregate files, not
-        # one file per record, so neither ever resolved here — which left every
+        # Through schema 2 traps and open questions were `## ` blocks inside
+        # aggregate files, so neither ever resolved here — which left every
         # trap and every question permanently live, still scoring in `search`
         # and still driving `guard`, with no way to retire one but hand-editing
         # known-traps.md / open-questions.md.
@@ -4204,7 +4204,8 @@ def cmd_traps(args: argparse.Namespace) -> int:
             print(f"      {r['summary']}")
     print(
         "\nStill true? `crumb traps --confirm <id>`. "
-        'No longer? `crumb mark-status <id> resolved --reason "..."`.'
+        'No longer? `crumb mark-status <id> stale --reason "..."` '
+        "(or `rejected` if it was never true)."
     )
     return 0
 
@@ -7515,7 +7516,7 @@ def question_item_id(question: str) -> str:
     return f"{QUESTION_ID_PREFIX}{slug[:QUESTION_SLUG_CHARS].rstrip('-')}-{digest}"
 
 
-# Question ids were `q:<slug>` through 0.3.x and are `q_<slug>` from Phase 2 on
+# Question ids were `q:<slug>` through 0.2.x and are `q_<slug>` from Phase 2 on
 # (WM-21/WM-22). The colon was the only id in the store that was not a valid
 # filename or a clean URI path segment, and questions are about to become files
 # and `memory://questions/{id}` resources. The old spelling is still accepted
@@ -8921,10 +8922,17 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
     # are appended and never age out, and every session loads all of them. The
     # check names the report that makes retirement possible rather than asking
     # for a rollup command that does not exist.
+    # From schema 3 the file is a one-line-per-trap index, so measure what the
+    # packet and the hooks actually carry: the active traps' own text.
+    from breadcrumbs import blockfiles as _blockfiles
+
     traps_path = memory_dir / "known-traps.md"
     if traps_path.is_file():
         traps = [t for t in load_traps(memory_dir) if (t.get("status") or "active") == "active"]
-        toks = approx_tokens(read_text_lenient(traps_path)[0])
+        if _blockfiles.uses_files(memory_dir):
+            toks = sum(approx_tokens(f"## {t['heading']}\n{t['body']}") for t in traps)
+        else:
+            toks = approx_tokens(read_text_lenient(traps_path)[0])
         if toks > TRAPS_TOKEN_BUDGET:
             findings.append(
                 {
@@ -10481,12 +10489,25 @@ def doctor_report(root: Path) -> dict:
         elif st["state"] == "unreadable":
             add("search_index", False, "unreadable — run `crumb reindex --search-index`")
         else:
-            add(
-                "search_index",
-                True,
-                f"not built (the store is under {_searchindex.INDEX_MIN_CORPUS} records; "
-                "a full scan is fast at this size)",
+            n_indexable = sum(
+                1
+                for d in _searchindex._indexable_dirs(memory_dir, root)
+                for _ in (memory_dir / d).glob("*.md")
             )
+            if n_indexable >= _searchindex.INDEX_MIN_CORPUS:
+                add(
+                    "search_index",
+                    False,
+                    f"not built ({n_indexable} records; search is scanning them all) "
+                    "— run `crumb reindex`",
+                )
+            else:
+                add(
+                    "search_index",
+                    True,
+                    f"not built (the store is under {_searchindex.INDEX_MIN_CORPUS} records; "
+                    "a full scan is fast at this size)",
+                )
 
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))
     return {"checks": checks, "integrated": integrated, "store": store}
@@ -11570,12 +11591,14 @@ def _add_schema(sub, global_parser: argparse.ArgumentParser) -> None:
         "schema_type",
         nargs="?",
         metavar="<type>",
-        help="limit to one record type (decision|attempt|verification|session|idea)",
+        help="limit to one record type (decision|attempt|verification|session|idea|"
+        "jot|trap|question)",
     )
     p_schema.add_argument(
         "--template",
         action="store_true",
-        help="emit a copy-pasteable `crumb remember <type>` command skeleton",
+        help="emit a copy-pasteable command skeleton for <type> "
+        "(`crumb remember`, `crumb note`, `crumb verify` or `crumb jot`)",
     )
     p_schema.set_defaults(func=cmd_schema)
 
@@ -11886,7 +11909,8 @@ def _add_resume(sub, global_parser: argparse.ArgumentParser) -> None:
         "--task",
         default=None,
         metavar="TEXT",
-        help="resume FOR this task: scope likely-files to matching records; "
+        help="resume FOR this task: order every section by relevance to it (the "
+        "3 newest per section stay first) and scope likely-files to matching records; "
         "a task-scoped packet prints only and does not overwrite the committed snapshot",
     )
     p_resume.set_defaults(func=cmd_resume)

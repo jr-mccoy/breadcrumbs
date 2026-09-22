@@ -80,7 +80,7 @@ crumb init                      # locates bundled templates post-install
 
 **Versioning.** The package uses semantic versioning. `crumb --version`
 prints the package version *and* the **record `schema_version`** (the manifest's
-`schema_version: 1`). These are independent: the package version moves with the
+`schema_version:`, currently `3`). These are independent: the package version moves with the
 code; the record schema version moves only on a breaking change to the on-disk
 record format, and a package MAJOR bump accompanies it.
 
@@ -112,7 +112,8 @@ crumb remember decision          # capture a durable choice
 crumb verify "finding#1" --status fixed   # record a verification result (a finding about reality)
 crumb mark-status "dec_…" stale --reason "superseded by reality"   # record lifecycle mutation
 crumb mark-status "trap_…" stale --reason "fixed in 2.1"           # ...retire a trap the same way
-crumb mark-status "q:…" answered --reason "see dec_…"              # ...and answer an open question
+crumb mark-status "q_…" answered --reason "see dec_…"              # ...and answer an open question
+crumb show "dec_…"               # the full text behind any id the tool prints (+ "see also")
 crumb note question|trap|idea    # leave a note for the next agent (no hand-editing)
 crumb jot "flaky under -n auto"  # short-term note: a TTL, no evidence rule
 crumb inbox                      # triage the jots; promote the durable ones
@@ -124,6 +125,7 @@ crumb capture session            # record session end (git-prefilled); updates h
 crumb resume                     # print a bounded resume packet with computed staleness
 crumb reindex                    # rebuild generated/ projections (mutations reindex automatically)
 crumb search "auth middleware"   # deterministic keyword/tag/file lookup over records
+crumb search "login" --explain   # ...and show the stems the query became
 crumb guard "rewrite the auth middleware"   # warn before repeating a known mistake
 crumb audit                      # heuristic health/safety report (stale/unsafe/bloated)
 crumb scan-secrets               # block if committed memory holds token-like strings
@@ -258,13 +260,15 @@ over MCP as `memory_verify`.
 python crumb.py schema                       # the full record contract (human)
 python crumb.py schema attempt --json        # one record type, machine-readable
 python crumb.py schema attempt --template    # a copy-pasteable `remember` skeleton
+python crumb.py schema trap --template       # ...or a `crumb note trap` one
 ```
 
 `schema` prints the record contract — body sections per type, required/derived
 frontmatter, status/privacy/confidence vocabularies, and the evidence-or-low-
 confidence rule — straight from the source constants, with no `.project-memory/`
 required. `--template <type>` emits a fill-in command so an agent reads the
-contract once instead of probing `--help` repeatedly.
+contract once instead of probing `--help` repeatedly (`trap` and `question`
+templates are `crumb note …` commands, since that is how both are written).
 
 ### `crumb note question | trap | idea`
 
@@ -275,10 +279,29 @@ python crumb.py note idea "cache the resume packet" --set Idea "memoize across s
 ```
 
 `note` is the write-surface for the three record kinds that previously had no
-command: open questions, known traps, and ideas. `question`/`trap` append a
-parse-verified block to `open-questions.md` / `known-traps.md`; `idea` writes a
-validated record under `ideas/`. Each refreshes `generated/resume-packet.md` so
-the projection never lags the note. Mirrored over MCP as the `memory_note` tool.
+command: open questions, known traps, and ideas. `question`/`trap` write one
+validated file each — `questions/<slug>.md` (id `q_<slug>`) / `traps/<slug>.md`
+(id `trap_<slug>`) — and `open-questions.md` / `known-traps.md` are rebuilt as
+one-line-per-record indexes of them; on a store still at `schema_version` 2 they
+append a parse-verified block to those files instead (`crumb migrate` moves the
+blocks into files). `idea` writes a validated record under `ideas/`. Each
+refreshes `generated/resume-packet.md` so the projection never lags the note.
+Mirrored over MCP as the `memory_note` tool.
+
+### `crumb show`
+
+```bash
+python crumb.py show dec_20260625_repo-local-memory-source-of-truth
+python crumb.py show q_should-age-signals-gate-compliance --json
+```
+
+The resume packet and the hook injections carry one line per record; `show`
+fetches the rest. It takes any id the tool prints — a decision, attempt,
+verification, idea, session, jot, trap or question (`q:…` still accepted) —
+prints the file, and ends with a `See also:` line naming up to three related
+records from `generated/related.json` (records that share files, tags or
+specific vocabulary, recomputed at every reindex). An unknown id exits 1. Over
+MCP: the `memory_show` tool and the `memory://records/{id}` resource.
 
 ### `crumb capture session`
 
@@ -336,7 +359,7 @@ python crumb.py resume                       # full bounded packet (writes gener
 python crumb.py resume --fast                # git snapshot + focus + next action + staleness (print-only)
 python crumb.py resume --json                # structured packet (sections + warnings) for agents
 python crumb.py resume --stale-days 14       # tighten the age cutoff (default 21)
-python crumb.py resume --task "verify the perf audit"   # scope likely-files to matching records (print-only)
+python crumb.py resume --task "verify the perf audit"   # order sections by relevance to the task (print-only)
 ```
 
 `resume` assembles a **bounded, paste-anywhere packet** (≤5k tokens) from the
@@ -361,15 +384,22 @@ sections are capped then trimmed to stay within budget even with hundreds of
 records. The packet carries a source `commit`/`inputs_hash`/`generated_at` header so
 both `validate` and `audit` can detect drift. Raw transcripts are never included.
 `--fast` is a print-only reorientation view and does not overwrite the committed
-packet. `--task TEXT` scopes **Likely Relevant Files** to the records that actually
-match the task (and labels an empty result `starting cold` rather than falling back
-to store-global noise); it is likewise print-only.
+packet. `--task TEXT` reorders every list section — decisions, failed attempts,
+verifications, traps, open questions — by relevance to the task: the three newest
+entries in each stay first, then the ones the task matches, best first, then the
+rest. Nothing is hidden; the caps and the budget apply afterwards, so what changes
+is which entries survive a trim, and the packet says it is relevance-ordered
+(`ordering` in `--json`). It also scopes **Likely Relevant Files** to the records
+that actually match the task (and labels an empty result `starting cold` rather
+than falling back to store-global noise). It is likewise print-only. After a
+compaction the `SessionStart` hook builds its packet the same way, with the last
+prompt as the task.
 
 Mutations (`remember`, `note`, `verify`, `capture session`, `mark-status`, and
 their MCP equivalents) **reindex on write**, so `generated/resume-packet.md`
 never silently desyncs from the records. `crumb resume` and `crumb reindex` go
-through that same reindex — both projections (`resume-packet.md` and the hook's
-`guard-prefilter.json`), both written atomically — and
+through that same reindex — every projection (`resume-packet.md`, the hook's
+`guard-prefilter.json`, and `related.json`), each written atomically — and
 `crumb validate` **fails** on a stale projection with a `Run \`crumb reindex\``
 hint, so the trust primitive no longer certifies drift.
 
@@ -386,13 +416,25 @@ python crumb.py search "auth middleware"        # keyword search over records
 python crumb.py search --tag auth               # filter by tag/component
 python crumb.py search --file src/auth/x.ts     # filter by referenced file path
 python crumb.py search "session" --type decision --json
+python crumb.py search "login flow" --explain   # print the stems the query became
 ```
 
 `search` is a **deterministic, dependency-free** lookup over the canonical records
-(decisions, attempts, traps, open questions). It matches on exact/keyword text,
-tags/component, and file paths — **no embeddings** (SQLite FTS / vectors are a later
-phase). Same input → same output. It is the permissive lookup layer that `guard`
-builds on.
+(decisions, attempts, verifications, ideas, jots, traps, open questions). It
+matches on exact/keyword text, tags/component, and file paths — **no embeddings**.
+Same input → same output. It is the permissive lookup layer that `guard` builds
+on.
+
+Words are compared as stems, so "reconciliation" meets "reconciler". A project's
+own synonyms go in `.project-memory/aliases.txt` (committed): one group per line,
+every word folding to the first — `auth authn authz login`. `--explain` prints
+the stems a query became, which is how you find out a synonym needs a line
+there; `crumb audit` flags a line it had to ignore.
+
+Past 200 records, reindex also builds `index/search.sqlite`, a machine-local,
+gitignored index that lets `search` parse only the records that could match. It
+narrows and never ranks: results are identical with and without it, and a stale
+or missing index just means the full scan. `crumb doctor` reports its state.
 
 ### `crumb guard`
 
@@ -535,7 +577,10 @@ step did not finish), and the whole committed store is copied to
 `private/migrations/<timestamp>/` first. `validate` names the remedy in each
 direction: an older store says `run crumb migrate`, a newer one says `upgrade
 crumb-kit` — a build must never write its own format into a store that is ahead
-of it.
+of it. Schema 3 moves every trap and open question out of `known-traps.md` /
+`open-questions.md` into a file of its own under `traps/` / `questions/`,
+keeping its id and every line, and turns the two files into generated indexes.
+Until a store migrates it keeps reading and writing the blocks.
 
 `usage` answers the question `audit`'s `[unreachable]` check cannot: not whether
 a record *could* be found, but whether it ever *was*. A record counts when it
@@ -550,7 +595,7 @@ in a committed file they would conflict on every merge.
 ```bash
 python crumb.py scan-secrets                 # gate before committing memory
 python crumb.py traps --stale                # traps nobody has confirmed in 180 days
-python crumb.py traps --confirm "trap_…"     # "still true", dated, in the trap's own block
+python crumb.py traps --confirm "trap_…"     # "still true", dated, in the trap's own file
 ```
 
 `scan-secrets` blocks on shapes with real structure — AWS keys, PEM blocks,
@@ -565,9 +610,11 @@ positive once, in a file your reviewers can see, instead of re-deciding it.
 `traps` reports what the always-on trap context costs and which traps nobody has
 confirmed lately, never-confirmed first. Age alone cannot retire a trap — an old
 trap may be perfectly live — so `--confirm` records the fact that was missing:
-when somebody last checked. Retire one with `crumb mark-status <id> stale`; it
-stays in the file for history and stops driving `guard`. `audit` raises
-`traps-growth` when the file outgrows its budget.
+when somebody last checked (the `last_confirmed` frontmatter key; a `- Last
+confirmed:` bullet on a schema-2 store). Retire one with `crumb mark-status <id>
+stale`; it stays on disk for history and stops driving `guard`. `audit` raises
+`traps-growth` when the active traps' text outgrows its budget (on a schema-2
+store, the whole of `known-traps.md`).
 
 ## Integrations — make the store actually get used
 
@@ -623,7 +670,8 @@ piece is independent:
   - `UserPromptSubmit → crumb hook prompt` injects the records that are about
     *this prompt* — the moment the task is finally known, and the one the
     recency-ordered resume packet cannot serve. It scores the prompt with the
-    same retrieval `guard` uses and shows at most five matches. It **never
+    same retrieval `guard` uses and shows at most five matches, pointing at
+    `crumb show <id>` (or `memory://records/{id}`) for the full text. It **never
     blocks**: that decision is available on this event and it erases the
     prompt, which is the worst thing a memory tool could do.
 
@@ -734,7 +782,10 @@ cannot execute the CLI can still reorient by reading:
 
 1. `.project-memory/generated/resume-packet.md` — the pre-built bounded packet; then
 2. the plain canonical files directly — `current.md`, `handoff.md`,
-   `decisions/`, `attempts/`, `known-traps.md`, `open-questions.md`.
+   `decisions/`, `attempts/`, `traps/`, `questions/`. `known-traps.md` and
+   `open-questions.md` are one-line-per-record indexes of the last two, each line
+   naming the file to open (on a store still at `schema_version` 2 they hold the
+   traps and questions themselves).
 
 Everything is human-readable Markdown, so no binary store or vendor runtime is
 required to resume. (`generated/resume-packet.md` is a rebuildable projection — if
@@ -765,20 +816,21 @@ automatically so it stays in step.)
 | `mark-status` (record, **trap and question** lifecycle mutation, validate-gated, `--superseded-by`) | implemented |
 | `reindex` (rebuild generated projections) | implemented |
 | `capture session` (incl. `--fast`) | implemented |
-| `resume` (incl. `--fast`, computed staleness) | implemented (**MVP-core**) |
-| `search` (deterministic keyword/tag/file) | implemented |
+| `resume` (incl. `--fast`, computed staleness, `--task` relevance ordering) | implemented (**MVP-core**) |
+| `search` (deterministic keyword/tag/file, store aliases, `--explain`, disposable index past 200 records) | implemented |
+| `show` (full text of any id, with "see also") | implemented |
 | `guard` (deterministic ranking, §11 verdicts) | implemented |
 | `audit` (heuristic: secrets, instruction-like, drift, staleness, bloat) | implemented (**MVP-trust**) |
 | `scan-secrets` (committed-memory secret gate) | implemented |
 | `schema` (record contract introspection + template) | implemented |
 | `note question` / `note trap` / `note idea` (write-surface) | implemented |
 | `jot` / `inbox` / `inbox promote` / `inbox drop` (short-term tier) | implemented |
-| `migrate` (store-format upgrade, backed up and idempotent) | implemented |
+| `migrate` (store-format upgrade, backed up and idempotent; schema 3 = one file per trap/question) | implemented |
 | `usage` (local surfacing counts, `--never`) | implemented |
 | `retitle` (rewrite a record's title; id/slug/filename unchanged) | implemented |
 | `traps` (staleness + always-on context cost, `--stale`, `--confirm`) | implemented |
 | `pipx`/`pip` packaging (`crumb` console script, bundled templates) | implemented |
-| MCP server (`breadcrumbs-mcp`: 9 resources, 6 prompts, 12 tools) | implemented (**optional**) |
+| MCP server (`breadcrumbs-mcp`: 14 resources, 6 prompts, 13 tools) | implemented (**optional**) |
 | Integrations: `init` bootstrapper, `doctor`, `mcp`, `hook` (adapter + `.mcp.json` + hooks) | implemented |
 
 The full loop (capture → resume → trust) is complete and CI-guarded, and ships as

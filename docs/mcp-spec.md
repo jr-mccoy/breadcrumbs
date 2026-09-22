@@ -83,7 +83,10 @@ Pythons it installs on.
 
 ---
 
-## Resources (9) — read-only
+## Resources (14) — read-only
+
+Seven static URIs and seven per-id templates (`STATIC_RESOURCES` /
+`TEMPLATE_RESOURCES` in `mcp_core.py`; `tests/test_mcp.py` pins the count).
 
 | URI | Returns | Backed by |
 |---|---|---|
@@ -93,9 +96,22 @@ Pythons it installs on.
 | `memory://decisions` | markdown index of **active** decisions (`` `id` — title``) | `active_decisions` |
 | `memory://decisions/{id}` | verbatim text of one decision record | `find_record_by_id` |
 | `memory://attempts/{id}` | verbatim text of one attempt record | `find_record_by_id` |
-| `memory://open-questions` | verbatim `open-questions.md` | plain file |
-| `memory://known-traps` | verbatim `known-traps.md` | plain file |
+| `memory://records/{id}` | the text `crumb show <id>` prints, for **any** id: record, jot, trap or question | `find_item` |
+| `memory://traps/{id}` | one trap (`trap_…`) | `find_item`, kind-checked |
+| `memory://questions/{id}` | one question (`q_…`; `q:…` accepted) | `find_item`, kind-checked |
+| `memory://verifications/{id}` | one verification record | `find_item`, kind-checked |
+| `memory://inbox/{id}` | one jot, committed or machine-local | `find_item`, kind-checked |
+| `memory://open-questions` | verbatim `open-questions.md` (at schema 3, the generated index of `questions/`) | plain file |
+| `memory://known-traps` | verbatim `known-traps.md` (at schema 3, the generated index of `traps/`) | plain file |
 | `memory://inbox` | rendered list of live jots, both inboxes | `inbox.jot_rows` |
+
+The per-id templates are progressive disclosure: the packet, the hook
+injections and the two indexes carry one line per item, and these fetch the
+body. `memory://records/{id}` serves anything; the typed templates refuse an id
+of the wrong kind (a decision id on `memory://traps/{id}` is an error, not the
+decision), as `memory://decisions/{id}` and `memory://attempts/{id}` always
+have. A trap or question file is served whole (frontmatter and body); one still
+stored as a block is served as that block.
 
 `memory://inbox` is the one resource that is *rendered* rather than a file: the
 inbox is two directories (committed and machine-local) and the useful view is
@@ -122,7 +138,7 @@ unknown `{id}` raises (surfaced to the client as a resource error). A missing
 Prompts return guidance text only. They carry **no authority** over the user's
 current instruction, the code, the tests, or authoritative docs.
 
-## Tools (12) — wrap existing functions
+## Tools (13) — wrap existing functions
 
 | Tool | Signature | Wraps | Output |
 |---|---|---|---|
@@ -134,7 +150,8 @@ current instruction, the code, the tests, or authoritative docs.
 | `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path}` or `{ok:false, error}` |
 | `memory_reindex` | `()` | `cli.reindex_projections` | `{ok, path}` |
 | `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
-| `memory_build_resume_packet` | `(task?)` | `cli.build_resume_packet` | `{ok, …packet}` (`task` is passed to the engine: scoped `likely_files`, echoed `requested_task`, `starting cold` label — identical to `crumb resume --task`) |
+| `memory_build_resume_packet` | `(task?)` | `cli.build_resume_packet` | `{ok, …packet}` (`task` is passed to the engine: scoped `likely_files`, echoed `requested_task`, `starting cold` label, list sections ordered by relevance with `ordering: "relevance"` — identical to `crumb resume --task`) |
+| `memory_show` | `(id)` | `cli.find_item` + `generated/related.json` | `{ok, id, kind, status, path, text, related}` or `{ok:false, error}` |
 | `memory_validate` | `()` | `cli.run_validate` | `{ok, fail_count, findings[]}` (includes the projection-freshness check) |
 | `memory_mark_status` | `(id, status, reason, superseded_by?)` | `cli.set_record_status`, reindex | `{ok, id, from, to, path}` or `{ok:false, error}` |
 | `memory_scan_secrets` | `()` | `cli.scan_secrets` | `{ok, clean, count, findings[]}` (pattern names + locations only) |
@@ -188,6 +205,15 @@ a warning string. The `verification`/`verifications` pair is kept as-is — thos
 are section names driving the packet's cap and trim order, so renaming them changes
 the bounding machinery, not just a label.
 
+### `memory_show`
+
+`crumb show` for clients without resource support: the same resolver
+(`cli.find_item`) and the same text as `memory://records/{id}`, plus `related`
+— up to three ids from `generated/related.json` that share files, tags or
+specific vocabulary with this item (`[]` when there are none or the projection
+is missing). `path` is store-relative, like every tool path. An unknown or
+ambiguous id is `{ok:false, error}`.
+
 ### `memory_verify`
 
 The home for a verification result — "I checked X; here is its state" (review
@@ -204,8 +230,11 @@ same validate gate as `memory_record`, and reindexes on write.
 Write-surface for the three record kinds that have no `memory_record` type:
 `kind` is `"question"`, `"trap"`, or `"idea"`. `fields` mirrors the `crumb note`
 flags per kind (question: `why`/`needs`/`status`; trap: `slug`/`area`/`symptom`/
-`why`/`safe`/`verify`; idea: `sections{heading:text}`). question/trap append a
-parse-verified block to the singleton file; idea passes the same validate gate as
+`why`/`safe`/`verify`; idea: `sections{heading:text}`). At schema 3 question/trap
+write their own file (`questions/<slug>.md` / `traps/<slug>.md`, id `q_<slug>` /
+`trap_<slug>`) through the same validate gate as `memory_record`, and the
+singleton index is rebuilt; on a schema-2 store they append a parse-verified
+block to the singleton file. idea passes the same validate gate as
 `memory_record`. Each call refreshes `generated/resume-packet.md`. Invalid writes
 are reverted.
 
@@ -248,11 +277,12 @@ rejected (§16.6) and reverted. When superseding, pass `superseded_by` (the
 replacing record's id) — the same flow as `crumb mark-status <id> superseded
 --superseded-by <new-id>` on the CLI.
 
-A `trap_<slug>` or `q:<slug>` id resolves here too. Traps and open questions are
-blocks inside an aggregate file rather than one file each, so the block's
-`- Status:` bullet is edited in place (every other byte preserved) instead of
-frontmatter; a block with no such bullet counts as `active` (trap) / `open`
-(question). Retiring a trap drops it from `memory://resume-packet` and the hook
+A `trap_<slug>` or `q_<slug>` id (legacy `q:<slug>` accepted) resolves here too.
+At schema 3 each is its own file and its frontmatter `status` is edited like any
+record's. On a schema-2 store — or for a block typed into a singleton since the
+last reindex — the block's `- Status:` bullet is edited in place (every other
+byte preserved) instead; a block with no such bullet counts as `active` (trap) /
+`open` (question). Retiring a trap drops it from `memory://resume-packet` and the hook
 pre-filter and stops it driving a `memory_guard_before_action` verdict;
 answering a question drops it from the packet, from that verdict's open-blocker
 floor and from the aged-unresolved staleness warning. Both stay in the verdict's
@@ -279,9 +309,10 @@ name rather than silently written.
   the static snapshots never desync from the records.
 - **Secret-scan before commit.** `memory_scan_secrets` is available so an agent
   can check before any "commit memory" step (§2.6, §15, Fixture 6).
-- **No new identity scheme.** `find_record_by_id` uses the same filename-canonical
-  id ([`record-schema.md`](record-schema.md) §5) the CLI, search, guard and resume
-  already use.
+- **No new identity scheme.** `find_record_by_id` and `find_item` use the same
+  filename-canonical ids ([`record-schema.md`](record-schema.md) §5) the CLI,
+  search, guard and resume already use; `find_item` is also what `crumb show`
+  resolves through.
 
 ## Design constraints (carried forward)
 

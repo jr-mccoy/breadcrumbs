@@ -2,7 +2,8 @@
 
 The concrete data contract for `.project-memory/`: directory layout, git-tracking
 policy, the manifest, canonical frontmatter, record identity, field population, the
-status/privacy vocabularies, and the body templates.
+status/privacy vocabularies, the body templates, store aliases, and the generated
+projections and search index.
 
 ---
 
@@ -423,6 +424,62 @@ or `--confidence low` (§16.9). It appears in the resume packet's **Verification
 section (actionable outcomes first) and is searchable with `crumb search --type
 verification --status open` (here `--status` filters on the outcome).
 
+### Trap record (`traps/<slug>.md`, schema_version 3+)
+
+```markdown
+## Area / files
+## Symptom
+## Why
+## Safe approach
+## Verification
+## Notes
+```
+
+Standard frontmatter with `type: trap` and the record status vocabulary (§8).
+One type-specific key, optional: **`last_confirmed`** (a date, placed after
+`expires_at`), the last time somebody checked the trap still holds — written by
+`crumb traps --confirm <id>`, read by `crumb traps --stale`. Write one with
+`crumb note trap "<summary>" --area … --symptom … --why … --safe … --verify …`;
+`crumb schema trap --template` prints that skeleton. Only filled sections are
+written.
+
+### Question record (`questions/<slug>.md`, schema_version 3+)
+
+```markdown
+## Question
+## Why it matters
+## Needs
+## Notes
+```
+
+Standard frontmatter with `type: question` and the question vocabulary (§8,
+`open` by default). Write one with `crumb note question "<question>" --why …
+--needs …` (`crumb schema question --template`).
+
+Neither type is under the §16.9 evidence rule. The sections are the bullets
+the block format always had, one heading each; `Notes` holds whatever a
+migrated block carried that fits no bullet (free prose, status-change
+comments).
+
+**Before schema 3** a trap is a `## trap_<slug>: <summary>` block in
+`known-traps.md` with `- Area / files:`, `- Symptom:`, `- Why:`,
+`- Safe approach:`, `- Verification:`, `- Last confirmed:` and `- Status:`
+bullets, and a question a `## Q: <question>` block in `open-questions.md` with
+`- Opened:`, `- Why it matters:`, `- Needs:` and `- Status:`. A block with no
+`- Status:` bullet counts as `active` (trap) / `open` (question). `crumb
+migrate` step 3 moves each block into a file.
+
+**From schema 3 the two singletons are generated indexes.** `known-traps.md` and
+`open-questions.md` are rewritten at every reindex as one line per record —
+`` - `<id>` [<status>] <summary> — `<path>` `` — under a `GENERATED INDEX`
+comment. They are kept because a cloud agent without the CLI reads them, and
+they are no longer inputs to `inputs_hash` (the files under `traps/` and
+`questions/` are). A `## trap_…` / `## Q:` block typed into either file by hand
+is still read (a file with the same id wins) and is **adopted** into its own
+file at the next reindex. A block whose id already has a file with different
+content is not adopted: it stays verbatim below the index under a `Not adopted`
+comment for somebody to merge, and `audit` reports it as `unadopted-block`.
+
 ### Session record
 
 ```markdown
@@ -462,3 +519,60 @@ _Commit: <short-sha>_
 ## Verification Commands
 ## Stale If
 ```
+
+---
+
+## 11. Store aliases (`aliases.txt`)
+
+Optional, hand-written and committed: the project's own synonyms for the
+stemmer, so a query for one name meets a record that uses another.
+
+```text
+# first word is canonical; the rest fold to its stem
+auth authn authz login
+billing invoicing ledger
+```
+
+- One group per line, whitespace-separated words; every word folds to the first
+  word's stem. `#` starts a comment; blank lines are ignored.
+- A word already claimed by an earlier group keeps its first meaning, so adding a
+  line never changes what an older line did. Chains resolve to a fixpoint.
+- A line with fewer than two words, or a word already in an earlier group, is
+  skipped and reported by `audit` as an `aliases` warning.
+- Applied wherever stems are compared: `search`, `guard` and the hook
+  pre-filter. It is committed because a teammate's clone must stem the same way,
+  and it is part of `inputs_hash` because it changes what the projections
+  contain — editing it makes them stale until the next reindex.
+
+`crumb search --explain` prints the stems a query became.
+
+---
+
+## 12. Projections and the search index
+
+Rebuilt by every reindex; never a source of truth.
+
+| File | Committed | Contents |
+|---|---|---|
+| `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header. |
+| `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads. Unstamped. |
+| `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null \| reason}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
+| `index/search.sqlite` | never (gitignored) | The disposable search index. |
+
+**`related.json`** relates live items (status `active`; for questions, `open`)
+by pure overlap — shared declared files ×6, shared tag stems ×4, shared
+non-ubiquitous specific stems ×1 — keeping pairs that reach
+`GUARD_NOISE_FLOOR`, best first, ties broken by id. The score is deliberately
+machine-independent (no branch, clock or commit-distance decay), so every clone
+computes the same file. Above 2000 live items `related` is empty and `skipped`
+names the reason. `validate` and `audit` check its `inputs_hash` like the
+packet's.
+
+**`index/search.sqlite`** is a plain SQLite inverted index (postings of specific
+stems, tag stems and files per record) over decisions, attempts, verifications,
+ideas and committed jots. It is built only once those number at least 200
+(`crumb reindex --search-index` builds it regardless), stamped with the
+`inputs_hash` it was built from, and consulted only while that still matches;
+`search` returns exactly the same results with or without it. It needs the
+standard-library `sqlite3` module and is skipped where that is missing.
+Deleting `index/` is always safe.

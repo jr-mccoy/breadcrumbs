@@ -1,7 +1,7 @@
 # Architecture
 
 This document distills the system principles, source-of-truth rules, record
-taxonomy, and build philosophy for `breadcrumbs`. It is the conceptual map;
+taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual map;
 [`record-schema.md`](record-schema.md) is the concrete data contract and
 [`cli-spec.md`](cli-spec.md) is the command surface.
 
@@ -14,7 +14,8 @@ taxonomy, and build philosophy for `breadcrumbs`. It is the conceptual map;
 2. **Typed records over transcript sludge.** Memory is structured enough to
    validate, search, audit, and guard against.
 3. **Generated projections are not source of truth.** Resume packets, guard
-   pre-filters, FTS databases, and vector stores are rebuildable artifacts.
+   pre-filters, related-record maps, search indexes, and vector stores are
+   rebuildable artifacts.
 4. **Memory is advisory.** Current user instruction, code, tests, build output, and
    authoritative docs outrank memory.
 5. **Status beats silent edits.** Use `active`, `superseded`, `stale`, `disputed`,
@@ -58,8 +59,8 @@ taxonomy, and build philosophy for `breadcrumbs`. It is the conceptual map;
 | Decision | What was decided/rejected and why | `decisions/YYYY-MM-DD-slug.md` | long-lived | yes |
 | Attempt | What was tried, outcome, do-not-retry | `attempts/YYYY-MM-DD-slug.md` | long-lived if instructive | yes |
 | Verification | A finding about reality: "I checked X; here is its state" | `verifications/YYYY-MM-DD-slug.md` | until the subject changes | yes |
-| Trap | Reusable warning about fragile areas | `known-traps.md` (or future `traps/`) | long-lived, reviewed | yes |
-| Open question | Unresolved ambiguity or blocker | `open-questions.md` | until resolved | yes |
+| Trap | Reusable warning about fragile areas | `traps/slug.md` (schema 3; a block in `known-traps.md` before) | long-lived, reviewed | yes |
+| Open question | Unresolved ambiguity or blocker | `questions/slug.md` (schema 3; a block in `open-questions.md` before) | until resolved | yes |
 | Idea | Potential future direction | `ideas/YYYY-MM-DD-slug.md` | reviewed periodically | yes |
 | Session | What happened in one work session | `sessions/YYYY-MM-DD-tool-topic.md` | historical | yes (lower priority) |
 | Evidence | Pointers to commits/tests/docs/issues/PRs | each record's `evidence:` frontmatter | with its record | yes |
@@ -68,7 +69,10 @@ taxonomy, and build philosophy for `breadcrumbs`. It is the conceptual map;
 | Private note | Local-only personal/sensitive context | `private/` | local policy | local-only |
 | Resume packet | Bounded generated boot summary | `generated/resume-packet.md` | regenerated | no |
 | Guard pre-filter | Token/path index the `PreToolUse` hook reads before a risky call | `generated/guard-prefilter.json` | regenerated | no |
-| Search index | FTS/vector/cache | `index/` | regenerated | no |
+| Related records | Up to three "see also" ids per live item, by shared files/tags/stems | `generated/related.json` | regenerated | no |
+| Trap / question index | One line per trap or question, for a reader without the CLI | `known-traps.md`, `open-questions.md` (schema 3) | regenerated | no |
+| Search index | Inverted index that narrows `search`'s candidate set | `index/search.sqlite` | regenerated; machine-local | no |
+| Store aliases | The project's synonyms for the stemmer | `aliases.txt` | hand-maintained | yes (configuration) |
 
 Evidence is **not a file of its own**. It is a frontmatter field on the record it
 supports, which is what makes it consumable: `resume` builds *Likely Relevant
@@ -80,10 +84,23 @@ pointers would have had no validator, no consumer, and no way to notice a dangli
 reference, while the per-record field already answers the question. Old stores can
 delete the file; no code looks for it.
 
-One row is still reserved space rather than working machinery: nothing builds an
-`index/` today (`search` scans the records directly). It stays because it is
-gitignored and therefore costs a user nothing — the difference from `refs.yml`,
-which shipped committed, with example entries to clean up.
+`index/` was reserved space until the search index filled it. It is gitignored,
+so it costs a user nothing — the difference from `refs.yml`, which shipped
+committed, with example entries to clean up — and what it holds is disposable
+in the strict sense: `index/search.sqlite` is built at reindex only once the
+store has 200 indexable records, is used only while the `inputs_hash` it was
+stamped with still matches, and only narrows which records `search` parses.
+Matches and scores are identical with and without it, and deleting it costs
+nothing but speed.
+
+**Traps and questions became files at schema 3.** Through schema 2 each was a
+`## ` block in one aggregate file, parsed whole on every hook firing, and every
+edit was a splice into a file other writers were splicing too. They are now one
+file each, with the ids they had as blocks. `known-traps.md` and
+`open-questions.md` stay, because a reader without the CLI looks there, but as
+generated indexes: one line per record, pointing at the file. Every reader gets
+the same dict shapes from both layouts, and chooses between them by the
+manifest's `schema_version`, never by what is on disk.
 
 **Mined candidates are proposals, not findings.** A hook writes what four
 deterministic regex rules noticed in a transcript. That is enough to be worth
@@ -108,8 +125,8 @@ git-tracking policy.
 ## 4. Layered interop
 
 ```text
-plain files  →  CLI  →  agent signposts  →  MCP  →  hooks  →  indexes/vectors
-(always)        (built) (built)            (built) (built)   (not built)
+plain files  →  CLI  →  agent signposts  →  MCP  →  hooks  →  index    →  vectors
+(always)        (built) (built)            (built) (built)   (built)     (not built)
 
 hooks, in the order a session fires them:
   SessionStart → UserPromptSubmit → PreToolUse → (SubagentStop) → PreCompact → Stop
@@ -118,7 +135,10 @@ hooks, in the order a session fires them:
 The baseline (plain files) must always work. Each higher layer is optional and
 must have a manual fallback to the layer below it. A read-only cloud agent that can
 only read files still resumes from `current.md`, `handoff.md`, `decisions/`,
-`attempts/`, `known-traps.md`, and `open-questions.md`.
+`attempts/`, `traps/` and `questions/` (indexed by `known-traps.md` and
+`open-questions.md`). The search index sits above the CLI in the same way: a
+missing, stale or unreadable index, or a Python without `sqlite3`, means the
+full scan, never a different answer.
 
 ---
 
@@ -150,3 +170,22 @@ Three falsifiable bars:
 
 The goal is a small continuity engine — a project cockpit with labeled switches,
 not a haunted attic of embeddings.
+
+---
+
+## 6. Code map
+
+Everything is in the `breadcrumbs` package, standard library only.
+
+| Module | Holds |
+|---|---|
+| `cli.py` | The CLI: record I/O, validate, the resume packet, search/guard scoring, audit, doctor, the integrations and the hook translators. The other modules call back into it. |
+| `blockfiles.py` | Traps and questions as one file each (schema 3): reading them in the dict shape the block readers return, writing them, rebuilding `known-traps.md` / `open-questions.md` as indexes, adopting hand-written blocks, and migration step 3. |
+| `related.py` | `generated/related.json`: "see also" by pure overlap, written at reindex. |
+| `searchindex.py` | `index/search.sqlite`: build, freshness check, and the narrowed candidate set `search` uses when the index is fresh. |
+| `migrate.py` | Ordered, idempotent store-format steps, the manifest version write, the pre-migration backup. |
+| `inbox.py` | Jots: writing, listing, promotion, dropping. |
+| `transcript.py` | Deterministic transcript mining into jot candidates. |
+| `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook, the `PreCompact` / `SubagentStop` hooks. |
+| `usage.py` | Local surfacing counts (`private/usage.json`). |
+| `mcp_core.py`, `mcp_server.py` | The MCP adapter over the same core functions, and its SDK binding. |

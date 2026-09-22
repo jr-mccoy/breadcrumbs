@@ -620,7 +620,15 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
         if result.get("ok"):
             new_paths.append(Path(result["path"]))
             new_id = result["id"]
-            note = "" if new_id == tid else f" (id was {tid!r}, not a usable filename)"
+            # Lookups ignore case, so `trap_Foo` still finds `trap_foo`; say so
+            # anyway, because the printed id is what people will copy next.
+            original = trap["id"]
+            if new_id == original:
+                note = ""
+            elif new_id == tid:
+                note = f" (id was {original!r}; ids are lowercase now, lookups ignore case)"
+            else:
+                note = f" (id was {original!r}, not a usable filename)"
             changed.append(f"trap {new_id} -> traps/{stem}.md{note}")
         elif "already exists" not in result.get("error", ""):
             raise RuntimeError(f"trap {tid}: {result.get('error')}")

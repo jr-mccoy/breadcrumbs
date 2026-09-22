@@ -61,8 +61,9 @@ INDEX_MIN_CORPUS = 200
 INDEX_FORMAT = "1"
 
 # The directories whose records the index may cover, by record type. Sessions
-# are never in the search corpus; traps and questions live in aggregate files
-# that are cheap to parse whole.
+# are never in the search corpus. Traps and questions are few (tens, not
+# hundreds) and may still be blocks in a schema-2 store, so `candidate_items`
+# always loads them directly instead of indexing them.
 _CORPUS_DIRS = {
     "decisions": "decision",
     "attempts": "attempt",

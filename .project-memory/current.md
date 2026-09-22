@@ -6,8 +6,10 @@ _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Recently Changed
-- 1669a96 feat: phase 0 of the working-memory roadmap (schema_version 2)
+- c367b90 Document Phase 2 in the CLI spec and record schema
+- 8bdc4bd Implement Phase 2 of the working-memory roadmap (WM-20 to WM-25)
+- 1f3ee4d feat: phase 1 of the working-memory roadmap (capture everywhere)
 
-_Prefill window: `d71a7e3`..HEAD — 1 commit(s) since the last session record._
+_Prefill window: `1669a96`..HEAD — 3 commit(s) since the last session record._
 
 ## Watch Out For

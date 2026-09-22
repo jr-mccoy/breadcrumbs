@@ -186,7 +186,6 @@ def resource_attempt(rid: str, root: str | Path | None = None) -> str:
     return _record_text(mem, rid, kind="attempt")
 
 
-# The declared resource surface. `mcp_server.build_server` binds each URI
 def _item_text(rid: str, root: str | Path | None, *, kinds: tuple[str, ...] | None) -> str:
     """The text `crumb show <id>` prints, restricted to `kinds` when given.
 
@@ -260,10 +259,11 @@ def resource_inbox(root: str | Path | None = None) -> str:
     return "\n".join(lines) + "\n"
 
 
+# The declared resource surface. `mcp_server.build_server` binds each URI
 # explicitly rather than looping over these dicts — one visible endpoint per
 # resource, and a stable function per binding — so these are a *manifest*, not a
 # dispatch table: the thing the README and `docs/mcp-spec.md` count when they say
-# "8 resources". `tests/test_mcp.py` asserts the bound URIs equal these keys, so
+# "14 resources". `tests/test_mcp.py` asserts the bound URIs equal these keys, so
 # the two cannot drift. (They previously carried a comment claiming the server
 # consumed them, which nothing did.)
 STATIC_RESOURCES = {

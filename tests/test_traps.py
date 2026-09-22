@@ -182,12 +182,38 @@ class TrapReportTests(unittest.TestCase):
 
 
 class TrapBudgetTests(unittest.TestCase):
+    PADDING = ("padding words that cost tokens " * 40 + "\n") * 40
+
     def test_audit_names_the_report_when_traps_outgrow_the_budget(self):
+        # At schema 3 known-traps.md is a one-line index, so what is measured is
+        # the active traps' own text — the thing the packet and hooks carry.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            tid = add_trap(tmp, "one real trap")
+            path = Path(_cli.find_trap_by_id(mem, tid)["record_path"])
+            path.write_text(
+                path.read_text("utf-8") + "\n## Notes\n" + self.PADDING, encoding="utf-8"
+            )
+            findings = _cli._audit_bloat(mem, Path(tmp))
+            growth = [f for f in findings if f["kind"] == "traps-growth"]
+            self.assertTrue(growth, findings)
+            self.assertIn("crumb traps --stale", growth[0]["message"])
+
+    def test_padding_the_index_is_not_trap_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             add_trap(tmp, "one real trap")
             with (mem / "known-traps.md").open("a", encoding="utf-8") as fh:
-                fh.write("\n" + ("- padding words that cost tokens " * 40 + "\n") * 40)
+                fh.write("\n" + self.PADDING)
+            kinds = {f["kind"] for f in _cli._audit_bloat(mem, Path(tmp))}
+            self.assertNotIn("traps-growth", kinds)
+
+    def test_a_schema2_singleton_is_measured_whole(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = downgrade_to_schema2(init_store(tmp))
+            add_trap(tmp, "one real trap")
+            with (mem / "known-traps.md").open("a", encoding="utf-8") as fh:
+                fh.write("\n" + self.PADDING)
             findings = _cli._audit_bloat(mem, Path(tmp))
             growth = [f for f in findings if f["kind"] == "traps-growth"]
             self.assertTrue(growth, findings)
