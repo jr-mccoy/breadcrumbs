@@ -112,7 +112,9 @@ class StoreLockTests(unittest.TestCase):
             mem = init_store(tmp)
             path = lock.lock_path(mem)
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(f"{os.getppid()} {time.time() - 120:.3f}\n", encoding="utf-8")
+            old = time.time() - 120
+            path.write_text(f"{os.getppid()} {old:.3f}\n", encoding="utf-8")
+            os.utime(path, (old, old))  # no heartbeat has touched it since
             with lock.store_lock(mem, timeout=0.1):
                 self.assertIn(str(os.getpid()), path.read_text("utf-8"))
 
@@ -183,3 +185,73 @@ class CallerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class LockFixTests(unittest.TestCase):
+    def test_listings_and_resume_do_not_wait(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            with held_by_another_process(mem), mock.patch.object(lock, "CLI_TIMEOUT", 5):
+                for argv in (["inbox"], ["traps"], ["consolidate"], ["resume"]):
+                    with self.subTest(cmd=argv[0]):
+                        start = time.monotonic()
+                        code, _out, err = run([*argv, "--project", tmp])
+                        self.assertEqual(code, 0, err)
+                        self.assertLess(time.monotonic() - start, 3)
+
+    def test_a_heartbeat_keeps_a_long_writer_s_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            with (
+                mock.patch.object(lock, "STALE_SECONDS", 0.4),
+                mock.patch.object(lock, "HEARTBEAT_SECONDS", 0.1),
+            ):
+                with lock.store_lock(mem):
+                    time.sleep(0.6)  # past STALE_SECONDS, kept alive by the heartbeat
+                    # Another *process* is what would break a stale lock; model it
+                    # by asking the stale test directly.
+                    self.assertFalse(lock._is_stale(lock.lock_path(mem)))
+
+    def test_breaking_a_stale_lock_never_removes_a_fresh_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            path = lock.lock_path(mem)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fresh = f"{os.getppid()} {time.time():.3f} {lock._host()}\n"
+            path.write_text(fresh, encoding="utf-8")
+            stale_owner = (12345, 1.0, lock._host())
+            real = lock._read_owner
+            calls = {"n": 0}
+
+            def fake(p):
+                calls["n"] += 1
+                # The waiter judged an old lock stale; by the time it moved the
+                # file aside, another waiter had put a fresh lock there.
+                return stale_owner if calls["n"] == 1 else real(p)
+
+            with mock.patch.object(lock, "_read_owner", side_effect=fake):
+                lock._break_stale(path)
+            self.assertEqual(path.read_text("utf-8"), fresh)
+
+    def test_a_thread_timeout_does_not_blame_this_process(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            release = threading.Event()
+            holding = threading.Event()
+
+            def holder() -> None:
+                with lock.store_lock(mem):
+                    holding.set()
+                    release.wait(5)
+
+            t = threading.Thread(target=holder)
+            t.start()
+            holding.wait(5)
+            try:
+                with self.assertRaises(lock.StoreLocked) as ctx:
+                    with lock.store_lock(mem, timeout=0.1):
+                        pass
+                self.assertIn("another thread", str(ctx.exception))
+            finally:
+                release.set()
+                t.join()

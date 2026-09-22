@@ -157,3 +157,49 @@ class ScopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class ScopeFixTests(unittest.TestCase):
+    def test_the_prompt_hook_leaves_out_another_branchs_records(self):
+        from breadcrumbs import hooks_prompt
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = repo_with_store(tmp)
+            vid = crumb.verify(
+                mem,
+                root,
+                "src/parser.py still fails on nested input",
+                status="regressed",
+                evidence=[{"type": "file", "ref": "src/parser.py"}],
+                scope="branch",
+            )["id"]
+            prompt = "fix the nested input failure in src/parser.py"
+            self.assertIn(vid, [m["id"] for m in hooks_prompt.retrieve(mem, root, prompt)])
+            git(root, "checkout", "-q", "main")
+            self.assertNotIn(vid, [m["id"] for m in hooks_prompt.retrieve(mem, root, prompt)])
+
+    def test_another_branchs_record_is_not_a_duplicate_here(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = repo_with_store(tmp)
+            argv = [
+                "verify",
+                "src/parser.py fails on nested input",
+                "--status",
+                "regressed",
+                "--scope",
+                "branch",
+                "--project",
+                tmp,
+            ]
+            self.assertEqual(run(argv)[0], 0)
+            git(root, "checkout", "-q", "main")
+            self.assertEqual(run(argv)[0], 0, "a record about feature-a must not block main")
+
+    def test_mcp_rejects_an_unknown_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_with_store(tmp)
+            res = mcp_core.tool_jot("an observation", scope="everywhere", root=tmp)
+            self.assertFalse(res["ok"])
+            self.assertIn("scope", res["error"])
+            res = mcp_core.tool_jot("an observation", scope="branch", root=tmp)
+            self.assertEqual(res["scope"], "branch")

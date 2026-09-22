@@ -45,6 +45,7 @@ from pathlib import Path, PurePosixPath
 #   1 -> 2: `inbox/` and `private/inbox/` (the jot tier, WM-03).
 #   2 -> 3: traps and questions become one file each under `traps/` and
 #           `questions/`; the singletons become generated indexes (WM-22).
+#   3 -> 4: `handoffs/` — one handoff per non-default branch (WM-50).
 SCHEMA_VERSION = 4
 MEMORY_DIRNAME = ".project-memory"
 
@@ -5091,7 +5092,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     else:
         print(f"{'Updated' if coalesce is not None else 'Captured'} session: {meta['id']}")
         print(f"  file:    {path}")
-        print("  handoff: updated")
+        print(f"  handoff: {handoff_path.relative_to(memory_dir).as_posix()} (updated)")
         print("  current: updated")
         if tracking == "distillate":
             print("  note: session_tracking=distillate — sessions/ stays local (gitignored);")
@@ -9516,7 +9517,9 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         # day(s) old, written 0 commit(s) behind" on a seconds-old store is
         # health context, not a problem.
         sev = AUDIT_INFO if (w.startswith("handoff is") and not w.startswith("⚠")) else AUDIT_WARN
-        findings.append(_audit_finding("staleness", sev, "handoff.md", w))
+        findings.append(
+            _audit_finding("staleness", sev, handoff_path.relative_to(memory_dir).as_posix(), w)
+        )
 
     # WM-31 / WM-32 / WM-34: evidence that points at a vanished file, live
     # records that say the same thing, and records that may argue with each
@@ -11812,7 +11815,9 @@ def cmd_hook(args: argparse.Namespace) -> int:
         return _hook_session(memory_dir, root, payload)
     if event == "guard":
         return _hook_guard(memory_dir, root, payload)
-    if not memory_dir.is_dir():
+    if event == "prompt" or not memory_dir.is_dir():
+        # The prompt hook is mostly a read; it locks around its one write
+        # (a correction jot) itself, so contention never costs the injection.
         return _dispatch_writing_hook(event, memory_dir, root, payload)
     # The writing hooks (WM-51): wait briefly for a parallel session's writer,
     # then skip rather than block the host. Skipping loses one firing's
@@ -12409,7 +12414,8 @@ def _add_prune(sub, global_parser: argparse.ArgumentParser) -> None:
     p_prune = sub.add_parser(
         "prune",
         parents=[global_parser],
-        help="delete old machine session snapshots (keeps human handoffs + the newest N)",
+        help="delete old machine session snapshots, expired jots, or branch handoffs "
+        "whose branch is gone",
     )
     p_prune.add_argument(
         "what",
@@ -12945,6 +12951,7 @@ def requested_command(argv: list[str]) -> str | None:
 # takes the lock per event, inside `cmd_hook`, with the hook timeout.
 LOCKED_COMMANDS = frozenset(
     {
+        "init",
         "remember",
         "note",
         "jot",
@@ -12957,7 +12964,6 @@ LOCKED_COMMANDS = frozenset(
         "migrate",
         "reindex",
         "capture",
-        "resume",
         "promote",
         "demote",
         "consolidate",
@@ -12966,9 +12972,29 @@ LOCKED_COMMANDS = frozenset(
 )
 
 
+def _needs_lock(args: argparse.Namespace) -> bool:
+    """Does this invocation write? Decided per invocation, not per command name.
+
+    `inbox`, `traps` and `consolidate` are listings unless given the flag or
+    subcommand that writes; a listing must never wait on a parallel writer.
+    `resume` is not locked at all: it only regenerates projections, every file
+    it writes is replaced atomically, and a session must not fail to start
+    because another session is capturing.
+    """
+    if args.command not in LOCKED_COMMANDS:
+        return False
+    if args.command == "inbox":
+        return getattr(args, "inbox_what", None) in ("promote", "drop")
+    if args.command == "traps":
+        return bool(getattr(args, "confirm", None))
+    if args.command == "consolidate":
+        return bool(getattr(args, "merge", None))
+    return True
+
+
 def _run_command(args: argparse.Namespace) -> int:
     """Run the parsed command, under the store's write lock when it writes."""
-    if args.command not in LOCKED_COMMANDS:
+    if not _needs_lock(args):
         return args.func(args)
     memory_dir = resolve_root(getattr(args, "project", None)) / MEMORY_DIRNAME
     if not memory_dir.is_dir():

@@ -23,7 +23,7 @@ from breadcrumbs import cli
 
 HANDOFFS_SCHEMA = 4
 HANDOFFS_DIR = "handoffs"
-# `crumb prune --handoffs` removes a branch handoff only when its branch is gone
+# `crumb prune handoffs` removes a branch handoff only when its branch is gone
 # *and* it has not been touched in this long: a branch deleted this morning may
 # be recreated this afternoon, and its handoff is exactly what that session wants.
 PRUNE_MIN_AGE_DAYS = 30
@@ -58,7 +58,20 @@ def default_branch(root: Path) -> str | None:
 
 
 def branch_slug(branch: str) -> str:
-    return cli.truncate_slug(cli.slugify(branch))
+    """The handoff file stem for `branch`: its slug, plus a short hash when the
+    slug is not the branch name itself.
+
+    `slugify` is lossy — `feature/parser-rewrite` and `feature-parser-rewrite`,
+    or `Fix` and `fix`, fold to one slug — and two branches sharing a handoff
+    file is the overwrite WM-50 exists to stop. A branch whose name already is
+    its slug keeps the plain, readable name.
+    """
+    import hashlib
+
+    slug = cli.truncate_slug(cli.slugify(branch))
+    if slug == branch:
+        return slug
+    return f"{slug}-{hashlib.sha1(branch.encode('utf-8')).hexdigest()[:6]}"
 
 
 def _is_feature_branch(root: Path, branch: str | None) -> bool:
@@ -110,19 +123,26 @@ def read_text(memory_dir: Path, root: Path) -> tuple[str, str | None, Path]:
 
 
 def seed_text(memory_dir: Path, path: Path) -> str:
-    """What a branch handoff starts from: `handoff.md`, the first time.
+    """What a handoff update starts from: the file itself, or — for a branch's
+    first handoff — `handoff.md`'s Current Focus and nothing else.
 
     A new branch is usually cut from the default branch mid-thought; starting
-    its handoff empty would drop the Current Focus the session just read.
+    empty would drop the focus the session just read. Nothing more carries
+    over: copying `handoff.md`'s Next Action under this branch's fresh date,
+    branch and commit lines would pass off another branch's stale instruction
+    as this one's, and hide it from the age and branch-mismatch checks.
     """
     if path.is_file():
         return path.read_text(encoding="utf-8")
     single = Path(memory_dir) / "handoff.md"
-    return single.read_text(encoding="utf-8") if single.is_file() else ""
+    if path == single or not single.is_file():
+        return single.read_text(encoding="utf-8") if single.is_file() else ""
+    focus = cli.split_md_sections(single.read_text(encoding="utf-8")).get("Current Focus", "")
+    return f"## Current Focus\n{focus}\n" if not cli._is_placeholder(focus) else ""
 
 
 # --------------------------------------------------------------------------- #
-# crumb prune --handoffs
+# crumb prune handoffs
 # --------------------------------------------------------------------------- #
 
 

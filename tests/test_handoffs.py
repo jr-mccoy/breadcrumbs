@@ -67,7 +67,8 @@ class BranchHandoffTests(unittest.TestCase):
             main_handoff = (mem / "handoff.md").read_text("utf-8")
             git(root, "checkout", "-q", "-b", "feature/parser-rewrite")
             res = capture(tmp, "finish the parser rewrite")
-            branch_file = mem / "handoffs" / "feature-parser-rewrite.md"
+            branch_file = handoffs.branch_handoff_path(mem, "feature/parser-rewrite")
+            self.assertTrue(branch_file.name.startswith("feature-parser-rewrite-"))
             self.assertEqual(Path(res["handoff"]), branch_file)
             self.assertIn("finish the parser rewrite", branch_file.read_text("utf-8"))
             self.assertIn("_Branch: feature/parser-rewrite_", branch_file.read_text("utf-8"))
@@ -196,3 +197,36 @@ class MigrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class HandoffFixTests(unittest.TestCase):
+    def test_branches_that_slug_alike_get_different_files(self):
+        a = handoffs.branch_slug("feature/parser-rewrite")
+        b = handoffs.branch_slug("feature-parser-rewrite")
+        c = handoffs.branch_slug("Feature-Parser-Rewrite")
+        self.assertEqual(b, "feature-parser-rewrite")
+        self.assertEqual(len({a, b, c}), 3)
+
+    def test_a_first_branch_handoff_does_not_inherit_the_next_action(self):
+        # A Stop-hook snapshot has no --next; the branch handoff must not pass
+        # off main's next action under fresh branch/commit/date lines.
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = repo_with_store(tmp)
+            capture(tmp, "ship the main-line fix", "--focus", "the parser rewrite")
+            git(root, "checkout", "-q", "-b", "feature-w")
+            # What the Stop hook's snapshot does: no focus, no next action given.
+            path = handoffs.write_path(mem, root, "feature-w")
+            crumb.update_handoff(mem, "feature-w", "abc1234", "", "", path=path)
+            text = path.read_text("utf-8")
+            self.assertIn("the parser rewrite", text)
+            self.assertNotIn("ship the main-line fix", text)
+
+    def test_the_mcp_handoff_resource_reads_the_branch_handoff(self):
+        from breadcrumbs import mcp_core
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, _mem = repo_with_store(tmp)
+            capture(tmp, "main work")
+            git(root, "checkout", "-q", "-b", "feature-m")
+            capture(tmp, "branch work")
+            self.assertIn("branch work", mcp_core.resource_handoff(root=tmp))

@@ -498,10 +498,13 @@ def live_candidates(memory_dir: Path, rtype: str) -> list[dict]:
     """Every live item of `rtype`, as a duplicate candidate.
 
     Live means what the packet and guard would still act on: active, not
-    expired; for questions, open. Retired items are history — duplicating one is
-    how you bring a retired claim back, which is allowed.
+    expired, not scoped to another branch (WM-52); for questions, open. Retired
+    items are history — duplicating one is how you bring a retired claim back,
+    which is allowed — and a record about another branch is not this branch's
+    to supersede.
     """
     memory_dir = Path(memory_dir)
+    current = cli.git_branch(memory_dir.parent)
     if rtype == "trap":
         return [
             _candidate(
@@ -523,11 +526,15 @@ def live_candidates(memory_dir: Path, rtype: str) -> list[dict]:
     if rtype == "jot":
         from breadcrumbs import inbox as _inbox
 
-        return [candidate_from_record(r) for r in _inbox.load_jots(memory_dir)]
+        return [
+            candidate_from_record(r)
+            for r in _inbox.load_jots(memory_dir)
+            if not cli.branch_scoped_elsewhere(r.meta, current)
+        ]
     return [
         candidate_from_record(r)
         for r in cli.active_records(memory_dir, rtype)
-        if not cli.record_expired(r.meta)
+        if not cli.record_expired(r.meta) and not cli.branch_scoped_elsewhere(r.meta, current)
     ]
 
 

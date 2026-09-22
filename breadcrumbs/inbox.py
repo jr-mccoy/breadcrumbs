@@ -194,6 +194,7 @@ def write_jot(
         "local": bool(local),
         "expires_at": expires,
         "source": source,
+        "scope": meta.get("scope") or "project",
     }
     if truncated:
         result["hint"] = (

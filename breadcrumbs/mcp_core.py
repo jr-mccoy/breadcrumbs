@@ -123,9 +123,16 @@ def resource_current(root: str | Path | None = None) -> str:
 
 
 def resource_handoff(root: str | Path | None = None) -> str:
-    """`memory://handoff` — verbatim handoff.md."""
-    _, mem = resolve(root)
-    return _read_singleton(mem, "handoff.md")
+    """`memory://handoff` — the current branch's handoff, verbatim.
+
+    `handoffs/<branch>.md` on a feature branch that has one (WM-50), else
+    `handoff.md` — the same file `memory://resume-packet` is built from.
+    """
+    from breadcrumbs import handoffs as _handoffs
+
+    project_root, mem = resolve(root)
+    path, _label = _handoffs.read_path(mem, project_root)
+    return _read_singleton(mem, str(path.relative_to(mem)))
 
 
 def resource_open_questions(root: str | Path | None = None) -> str:
@@ -555,6 +562,8 @@ def tool_verify(
     same validate gate as every other write, and refreshes the projections.
     """
     project_root, mem = resolve(root)
+    if scope is not None and scope not in cli.RECORD_SCOPES:
+        return {"ok": False, "error": f"scope must be one of {', '.join(cli.RECORD_SCOPES)}"}
     if (missing := _memory_missing(mem)) is not None:
         return missing
     return _relativize(
@@ -571,7 +580,7 @@ def tool_verify(
             agent=_agent_label(),
             dedupe=not allow_duplicate,
             supersedes=supersedes,
-            scope=scope if scope in cli.RECORD_SCOPES else None,
+            scope=scope,
         ),
         mem,
     )
@@ -673,6 +682,8 @@ def tool_jot(
     from breadcrumbs import inbox as _inbox
 
     project_root, mem = resolve(root)
+    if scope is not None and scope not in cli.RECORD_SCOPES:
+        return {"ok": False, "error": f"scope must be one of {', '.join(cli.RECORD_SCOPES)}"}
     if (missing := _memory_missing(mem)) is not None:
         return missing
     if not allow_duplicate:
@@ -698,7 +709,7 @@ def tool_jot(
             local=bool(local),
             source="agent",
             agent=_agent_label(),
-            scope=scope if scope in cli.RECORD_SCOPES else None,
+            scope=scope,
         ),
         mem,
     )

@@ -1602,7 +1602,7 @@ Phase 5 is implemented in `breadcrumbs/handoffs.py` (WM-50) and
 `cli.py` and `inbox.py`. New tests: `tests/test_handoffs.py`,
 `tests/test_lock.py`, `tests/test_scope.py`. **Record `schema_version` is 4.**
 
-Seven departures from what this document specified. Read these before Phase 6.
+Eleven departures from what this document specified. Read these before Phase 6.
 
 1. **`crumb prune handoffs`, not `crumb prune --handoffs`.** `prune` already
    takes what to prune as a positional (`sessions`, `jots`), and one command
@@ -1635,6 +1635,25 @@ Seven departures from what this document specified. Read these before Phase 6.
    on a detached HEAD, or for a record with no recorded branch, a
    branch-scoped record stays live. This matches guard's existing
    branch-mismatch rule, which already ignores a detached HEAD.
+
+Four more, found while documenting it and fixed before the phase closed:
+
+8. **A branch whose name is not already a slug gets a hash suffix**
+   (`feature/parser-rewrite` → `handoffs/feature-parser-rewrite-<6 hex>.md`).
+   Slugging is lossy, and two branches sharing one handoff file is the overwrite
+   WM-50 exists to stop.
+9. **A branch's first handoff inherits `handoff.md`'s Current Focus only.** Copying
+   the whole file passed off the default branch's Next Action under the new
+   branch's fresh date, branch and commit lines, which also hid it from the
+   age and branch-mismatch warnings.
+10. **The lock is decided per invocation, and `resume` does not take it.** Listings
+    (`inbox`, `traps`, `consolidate` without `--merge`) never wait. `resume` only
+    regenerates projections, each replaced atomically, and a session must not
+    fail to start because another is capturing. The prompt hook locks only its
+    correction write, so contention never costs the injection.
+11. **The holder heartbeats the lock and records its host.** A writer running
+    past 60 s (a migration backup, a search-index build) kept losing its lock.
+    A pid is only checked on the host that wrote it.
 
 Notes for Phase 6: the lock means an eval harness that runs parallel sessions
 against one store will see skipped hook writes when they collide. Count them

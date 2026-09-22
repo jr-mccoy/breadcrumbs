@@ -102,6 +102,9 @@ def retrieve(memory_dir: Path, root: Path, prompt: str) -> list[dict]:
         if (cli.GUARD_SURFACING_SIGNALS & set(m.get("signals", ())))
         or m.get("score", 0) >= cli.GUARD_READ_FIRST_SCORE
     ]
+    # WM-52: a branch-scoped record written on another branch is not about the
+    # work checked out here — the packet and guard's live set leave it out too.
+    kept = [m for m in kept if not (m.get("scope") == "branch" and m.get("branch_mismatch"))]
     return kept[:PROMPT_HOOK_MAX_MATCHES]
 
 
@@ -138,17 +141,23 @@ def _capture_correction(memory_dir: Path, root: Path, prompt: str, session_id: s
         ).fingerprint
         if fingerprint in _transcript._session_fingerprints(memory_dir, session_id):
             return
-        _inbox.write_jot(
-            memory_dir,
-            root,
-            safe,
-            tags=["correction", "mined"],
-            local=True,
-            source="prompt",
-            agent=cli.detect_agent(fallback="agent"),
-            host_session=session_id,
-            fingerprint=fingerprint,
-        )
+        # Only this write takes the store lock (WM-51): the injection below is a
+        # read, and a parallel session's capture must not cost this prompt its
+        # relevant records. On contention the correction is skipped, not waited on.
+        from breadcrumbs import lock as _lock
+
+        with _lock.store_lock(memory_dir, timeout=_lock.HOOK_TIMEOUT):
+            _inbox.write_jot(
+                memory_dir,
+                root,
+                safe,
+                tags=["correction", "mined"],
+                local=True,
+                source="prompt",
+                agent=cli.detect_agent(fallback="agent"),
+                host_session=session_id,
+                fingerprint=fingerprint,
+            )
     except Exception:  # pragma: no cover - capture never breaks the prompt
         pass
 
