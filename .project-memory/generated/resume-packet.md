@@ -1,17 +1,23 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 9037d68 | inputs_hash: 9ae96adff345 | generated_at: 2026-09-05T01:35:59+00:00 -->
+<!-- source_commit: 53b5dac | inputs_hash: 9ae96adff345 | generated_at: 2026-09-22T03:27:01+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/artifact-388cc819-sm0ipj` · commit `9037d68` · 3 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `53b5dac` · clean
 
 ## Current Focus
 0.2.0 is cut and waiting on the PR #49 merge; the field-review work is done
 
 ## Next Action
 Merge PR #49 to main, then run release.yml from main: mode=dry-run first to confirm the artifact, then mode=publish. Do not hand-tag — the workflow cuts the tag and the Release on the commit it builds.
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 53b5dac Merge pull request #50 from jr-mccoy/claude/artifact-388cc819-sm0ipj
+- 583963b memory: hand off the 0.2.0 release
+- abd2bfd Merge pull request #49 from jr-mccoy/claude/artifact-388cc819-sm0ipj
 
 ## Active Decisions
 - `dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns` — Neither is a scoring problem. Overlap is symmetric, so corpus frequency reads as relevance and no weighting fixes a command that cannot do the thing being warned about. And a gate that is hand-overridden every time has stopped being a gate — worse, it punishes exactly the records that cite a concrete path, which are the most useful ones a store has. Both classifications are conservative: an unrecognized action keeps its full verdict, and a structured credential still blocks.
@@ -84,4 +90,18 @@ _(none recorded)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 17 day(s) old, written 3 commit(s) behind current HEAD.
+- active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 34 days old with no update — is this still true?
+- active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 34 days old with no update — is this still true?
+- active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 34 days old with no update — is this still true?
+- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 35 days old with no update — is this still true?
+- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 37 days old with no update — is this still true?
+- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 37 days old with no update — is this still true?
+- active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 37 days old with no update — is this still true?
+- active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 37 days old with no update — is this still true?
+- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 37 days old with no update — is this still true?
+- active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 38 days old with no update — is this still true?
+- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 38 days old with no update — is this still true?
+- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 38 days old with no update — is this still true?
+- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 38 days old with no update — is this still true?
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 38 days — did this ever get resolved?
