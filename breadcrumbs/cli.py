@@ -4229,6 +4229,7 @@ def verify(
     agent: str | None = None,
     dedupe: bool = False,
     supersedes: str | None = None,
+    scope: str | None = None,
 ) -> dict:
     """Record a verification result — a finding about reality.
 
@@ -4306,6 +4307,7 @@ def verify(
             evidence=evidence,
             confidence=confidence,
             agent=agent,
+            scope=scope,
             extra={
                 "subject": subject,
                 "outcome": status,
@@ -4390,6 +4392,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         agent=getattr(args, "agent", None),
         dedupe=not getattr(args, "allow_duplicate", False),
         supersedes=getattr(args, "supersedes", None),
+        scope=getattr(args, "scope", None),
     )
     if result.get("error") == "near-duplicate":
         return _emit_duplicate(args, result)
@@ -5512,6 +5515,28 @@ def record_expired(meta: dict) -> bool:
     return age is not None and age >= 0
 
 
+# `scope` values (WM-52). `project` is every record's default; `branch` says the
+# record describes this branch's state — a verification of work in progress, an
+# observation a hook mined mid-session — and applies only while that branch is
+# checked out. The branch is the record's existing `branch` key.
+RECORD_SCOPES = ("project", "branch")
+
+
+def branch_scoped_elsewhere(meta: dict, current_branch: str) -> bool:
+    """Is this a `scope: branch` record written on a branch other than the current one?
+
+    Such a record stays on disk and in `search`, but leaves the packet's lists
+    and guard's live set: it is about a branch that is not checked out. With no
+    git (or no recorded branch) nothing is "elsewhere".
+    """
+    if str(meta.get("scope") or "project") != "branch":
+        return False
+    rb = meta.get("branch")
+    if not rb or rb in (NO_GIT_BRANCH, "") or current_branch in (NO_GIT_BRANCH, "HEAD"):
+        return False
+    return rb != current_branch
+
+
 def _dt_sort_key(value: str | None) -> float:
     """Chronologically comparable key for an ISO timestamp string.
 
@@ -6515,6 +6540,17 @@ def build_resume_packet(
     listed_decisions = [r for r in decisions if not record_expired(r.meta)]
     listed_attempts = [r for r in attempts if not record_expired(r.meta)]
     listed_verifications = [r for r in verifications if not record_expired(r.meta)]
+    # WM-52: branch-scoped records from another branch leave the lists too.
+    current_branch = git_branch(root)
+    listed_decisions = [
+        r for r in listed_decisions if not branch_scoped_elsewhere(r.meta, current_branch)
+    ]
+    listed_attempts = [
+        r for r in listed_attempts if not branch_scoped_elsewhere(r.meta, current_branch)
+    ]
+    listed_verifications = [
+        r for r in listed_verifications if not branch_scoped_elsewhere(r.meta, current_branch)
+    ]
     # WM-40: a promoted record is already in the model's context through the
     # instruction file; listing it again spends the packet's budget twice. Only
     # the list sections drop it — guard, search and the warnings still see it.
@@ -7874,6 +7910,7 @@ def _item_from_record(rec: Record) -> dict:
         "do_not_retry": rec.rtype == "attempt" and _attempt_has_do_not_retry(rec),
         "expired": record_expired(rec.meta),
         "promoted": bool(rec.meta.get("promoted_to")),
+        "scope": str(rec.meta.get("scope") or "project"),
     }
 
 
@@ -8182,6 +8219,7 @@ def _score_item(
         "lifecycle": item.get("lifecycle", item["status"]),
         "expired": bool(item.get("expired")),
         "promoted": bool(item.get("promoted")),
+        "scope": item.get("scope") or "project",
         "title": item["title"],
         "score": score,
         "raw_score": round(undecayed, 2),
@@ -8552,13 +8590,20 @@ def guard(
         # attention, mirroring `active_verifications`.
         # A record past its `expires_at` (WM-30) is history too: it aged out,
         # like a superseded one, and is named rather than allowed to drive.
-        live = not m.get("expired") and (
-            m["status"] == "active"
-            or (m["kind"] == "question" and m["status"] == "open")
-            or (
-                m["kind"] == "verification"
-                and m.get("lifecycle", "active") == "active"
-                and m["status"] in ACTIONABLE_VERIFICATION_OUTCOMES
+        # WM-52: a branch-scoped record written on another branch is about
+        # work that is not checked out here; it is history, not a live constraint.
+        elsewhere = m.get("scope") == "branch" and m.get("branch_mismatch")
+        live = (
+            not m.get("expired")
+            and not elsewhere
+            and (
+                m["status"] == "active"
+                or (m["kind"] == "question" and m["status"] == "open")
+                or (
+                    m["kind"] == "verification"
+                    and m.get("lifecycle", "active") == "active"
+                    and m["status"] in ACTIONABLE_VERIFICATION_OUTCOMES
+                )
             )
         )
         (active if live else history).append(m)
@@ -10209,6 +10254,7 @@ def cmd_jot(args: argparse.Namespace) -> int:
         local=args.local,
         source="human" if args.agent == "human" else "agent",
         agent=args.agent,
+        scope=getattr(args, "scope", None),
     )
     if not result.get("ok"):
         _emit_error(args, result.get("error", "jot failed"))
@@ -12183,6 +12229,13 @@ def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     _add_duplicate_flags(p_verify)
     p_verify.add_argument(
+        "--scope",
+        choices=RECORD_SCOPES,
+        default=None,
+        help="branch: this result applies only while the current branch is checked out "
+        "(default: project)",
+    )
+    p_verify.add_argument(
         "--recheck",
         metavar="ID",
         action="append",
@@ -12647,6 +12700,13 @@ def _add_jot(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
     _add_duplicate_flags(p, supersede=False)
+    p.add_argument(
+        "--scope",
+        choices=RECORD_SCOPES,
+        default=None,
+        help="branch: the note applies only while the current branch is checked out "
+        "(default: project for a jot you write; hooks write branch-scoped jots)",
+    )
     p.set_defaults(func=cmd_jot)
 
 

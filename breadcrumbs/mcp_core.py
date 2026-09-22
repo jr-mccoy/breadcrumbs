@@ -545,6 +545,7 @@ def tool_verify(
     root: str | Path | None = None,
     allow_duplicate: bool = False,
     supersedes: str | None = None,
+    scope: str | None = None,
 ) -> dict:
     """`memory_verify` — wraps `cli.verify`.
 
@@ -570,6 +571,7 @@ def tool_verify(
             agent=_agent_label(),
             dedupe=not allow_duplicate,
             supersedes=supersedes,
+            scope=scope if scope in cli.RECORD_SCOPES else None,
         ),
         mem,
     )
@@ -655,6 +657,7 @@ def tool_jot(
     local: bool = False,
     root: str | Path | None = None,
     allow_duplicate: bool = False,
+    scope: str | None = None,
 ) -> dict:
     """`memory_jot` — wraps `breadcrumbs.inbox.write_jot`.
 
@@ -695,6 +698,7 @@ def tool_jot(
             local=bool(local),
             source="agent",
             agent=_agent_label(),
+            scope=scope if scope in cli.RECORD_SCOPES else None,
         ),
         mem,
     )

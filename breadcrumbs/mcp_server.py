@@ -335,11 +335,13 @@ def build_server():  # -> FastMCP
         files: list[str] | None = None,
         local: bool = False,
         allow_duplicate: bool = False,
+        scope: str | None = None,
     ) -> dict:
         """Leave a short-term note with a TTL (wraps `crumb jot`); no evidence needed.
 
         A near-verbatim repeat of a live jot is refused with
         `{ok: false, error: "near-duplicate", duplicates}` unless `allow_duplicate`.
+        `scope: "branch"` makes it apply only while the current branch is checked out.
         """
         return mcp_core.tool_jot(
             text,
@@ -347,6 +349,7 @@ def build_server():  # -> FastMCP
             files=files,
             local=local,
             allow_duplicate=allow_duplicate,
+            scope=scope,
             root=_root(),
         )
 
@@ -429,12 +432,14 @@ def build_server():  # -> FastMCP
         confidence: str | None = None,
         allow_duplicate: bool = False,
         supersedes: str | None = None,
+        scope: str | None = None,
     ) -> dict:
         """Record a verification result — a finding about reality (wraps `crumb verify`).
 
         Re-verifying something already verified is refused as a near-duplicate
         (`{ok: false, error: "near-duplicate", duplicates}`): pass `supersedes`
         with the old verification's id so the new result replaces it.
+        `scope: "branch"` marks a result that holds only on the current branch.
 
         For the most common agentic output ("I checked X; here is its state"), which
         otherwise gets mis-filed as a decision/attempt. `status` is the outcome
@@ -452,6 +457,7 @@ def build_server():  # -> FastMCP
             confidence=confidence,
             allow_duplicate=allow_duplicate,
             supersedes=supersedes,
+            scope=scope,
             root=_root(),
         )
 

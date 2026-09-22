@@ -115,8 +115,14 @@ def write_jot(
     fingerprint: str | None = None,
     evidence: list[dict] | None = None,
     title: str | None = None,
+    scope: str | None = None,
 ) -> dict:
     """Write one jot. Same write + validate + revert gate as every other record.
+
+    `scope` defaults by who is writing (WM-52): a jot a person or agent writes
+    is about the project (`project`); one a hook writes — mined from this
+    session's transcript, or a correction — is about the work on this branch
+    (`branch`), and leaves the packet when another branch is checked out.
 
     `files` becomes `evidence: [{type: file, ref: …}]` rather than prose, so the
     guard's *declared file* signal reaches a jot exactly as it reaches a record.
@@ -165,6 +171,7 @@ def write_jot(
             confidence="low",
             privacy="local-private" if local else "repo-safe",
             agent=agent,
+            scope=scope or ("project" if source in ("human", "agent") else "branch"),
             extra=extra,
             subdir=target_dir,
         )
@@ -290,6 +297,8 @@ def jot_rows(memory_dir: Path, **kwargs) -> list[dict]:
                 "expires_at": rec.meta.get("expires_at"),
                 "expired": is_expired(rec),
                 "tags": rec.meta.get("tags") or [],
+                "scope": str(rec.meta.get("scope") or "project"),
+                "branch": rec.meta.get("branch"),
                 "path": str(rec.path),
             }
         )
@@ -310,9 +319,17 @@ def packet_jots(memory_dir: Path) -> list[dict]:
     """The Inbox section of the resume packet: committed, live jots only.
 
     Private jots are excluded — see this module's docstring. This is the one
-    reader where that matters, because its output is a committed file.
+    reader where that matters, because its output is a committed file. A
+    branch-scoped jot from another branch is excluded too (WM-52).
     """
-    return jot_rows(memory_dir, include_private=False)
+    memory_dir = Path(memory_dir)
+    current = cli.git_branch(memory_dir.parent)
+    keep = {
+        rec.meta.get("id") or rec.stem
+        for rec in load_jots(memory_dir, include_private=False)
+        if not cli.branch_scoped_elsewhere(rec.meta, current)
+    }
+    return [row for row in jot_rows(memory_dir, include_private=False) if row["id"] in keep]
 
 
 # --------------------------------------------------------------------------- #
