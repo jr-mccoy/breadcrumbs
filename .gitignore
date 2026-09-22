@@ -37,6 +37,8 @@ fixtures/**/.project-memory/generated/resume-packet.md
 # same reason as above — two machines must agree on it byte-for-byte.
 fixtures/**/.project-memory/generated/guard-prefilter.json
 !fixtures/fixture-11-multi-machine/.project-memory/generated/guard-prefilter.json
+# related.json (WM-25) is the same kind of rebuildable projection.
+fixtures/**/.project-memory/generated/related.json
 !fixtures/fixture-01-fresh-resume/.project-memory/generated/guard-prefilter.json
 
 # A fixture's private/ is machine-local for the same reason any store's is, and

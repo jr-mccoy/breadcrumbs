@@ -43,7 +43,9 @@ from pathlib import Path, PurePosixPath
 # moves only when the shape of the store changes, and every move ships with a
 # step in `breadcrumbs/migrate.py` plus readers that tolerate the older shape.
 #   1 -> 2: `inbox/` and `private/inbox/` (the jot tier, WM-03).
-SCHEMA_VERSION = 2
+#   2 -> 3: traps and questions become one file each under `traps/` and
+#           `questions/`; the singletons become generated indexes (WM-22).
+SCHEMA_VERSION = 3
 MEMORY_DIRNAME = ".project-memory"
 
 # Templates are package data: they live next to this module inside the
@@ -183,7 +185,20 @@ DIR_TYPES = {
     "ideas": "idea",
     "verifications": "verification",
     "inbox": "jot",
+    # One file per trap and per question from schema_version 3 (WM-22). Before
+    # that they are `## ` blocks in known-traps.md / open-questions.md; the
+    # directories simply do not exist, and readers use the blocks.
+    "traps": "trap",
+    "questions": "question",
 }
+
+# Types whose files are named by slug alone, with no date. A trap's id is
+# `trap_<slug>` and a question's `q_<slug>` — ids that predate these being files
+# at all, that are cited in decision records, commit messages and people's
+# notes, and that a migration therefore must not change. Every other record's
+# id carries its creation date, because its filename does.
+UNDATED_ID_PREFIX = {"trap": "trap_", "question": "q_"}
+UNDATED_STEM_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
 
 # Record directories that exist outside the committed tree, as store-relative
 # POSIX paths -> record type. `load_records` walks these too; nothing that
@@ -1080,7 +1095,15 @@ def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
     The date must be a real calendar date: `2026-02-30` and `9999-99-99` are shaped
     like dates but name no day, and an id built from one sorts and reads as if it
     did.
+
+    Traps and questions are the exception (`UNDATED_ID_PREFIX`): their filename
+    is the slug alone and their id is prefix + slug, so the ids they had as
+    blocks survive becoming files.
     """
+    if rtype in UNDATED_ID_PREFIX:
+        if not UNDATED_STEM_RE.match(stem):
+            return None
+        return UNDATED_ID_PREFIX[rtype] + stem, stem
     m = RECORD_STEM_RE.match(stem)
     if not m:
         return None
@@ -1571,15 +1594,17 @@ def run_validate(memory_dir: Path) -> list[dict]:
                 # identity pass that would inflate the passed count.
                 findings.append(_finding("identity", "pass", rel, f"id {rid}"))
 
-        # 16.5 — status in vocabulary.
+        # 16.5 — status in vocabulary. A question has its own (open / answered /
+        # closed); everything else, traps included, uses the record lifecycle.
         status = rec.meta.get("status")
-        if status is not None and status not in VALID_STATUS:
+        vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
+        if status is not None and status not in vocab:
             findings.append(
                 _finding(
                     "status",
                     "fail",
                     rel,
-                    f"invalid status {status!r} (allowed: {', '.join(VALID_STATUS)})",
+                    f"invalid status {status!r} (allowed: {', '.join(vocab)})",
                 )
             )
 
@@ -1917,6 +1942,24 @@ BODY_SECTIONS = {
     "jot": [
         "Note",
     ],
+    # Traps and questions as files (schema 3, WM-22). The sections are the
+    # bullets the block format always had, one heading each, plus `Notes` for
+    # anything a block carried that fits no bullet — a migration keeps every
+    # line, and this is where the lines with no other home go.
+    "trap": [
+        "Area / files",
+        "Symptom",
+        "Why",
+        "Safe approach",
+        "Verification",
+        "Notes",
+    ],
+    "question": [
+        "Question",
+        "Why it matters",
+        "Needs",
+        "Notes",
+    ],
 }
 
 # Where content lands when its `--set` heading matches nothing in the record
@@ -2095,6 +2138,9 @@ FRONTMATTER_ORDER = [
     "supersedes",
     "superseded_by",
     "expires_at",
+    # When somebody last checked that a trap is still true (R6) — frontmatter on
+    # a trap file, the `- Last confirmed:` bullet on a trap block.
+    "last_confirmed",
     "subject",
     "outcome",
     "method",
@@ -2496,6 +2542,75 @@ def find_record_by_id(memory_dir: Path, rid: str) -> "Record | None":
     return None
 
 
+def find_item(memory_dir: Path, rid: str) -> dict | None:
+    """Resolve any id the tool prints to `{id, kind, status, path, text, meta}`.
+
+    One resolver for every kind of thing an id can name — a directory record
+    (decision, attempt, verification, idea, session, jot), a trap, a question —
+    so `crumb show`, the `memory://…/{id}` resources and `memory_show` can never
+    disagree about what an id means. The resolution order is the one
+    `set_record_status` already uses: records first, then traps, then questions.
+
+    `text` is the thing a reader wants to see: the whole file for a record, the
+    block for a trap or question that still lives in an aggregate file. None when
+    nothing matches, or when a question id is ambiguous (two slug-derived ids
+    collide) — naming one of two things silently is worse than naming neither.
+    """
+    memory_dir = Path(memory_dir)
+    rid = normalize_question_id(rid)
+    if not rid:
+        return None
+    rec = find_record_by_id(memory_dir, rid)
+    if rec is not None and not rec.error:
+        try:
+            text = rec.path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        return {
+            "id": rec.meta.get("id") or rec.stem,
+            "kind": rec.rtype,
+            "status": rec.meta.get("status") or "active",
+            "path": rec.path,
+            "text": text,
+            "meta": dict(rec.meta),
+        }
+    trap = find_trap_by_id(memory_dir, rid)
+    if trap is not None:
+        return _block_item(memory_dir, trap, "trap", "known-traps.md", f"## {trap['heading']}")
+    found = find_questions_by_id(memory_dir, rid)
+    if len(found) == 1:
+        q = found[0]
+        return _block_item(memory_dir, q, "question", "open-questions.md", f"## Q: {q['question']}")
+    return None
+
+
+def _block_item(memory_dir: Path, block: dict, kind: str, singleton: str, heading: str) -> dict:
+    """A trap or question as a `find_item` result.
+
+    When the block is backed by its own file (schema 3+, WM-22) the file is the
+    text. Otherwise the block is re-rendered from its heading and body, which is
+    exactly what sits in the aggregate file.
+    """
+    record_path = block.get("record_path")
+    if record_path:
+        path = Path(record_path)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = heading + "\n" + (block.get("body") or "")
+    else:
+        path = memory_dir / singleton
+        text = heading + "\n" + (block.get("body") or "").rstrip() + "\n"
+    return {
+        "id": block["id"],
+        "kind": kind,
+        "status": block.get("status") or ("open" if kind == "question" else "active"),
+        "path": path,
+        "text": text,
+        "meta": {},
+    }
+
+
 def set_record_status(
     memory_dir: Path,
     rid: str,
@@ -2518,6 +2633,7 @@ def set_record_status(
     # Resolution comes before the status check, because which vocabulary applies
     # depends on what the id names: a question is `open`/`answered`/`closed`,
     # never `superseded`.
+    rid = normalize_question_id(rid)
     rec = find_record_by_id(memory_dir, rid)
     if rec is None:
         # Traps and open questions are `## ` blocks inside aggregate files, not
@@ -2542,10 +2658,15 @@ def set_record_status(
             )
         return {"ok": False, "error": f"no record, trap or question with id {rid!r}"}
 
-    if status not in VALID_STATUS:
+    # A question file (schema 3) keeps its own vocabulary, exactly as a question
+    # block always did: `answered` is how a question retires, and no record
+    # lifecycle word says that.
+    vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
+    if status not in vocab:
+        what = "question status" if rec.rtype == "question" else "status"
         return {
             "ok": False,
-            "error": f"invalid status {status!r}; valid: {', '.join(VALID_STATUS)}",
+            "error": f"invalid {what} {status!r}; valid: {', '.join(vocab)}",
         }
 
     original = rec.path.read_text(encoding="utf-8")
@@ -2763,6 +2884,13 @@ def set_trap_confirmed(memory_dir: Path, rid: str, *, when: str | None = None) -
     if trap is None:
         return {"ok": False, "error": f"no trap with id {rid!r}"}
     tid = trap["id"]
+    from breadcrumbs import blockfiles
+
+    if trap.get("record_path"):
+        result = blockfiles.set_last_confirmed(memory_dir, tid, when or now_iso()[:10])
+        if result.get("ok"):
+            reindex_projections(memory_dir)
+        return result
     path = memory_dir / "known-traps.md"
     try:
         original = path.read_text(encoding="utf-8")
@@ -2815,8 +2943,19 @@ def set_trap_status(
 
     Fail-closed like `note()`: the file is reverted unless the edited block reads
     back with the requested status and leaves `validate` clean.
+
+    At schema 3 a trap is its own file, so this is simply the record path.
     """
     memory_dir = Path(memory_dir)
+    # Dispatch on the trap itself, not on the store version: at schema 3 a trap
+    # is normally a file, but one a person typed into known-traps.md since the
+    # last reindex is still a block. The record path gets the canonical id,
+    # because trap lookup is case-insensitive and record lookup is exact.
+    found_trap = find_trap_by_id(memory_dir, rid)
+    if found_trap is not None and found_trap.get("record_path"):
+        return set_record_status(
+            memory_dir, found_trap["id"], status, reason, agent=agent, superseded_by=superseded_by
+        )
     if status not in VALID_STATUS:
         return {
             "ok": False,
@@ -2884,7 +3023,7 @@ def set_trap_status(
 
 
 def find_questions_by_id(memory_dir: Path, rid: str) -> list[dict]:
-    """Every question block whose `q:<slug>` id == `rid` — normally zero or one.
+    """Every question whose `q_<slug>` id == `rid` (`q:<slug>` accepted) — normally zero or one.
 
     A list, not an Optional, because question ids are slug-derived: two questions
     can collide on one id (`question_item_id` only disambiguates the *truncated*
@@ -2892,7 +3031,7 @@ def find_questions_by_id(memory_dir: Path, rid: str) -> list[dict]:
     address a block by. The caller refuses an ambiguous edit rather than guessing
     which of two questions the user meant.
     """
-    wanted = (rid or "").strip().lower()
+    wanted = normalize_question_id(rid).lower()
     if not wanted:
         return []
     return [q for q in load_open_questions(Path(memory_dir)) if q["id"].lower() == wanted]
@@ -2917,8 +3056,16 @@ def set_question_status(
 
     Reached through `set_record_status`, so the CLI and `memory_mark_status` both
     get it with no second entry point. Same result shape as the record path.
+
+    At schema 3 a question is its own file, so this is simply the record path.
     """
     memory_dir = Path(memory_dir)
+    # Dispatch on the question itself — see `set_trap_status`.
+    matches = find_questions_by_id(memory_dir, rid)
+    if len(matches) == 1 and matches[0].get("record_path"):
+        return set_record_status(
+            memory_dir, matches[0]["id"], status, reason, agent=agent, superseded_by=superseded_by
+        )
     if status not in VALID_QUESTION_STATUS:
         return {
             "ok": False,
@@ -3218,6 +3365,27 @@ def _record_template(rtype: str) -> str:
                 "  --note 'what the evidence shows'",
             ]
         )
+    if rtype == "trap":
+        # Traps and questions are files from schema 3, but they are still
+        # written with `crumb note`, which fills the sections from flags.
+        return "\n".join(
+            [
+                "crumb note trap 'ONE-LINE TRAP SUMMARY' \\",
+                "  --area 'files / area where this bites' \\",
+                "  --symptom 'what goes wrong' \\",
+                "  --why 'the mechanism, not vibes' \\",
+                "  --safe 'the safe approach to use instead' \\",
+                "  --verify 'a command that proves it is OK'",
+            ]
+        )
+    if rtype == "question":
+        return "\n".join(
+            [
+                "crumb note question 'THE QUESTION, IN ONE LINE?' \\",
+                "  --why 'why it matters / what is blocked' \\",
+                "  --needs 'human input | investigation | a decision'",
+            ]
+        )
     lines = [f"crumb remember {rtype} \\", "  --title 'SHORT IMPERATIVE TITLE' \\"]
     flag_for = {h: a for a, h in ATTEMPT_FLAG_SECTIONS}
     for heading in BODY_SECTIONS[rtype]:
@@ -3369,6 +3537,7 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     hardcoding any particular trap in a regex and without record I/O on the
     common hook path — the near-miss class that motivated hooks in the first place.
     """
+    activate_store_aliases(memory_dir)
     tokens: set[str] = set()
     paths: set[str] = set()
     for trap in active_traps(memory_dir):
@@ -3403,6 +3572,13 @@ def try_reindex_projections(
     memory_dir = Path(memory_dir)
     project_root = Path(project_root) if project_root is not None else memory_dir.parent
     try:
+        # At schema 3 known-traps.md and open-questions.md are indexes of the
+        # trap and question files (WM-22). Rebuilt first; they are not inputs to
+        # the freshness hash, so the order only matters to a human reading them.
+        from breadcrumbs import blockfiles
+
+        if blockfiles.uses_files(memory_dir):
+            blockfiles.write_indexes(memory_dir, project_root)
         packet = build_resume_packet(memory_dir, project_root, stale_days=STALE_AGE_DAYS)
         gen = memory_dir / "generated"
         gen.mkdir(parents=True, exist_ok=True)
@@ -3414,6 +3590,19 @@ def try_reindex_projections(
             gen / GUARD_PREFILTER_FILENAME,
             json.dumps(_build_guard_prefilter(memory_dir), indent=0, sort_keys=True) + "\n",
         )
+        # "See also" for every live item (WM-25). Stamped like the packet, so
+        # drift detection covers it.
+        from breadcrumbs import related as _related
+
+        write_text_atomic(
+            gen / _related.RELATED_FILENAME, _related.render_related(memory_dir, project_root)
+        )
+        # The disposable search index (WM-23). Built last, so it is stamped with
+        # the same inputs as everything above; its own failures are swallowed
+        # inside, because a missing index only means the full scan.
+        from breadcrumbs import searchindex as _searchindex
+
+        _searchindex.build_index(memory_dir, project_root)
         return True, None
     except Exception as exc:  # pragma: no cover - defensive; never block a write
         return False, f"{type(exc).__name__}: {exc}"
@@ -3439,6 +3628,103 @@ def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> b
 
 # Back-compat alias: the note() writer and tests referenced the original name.
 _refresh_resume_packet = reindex_projections
+
+
+def _note_as_file(
+    memory_dir: Path, project_root: Path, kind: str, text: str, fields: dict, *, agent: str | None
+) -> dict:
+    """`note trap|question` at schema 3: one file per record (WM-22).
+
+    Same checks, same result shape and the same hints as the block writer, so a
+    caller cannot tell which storage it wrote to — which is the point.
+    """
+    from breadcrumbs import blockfiles
+
+    if kind == "question":
+        qstatus = (fields.get("status") or "open").strip().lower()
+        if qstatus not in VALID_QUESTION_STATUS:
+            return {
+                "ok": False,
+                "error": f"invalid question status {fields.get('status')!r}; valid: "
+                + ", ".join(VALID_QUESTION_STATUS),
+            }
+        if any(q["question"] == text for q in load_open_questions(memory_dir)):
+            return {
+                "ok": False,
+                "error": f"question already recorded: {text!r} (reopen it with "
+                "`crumb mark-status <id> open`)",
+            }
+        written = blockfiles.write_question(
+            memory_dir,
+            project_root,
+            text,
+            why=fields.get("why"),
+            needs=fields.get("needs"),
+            status=qstatus,
+            agent=agent,
+        )
+        if not written.get("ok"):
+            return written
+        result = {
+            "ok": True,
+            "kind": "question",
+            "id": written["id"],
+            "ref": text,
+            "path": written["path"],
+        }
+        hint = _block_reachability_hint(
+            "\n".join(str(fields.get(k) or "") for k in ("why", "needs")) + "\n" + text,
+            "question",
+        )
+    else:
+        slug = fields.get("slug") or truncate_slug(slugify(text))
+        if find_trap_by_id(memory_dir, f"trap_{slug}") is not None:
+            return {
+                "ok": False,
+                "error": f"trap trap_{slug} already exists; reopen it with "
+                f"`crumb mark-status trap_{slug} active`, or pass a distinct "
+                "slug (--slug / fields.slug) to record a separate trap",
+            }
+        written = blockfiles.write_trap(
+            memory_dir,
+            project_root,
+            text,
+            slug=slug,
+            area=fields.get("area"),
+            symptom=fields.get("symptom"),
+            why=fields.get("why"),
+            safe=fields.get("safe"),
+            verify=fields.get("verify"),
+            agent=agent,
+        )
+        if not written.get("ok"):
+            return written
+        result = {
+            "ok": True,
+            "kind": "trap",
+            "id": written["id"],
+            "ref": written["id"],
+            "path": written["path"],
+        }
+        if not any(fields.get(k) for k in ("area", "symptom", "why", "safe", "verify")):
+            hint = (
+                "summary line only — a trap records Area / Symptom / Why / Safe "
+                "approach / Verification; pass --area/--symptom/--why/--safe/--verify "
+                "so the next agent gets the mechanism, not just the warning"
+            )
+        else:
+            hint = _block_reachability_hint(
+                "\n".join(
+                    str(fields.get(k) or "") for k in ("area", "symptom", "why", "safe", "verify")
+                )
+                + "\n"
+                + text,
+                "trap",
+            )
+    if hint:
+        result["hint"] = hint
+    reindex_projections(memory_dir, project_root)
+    return result
 
 
 def note(
@@ -3470,6 +3756,11 @@ def note(
         fields = {
             k: (_sanitize_note_text(v) if isinstance(v, str) else v) for k, v in fields.items()
         }
+
+    from breadcrumbs import blockfiles
+
+    if kind in ("question", "trap") and blockfiles.uses_files(memory_dir):
+        return _note_as_file(memory_dir, project_root, kind, text, fields, agent=agent)
 
     if kind == "question":
         path = memory_dir / "open-questions.md"
@@ -3937,6 +4228,48 @@ def cmd_retitle(args: argparse.Namespace) -> int:
             "  note: the id, slug and filename are unchanged — they are what "
             "other records reference."
         )
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    """`crumb show <id>` — the body behind a one-line mention.
+
+    Packets and hook injections carry one line per record, deliberately: a line
+    is what a reader can afford to skim on every turn. This is the other half of
+    that bargain — the way to fetch the rest when a line looks relevant.
+    """
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    item = find_item(memory_dir, args.record_id)
+    if item is None:
+        _emit_error(
+            args,
+            f"no record, trap, question or jot with id {args.record_id!r} "
+            "(`crumb search` lists ids)",
+        )
+        return 1
+    related = load_related(memory_dir).get(item["id"], [])
+    if args.json:
+        _print_json(
+            args,
+            {
+                "id": item["id"],
+                "kind": item["kind"],
+                "status": item["status"],
+                "path": str(item["path"]),
+                "text": item["text"],
+                "related": related,
+                "items": related,
+            },
+        )
+        return 0
+    print(item["text"].rstrip())
+    if related:
+        print()
+        print("See also: " + ", ".join(f"`{r}`" for r in related))
     return 0
 
 
@@ -5096,6 +5429,28 @@ def _block_content(body: str) -> str:
 
 
 def load_traps(memory_dir: Path) -> list[dict]:
+    """Every trap, with `{heading, body, id, summary, status, content}`.
+
+    From schema 3 each trap is its own file under `traps/` (WM-22); before that
+    it is a block in known-traps.md. Either way the dicts are the same shape,
+    and `body` is the same bullet text — which is why nothing that reads traps
+    had to change when their storage did.
+    """
+    from breadcrumbs import blockfiles
+
+    if blockfiles.uses_files(memory_dir):
+        # Files, plus any block a person typed into known-traps.md since the
+        # last reindex — a schema-3 store must not silently ignore what somebody
+        # wrote in the place they have always written it. The next reindex
+        # adopts such a block into a file; until then it is read as a block.
+        # A file wins over a block with the same id.
+        files = blockfiles.load_trap_files(memory_dir)
+        seen = {t["id"].lower() for t in files}
+        return files + [t for t in _load_trap_blocks(memory_dir) if t["id"].lower() not in seen]
+    return _load_trap_blocks(memory_dir)
+
+
+def _load_trap_blocks(memory_dir: Path) -> list[dict]:
     """Trap blocks from known-traps.md (each `## trap_<slug>: <summary>`).
 
     Each block is returned with its `id` (the `trap_<slug>` heading prefix — the
@@ -5132,9 +5487,25 @@ def active_traps(memory_dir: Path) -> list[dict]:
 
 
 def load_open_questions(memory_dir: Path) -> list[dict]:
+    """Every question, with `{id, question, opened, status, content, body}`.
+
+    Files under `questions/` from schema 3 (WM-22), `## Q:` blocks before. Same
+    shape either way — see `load_traps`.
+    """
+    from breadcrumbs import blockfiles
+
+    if blockfiles.uses_files(memory_dir):
+        # Files plus any hand-written block not yet adopted — see `load_traps`.
+        files = blockfiles.load_question_files(memory_dir)
+        seen = {q["id"].lower() for q in files}
+        return files + [q for q in _load_question_blocks(memory_dir) if q["id"].lower() not in seen]
+    return _load_question_blocks(memory_dir)
+
+
+def _load_question_blocks(memory_dir: Path) -> list[dict]:
     """Parse `## Q: <question>` blocks into {id, question, opened, status, body}.
 
-    `id` is the `q:<slug>` id `search` lists and `mark-status` takes. The name is
+    `id` is the `q_<slug>` id `search` lists and `mark-status` takes. The name is
     historical: this returns *all* questions with their status, open or not —
     every caller filters on `status == "open"` itself, or uses `open_questions`.
     """
@@ -5649,7 +6020,18 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     # the hash — otherwise the freshness check certifies a packet built from a
     # since-edited manifest.
     paths = [memory_dir / f for f in CORE_FILES]
+    # At schema 3 the trap and question singletons are generated indexes of the
+    # files under traps/ and questions/ (WM-22), which are hashed below as
+    # record directories. Hashing a projection as an input would make every
+    # reindex change the stamp it just wrote.
+    from breadcrumbs import blockfiles
+
+    if blockfiles.uses_files(memory_dir):
+        paths = [p for p in paths if p.name not in ("known-traps.md", "open-questions.md")]
     paths.append(memory_dir / "manifest.yml")
+    # The alias table changes what every stem means, so it is an input to every
+    # projection built from stems (the guard prefilter most of all).
+    paths.append(memory_dir / ALIASES_FILENAME)
     for d in dirs:
         dd = memory_dir / d
         if dd.is_dir():
@@ -5891,15 +6273,67 @@ def build_resume_packet(
     # likely_files with files drawn from the records that actually match the task,
     # and label an empty result so the consumer knows the store is cold here rather
     # than trusting noise.
+    packet["ordering"] = "recency"
     if task:
         packet["requested_task"] = task
         scoped, note = _task_scoped_files(memory_dir, root, task, stale_days=stale_days)
         packet["likely_files"] = scoped
         if note:
             packet["likely_files_note"] = note
+        _order_by_relevance(packet, memory_dir, root, task, stale_days=stale_days)
 
     _bound_packet(packet, fast=fast)
     return packet
+
+
+# How many of the newest items in each section keep their place when a packet
+# is ordered by relevance. Without a floor, a record written ten minutes ago that
+# happens to share no words with the task would sink below a year-old one that
+# does — and "what just changed" is the one thing a resuming reader cannot
+# afford to miss, whatever they are about to work on.
+RECENCY_FLOOR = 3
+
+# The packet's list sections and how to get a search id out of each entry. Two
+# of them hold strings rather than dicts: a trap is rendered as its heading
+# (`trap_<slug>: summary`) and a question as its text.
+_RELEVANCE_SECTIONS: dict[str, "object"] = {
+    "active_decisions": lambda e: e["id"],
+    "failed_attempts": lambda e: e["id"],
+    "verifications": lambda e: e["id"],
+    "known_traps": lambda e: str(e).split(":", 1)[0].strip(),
+    "open_questions": lambda e: question_item_id(str(e)),
+}
+
+
+def _order_by_relevance(
+    packet: dict, memory_dir: Path, root: Path, task: str, *, stale_days: int
+) -> None:
+    """Reorder every list section by relevance to `task`, in place (WM-20).
+
+    Ordering only — nothing is hidden. The newest `RECENCY_FLOOR` entries stay
+    first, then everything the task scores against, best first, then the rest
+    in their original order. Caps and the token budget apply afterwards exactly
+    as before, so what relevance changes is *which* entries survive a trim: the
+    ones about the task instead of whichever happened to be newest.
+
+    One `search` over the whole corpus, reused for every section, so the cost is
+    the same as `--task`'s likely-file scoping already paid.
+    """
+    matches, _ = search(
+        memory_dir, root, task, include_ideas=False, min_keyword=1, stale_days=stale_days
+    )
+    scores = {m["id"]: float(m.get("score") or 0) for m in matches}
+    if not scores:
+        return
+    for key, id_of in _RELEVANCE_SECTIONS.items():
+        entries = packet.get(key) or []
+        head, rest = entries[:RECENCY_FLOOR], entries[RECENCY_FLOOR:]
+        scored = [e for e in rest if scores.get(id_of(e), 0) > 0]
+        unscored = [e for e in rest if scores.get(id_of(e), 0) <= 0]
+        # sort() is stable, so equal scores keep their recency order.
+        scored.sort(key=lambda e: -scores[id_of(e)])
+        packet[key] = head + scored + unscored
+    packet["ordering"] = "relevance"
 
 
 def active_verifications(memory_dir: Path) -> list[Record]:
@@ -6045,6 +6479,15 @@ def render_packet_markdown(packet: dict) -> str:
         "## Project",
         f"**{proj['name']}** — `{proj['path']}`  ",
         f"branch `{proj['branch']}` · commit `{proj['commit']}` · {proj['dirty_state']}",
+    ]
+    # Say which order the reader is looking at. A relevance-ordered list read as
+    # if it were newest-first would suggest a year-old decision is the latest.
+    if packet.get("ordering") == "relevance" and packet.get("requested_task"):
+        out.append(
+            f"_(sections ordered by relevance to: {packet['requested_task']}; "
+            f"the {RECENCY_FLOOR} newest in each stay first)_"
+        )
+    out += [
         "",
         "## Current Focus",
         cf or "_(not recorded — see current.md / handoff.md)_",
@@ -6226,10 +6669,20 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     summary = {"reindexed": ok, "path": str(memory_dir / "generated" / "resume-packet.md")}
     if problem:
         summary["error"] = problem
+    if getattr(args, "search_index", False):
+        # Build even below the size threshold — for a test, or to see whether it
+        # helps a particular store. Search still consults it only past the threshold.
+        from breadcrumbs import searchindex as _searchindex
+
+        summary["search_index"] = _searchindex.build_index(memory_dir, root, force=True)
     if args.json:
         _print_json(args, summary)
     elif ok:
         print(f"Reindexed projections: {summary['path']}")
+        if summary.get("search_index"):
+            si = summary["search_index"]
+            state = "built" if si["built"] else f"not built ({si['reason']})"
+            print(f"Search index: {state}, {si['records']} record(s)")
     else:
         # Naming the cause: "Reindex failed" alone left the user with a store
         # whose projections had silently stopped refreshing.
@@ -6652,7 +7105,101 @@ GUARD_STEM_ALIASES = {
 }
 
 
+# ---- store-local aliases (WM-24) ------------------------------------------- #
+#
+# `GUARD_STEM_ALIASES` is five entries, and it is the tool's vocabulary, not the
+# project's. Every codebase has its own: a service nickname, a module and its
+# acronym, the two names a team uses for one thing. `.project-memory/aliases.txt`
+# lets a store add those without a code change — one group per line, words that
+# fold to the first word's stem:
+#
+#     auth authn authz login
+#     billing invoicing ledger
+#
+# It is committed (a teammate's clone must stem the same way, or the same query
+# returns different results on two machines) and folded into `_inputs_hash`
+# (it changes what the guard prefilter contains).
+#
+# `_stem` is a pure function called from everywhere, with no store in scope, so
+# the table is module state that the store-scoped entry points *activate*
+# (`_candidate_items`, the prefilter builder and reader). Activation is keyed on
+# the file's path, mtime and size, so it is one `stat` when nothing changed — and
+# a store with no file resets the table, so one store's aliases never leak into
+# another's results in a process that touches both.
+ALIASES_FILENAME = "aliases.txt"
+_STORE_ALIASES: dict[str, str] = {}
+_STORE_ALIASES_KEY: tuple | None = None
+
+
+def parse_store_aliases(text: str) -> tuple[dict[str, str], list[dict]]:
+    """Alias groups -> `{member_stem: canonical_stem}`, plus per-line problems.
+
+    Problems are reported, never raised: a malformed alias file must degrade to
+    "fewer aliases", not to a search that crashes. A word already claimed by an
+    earlier group keeps its first meaning — deterministic, and it means adding a
+    line can never silently change what an older line did.
+    """
+    mapping: dict[str, str] = {}
+    problems: list[dict] = []
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        words = [w for w in _TOKEN_RE.findall(line.lower()) if len(w) > 1]
+        if len(words) < 2:
+            problems.append({"line": lineno, "problem": "a group needs at least two words"})
+            continue
+        canonical = _base_stem(words[0])
+        mapping.setdefault(canonical, canonical)
+        for word in words[1:]:
+            stem = _base_stem(word)
+            if stem in mapping and mapping[stem] != canonical:
+                problems.append(
+                    {"line": lineno, "problem": f"{word!r} is already in an earlier group"}
+                )
+                continue
+            mapping[stem] = canonical
+    # Resolve chains to a fixpoint so `_stem` stays idempotent: the guard
+    # prefilter re-stems tokens it wrote earlier, and `stem(stem(x)) != stem(x)`
+    # would make a fresh index and a stale one disagree.
+    for key in list(mapping):
+        seen = {key}
+        target = mapping[key]
+        while target in mapping and mapping[target] != target and target not in seen:
+            seen.add(target)
+            target = mapping[target]
+        mapping[key] = target
+    return {k: v for k, v in mapping.items() if k != v}, problems
+
+
+def activate_store_aliases(memory_dir: Path) -> None:
+    """Make `_stem` use this store's aliases. Cheap when nothing changed."""
+    global _STORE_ALIASES, _STORE_ALIASES_KEY
+    path = Path(memory_dir) / ALIASES_FILENAME
+    try:
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key == _STORE_ALIASES_KEY:
+        return
+    _STORE_ALIASES_KEY = key
+    if key is None:
+        _STORE_ALIASES = {}
+        return
+    try:
+        _STORE_ALIASES = parse_store_aliases(read_text_lenient(path)[0])[0]
+    except Exception:  # pragma: no cover - aliases must never break a search
+        _STORE_ALIASES = {}
+
+
 def _stem(token: str) -> str:
+    """Fold a token to its stem, then apply the active store's aliases."""
+    stem = _base_stem(token)
+    return _STORE_ALIASES.get(stem, stem) if _STORE_ALIASES else stem
+
+
+def _base_stem(token: str) -> str:
     """Fold a token to its morphological stem (deterministic, idempotent)."""
     word = token
     for _ in range(4):  # fixpoint: families collapse in <=4 strips
@@ -6952,7 +7499,7 @@ QUESTION_SLUG_CHARS = 48
 
 
 def question_item_id(question: str) -> str:
-    """Search id for an open question: `q:<slug>`, disambiguated when truncated.
+    """Search id for an open question: `q_<slug>`, disambiguated when truncated.
 
     Truncating the slug at 48 characters made two distinct questions share one id
     ("… to the new columnar store this quarter" / "… to the new row store next
@@ -6963,9 +7510,27 @@ def question_item_id(question: str) -> str:
     """
     slug = slugify(question)
     if len(slug) <= QUESTION_SLUG_CHARS:
-        return "q:" + slug
+        return QUESTION_ID_PREFIX + slug
     digest = hashlib.sha256(question.encode("utf-8")).hexdigest()[:6]
-    return f"q:{slug[:QUESTION_SLUG_CHARS].rstrip('-')}-{digest}"
+    return f"{QUESTION_ID_PREFIX}{slug[:QUESTION_SLUG_CHARS].rstrip('-')}-{digest}"
+
+
+# Question ids were `q:<slug>` through 0.3.x and are `q_<slug>` from Phase 2 on
+# (WM-21/WM-22). The colon was the only id in the store that was not a valid
+# filename or a clean URI path segment, and questions are about to become files
+# and `memory://questions/{id}` resources. The old spelling is still accepted
+# everywhere an id is *read* — it is in commit messages, decision records and
+# people's shell history — and never printed.
+QUESTION_ID_PREFIX = "q_"
+_LEGACY_QUESTION_ID_PREFIX = "q:"
+
+
+def normalize_question_id(rid: str) -> str:
+    """`q:<slug>` -> `q_<slug>`; anything else unchanged."""
+    rid = (rid or "").strip()
+    if rid.lower().startswith(_LEGACY_QUESTION_ID_PREFIX):
+        return QUESTION_ID_PREFIX + rid[len(_LEGACY_QUESTION_ID_PREFIX) :]
+    return rid
 
 
 def _item_from_question(q: dict) -> dict:
@@ -7028,6 +7593,9 @@ def _candidate_items(memory_dir: Path, *, include_ideas: bool = False) -> list[d
     `session_tracking: distillate` a clone may not have them at all, so including
     them would make results depend on which checkout you ran in.
     """
+    # Store aliases first: `search` stems the query right after this returns,
+    # and both sides of every comparison must fold through the same table.
+    activate_store_aliases(memory_dir)
     types = JUDGING_ITEM_TYPES + (SPECULATIVE_ITEM_TYPES if include_ideas else ())
     items: list[dict] = []
     for rec in load_records(memory_dir, types=types):
@@ -7274,15 +7842,29 @@ def search(
     It defaults to False so a caller that forgets it gets guard's corpus, which is
     the safe side of the mistake.
     """
-    items = _candidate_items(memory_dir, include_ideas=include_ideas)
-    by_id = {it["id"]: it for it in items}
+    # Aliases before the query is stemmed: both sides of every comparison must
+    # fold through the same table (WM-24).
+    activate_store_aliases(memory_dir)
     filters = filters or {}
     q_specific = _specific(query)
     q_files = _norm_files(_paths_from_text(query) | set(files or []))
+    # The search index narrows the corpus to records that could possibly match
+    # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
+    # the full scan below is then exactly what it always was.
+    from breadcrumbs import searchindex as _searchindex
+
+    narrowed = _searchindex.candidate_items(
+        memory_dir, root, q_specific, q_files, include_ideas=include_ideas
+    )
+    if narrowed is not None:
+        items, ubiquitous = narrowed
+    else:
+        items = _candidate_items(memory_dir, include_ideas=include_ideas)
+        ubiquitous = _ubiquitous_stems(items)
+    by_id = {it["id"]: it for it in items}
     cur_branch = git_branch(root)
     # One commit-distance index for the whole pass — see the class.
     distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
-    ubiquitous = _ubiquitous_stems(items)
 
     matches: list[dict] = []
     for it in items:
@@ -7717,8 +8299,21 @@ def cmd_search(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        _print_json(args, {"query": query, "filters": filters, "matches": matches})
+        payload = {"query": query, "filters": filters, "matches": matches}
+        if getattr(args, "explain", False):
+            payload["query_stems"] = sorted(_specific(query))
+        _print_json(args, payload)
         return 0
+    if getattr(args, "explain", False):
+        # What the query actually became. A synonym that "should" have matched
+        # usually did not because the two words stem differently, and without
+        # this the only way to find out was reading `_stem`. The fix is a line in
+        # aliases.txt; this is how you find out you need one.
+        stems = sorted(_specific(query))
+        print(f"query stems: {', '.join(stems) if stems else '(none — every word was a stopword)'}")
+        if _STORE_ALIASES:
+            print(f"store aliases active: {len(_STORE_ALIASES)} ({ALIASES_FILENAME})")
+        print()
     print(render_search_human(matches, query or "(filters only)"))
     return 0
 
@@ -8233,7 +8828,27 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
             findings.append(
                 {"path": str(p.relative_to(memory_dir)), "stamped": stamped, "current": current}
             )
+    # JSON projections that carry a top-level `inputs_hash` (related.json).
+    # One without the key — guard-prefilter.json — is unstamped by design and
+    # skipped, exactly like an unstamped markdown projection above.
+    for p in sorted(gen.glob("*.json")):
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        stamped = doc.get("inputs_hash") if isinstance(doc, dict) else None
+        if isinstance(stamped, str) and stamped != current:
+            findings.append(
+                {"path": str(p.relative_to(memory_dir)), "stamped": stamped, "current": current}
+            )
     return findings
+
+
+def load_related(memory_dir: Path) -> dict[str, list[str]]:
+    """`{id: [related ids]}` from `generated/related.json`, or `{}`."""
+    from breadcrumbs import related as _related
+
+    return _related.load_related(memory_dir)
 
 
 # ---- bloat ----------------------------------------------------------------- #
@@ -8434,6 +9049,39 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
     for vf in run_validate(memory_dir):
         if vf["status"] == "fail" and vf["check"] in _AUDIT_HEALTH_CHECKS:
             findings.append(_audit_finding(vf["check"], AUDIT_WARN, vf["path"], vf["message"]))
+
+    # B (cont). A hand-written trap/question block that reindex could not adopt
+    # (WM-22): its id belongs to an existing file with different content. The
+    # file drives every reader; the block is someone's edit waiting to be merged.
+    from breadcrumbs import blockfiles as _blockfiles
+
+    for rid in _blockfiles.unadopted_blocks(memory_dir):
+        findings.append(
+            _audit_finding(
+                "unadopted-block",
+                AUDIT_WARN,
+                "known-traps.md" if rid.startswith("trap") else "open-questions.md",
+                f"{rid} is a hand-written block whose id already has a file with different "
+                "content — merge the block into that file by hand, then delete the block",
+            )
+        )
+
+    # B (cont). A malformed alias line. Audit, not validate: an unusable line is
+    # simply skipped by the parser, so the store still works — but the author
+    # meant something by it, and silently doing nothing is how a synonym
+    # "doesn't work" for a month before anybody reads `_stem`.
+    alias_path = memory_dir / ALIASES_FILENAME
+    if alias_path.is_file():
+        for problem in parse_store_aliases(read_text_lenient(alias_path)[0])[1]:
+            findings.append(
+                _audit_finding(
+                    "aliases",
+                    AUDIT_WARN,
+                    ALIASES_FILENAME,
+                    f"line {problem['line']}: {problem['problem']} — the line is ignored",
+                    line=problem["line"],
+                )
+            )
 
     # B (cont). Records nothing has ever reached. `audit`'s [unreachable] check
     # asks whether a record *could* be found; this asks whether it ever *was* —
@@ -8944,7 +9592,7 @@ def adapter_block() -> str:
                 "- **When a trap or decision no longer applies:**",
                 '  `crumb mark-status <id> stale --reason "…"`, so it stops raising `guard`.',
                 "- **When an open question gets answered:**",
-                '  `crumb mark-status q:<slug> answered --reason "…"` (name the decision',
+                '  `crumb mark-status q_<slug> answered --reason "…"` (name the decision',
                 "  that answered it), so it stops counting as a live blocker.",
                 '- **Session end:** `crumb capture session --next "<what to do next>"`',
                 '  (add `--set "Decisions Made" "…"` for narrative). Pass `--next`: the bare',
@@ -9814,6 +10462,32 @@ def doctor_report(root: Path) -> dict:
         else:
             add("resume_packet", False, "not generated — run `crumb resume`")
 
+        # The search index (WM-23). Absent is healthy below the threshold — the
+        # full scan is already fast there — so only a *stale* index is a
+        # problem, and even that only costs speed: search never trusts it.
+        from breadcrumbs import searchindex as _searchindex
+
+        st = _searchindex.index_status(memory_dir, root)
+        if st["state"] == "fresh":
+            add("search_index", True, f"fresh ({st['records']} records indexed)")
+        elif st["state"] == "stale":
+            add(
+                "search_index",
+                False,
+                "stale (search falls back to a full scan) — run `crumb reindex`",
+            )
+        elif st["state"] == "unavailable":
+            add("search_index", True, "sqlite3 unavailable in this Python; search uses a full scan")
+        elif st["state"] == "unreadable":
+            add("search_index", False, "unreadable — run `crumb reindex --search-index`")
+        else:
+            add(
+                "search_index",
+                True,
+                f"not built (the store is under {_searchindex.INDEX_MIN_CORPUS} records; "
+                "a full scan is fast at this size)",
+            )
+
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))
     return {"checks": checks, "integrated": integrated, "store": store}
 
@@ -9926,6 +10600,7 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     keyword classifier and the destructive-op regex are both blind to. Absent or
     unreadable index ⇒ not risky (the index is rebuilt on every reindex).
     """
+    activate_store_aliases(memory_dir)
     p = memory_dir / "generated" / GUARD_PREFILTER_FILENAME
     try:
         idx = json.loads(p.read_text(encoding="utf-8"))
@@ -10160,16 +10835,22 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
     payload = payload or {}
     if memory_dir.is_dir():
         try:
-            packet = build_resume_packet(memory_dir, root)
-            context = render_packet_markdown(packet)
             # `source` says why this SessionStart fired. Absent on older harness
             # versions, which is `startup` for every practical purpose.
-            if str(payload.get("source") or "startup") == "compact":
+            compacted = str(payload.get("source") or "startup") == "compact"
+            task = None
+            if compacted:
                 from breadcrumbs import hooks_common
 
-                context = (
-                    _compaction_preamble(memory_dir, hooks_common.session_id_of(payload)) + context
-                )
+                session_id = hooks_common.session_id_of(payload)
+                # The last prompt before the compaction is the best statement of
+                # what this session is doing, so the rebuilt packet is ordered by
+                # relevance to it (WM-20) rather than by recency.
+                task = hooks_common.prompt_state(memory_dir, session_id).get("last_prompt")
+            packet = build_resume_packet(memory_dir, root, task=task or None)
+            context = render_packet_markdown(packet)
+            if compacted:
+                context = _compaction_preamble(memory_dir, session_id) + context
             out = {
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",
@@ -11066,6 +11747,21 @@ def _add_traps(sub, global_parser: argparse.ArgumentParser) -> None:
     p_traps.set_defaults(func=cmd_traps)
 
 
+# show — the body behind a one-line mention
+def _add_show(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "show",
+        parents=[global_parser],
+        help="print one record, trap, question or jot by id (the body behind a one-line mention)",
+    )
+    p.add_argument(
+        "record_id",
+        metavar="ID",
+        help="any id the tool prints: dec_…, att_…, ver_…, idea_…, ses_…, jot_…, trap_…, q_…",
+    )
+    p.set_defaults(func=cmd_show)
+
+
 # retitle — repair a record whose title carries no information
 def _add_retitle(sub, global_parser: argparse.ArgumentParser) -> None:
     p_retitle = sub.add_parser(
@@ -11114,6 +11810,11 @@ def _add_reindex(sub, global_parser: argparse.ArgumentParser) -> None:
         "reindex",
         parents=[global_parser],
         help="rebuild generated/ projections from the canonical records",
+    )
+    p_reindex.add_argument(
+        "--search-index",
+        action="store_true",
+        help="also build index/search.sqlite even if the store is under the size threshold",
     )
     p_reindex.set_defaults(func=cmd_reindex)
 
@@ -11206,6 +11907,11 @@ def _add_search(sub, global_parser: argparse.ArgumentParser) -> None:
         choices=("decision", "attempt", "verification", "idea", "trap", "question", "jot"),
         help="narrow the corpus to one record type ('idea' and 'jot' are searchable "
         "but never reach a guard verdict)",
+    )
+    p_search.add_argument(
+        "--explain",
+        action="store_true",
+        help=f"print the stems the query became (and whether {ALIASES_FILENAME} is active)",
     )
     p_search.add_argument(
         "--status",
@@ -11480,6 +12186,7 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "inbox": _add_inbox,
     "verify": _add_verify,
     "mark-status": _add_mark_status,
+    "show": _add_show,
     "retitle": _add_retitle,
     "traps": _add_traps,
     "prune": _add_prune,

@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: d71a7e3 | inputs_hash: 2e3dc7f5b30d | generated_at: 2026-09-22T16:43:07+00:00 -->
+<!-- source_commit: 1f3ee4d | inputs_hash: a2de1718a4ec | generated_at: 2026-09-22T18:29:19+00:00 -->
 
 # Resume Packet
 
 ## Project
 **shared-service** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `d71a7e3` · 36 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `1f3ee4d` · 76 uncommitted file(s)
 
 ## Current Focus
 Splitting the ingest worker out of the API process.

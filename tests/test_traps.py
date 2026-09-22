@@ -25,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
+from _schema2 import downgrade_to_schema2  # noqa: E402
 
 
 def run(argv: list[str]) -> tuple[int, str]:
@@ -37,6 +38,12 @@ def run(argv: list[str]) -> tuple[int, str]:
 def init_store(tmp: str) -> Path:
     crumb.main(["init", "--project", tmp, "--session-tracking", "full"])
     return Path(tmp) / crumb.MEMORY_DIRNAME
+
+
+def trap_text(mem: Path, tid: str) -> str:
+    """The text a trap lives in: its own file from schema 3, else the singleton."""
+    path = _cli.find_trap_by_id(mem, tid).get("record_path") or (mem / "known-traps.md")
+    return Path(path).read_text("utf-8")
 
 
 def add_trap(tmp: str, summary: str) -> str:
@@ -79,7 +86,7 @@ class TrapReportTests(unittest.TestCase):
             tid = add_trap(tmp, "the first trap")
             code, out = run(["traps", "--confirm", tid, "--project", tmp])
             self.assertEqual(code, 0, out)
-            self.assertIn(_cli.TRAP_CONFIRMED_KEY, (mem / "known-traps.md").read_text("utf-8"))
+            self.assertIn("last_confirmed: ", trap_text(mem, tid))
             row = next(r for r in _cli.trap_report(mem) if r["id"] == tid)
             self.assertIsNotNone(row["last_confirmed"])
             self.assertEqual(row["age_days"], 0)
@@ -90,16 +97,30 @@ class TrapReportTests(unittest.TestCase):
             tid = add_trap(tmp, "the first trap")
             run(["traps", "--confirm", tid, "--project", tmp])
             run(["traps", "--confirm", tid, "--project", tmp])
+            self.assertEqual(trap_text(mem, tid).count("last_confirmed: "), 1)
+
+    def test_a_schema2_block_confirms_in_place(self):
+        # A store that has not migrated keeps its traps as blocks, and the
+        # confirmation stamp is a bullet in the block.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = downgrade_to_schema2(init_store(tmp))
+            tid = add_trap(tmp, "the first trap")
+            run(["traps", "--confirm", tid, "--project", tmp])
+            run(["traps", "--confirm", tid, "--project", tmp])
             text = (mem / "known-traps.md").read_text("utf-8")
             self.assertEqual(text.count(f"- {_cli.TRAP_CONFIRMED_KEY}:"), 1)
+            for kept in ("Area / files: app/x.py", "Symptom: it breaks", "Why: because"):
+                self.assertIn(kept, text)
+            row = next(r for r in _cli.trap_report(mem) if r["id"] == tid)
+            self.assertEqual(row["age_days"], 0)
 
     def test_confirming_preserves_the_rest_of_the_block(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             tid = add_trap(tmp, "the first trap")
             run(["traps", "--confirm", tid, "--project", tmp])
-            text = (mem / "known-traps.md").read_text("utf-8")
-            for kept in ("Area / files: app/x.py", "Symptom: it breaks", "Why: because"):
+            text = trap_text(mem, tid)
+            for kept in ("## Area / files\napp/x.py", "## Symptom\nit breaks", "## Why\nbecause"):
                 self.assertIn(kept, text)
 
     def test_stale_filters_to_what_nobody_has_confirmed(self):

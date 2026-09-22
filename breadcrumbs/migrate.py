@@ -79,8 +79,39 @@ def _m2_inbox_directories(memory_dir: Path, project_root: Path) -> list[str]:
     return changed
 
 
+def _m3_traps_and_questions_as_files(memory_dir: Path, project_root: Path) -> list[str]:
+    """schema 3 — one file per trap and per question (WM-22).
+
+    Every `## trap_…` block in known-traps.md becomes `traps/<slug>.md` and every
+    `## Q:` block in open-questions.md becomes `questions/<slug>.md`. Ids are
+    kept exactly: they are cited in decision records and commit messages. Every
+    line of every block is kept too — content bullets become sections,
+    bookkeeping bullets become frontmatter, and anything else (free prose,
+    status-change provenance comments) becomes the file's `Notes` section.
+
+    The two singletons are then rewritten as generated one-line-per-record
+    indexes, so a cloud agent reading them without the CLI still finds every
+    trap and question. Readers switch on the manifest version, not on what is
+    on disk, so a store stopped halfway still reads its blocks.
+
+    Idempotent: an existing file is never overwritten, and on a store with no
+    blocks left (already migrated) the step only rewrites the indexes. If the
+    written files fail validation, they are removed and the step raises, leaving
+    the store at schema 2 exactly as it was.
+    """
+    from breadcrumbs import blockfiles
+
+    return blockfiles.migrate_blocks_to_files(memory_dir, project_root)
+
+
 MIGRATIONS: list[Migration] = [
     Migration(2, "add inbox/ and private/inbox/ for the jot tier", _m2_inbox_directories),
+    Migration(
+        3,
+        "move traps and questions to one file each; known-traps.md and "
+        "open-questions.md become generated indexes",
+        _m3_traps_and_questions_as_files,
+    ),
 ]
 
 

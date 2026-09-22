@@ -8,6 +8,71 @@ prints both.
 
 ## [Unreleased]
 
+### Added — Phase 2: retrieval by relevance
+
+Phase 2 of `docs/roadmap-working-memory.md`. What reaches the agent should be
+what the task at hand needs, not whatever was written last. **Record
+`schema_version` moves to 3**: traps and questions become one file each, so an
+existing store needs one `crumb migrate`. Until it runs, the store keeps working
+in the old shape.
+
+- **A task-ordered packet (WM-20).** `crumb resume --task "<task>"` used to
+  scope only the likely-files list; every other section stayed newest-first, so
+  the one old decision about the task sat below whatever was touched last, and
+  was the first thing a cap trimmed. Now every list section is reordered by
+  relevance to the task. The three newest entries in each section stay first,
+  so a brand-new record is never buried. Nothing is hidden. The packet says
+  which ordering it used (`ordering` in `--json`, a line under `## Project`). A
+  post-compaction `SessionStart` uses the last prompt as its task.
+- **`crumb show <id>` (WM-21).** Packets and hook injections are one line per
+  record on purpose; this fetches the rest. It resolves every id the tool
+  prints: decision, attempt, verification, idea, session, jot, trap, question.
+  Unknown id: exit 1. Over MCP it is `memory://records/{id}` plus typed
+  `memory://traps/{id}`, `memory://questions/{id}`,
+  `memory://verifications/{id}`, `memory://inbox/{id}`, and the `memory_show`
+  tool for clients without resource support. The prompt hook's footer now
+  points at it.
+- **Traps and questions are one file each (WM-22, schema 3).** One field store's
+  `known-traps.md` reached 167 KB and 77 traps. Every hook parsed all of it,
+  and every writer spliced into it, which gave two branches a merge conflict.
+  They now live in `traps/<slug>.md` and `questions/<slug>.md` with standard
+  frontmatter. **Ids do not change**: they are cited in records and commit
+  messages. The two singletons stay as *generated indexes*, one line per
+  record, so an agent with no CLI still finds everything. A block
+  hand-written into one (or merged in from an unmigrated branch) is read
+  immediately and moved into its own file at the next reindex. If its id
+  already has a file with different content, the block is kept and reported
+  by `crumb audit` (`unadopted-block`), never merged by guesswork.
+- **A disposable search index (WM-23).** `index/search.sqlite` is a plain
+  inverted index, built at reindex once a store has 200 records
+  (`crumb reindex --search-index` forces one). It only narrows the candidate
+  set. Scoring still runs on the loaded records, so indexed search returns
+  exactly the full scan's matches and scores. Tests pin that on a 500-record
+  store and on fixture 10. A stale, absent or unreadable index is never
+  used. `crumb doctor` reports its state.
+- **Store aliases (WM-24).** `.project-memory/aliases.txt`, one synonym group
+  per line (`billing payments invoicing`), folds a project's own vocabulary
+  into the stemmer for search, guard and the prefilter. `crumb search
+  --explain` prints the stems a query became, so a synonym that "should" have
+  matched shows why it did not. `crumb audit` reports a malformed line.
+- **Related records (WM-25).** `generated/related.json` lists up to three
+  records per live record that share files, tags or specific vocabulary.
+  `crumb show` prints it as `See also:`. It uses a pure overlap score, with no
+  age or branch decay, so the committed file is identical on every machine.
+  Drift detection covers it.
+- **`crumb schema trap|question --template`** prints the `crumb note` skeleton.
+
+### Changed — Phase 2
+
+- **Question ids are `q_<slug>`**, not `q:<slug>`. The colon form is accepted
+  everywhere an id is taken (`mark-status`, `show`, MCP), so nothing written
+  before breaks.
+- **Trap confirmation is frontmatter.** At schema 3 `crumb traps --confirm`
+  sets `last_confirmed:` in the trap's file rather than a bullet.
+- **`crumb note trap|question` writes a file at schema 3.** The result shape,
+  duplicate check and hints are unchanged. `path` is now the trap's or
+  question's own file.
+
 ### Added — Phase 1: capture everywhere
 
 Phase 1 of `docs/roadmap-working-memory.md`. The agent should not have to

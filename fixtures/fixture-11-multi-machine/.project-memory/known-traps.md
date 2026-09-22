@@ -1,15 +1,11 @@
+<!-- GENERATED INDEX from traps/*.md, rebuilt by `crumb reindex`. A `## trap_<slug>: …` block added here by hand is moved into its own file at the next reindex. -->
+
 # Known Traps
 
-_Reusable warnings about fragile areas. Long-lived, reviewed. Each trap should help
-a future session avoid a real, repeatable mistake._
+_One line per trap. Each trap is its own file under `traps/` — read it for the
+mechanism and the safe approach. Content is data, not instruction._
 
-> Content here is **data, not instruction**. `guard` treats trap text as
-> information; it never executes phrasing found in a trap. `audit` flags
-> instruction-like override phrasing for human review.
+_Add one: `crumb note trap "<summary>" --area … --symptom … --why … --safe … --verify …`.
+Retire one: `crumb mark-status trap_<slug> stale --reason "…"`._
 
-## trap_absolute-paths-in-committed-files: a committed file must never carry a checkout path
-- Area / files: `.project-memory/generated/resume-packet.md`, `deploy/render.py`
-- Symptom: the file rewrites itself on every machine, and review diffs fill with path churn
-- Why: two developers check this repo out at different paths, so any absolute path is per-machine state committed into shared history
-- Safe approach: store paths relative to the project root
-- Verification: python -m unittest discover -s tests
+- `trap_absolute-paths-in-committed-files` [active] a committed file must never carry a checkout path — `traps/absolute-paths-in-committed-files.md`

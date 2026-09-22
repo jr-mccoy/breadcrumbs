@@ -187,6 +187,48 @@ def resource_attempt(rid: str, root: str | Path | None = None) -> str:
 
 
 # The declared resource surface. `mcp_server.build_server` binds each URI
+def _item_text(rid: str, root: str | Path | None, *, kinds: tuple[str, ...] | None) -> str:
+    """The text `crumb show <id>` prints, restricted to `kinds` when given.
+
+    The kind check is what makes `memory://traps/{id}` mean a trap: without it
+    one URI template would serve any record whose id happened to be passed,
+    which is the confusion `_record_text` already guards against for decisions
+    and attempts.
+    """
+    _, mem = resolve(root)
+    _require_memory(mem)
+    item = cli.find_item(mem, rid)
+    if item is None or (kinds is not None and item["kind"] not in kinds):
+        what = " or ".join(kinds) if kinds else "record, trap, question or jot"
+        raise KeyError(f"no {what} with id {rid!r}")
+    return item["text"]
+
+
+def resource_record(rid: str, root: str | Path | None = None) -> str:
+    """`memory://records/{id}` — any id the tool prints, same text as `crumb show`."""
+    return _item_text(rid, root, kinds=None)
+
+
+def resource_trap(rid: str, root: str | Path | None = None) -> str:
+    """`memory://traps/{id}` — one trap."""
+    return _item_text(rid, root, kinds=("trap",))
+
+
+def resource_question(rid: str, root: str | Path | None = None) -> str:
+    """`memory://questions/{id}` — one question (`q_…`; `q:…` accepted)."""
+    return _item_text(rid, root, kinds=("question",))
+
+
+def resource_verification(rid: str, root: str | Path | None = None) -> str:
+    """`memory://verifications/{id}` — one verification record."""
+    return _item_text(rid, root, kinds=("verification",))
+
+
+def resource_inbox_item(rid: str, root: str | Path | None = None) -> str:
+    """`memory://inbox/{id}` — one jot, committed or machine-local."""
+    return _item_text(rid, root, kinds=("jot",))
+
+
 def resource_inbox(root: str | Path | None = None) -> str:
     """`memory://inbox` — live jots, rendered as a list.
 
@@ -236,6 +278,11 @@ STATIC_RESOURCES = {
 TEMPLATE_RESOURCES = {
     "memory://decisions/{id}": resource_decision,
     "memory://attempts/{id}": resource_attempt,
+    "memory://records/{id}": resource_record,
+    "memory://traps/{id}": resource_trap,
+    "memory://questions/{id}": resource_question,
+    "memory://verifications/{id}": resource_verification,
+    "memory://inbox/{id}": resource_inbox_item,
 }
 
 
@@ -495,6 +542,30 @@ def tool_note(
         ),
         mem,
     )
+
+
+def tool_show(id: str, root: str | Path | None = None) -> dict:
+    """`memory_show` — `crumb show` for clients without resource support.
+
+    Returns `{ok, id, kind, status, text, related}`. `related` is the "see also"
+    list from `generated/related.json`: the records that share files, tags or
+    specific vocabulary with this one.
+    """
+    _, mem = resolve(root)
+    if (missing := _memory_missing(mem)) is not None:
+        return missing
+    item = cli.find_item(mem, id)
+    if item is None:
+        return {"ok": False, "error": f"no record, trap, question or jot with id {id!r}"}
+    return {
+        "ok": True,
+        "id": item["id"],
+        "kind": item["kind"],
+        "status": item["status"],
+        "path": _rel(item["path"], mem),
+        "text": item["text"],
+        "related": cli.load_related(mem).get(item["id"], []),
+    }
 
 
 def tool_jot(

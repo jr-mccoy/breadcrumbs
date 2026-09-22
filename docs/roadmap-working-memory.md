@@ -104,7 +104,7 @@ three days, **L** a week.
 |---|---|---|---|
 | 0 | Foundations: migration, inbox, telemetry — **shipped**, see §0.5 | WM-01, WM-02, WM-03 | 0.3.0 |
 | 1 | Capture everywhere: new hooks and the transcript miner — **shipped**, see §0.6 | WM-10 to WM-16 | 0.4.0 |
-| 2 | Retrieval by relevance | WM-20 to WM-25 | 0.5.0 |
+| 2 | Retrieval by relevance — **shipped**, see §0.7 | WM-20 to WM-25 | 0.5.0 |
 | 3 | Lifecycle: decay, dedup, consolidation, contradiction | WM-30 to WM-35 | 0.6.0 |
 | 4 | The bridge to long-term memory | WM-40 to WM-43 | 0.7.0 |
 | 5 | Scope and multi-agent | WM-50 to WM-52 | 0.8.0 |
@@ -910,7 +910,7 @@ already the second.
 
 ## Phase 2: Retrieval by relevance
 
-### WM-20 A task-relevant packet — **M**
+### WM-20 A task-relevant packet — **M** — SHIPPED
 
 **Goal.** `build_resume_packet(task=…)` scopes only `likely_files`. Scope
 every list section by relevance when a task is known, and keep a recency
@@ -943,7 +943,7 @@ one old decision cites the task's file, `--task` lists that decision
 within the first 4 lines of Active Decisions while the 3 newest stay
 first; without `--task` order is unchanged; `ordering` is in `--json`.
 
-### WM-21 Progressive disclosure: `crumb show` and generic MCP resources — **S**
+### WM-21 Progressive disclosure: `crumb show` and generic MCP resources — **S** — SHIPPED
 
 **Goal.** Packets and hook injections should carry one line per record and
 a way to fetch the body. Only decisions and attempts have MCP resources.
@@ -969,7 +969,7 @@ a way to fetch the body. Only decisions and attempts have MCP resources.
 **Tests**: `show` for each id kind; unknown id exits 1 with
 `CRUMB-ERROR`; MCP resource text equals CLI text.
 
-### WM-22 Traps and questions as one file per record — **L** (needs WM-01)
+### WM-22 Traps and questions as one file per record — **L** — SHIPPED (needs WM-01)
 
 **Goal.** `known-traps.md` reached 167 KB and 77 active traps in a field
 store and is parsed in full on every hook firing. This is the recorded
@@ -1014,7 +1014,7 @@ refreshes the index; `guard` verdicts on `fixtures/fixture-02` and
 `fixture-03` are unchanged after migration (copy the fixture to a temp
 dir, migrate, compare `--json` output minus timestamps).
 
-### WM-23 SQLite FTS5 index as a disposable recall accelerator — **M**
+### WM-23 SQLite FTS5 index as a disposable recall accelerator — **M** — SHIPPED
 
 **Goal.** Bag-of-words scanning is fine to 300 records and gets slow and
 narrow past that. `architecture.md` already reserves `index/` for a
@@ -1053,7 +1053,7 @@ freshness check, stale detection after a record write without reindex;
 equivalence over `fixtures/fixture-10-many-sessions` plus a synthetic
 500-record store for 20 queries; `doctor` row.
 
-### WM-24 Store-local aliases for the stemmer — **S**
+### WM-24 Store-local aliases for the stemmer — **S** — SHIPPED
 
 **Goal.** `GUARD_STEM_ALIASES` has five entries. Each project has its own
 vocabulary (a service nickname, a module and its acronym).
@@ -1070,7 +1070,7 @@ the prefilter contains.
 **Tests**: alias makes a query hit a record it did not before; malformed
 lines are ignored; `_inputs_hash` changes when the file changes.
 
-### WM-25 Related records — **S**
+### WM-25 Related records — **S** — SHIPPED
 
 **Goal.** Records that share files or specific stems should point at each
 other, so `show` and the packet can say "see also".
@@ -1085,6 +1085,80 @@ skip when the corpus exceeds 2000 items and say so in the file.
 
 **Tests**: two records citing the same file relate to each other; a
 superseded record is never listed; drift detection covers the new file.
+
+---
+
+### 0.7 Phase 2: what shipped, and where it differs from this plan
+
+Phase 2 is implemented. New modules: `breadcrumbs/blockfiles.py` (traps and
+questions as files), `breadcrumbs/related.py`, `breadcrumbs/searchindex.py`; new
+tests: `tests/test_aliases.py`, `tests/test_show.py`, `tests/test_searchindex.py`,
+`tests/test_blockfiles.py`, plus `RelevanceOrderingTests` in
+`tests/test_resume.py`. `tests/_schema2.py` builds a schema-2 store, so the tests
+that pin the block format still run against the shape an unmigrated store has.
+**Record `schema_version` is 3.**
+
+Eight departures from what this document specified. Read these before Phase 3.
+
+1. **WM-23 is not FTS5.** It is a plain inverted index in sqlite
+   (`postings(field, token, rid)`), in `searchindex.py`, flag
+   `crumb reindex --search-index`, threshold `INDEX_MIN_CORPUS = 200`. FTS5
+   tokenises text itself, and its tokens are not `_specific`'s stems: a record
+   FTS5 missed could still score, which breaks the equivalence rule. Storing
+   our own stems as postings makes the narrowing exact by construction. It
+   also works on Python builds compiled without FTS5.
+2. **The index computes ubiquity itself.** `_ubiquitous_stems` depends on
+   document frequency across the *whole* corpus. Computing it over the
+   narrowed candidates changed which stems were ubiquitous, and so the
+   scores. The index stores enough to answer document frequency for the query's
+   stems, which is the only part scoring reads.
+3. **The index's freshness check is a stat fingerprint first.** `_inputs_hash`
+   reads every file. On a 500-record store that cost as much as the scan the
+   index saves. A fingerprint of names, sizes and mtimes decides "fresh"
+   cheaply, and `_inputs_hash` runs only when the fingerprint differs (a
+   checkout that changed mtimes but no content).
+4. **WM-25 does not use `_score_item`.** That score decays by age and by branch,
+   so two machines would compute different neighbours and the committed
+   `related.json` would churn on every reindex. `related.pair_score` is the pure
+   overlap part: files ×6, tag stems ×4, non-ubiquitous specific stems ×1,
+   ties broken by id.
+5. **WM-22 keeps loose prose in a `## Notes` section, and `Last confirmed` is
+   frontmatter** (`last_confirmed`), not a body section. A block's bookkeeping
+   bullets (`Status`, `Last confirmed`, `Superseded by`, `Opened`) become
+   frontmatter. Everything that is neither a known bullet nor bookkeeping
+   (free prose, the provenance comments `mark-status` leaves) goes to `Notes`,
+   because "every line of every block is kept" was the migration's one hard
+   rule. There is no `traps_source()`. `blockfiles.uses_files()` reads the
+   manifest version, never what is on disk.
+6. **WM-22 files are undated.** Every other record type is
+   `YYYY-MM-DD-<slug>.md`. A date in a trap's filename would put a date in its id,
+   and trap ids are cited everywhere. `derive_identity` takes an undated stem for
+   `trap` and `question` (`UNDATED_ID_PREFIX`).
+7. **At schema 3 a hand-written block is adopted, not ignored.** The plan made
+   the singletons pure projections. But people and older tool versions still
+   append `## trap_…` blocks, and a branch that has not migrated merges them
+   in. Regenerating the index would silently delete them. So readers union
+   files with blocks (the file wins on an id clash), and the next reindex
+   moves each block into its own file. A block whose id already has a *different*
+   file is kept under the index and reported by `crumb audit` as
+   `unadopted-block`. Merging two versions of a trap is a judgement call, and
+   the tool does not make it.
+8. **Aliases are reported by `audit`, not `validate`,** and the first group to
+   claim a word keeps it. A malformed line is skipped, so the store is still
+   valid. Validate is for invalid stores. First-group-wins means adding a line
+   can never silently change what an older line did.
+
+A bug the migration tests caught: a trap with no sections is stored with the
+`_(not recorded)_` stub so its file parses. Rendering that stub back as a
+bullet gave the migrated trap keywords (`record`) its block never had.
+`blockfiles._flat` drops it.
+
+Notes for Phase 3: `find_item` is the one resolver for any printed id. Use it
+rather than adding a per-type lookup. WM-30's `expires_at` on traps and
+questions is now plain frontmatter like every other type. Anything that writes a
+trap or question must check `blockfiles.uses_files()`: at schema 3 it goes
+through `blockfiles.write_trap` / `write_question`, and below schema 3 it uses
+the block writers, as `cli.note` does.
 
 ---
 

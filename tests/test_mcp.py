@@ -319,8 +319,12 @@ class ToolPathTests(unittest.TestCase):
 
     def test_note_paths_are_store_relative(self):
         for kind, text, expected in (
-            ("question", "Does the cache need eviction?", "open-questions.md"),
-            ("trap", "the daemon holds a lock", "known-traps.md"),
+            (
+                "question",
+                "Does the cache need eviction?",
+                "questions/does-the-cache-need-eviction.md",
+            ),
+            ("trap", "the daemon holds a lock", "traps/the-daemon-holds-a-lock.md"),
         ):
             with self.subTest(kind=kind):
                 res = mcp_core.tool_note(kind, text, root=self.tmp)
@@ -463,6 +467,7 @@ class GracefulDegradationTests(unittest.TestCase):
             "tool_verify": lambda: mcp_core.tool_verify("subj", "open", root=empty),
             "tool_reindex": lambda: mcp_core.tool_reindex(root=empty),
             "tool_jot": lambda: mcp_core.tool_jot("x", root=empty),
+            "tool_show": lambda: mcp_core.tool_show("dec_x", root=empty),
             "tool_inbox_promote": lambda: mcp_core.tool_inbox_promote(
                 "jot_x", "decision", root=empty
             ),
@@ -536,11 +541,12 @@ class ResourceRegistryTests(unittest.TestCase):
         declared = set(mcp_core.STATIC_RESOURCES) | set(mcp_core.TEMPLATE_RESOURCES)
         self.assertEqual(self._bound_uris(), declared)
 
-    def test_the_advertised_count_is_nine(self):
-        # Eight through 0.2.0; `memory://inbox` is the ninth (WM-03, the jot
-        # tier). The number is pinned because the README and docs/mcp-spec.md
+    def test_the_advertised_count_is_fourteen(self):
+        # Eight through 0.2.0; `memory://inbox` is the ninth (WM-03), and WM-21
+        # adds five per-id templates (records, traps, questions, verifications,
+        # inbox). The number is pinned because the README and docs/mcp-spec.md
         # both state it, and a silent drift makes the docs wrong.
-        self.assertEqual(len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 9)
+        self.assertEqual(len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 14)
 
     def test_every_registry_target_is_callable(self):
         for uri, fn in {**mcp_core.STATIC_RESOURCES, **mcp_core.TEMPLATE_RESOURCES}.items():

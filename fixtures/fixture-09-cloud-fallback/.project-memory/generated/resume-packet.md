@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: d71a7e3 | inputs_hash: 77d854663a93 | generated_at: 2026-09-22T16:43:07+00:00 -->
+<!-- source_commit: 1f3ee4d | inputs_hash: 45ccb1f857e4 | generated_at: 2026-09-22T18:29:18+00:00 -->
 
 # Resume Packet
 
 ## Project
 **demo-service** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `d71a7e3` · 31 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `1f3ee4d` · 65 uncommitted file(s)
 
 ## Current Focus
 Plain-file portability.

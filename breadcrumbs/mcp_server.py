@@ -225,6 +225,26 @@ def build_server():  # -> FastMCP
     def attempt(id: str) -> str:
         return mcp_core.resource_attempt(id, _root())
 
+    @mcp.resource("memory://records/{id}")
+    def record(id: str) -> str:
+        return mcp_core.resource_record(id, _root())
+
+    @mcp.resource("memory://traps/{id}")
+    def trap(id: str) -> str:
+        return mcp_core.resource_trap(id, _root())
+
+    @mcp.resource("memory://questions/{id}")
+    def question(id: str) -> str:
+        return mcp_core.resource_question(id, _root())
+
+    @mcp.resource("memory://verifications/{id}")
+    def verification(id: str) -> str:
+        return mcp_core.resource_verification(id, _root())
+
+    @mcp.resource("memory://inbox/{id}")
+    def inbox_item(id: str) -> str:
+        return mcp_core.resource_inbox_item(id, _root())
+
     @mcp.resource("memory://open-questions")
     def open_questions() -> str:
         return mcp_core.resource_open_questions(_root())
@@ -297,6 +317,11 @@ def build_server():  # -> FastMCP
         return mcp_core.tool_validate(root=_root())
 
     @mcp.tool()
+    def memory_show(id: str) -> dict:
+        """Fetch one record, trap, question or jot by id, with its "see also" list."""
+        return mcp_core.tool_show(id, root=_root())
+
+    @mcp.tool()
     def memory_jot(
         text: str,
         tags: list[str] | None = None,
@@ -348,7 +373,8 @@ def build_server():  # -> FastMCP
         Pass `superseded_by` (the replacing record's id) when marking
         `superseded` — validate rejects a superseded record without it.
 
-        A `trap_<slug>` id retires a known trap and a `q:<slug>` id resolves an
+        A `trap_<slug>` id retires a known trap and a `q_<slug>` id (the older
+        `q:<slug>` spelling is still accepted) resolves an
         open question: either leaves the resume packet and stops raising
         `memory_guard_before_action`, while staying findable in `memory_search`
         under its new status. Questions take `open`/`answered`/`closed`; records

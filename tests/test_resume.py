@@ -649,5 +649,116 @@ class PacketTruthTests(unittest.TestCase):
             self.assertEqual([w for w in packet["warnings"] if "possible drift" in w], [])
 
 
+class RelevanceOrderingTests(unittest.TestCase):
+    """WM-20: `--task` reorders the packet's sections; it never hides anything.
+
+    Before, every section was newest-first, so the one decision about the task
+    at hand sat below whatever happened to be touched last — and was the first
+    thing a cap or the token budget trimmed.
+    """
+
+    TOPICS = [
+        "payments ledger rounding uses banker rounding",  # oldest: the one we want
+        "compose preview renders in dark mode",
+        "gradle daemon is disabled on ci",
+        "logo asset lives in the design repo",
+        "onboarding copy reviewed by marketing",
+        "crash reporter sampling at ten percent",
+        "icons exported as vector drawables",
+        "release notes drafted in the wiki",
+    ]
+
+    def _store(self, tmp: str) -> Path:
+        crumb.main(["init", "--project", tmp, "--session-tracking", "full"])
+        mem = Path(tmp) / crumb.MEMORY_DIRNAME
+        for day, title in enumerate(self.TOPICS, start=1):
+            stem = f"2026-01-{day:02d}-{crumb.slugify(title)}"
+            rid, slug = crumb.derive_identity(stem, "decision")
+            meta = {
+                "id": rid,
+                "type": "decision",
+                "slug": slug,
+                "title": title,
+                "status": "active",
+                "created_at": f"2026-01-{day:02d}T10:00:00+00:00",
+                "updated_at": f"2026-01-{day:02d}T10:00:00+00:00",
+                "created_by": "tester",
+                "agent": "human",
+                "project": "demo",
+                "scope": "project",
+                "branch": "main",
+                "commit": "abc1234",
+                "dirty_files": [],
+                "confidence": "low",
+                "privacy": "repo-safe",
+                "review_status": "unreviewed",
+                "reviewed_by": None,
+                "supersedes": [],
+                "superseded_by": None,
+                "expires_at": None,
+                "tags": [],
+                "evidence": [],
+            }
+            (mem / "decisions" / f"{stem}.md").write_text(
+                crumb.render_frontmatter(meta) + f"\n## Decision\n{title}.\n", encoding="utf-8"
+            )
+        return mem
+
+    def _ids(self, packet: dict) -> list[str]:
+        return [e["id"] for e in packet["active_decisions"]]
+
+    def test_without_a_task_the_order_is_recency(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._store(tmp)
+            packet = crumb.build_resume_packet(mem, Path(tmp))
+            self.assertEqual(packet["ordering"], "recency")
+            ids = self._ids(packet)
+            self.assertNotIn("payments", " ".join(ids[:RECENCY]))
+
+    def test_a_task_moves_the_matching_record_up_behind_the_recency_floor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._store(tmp)
+            plain = self._ids(crumb.build_resume_packet(mem, Path(tmp)))
+            packet = crumb.build_resume_packet(mem, Path(tmp), task="fix payments ledger rounding")
+            self.assertEqual(packet["ordering"], "relevance")
+            ids = self._ids(packet)
+            target = next(i for i in ids if "payments" in i)
+            # The newest RECENCY_FLOOR stay first, unchanged…
+            self.assertEqual(ids[:RECENCY], plain[:RECENCY])
+            # …and the task's record comes straight after them.
+            self.assertEqual(ids.index(target), RECENCY)
+            # Nothing hidden, nothing added.
+            self.assertEqual(sorted(ids), sorted(plain))
+
+    def test_a_task_that_matches_nothing_keeps_recency(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._store(tmp)
+            plain = crumb.build_resume_packet(mem, Path(tmp))
+            packet = crumb.build_resume_packet(mem, Path(tmp), task="zzqx unrelated gibberish")
+            self.assertEqual(self._ids(packet), self._ids(plain))
+            self.assertEqual(packet["ordering"], "recency")
+
+    def test_the_rendered_packet_says_how_it_is_ordered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._store(tmp)
+            code, out = run(["resume", "--project", tmp, "--task", "payments ledger rounding"])
+            self.assertEqual(code, 0)
+            self.assertIn("ordered by relevance to: payments ledger rounding", out)
+            code, out = run(["resume", "--project", tmp])
+            self.assertNotIn("ordered by relevance", out)
+
+    def test_json_carries_the_ordering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._store(tmp)
+            code, out = run(["resume", "--project", tmp, "--task", "payments ledger", "--json"])
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["ordering"], "relevance")
+            code, out = run(["resume", "--project", tmp, "--json"])
+            self.assertEqual(json.loads(out)["ordering"], "recency")
+
+
+RECENCY = crumb.RECENCY_FLOOR
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
