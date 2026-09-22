@@ -64,6 +64,7 @@ def add_trap(tmp: str, summary: str) -> str:
             "do the other thing",
             "--verify",
             "run the suite",
+            "--allow-duplicate",  # every trap here has the same body on purpose
             "--json",
         ]
     )

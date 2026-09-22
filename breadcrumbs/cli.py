@@ -351,9 +351,19 @@ def read_text_lenient(path: Path) -> tuple[str, str | None]:
         )
 
 
+def _now() -> datetime:
+    """The current local time, timezone-aware. The one clock seam.
+
+    Everything that ages a record — `now_iso`, `_age_days`, the TTL checks in
+    `breadcrumbs.lifecycle` — reads the time through here, so a test can move
+    the clock by patching one function.
+    """
+    return datetime.now().astimezone()
+
+
 def now_iso() -> str:
     """Local time, ISO-8601, timezone-aware (e.g. 2026-06-25T14:30:00-05:00)."""
-    return datetime.now().astimezone().replace(microsecond=0).isoformat()
+    return _now().replace(microsecond=0).isoformat()
 
 
 # Memo for `is_git_repo`, keyed by (path, does `.git` exist there) so the answer is
@@ -873,6 +883,50 @@ def _emit_warning(args: argparse.Namespace, message: str) -> None:
     """
     if not getattr(args, "json", False):
         print(f"{WARN_PREFIX} {command_label(args)}: {message}", file=sys.stderr)
+
+
+# `crumb remember|note|verify|jot` refused a near-duplicate (WM-32). Distinct
+# from 1 (the write failed) and 2 (bad usage): the input was fine, and the
+# caller has a decision to make — supersede the existing record or write anyway.
+EXIT_NEAR_DUPLICATE = 3
+
+
+def _emit_duplicate(args: argparse.Namespace, result: dict) -> int:
+    """Report a near-duplicate refusal and return its exit code (3)."""
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "command": command_label(args),
+                    "items": result.get("duplicates", []),
+                    "error": "near-duplicate",
+                    "message": result.get("message"),
+                    "duplicates": result.get("duplicates", []),
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(f"{ERROR_PREFIX} {command_label(args)}: {result.get('message')}", file=sys.stderr)
+    return EXIT_NEAR_DUPLICATE
+
+
+def _add_duplicate_flags(parser: argparse.ArgumentParser, *, supersede: bool = True) -> None:
+    """`--allow-duplicate` (and `--supersedes ID`) for a writer that gates duplicates."""
+    parser.add_argument(
+        "--allow-duplicate",
+        action="store_true",
+        help="write even if a live record of this type says nearly the same thing",
+    )
+    if supersede:
+        parser.add_argument(
+            "--supersedes",
+            metavar="ID",
+            default=None,
+            help="replace this live record of the same type: it is marked superseded by "
+            "the new one (also answers a near-duplicate refusal)",
+        )
 
 
 def _emit_error(args: argparse.Namespace, message: str) -> None:
@@ -3247,6 +3301,30 @@ def cmd_remember(args: argparse.Namespace) -> int:
             )
             return 2
 
+    # WM-32: refuse a near-duplicate of a live record of the same type, unless
+    # the author said which one this replaces or that they want both.
+    from breadcrumbs import lifecycle as _lifecycle
+
+    supersedes = getattr(args, "supersedes", None)
+    problem = _lifecycle.check_supersedes(memory_dir, rtype, supersedes)
+    if problem:
+        _emit_error(args, problem)
+        return 2
+    if not supersedes and not getattr(args, "allow_duplicate", False):
+        dups = _lifecycle.find_near_duplicates(
+            memory_dir,
+            rtype,
+            title,
+            "\n".join(str(v) for v in sections.values()),
+            files=[e["ref"] for e in evidence if e.get("type") in ("file", "path")],
+            tags=tags or (),
+        )
+        if dups:
+            return _emit_duplicate(
+                args,
+                {"duplicates": dups, "message": _lifecycle.duplicate_message(dups)},
+            )
+
     try:
         path, meta = write_record(
             memory_dir,
@@ -3261,6 +3339,7 @@ def cmd_remember(args: argparse.Namespace) -> int:
             scope=args.scope,
             status=args.status,
             agent=args.agent,
+            extra={"supersedes": [supersedes]} if supersedes else None,
         )
     except ValueError as exc:
         # e.g. a newline in a frontmatter field — rendering refuses to corrupt.
@@ -3274,6 +3353,9 @@ def cmd_remember(args: argparse.Namespace) -> int:
         _emit_error(args, "new record failed validation: " + "; ".join(f["message"] for f in fails))
         return 1
 
+    if supersedes:
+        _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=args.agent)
+
     # Reindex-on-write: keep generated/ in step with the new record.
     reindex_projections(memory_dir, root)
 
@@ -3284,6 +3366,8 @@ def cmd_remember(args: argparse.Namespace) -> int:
         "slug": meta["slug"],
         "confidence": meta["confidence"],
     }
+    if supersedes:
+        summary["supersedes"] = [supersedes]
     # F-4: decisions and attempts are covered by audit's [unreachable] check too,
     # so they get the same warning at the same moment. `--confidence low` is a
     # documented way to write a decision with no evidence at all, which is exactly
@@ -3736,6 +3820,87 @@ def note(
     fields: dict | None = None,
     tags: list[str] | None = None,
     agent: str | None = None,
+    dedupe: bool = False,
+    supersedes: str | None = None,
+) -> dict:
+    """Write a question / trap / idea, refusing a near-duplicate when `dedupe` (WM-32).
+
+    `dedupe` is off by default and on for the two writers a person or agent
+    calls directly — `crumb note` and `memory_note`. Internal callers (inbox
+    promotion, the migration, tests building a store) write exactly what they
+    were given. `supersedes` names a live item of the same kind that the new one
+    replaces; it skips the duplicate check, because superseding the duplicate is
+    precisely the answer to it.
+    """
+    from breadcrumbs import lifecycle as _lifecycle
+
+    fields = fields or {}
+    problem = _lifecycle.check_supersedes(memory_dir, kind, supersedes)
+    if problem:
+        return {"ok": False, "error": problem}
+    # An exact repeat (same question text, same trap slug) has its own, more
+    # useful refusal in `_note_write` — "reopen it with mark-status" — so the
+    # similarity gate stands aside for it.
+    exact = (
+        kind == "question"
+        and any(
+            q["question"] == _sanitize_note_text(text.strip())
+            for q in load_open_questions(memory_dir)
+        )
+    ) or (
+        kind == "trap"
+        and find_trap_by_id(
+            memory_dir, f"trap_{fields.get('slug') or truncate_slug(slugify(text.strip()))}"
+        )
+        is not None
+    )
+    if dedupe and not supersedes and not exact and kind in ("question", "trap", "idea"):
+        body = "\n".join(
+            str(v) for k, v in fields.items() if isinstance(v, str) and k not in ("slug", "status")
+        )
+        if kind == "idea":
+            body = "\n".join(str(v) for v in (fields.get("sections") or {}).values())
+        dups = _lifecycle.find_near_duplicates(
+            memory_dir,
+            kind,
+            text.strip(),
+            body,
+            files=_paths_from_text(str(fields.get("area") or "")),
+            tags=tags or (),
+        )
+        if dups:
+            return {
+                "ok": False,
+                "error": "near-duplicate",
+                "duplicates": dups,
+                "message": _lifecycle.duplicate_message(dups),
+            }
+    result = _note_write(
+        memory_dir,
+        project_root,
+        kind,
+        text,
+        fields=fields,
+        tags=tags,
+        agent=agent,
+        supersedes=supersedes,
+    )
+    if result.get("ok") and supersedes:
+        _lifecycle.mark_superseded(memory_dir, [supersedes], result["id"], agent=agent)
+        result["supersedes"] = [supersedes]
+    return result
+
+
+def _note_write(
+    memory_dir: Path,
+    project_root: Path,
+    kind: str,
+    text: str,
+    *,
+    fields: dict | None = None,
+    tags: list[str] | None = None,
+    agent: str | None = None,
+    supersedes: str | None = None,
 ) -> dict:
     """Write an open-question / known-trap / idea and refresh projections.
 
@@ -3885,7 +4050,14 @@ def note(
         sections = dict(fields.get("sections") or {})
         try:
             path, meta = write_record(
-                memory_dir, project_root, "idea", text, sections, tags=tags, agent=agent
+                memory_dir,
+                project_root,
+                "idea",
+                text,
+                sections,
+                tags=tags,
+                agent=agent,
+                extra={"supersedes": [supersedes]} if supersedes else None,
             )
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
@@ -3967,7 +4139,11 @@ def cmd_note(args: argparse.Namespace) -> int:
         fields=fields,
         tags=tags,
         agent=getattr(args, "agent", None),
+        dedupe=not getattr(args, "allow_duplicate", False),
+        supersedes=getattr(args, "supersedes", None),
     )
+    if result.get("error") == "near-duplicate":
+        return _emit_duplicate(args, result)
     if not result.get("ok"):
         _emit_error(args, result.get("error", "note failed"))
         return 1
@@ -3999,8 +4175,13 @@ def verify(
     tags: list[str] | None = None,
     confidence: str | None = None,
     agent: str | None = None,
+    dedupe: bool = False,
+    supersedes: str | None = None,
 ) -> dict:
     """Record a verification result — a finding about reality.
+
+    `dedupe` / `supersedes` are the WM-32 gate, as on `note`: on for the CLI and
+    MCP writers, off for internal callers.
 
     The single most common agentic output ("I checked X; here is its state") had
     no home: it was mis-filed as a decision/attempt, polluting those categories.
@@ -4030,6 +4211,32 @@ def verify(
     if not evidence and confidence != "low":
         confidence = "low"
 
+    from breadcrumbs import lifecycle as _lifecycle
+
+    problem = _lifecycle.check_supersedes(memory_dir, "verification", supersedes)
+    if problem:
+        return {"ok": False, "error": problem}
+    if dedupe and not supersedes:
+        dups = _lifecycle.find_near_duplicates(
+            memory_dir,
+            "verification",
+            f"{subject} — {status}",
+            "\n".join(x for x in (subject, status, method or "", note or "") if x),
+            files=[e.get("ref") for e in evidence if e.get("type") in ("file", "path")],
+            tags=tags or (),
+        )
+        if dups:
+            return {
+                "ok": False,
+                "error": "near-duplicate",
+                "duplicates": dups,
+                "message": _lifecycle.duplicate_message(dups),
+            }
+
+    # WM-30: a settled verification (fixed / not_applicable) is the kind that
+    # silently goes stale, so it expires; an actionable one never does.
+    expires_at = _lifecycle.verification_expiry(memory_dir, status, now_iso())
+
     sections = {"Subject": subject, "Outcome": status}
     if method:
         sections["Method"] = method
@@ -4047,7 +4254,13 @@ def verify(
             evidence=evidence,
             confidence=confidence,
             agent=agent,
-            extra={"subject": subject, "outcome": status, "method": method},
+            extra={
+                "subject": subject,
+                "outcome": status,
+                "method": method,
+                "expires_at": expires_at,
+                "supersedes": [supersedes] if supersedes else None,
+            },
         )
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
@@ -4060,6 +4273,8 @@ def verify(
             "error": "verification rejected by validate: " + "; ".join(f["message"] for f in fails),
         }
 
+    if supersedes:
+        _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=agent)
     reindex_projections(memory_dir, project_root)
     out = {
         "ok": True,
@@ -4068,8 +4283,11 @@ def verify(
         "outcome": status,
         "method": method,
         "confidence": meta["confidence"],
+        "expires_at": meta.get("expires_at"),
         "path": str(path),
     }
+    if supersedes:
+        out["supersedes"] = [supersedes]
     # F-4: verifications are the record type this bites hardest — the audit found
     # four unreachable ones in a single store — because `crumb verify "<claim>"
     # --status fixed` is a complete, valid call that carries neither tags nor
@@ -4085,6 +4303,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
     memory_dir = root / MEMORY_DIRNAME
     if not memory_dir.is_dir():
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+
+    if getattr(args, "recheck", None) or getattr(args, "recheck_all", False):
+        from breadcrumbs import lifecycle_cmds
+
+        return lifecycle_cmds.run_recheck(args, memory_dir, root)
+    if not args.status:
+        _emit_error(args, "--status is required (or --recheck <id> / --all to rerun commands)")
         return 2
 
     subject = args.subject
@@ -4105,7 +4331,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
         tags=_split_tags(args.tags),
         confidence=args.confidence,
         agent=getattr(args, "agent", None),
+        dedupe=not getattr(args, "allow_duplicate", False),
+        supersedes=getattr(args, "supersedes", None),
     )
+    if result.get("error") == "near-duplicate":
+        return _emit_duplicate(args, result)
     if not result.get("ok"):
         _emit_error(args, result.get("error", "verify failed"))
         return 1
@@ -5158,10 +5388,20 @@ def _age_days(value: str | None) -> int | None:
     dt = _parse_iso(value)
     if dt is None:
         return None
-    now = datetime.now().astimezone()
+    now = _now()
     if dt.tzinfo is None:
         dt = dt.astimezone()
     return (now - dt).days
+
+
+def record_expired(meta: dict) -> bool:
+    """Has a record passed its `expires_at` (WM-30)? None or unparseable never does.
+
+    Expiry is decay, not retirement: the status stays `active` and the record
+    stays on disk, but it leaves the packet's lists and guard's live set.
+    """
+    age = _age_days(meta.get("expires_at"))
+    return age is not None and age >= 0
 
 
 def _dt_sort_key(value: str | None) -> float:
@@ -5795,10 +6035,9 @@ def compute_staleness(
     # (8) Expired + low-confidence records.
     for r in decisions + attempts:
         exp = r.meta.get("expires_at")
-        if exp:
+        if exp and record_expired(r.meta):
             a = _age_days(exp)
-            if a is not None and a > 0:
-                warnings.append(f"{r.meta.get('id', r.stem)} expired on {exp} ({a} days ago).")
+            warnings.append(f"{r.meta.get('id', r.stem)} expired on {exp} ({a} days ago).")
         if r.meta.get("confidence") == "low":
             warnings.append(
                 f"{r.meta.get('id', r.stem)} is low-confidence — verify before relying on it."
@@ -6151,6 +6390,12 @@ def build_resume_packet(
     traps = active_traps(memory_dir)
     questions = load_open_questions(memory_dir)
     verifications = active_verifications(memory_dir)
+    # WM-30: a record past its `expires_at` leaves the lists (it is still on
+    # disk, still searchable, and `crumb expired` names it). The staleness
+    # warnings below still see every active record, so "X expired on …" is said.
+    listed_decisions = [r for r in decisions if not record_expired(r.meta)]
+    listed_attempts = [r for r in attempts if not record_expired(r.meta)]
+    listed_verifications = [r for r in verifications if not record_expired(r.meta)]
 
     # Project snapshot (git is the live source; handoff metadata is advisory).
     dirty = git_dirty_files(root)
@@ -6205,7 +6450,7 @@ def build_resume_packet(
                 "title": r.meta.get("title", ""),
                 "rationale": _decision_rationale(r),
             }
-            for r in decisions
+            for r in listed_decisions
         ],
         "failed_attempts": [
             {
@@ -6213,7 +6458,7 @@ def build_resume_packet(
                 "title": r.meta.get("title", ""),
                 "do_not_retry": _attempt_do_not_retry(r),
             }
-            for r in attempts
+            for r in listed_attempts
         ],
         "known_traps": [t["heading"] for t in traps],
         "open_questions": [q["question"] for q in questions if q["status"] == "open"],
@@ -6231,7 +6476,7 @@ def build_resume_packet(
                 "outcome": (r.meta.get("outcome") or "open"),
                 "method": r.meta.get("method"),
             }
-            for r in verifications
+            for r in listed_verifications
         ],
         "commits_since_handoff": _commits_since(
             root, handoff_meta.get("commit"), PACKET_COMMITS_SINCE_HANDOFF_MAX
@@ -6255,6 +6500,15 @@ def build_resume_packet(
     # the one staleness the age/distance numbers can never see.
     packet["warnings"] += _focus_verification_conflicts(
         packet["next_action"], packet["current_focus"], verifications
+    )
+    from breadcrumbs import lifecycle as _lifecycle
+
+    packet["warnings"] += _lifecycle.lifecycle_warnings(
+        memory_dir, root, verifications=listed_verifications, traps=traps
+    )
+    # WM-31: a record citing a file that is gone may describe code that is gone.
+    packet["warnings"] += _lifecycle.missing_evidence_warnings(
+        root, listed_decisions + listed_attempts + listed_verifications
     )
 
     # Likely files: handoff section + file-type evidence refs (deduped, order-stable).
@@ -7469,6 +7723,7 @@ def _item_from_record(rec: Record) -> dict:
         "branch": rec.meta.get("branch"),
         "record": rec,
         "do_not_retry": rec.rtype == "attempt" and _attempt_has_do_not_retry(rec),
+        "expired": record_expired(rec.meta),
     }
 
 
@@ -7772,6 +8027,7 @@ def _score_item(
         "kind": item["kind"],
         "status": item["status"],
         "lifecycle": item.get("lifecycle", item["status"]),
+        "expired": bool(item.get("expired")),
         "title": item["title"],
         "score": score,
         "raw_score": round(undecayed, 2),
@@ -7890,6 +8146,7 @@ def search(
                     "kind": it["kind"],
                     "status": it["status"],
                     "lifecycle": it.get("lifecycle", it["status"]),
+                    "expired": bool(it.get("expired")),
                     "title": it["title"],
                     "score": float(noise_floor),
                     "raw_score": float(noise_floor),
@@ -8138,7 +8395,9 @@ def guard(
         # the exact files being touched could not raise the verdict.
         # It is live when the record itself is active and the outcome still needs
         # attention, mirroring `active_verifications`.
-        live = (
+        # A record past its `expires_at` (WM-30) is history too: it aged out,
+        # like a superseded one, and is named rather than allowed to drive.
+        live = not m.get("expired") and (
             m["status"] == "active"
             or (m["kind"] == "question" and m["status"] == "open")
             or (
@@ -8257,7 +8516,8 @@ def render_search_human(matches: list[dict], query: str) -> str:
     out = [f"search: {len(matches)} record(s) matched {query!r}", ""]
     for m in matches:
         out.append(
-            f"- {m['id']} — {m['kind']} [{m['status']}] (score {m['score']}): {m['reason']}."
+            f"- {m['id']} — {m['kind']} [{m['status']}{', expired' if m.get('expired') else ''}] "
+            f"(score {m['score']}): {m['reason']}."
         )
     return "\n".join(out) + "\n"
 
@@ -9051,6 +9311,13 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         sev = AUDIT_INFO if (w.startswith("handoff is") and not w.startswith("⚠")) else AUDIT_WARN
         findings.append(_audit_finding("staleness", sev, "handoff.md", w))
 
+    # WM-31 / WM-32 / WM-34: evidence that points at a vanished file, live
+    # records that say the same thing, and records that may argue with each
+    # other. All advisory — each is a question for the author, never a fix.
+    from breadcrumbs import lifecycle as _lifecycle
+
+    findings.extend(_lifecycle.audit_findings(memory_dir, root))
+
     # A (cont). Re-surface the validate-failing health conditions for the health view
     # (missing evidence, invalid status, private-path violation, id/frontmatter
     # disagreement). These still FAIL `validate`; audit only reports them (§19b.9).
@@ -9747,6 +10014,24 @@ def cmd_jot(args: argparse.Namespace) -> int:
         return 2
     from breadcrumbs import inbox as _inbox
 
+    if not getattr(args, "allow_duplicate", False):
+        from breadcrumbs import lifecycle as _lifecycle
+
+        dups = _lifecycle.find_near_duplicates(
+            memory_dir,
+            "jot",
+            args.text or "",
+            files=args.file or [],
+            tags=_split_tags(args.tags) or (),
+        )
+        if dups:
+            return _emit_duplicate(
+                args,
+                {
+                    "duplicates": dups,
+                    "message": _lifecycle.duplicate_message(dups, allow_supersede=False),
+                },
+            )
     result = _inbox.write_jot(
         memory_dir,
         root,
@@ -11149,6 +11434,8 @@ def _extraction_reason(commits: list[str], session_jots: list[dict] | None = Non
         '--status fixed|open|regressed --evidence command "<cmd>"`\n'
         "4. A record this session contradicted -> `crumb mark-status <id> "
         'stale --reason "…"`\n'
+        "A write refused with exit 3 is a near-duplicate: pass `--supersedes <id>` "
+        "to replace that record, or `--allow-duplicate` to keep both.\n"
         'Finish with `crumb capture session --next "<the next concrete action — cite '
         'a commit sha or file so the claim stays checkable>"`. '
         "Record durable facts only — routine work needs no records; if nothing "
@@ -11566,6 +11853,7 @@ def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
         pr.add_argument("--scope")
         pr.add_argument("--status", choices=VALID_STATUS)
         pr.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author"))
+        _add_duplicate_flags(pr)
         if rtype == "attempt":
             # The fixed attempt vocabulary as named flags; each
             # overrides the matching --set heading.
@@ -11624,6 +11912,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
         choices=VALID_QUESTION_STATUS,
         help="status (default: open); retire one later with `crumb mark-status <id> answered`",
     )
+    _add_duplicate_flags(pq)
     pq.set_defaults(func=cmd_note)
 
     pt = note_sub.add_parser("trap", parents=[global_parser], help="record a reusable known trap")
@@ -11635,6 +11924,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pt.add_argument("--why", help="the mechanism, not vibes")
     pt.add_argument("--safe", help="the safe approach to use instead")
     pt.add_argument("--verify", help="a command that proves it is OK")
+    _add_duplicate_flags(pt)
     pt.set_defaults(func=cmd_note)
 
     pi = note_sub.add_parser("idea", parents=[global_parser], help="record a speculative idea")
@@ -11649,6 +11939,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     pi.add_argument("--tags", help="comma-separated tags")
     pi.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
+    _add_duplicate_flags(pi)
     pi.set_defaults(func=cmd_note)
 
 
@@ -11668,9 +11959,8 @@ def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     p_verify.add_argument(
         "--status",
-        required=True,
         choices=VALID_VERIFICATION_OUTCOME,
-        help="the verification outcome",
+        help="the verification outcome (required unless --recheck / --all)",
     )
     p_verify.add_argument(
         "--method",
@@ -11689,6 +11979,26 @@ def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
     p_verify.add_argument("--confidence", choices=("low", "medium", "high"))
     p_verify.add_argument(
         "--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author")
+    )
+    _add_duplicate_flags(p_verify)
+    p_verify.add_argument(
+        "--recheck",
+        metavar="ID",
+        action="append",
+        default=None,
+        help="rerun the command evidence of this verification and record the result as a "
+        "new verification that supersedes it (repeatable; asks before running anything)",
+    )
+    p_verify.add_argument(
+        "--all",
+        dest="recheck_all",
+        action="store_true",
+        help="with --recheck semantics: every active verification that names a command",
+    )
+    p_verify.add_argument(
+        "--yes",
+        action="store_true",
+        help="run the commands without asking (required when there is no terminal)",
     )
     p_verify.set_defaults(func=cmd_verify)
 
@@ -11783,6 +12093,20 @@ def _add_show(sub, global_parser: argparse.ArgumentParser) -> None:
         help="any id the tool prints: dec_…, att_…, ver_…, idea_…, ses_…, jot_…, trap_…, q_…",
     )
     p.set_defaults(func=cmd_show)
+
+
+# Phase 3 lifecycle commands — implemented in `breadcrumbs.lifecycle_cmds`,
+# imported only when one of them runs.
+def _add_expired(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import lifecycle_cmds
+
+    lifecycle_cmds.add_expired(sub, global_parser)
+
+
+def _add_questions(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import lifecycle_cmds
+
+    lifecycle_cmds.add_questions(sub, global_parser)
 
 
 # retitle — repair a record whose title carries no information
@@ -12096,6 +12420,7 @@ def _add_jot(sub, global_parser: argparse.ArgumentParser) -> None:
         help=f"write to {MEMORY_DIRNAME}/private/inbox/ instead — never committed",
     )
     p.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
+    _add_duplicate_flags(p, supersede=False)
     p.set_defaults(func=cmd_jot)
 
 
@@ -12213,6 +12538,8 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "show": _add_show,
     "retitle": _add_retitle,
     "traps": _add_traps,
+    "questions": _add_questions,
+    "expired": _add_expired,
     "prune": _add_prune,
     "migrate": _add_migrate,
     "usage": _add_usage,

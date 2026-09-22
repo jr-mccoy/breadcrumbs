@@ -646,7 +646,19 @@ class InputSchemaTests(unittest.TestCase):
         self.assertEqual(set(mcp_server.RecordPayload.__required_keys__), {"title"})
         self.assertEqual(
             set(mcp_server.RecordPayload.__optional_keys__),
-            {"sections", "evidence", "tags", "confidence", "privacy", "scope", "status", "agent"},
+            {
+                "sections",
+                "evidence",
+                "tags",
+                "confidence",
+                "privacy",
+                "scope",
+                "status",
+                "agent",
+                # WM-32: the near-duplicate gate's two answers.
+                "allow_duplicate",
+                "supersedes",
+            },
         )
 
     def test_evidence_item_keys(self):

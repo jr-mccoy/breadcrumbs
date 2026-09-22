@@ -82,13 +82,10 @@ def inbox_dirs(memory_dir: Path) -> list[Path]:
 
 
 def jot_ttl_days(memory_dir: Path) -> int:
-    """The store's jot TTL. Falls back to the default on anything unparseable."""
-    manifest = cli.load_manifest(Path(memory_dir)) or {}
-    try:
-        value = int(str(manifest.get("jot_ttl_days", JOT_TTL_DAYS)).strip())
-    except (TypeError, ValueError):
-        return JOT_TTL_DAYS
-    return value if value > 0 else JOT_TTL_DAYS
+    """The store's jot TTL (`ttl_jot_days`, or the older `jot_ttl_days`)."""
+    from breadcrumbs import lifecycle
+
+    return lifecycle.ttl_days(Path(memory_dir), "jot")
 
 
 # --------------------------------------------------------------------------- #

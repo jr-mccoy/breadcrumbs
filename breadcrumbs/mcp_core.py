@@ -426,6 +426,34 @@ def tool_record(
                 "add payload.evidence or set payload.confidence to 'low'",
             }
 
+    # WM-32: the same near-duplicate gate as `crumb remember`.
+    from breadcrumbs import lifecycle as _lifecycle
+
+    supersedes = payload.get("supersedes")
+    problem = _lifecycle.check_supersedes(mem, type, supersedes)
+    if problem:
+        return {"ok": False, "error": problem}
+    if not supersedes and not payload.get("allow_duplicate"):
+        dups = _lifecycle.find_near_duplicates(
+            mem,
+            type,
+            title,
+            "\n".join(str(v) for v in sections.values()),
+            files=[
+                e.get("ref")
+                for e in evidence
+                if isinstance(e, dict) and e.get("type") in ("file", "path")
+            ],
+            tags=tags,
+        )
+        if dups:
+            return {
+                "ok": False,
+                "error": "near-duplicate",
+                "duplicates": dups,
+                "message": _lifecycle.duplicate_message(dups),
+            }
+
     try:
         path, meta = cli.write_record(
             mem,
@@ -440,6 +468,7 @@ def tool_record(
             scope=payload.get("scope"),
             status=payload.get("status"),
             agent=payload.get("agent") or _agent_label(),
+            extra={"supersedes": [supersedes]} if supersedes else None,
         )
     except ValueError as exc:
         # Same envelope every other writer uses. Bare, any value the
@@ -453,16 +482,21 @@ def tool_record(
             "ok": False,
             "error": "record rejected by validate: " + "; ".join(f["message"] for f in fails),
         }
+    if supersedes:
+        _lifecycle.mark_superseded(mem, [supersedes], meta["id"], agent=_agent_label())
     # Reindex-on-write: an MCP write must refresh the projections too —
     # an agent will not remember to `crumb reindex` after each `memory_record`.
     cli.reindex_projections(mem, project_root)
-    return {
+    out = {
         "ok": True,
         "id": meta["id"],
         "type": type,
         "path": _rel(path, mem),
         "confidence": meta["confidence"],
     }
+    if supersedes:
+        out["supersedes"] = [supersedes]
+    return out
 
 
 def tool_verify(
@@ -474,6 +508,8 @@ def tool_verify(
     tags: list[str] | None = None,
     confidence: str | None = None,
     root: str | Path | None = None,
+    allow_duplicate: bool = False,
+    supersedes: str | None = None,
 ) -> dict:
     """`memory_verify` — wraps `cli.verify`.
 
@@ -497,6 +533,8 @@ def tool_verify(
             tags=tags,
             confidence=confidence,
             agent=_agent_label(),
+            dedupe=not allow_duplicate,
+            supersedes=supersedes,
         ),
         mem,
     )
@@ -517,6 +555,8 @@ def tool_note(
     fields: dict | None = None,
     tags: list[str] | None = None,
     root: str | Path | None = None,
+    allow_duplicate: bool = False,
+    supersedes: str | None = None,
 ) -> dict:
     """`memory_note` — wraps `cli.note`.
 
@@ -539,6 +579,8 @@ def tool_note(
             fields=fields or {},
             tags=tags or [],
             agent=_agent_label(),
+            dedupe=not allow_duplicate,
+            supersedes=supersedes,
         ),
         mem,
     )
@@ -574,6 +616,7 @@ def tool_jot(
     files: list[str] | None = None,
     local: bool = False,
     root: str | Path | None = None,
+    allow_duplicate: bool = False,
 ) -> dict:
     """`memory_jot` — wraps `breadcrumbs.inbox.write_jot`.
 
@@ -591,6 +634,19 @@ def tool_jot(
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
+    if not allow_duplicate:
+        from breadcrumbs import lifecycle as _lifecycle
+
+        dups = _lifecycle.find_near_duplicates(
+            mem, "jot", text or "", files=files or [], tags=tags or []
+        )
+        if dups:
+            return {
+                "ok": False,
+                "error": "near-duplicate",
+                "duplicates": dups,
+                "message": _lifecycle.duplicate_message(dups, allow_supersede=False),
+            }
     return _relativize(
         _inbox.write_jot(
             mem,

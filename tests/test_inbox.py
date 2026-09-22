@@ -46,7 +46,8 @@ def run(argv: list[str]) -> tuple[int, str]:
 
 
 def jot(tmp: str, text: str, *extra: str) -> str:
-    code, out = run(["jot", text, "--project", tmp, "--json", *extra])
+    # Tests here write deliberately alike jots; the WM-32 gate has its own tests.
+    code, out = run(["jot", text, "--project", tmp, "--json", "--allow-duplicate", *extra])
     assert code == 0, out
     return json.loads(out)["id"]
 

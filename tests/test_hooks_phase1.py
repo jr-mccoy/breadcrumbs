@@ -93,6 +93,7 @@ def a_decision(root: Path, title: str, *, file: str, tags: str = "parser") -> st
             file,
             "--tags",
             tags,
+            "--allow-duplicate",  # these helpers write deliberately alike records
             "--json",
         ]
     )

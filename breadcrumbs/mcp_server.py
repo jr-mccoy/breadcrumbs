@@ -80,6 +80,8 @@ class _RecordPayloadOptional(TypedDict, total=False):
     scope: str
     status: str
     agent: str
+    allow_duplicate: bool  # write even if a live record says nearly the same thing
+    supersedes: str  # id of the live record of this type the new one replaces
 
 
 class RecordPayload(_RecordPayloadOptional):
@@ -298,7 +300,12 @@ def build_server():  # -> FastMCP
 
     @mcp.tool()
     def memory_record(type: str, payload: RecordPayload) -> dict:
-        """Write a durable decision/attempt; passes the same validate gate as the CLI."""
+        """Write a durable decision/attempt; passes the same validate gate as the CLI.
+
+        A near-duplicate of a live record of the same type is refused with
+        `{ok: false, error: "near-duplicate", duplicates}`; set `payload.supersedes`
+        to the id it replaces, or `payload.allow_duplicate` to write both.
+        """
         return mcp_core.tool_record(type, payload, root=_root())
 
     @mcp.tool()
@@ -327,9 +334,21 @@ def build_server():  # -> FastMCP
         tags: list[str] | None = None,
         files: list[str] | None = None,
         local: bool = False,
+        allow_duplicate: bool = False,
     ) -> dict:
-        """Leave a short-term note with a TTL (wraps `crumb jot`); no evidence needed."""
-        return mcp_core.tool_jot(text, tags=tags, files=files, local=local, root=_root())
+        """Leave a short-term note with a TTL (wraps `crumb jot`); no evidence needed.
+
+        A near-verbatim repeat of a live jot is refused with
+        `{ok: false, error: "near-duplicate", duplicates}` unless `allow_duplicate`.
+        """
+        return mcp_core.tool_jot(
+            text,
+            tags=tags,
+            files=files,
+            local=local,
+            allow_duplicate=allow_duplicate,
+            root=_root(),
+        )
 
     @mcp.tool()
     def memory_inbox_promote(
@@ -355,14 +374,29 @@ def build_server():  # -> FastMCP
 
     @mcp.tool()
     def memory_note(
-        kind: str, text: str, fields: dict | None = None, tags: list[str] | None = None
+        kind: str,
+        text: str,
+        fields: dict | None = None,
+        tags: list[str] | None = None,
+        allow_duplicate: bool = False,
+        supersedes: str | None = None,
     ) -> dict:
         """Leave an open-question / known-trap / idea (wraps `crumb note`).
 
         `kind` is question|trap|idea. Closes the read/write asymmetry where these
-        were readable as resources but had no writer.
+        were readable as resources but had no writer. A near-duplicate of a live
+        item is refused with `{ok: false, error: "near-duplicate", duplicates}`;
+        pass `supersedes` (the id it replaces) or `allow_duplicate: true`.
         """
-        return mcp_core.tool_note(kind, text, fields=fields, tags=tags, root=_root())
+        return mcp_core.tool_note(
+            kind,
+            text,
+            fields=fields,
+            tags=tags,
+            allow_duplicate=allow_duplicate,
+            supersedes=supersedes,
+            root=_root(),
+        )
 
     @mcp.tool()
     def memory_mark_status(
@@ -393,8 +427,14 @@ def build_server():  # -> FastMCP
         evidence: list[EvidenceItem] | None = None,
         tags: list[str] | None = None,
         confidence: str | None = None,
+        allow_duplicate: bool = False,
+        supersedes: str | None = None,
     ) -> dict:
         """Record a verification result — a finding about reality (wraps `crumb verify`).
+
+        Re-verifying something already verified is refused as a near-duplicate
+        (`{ok: false, error: "near-duplicate", duplicates}`): pass `supersedes`
+        with the old verification's id so the new result replaces it.
 
         For the most common agentic output ("I checked X; here is its state"), which
         otherwise gets mis-filed as a decision/attempt. `status` is the outcome
@@ -410,6 +450,8 @@ def build_server():  # -> FastMCP
             evidence=evidence,
             tags=tags,
             confidence=confidence,
+            allow_duplicate=allow_duplicate,
+            supersedes=supersedes,
             root=_root(),
         )
 

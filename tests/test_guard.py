@@ -740,6 +740,7 @@ class CommitDistanceIndexTests(unittest.TestCase):
                             "--evidence",
                             "commit",
                             "abc1234",
+                            "--allow-duplicate",  # alike on purpose: it is a load test
                         ]
                     )
 
@@ -972,6 +973,7 @@ class UbiquityTests(unittest.TestCase):
                     "the gradle sandbox behaves the same here",
                     "--confidence",
                     "low",
+                    "--allow-duplicate",
                 ]
             )
         crumb.main(

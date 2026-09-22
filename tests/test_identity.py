@@ -210,6 +210,7 @@ class SlugLengthTests(unittest.TestCase):
                         self.LONG_TITLE,
                         "--confidence",
                         "low",
+                        "--allow-duplicate",
                     ]
                 )
             names = sorted(p.stem for p in (mem / "decisions").glob("*.md"))
