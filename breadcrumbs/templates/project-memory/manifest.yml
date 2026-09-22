@@ -1,7 +1,7 @@
 # .project-memory/manifest.yml — per-project control file.
 # NOTE: `crumb init` overwrites this file with computed values. The tokens in
 # <angle brackets> below are placeholders, never literals to copy.
-schema_version: 3
+schema_version: 4
 created_at: <ISO-8601-with-timezone>
 project: <project-name>
 # Tracking policy chosen during `crumb init` (see docs/record-schema.md):

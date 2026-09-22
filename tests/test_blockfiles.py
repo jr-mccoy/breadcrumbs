@@ -107,7 +107,7 @@ class MigrationTests(unittest.TestCase):
             question_ids = {q["id"] for q in crumb.load_open_questions(mem)}
             res = migrate.migrate(mem, root)
             self.assertTrue(res["ok"], res)
-            self.assertEqual(res["to"], 3)
+            self.assertEqual(res["to"], crumb.SCHEMA_VERSION)
             self.assertEqual(len(list((mem / "traps").glob("*.md"))), len(TRAPS))
             self.assertEqual(len(list((mem / "questions").glob("*.md"))), len(QUESTIONS))
             self.assertEqual({t["id"] for t in crumb.load_traps(mem)}, trap_ids)

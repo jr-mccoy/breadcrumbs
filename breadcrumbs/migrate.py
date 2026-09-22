@@ -104,6 +104,26 @@ def _m3_traps_and_questions_as_files(memory_dir: Path, project_root: Path) -> li
     return blockfiles.migrate_blocks_to_files(memory_dir, project_root)
 
 
+def _m4_branch_handoffs(memory_dir: Path, project_root: Path) -> list[str]:
+    """schema 4 — add `handoffs/` for one handoff per branch (WM-50).
+
+    Creates the directory only. `handoff.md` is untouched: it stays the default
+    branch's handoff, and a branch handoff is written the first time a session
+    captures on a feature branch. Readers (`breadcrumbs.handoffs`) fall back to
+    `handoff.md` whenever a branch has no file of its own, so a store that never
+    migrates keeps its single handoff.
+    """
+    changed: list[str] = []
+    directory = memory_dir / "handoffs"
+    if not directory.is_dir():
+        directory.mkdir(parents=True, exist_ok=True)
+        changed.append("created handoffs/ (one handoff per non-default branch)")
+    keep = directory / ".gitkeep"
+    if not keep.exists():
+        keep.write_text("", encoding="utf-8")
+    return changed
+
+
 MIGRATIONS: list[Migration] = [
     Migration(2, "add inbox/ and private/inbox/ for the jot tier", _m2_inbox_directories),
     Migration(
@@ -112,6 +132,7 @@ MIGRATIONS: list[Migration] = [
         "open-questions.md become generated indexes",
         _m3_traps_and_questions_as_files,
     ),
+    Migration(4, "add handoffs/ for one handoff per branch", _m4_branch_handoffs),
 ]
 
 

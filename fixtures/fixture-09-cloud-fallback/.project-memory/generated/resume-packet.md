@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 1f3ee4d | inputs_hash: 45ccb1f857e4 | generated_at: 2026-09-22T18:29:18+00:00 -->
+<!-- source_commit: a1e479a | inputs_hash: 735e059ec520 | generated_at: 2026-09-22T21:47:00+00:00 -->
 
 # Resume Packet
 
 ## Project
 **demo-service** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `1f3ee4d` · 65 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `a1e479a` · 24 uncommitted file(s) · handoff: handoff.md (no branch handoff)
 
 ## Current Focus
 Plain-file portability.
@@ -39,3 +39,4 @@ _(none recorded)_
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - ⚠ handoff is 94 day(s) old.
 - active decision dec_20260610_markdown-source-of-truth is 104 days old with no update — is this still true?
+- current.md has not changed in 88 days; is Current Focus still true?

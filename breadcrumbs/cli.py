@@ -45,7 +45,7 @@ from pathlib import Path, PurePosixPath
 #   1 -> 2: `inbox/` and `private/inbox/` (the jot tier, WM-03).
 #   2 -> 3: traps and questions become one file each under `traps/` and
 #           `questions/`; the singletons become generated indexes (WM-22).
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 MEMORY_DIRNAME = ".project-memory"
 
 # Templates are package data: they live next to this module inside the
@@ -5053,7 +5053,17 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     # which is also the honest reading of "the caller said nothing about focus".
     focus = args.focus or ""
     recently = sections.get("Work Completed", "")
-    update_handoff(memory_dir, meta["branch"], meta["commit"], focus, sections["Next Action"])
+    from breadcrumbs import handoffs as _handoffs
+
+    handoff_path = _handoffs.write_path(memory_dir, root, meta["branch"])
+    update_handoff(
+        memory_dir,
+        meta["branch"],
+        meta["commit"],
+        focus,
+        sections["Next Action"],
+        path=handoff_path,
+    )
     update_current(memory_dir, focus, recently)
     # Reindex-on-write: capture mutates three packet inputs (the
     # session record, handoff.md, current.md), so the projections must follow —
@@ -5064,7 +5074,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     summary = {
         "session": str(path),
         "id": meta["id"],
-        "handoff": str(memory_dir / "handoff.md"),
+        "handoff": str(handoff_path),
         "current": str(memory_dir / "current.md"),
         "session_tracking": tracking,
         "fast": bool(args.fast),
@@ -5136,6 +5146,23 @@ def cmd_prune(args: argparse.Namespace) -> int:
     if not memory_dir.is_dir():
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
+    if args.what == "handoffs":
+        from breadcrumbs import handoffs as _handoffs
+
+        res = _handoffs.prune_handoffs(memory_dir, root, dry_run=args.dry_run)
+        if args.json:
+            _print_json(args, {**res, "items": res["pruned"]})
+            return 0
+        verb = "would delete" if res["dry_run"] else "deleted"
+        print(
+            f"prune handoffs: {verb} {len(res['pruned'])} branch handoff(s) whose branch is "
+            f"gone locally and on origin and which are {_handoffs.PRUNE_MIN_AGE_DAYS}+ days old"
+        )
+        for o in res["pruned"]:
+            print(f"  - {o['path']} ({o['age_days']}d)")
+        if res["dry_run"] and res["pruned"]:
+            print("Re-run without --dry-run to delete.")
+        return 0
     if args.what == "jots":
         from breadcrumbs import inbox as _inbox
 
@@ -5283,10 +5310,25 @@ def _user_preamble(preamble: list[str]) -> list[str]:
 
 
 def update_handoff(
-    memory_dir: Path, branch: str, commit: str, focus: str, next_action: str
+    memory_dir: Path,
+    branch: str,
+    commit: str,
+    focus: str,
+    next_action: str,
+    *,
+    path: Path | None = None,
 ) -> None:
-    path = Path(memory_dir) / "handoff.md"
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    """Rewrite a handoff with fresh metadata and the given focus / next action.
+
+    `path` is `handoff.md` unless a branch handoff is being written (WM-50); a
+    branch handoff that does not exist yet starts from `handoff.md`'s content,
+    so the focus the session was cut from carries over.
+    """
+    from breadcrumbs import handoffs as _handoffs
+
+    path = Path(path) if path is not None else Path(memory_dir) / "handoff.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _handoffs.seed_text(memory_dir, path)
     preamble, ordered = split_md_ordered(existing)
     sec = split_md_sections(existing)
     focus = "" if _is_placeholder(focus) else focus
@@ -6002,6 +6044,7 @@ def compute_staleness(
     *,
     risks_only: bool = False,
     memory_dir: Path | None = None,
+    handoff_path: Path | None = None,
 ) -> list[str]:
     """All computed staleness/risk warnings (§12, §15). Order: primary first.
 
@@ -6024,7 +6067,8 @@ def compute_staleness(
     cur_branch = git_branch(root)
     detached = is_git_repo(root) and cur_branch == "HEAD"
     reached = HeadTree(root)
-    handoff_path = Path(memory_dir) / "handoff.md" if memory_dir is not None else None
+    if handoff_path is None and memory_dir is not None:
+        handoff_path = Path(memory_dir) / "handoff.md"
 
     # (5) Primary signal: handoff age + commit-distance ("train of thought cold").
     age = _age_days(handoff_meta.get("updated_at"))
@@ -6345,6 +6389,10 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
         dd = memory_dir / d
         if dd.is_dir():
             paths.extend(sorted(dd.glob("*.md")))
+    # Branch handoffs (WM-50) are packet inputs like handoff.md.
+    handoffs_dir = memory_dir / "handoffs"
+    if handoffs_dir.is_dir():
+        paths.extend(sorted(handoffs_dir.glob("*.md")))
     for p in sorted(set(paths)):
         if p.is_file():
             # Path *and* separators, not bare contents: record ids
@@ -6444,13 +6492,15 @@ def build_resume_packet(
     if problem:
         unreadable.append(f"current.md: {problem}")
     current_sections = split_md_sections(current_text)
+    # WM-50: this branch's own handoff when it has one, else handoff.md.
+    from breadcrumbs import handoffs as _handoffs
+
+    handoff_path, handoff_label = _handoffs.read_path(memory_dir, root)
     handoff_text, problem = (
-        read_text_lenient(memory_dir / "handoff.md")
-        if (memory_dir / "handoff.md").is_file()
-        else ("", None)
+        read_text_lenient(handoff_path) if handoff_path.is_file() else ("", None)
     )
     if problem:
-        unreadable.append(f"handoff.md: {problem}")
+        unreadable.append(f"{handoff_label}: {problem}")
     handoff_sections = split_md_sections(handoff_text)
     handoff_meta = parse_handoff_meta(handoff_text)
 
@@ -6496,6 +6546,7 @@ def build_resume_packet(
         "commit": git_commit(root),
         "dirty": len(dirty),
         "dirty_state": (f"{len(dirty)} uncommitted file(s)" if dirty else "clean"),
+        "handoff": handoff_label,
     }
 
     def _focus() -> str:
@@ -6576,6 +6627,7 @@ def build_resume_packet(
                 questions,
                 stale_days,
                 memory_dir=memory_dir,
+                handoff_path=handoff_path,
             )
         ),
         "omitted": {},
@@ -6829,7 +6881,8 @@ def render_packet_markdown(packet: dict) -> str:
     out += [
         "## Project",
         f"**{proj['name']}** — `{proj['path']}`  ",
-        f"branch `{proj['branch']}` · commit `{proj['commit']}` · {proj['dirty_state']}",
+        f"branch `{proj['branch']}` · commit `{proj['commit']}` · {proj['dirty_state']}"
+        + (f" · handoff: {proj['handoff']}" if proj.get("handoff") else ""),
     ]
     # Say which order the reader is looking at. A relevance-ordered list read as
     # if it were newest-first would suggest a year-old decision is the latest.
@@ -8517,11 +8570,9 @@ def guard(
     # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
     # Lenient read: guard runs on the PreToolUse path and must not die on a bad
     # byte.
-    handoff_text = (
-        read_text_lenient(memory_dir / "handoff.md")[0]
-        if (memory_dir / "handoff.md").is_file()
-        else ""
-    )
+    from breadcrumbs import handoffs as _handoffs
+
+    handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
     # `risks_only`: guard is called once per edit, and the full staleness view
     # repeated the same store-wide facts verbatim on every call (P0-4). Only
     # abnormal states — cold handoff, detached HEAD, branch mismatch — belong
@@ -8535,6 +8586,7 @@ def guard(
         stale_days,
         risks_only=True,
         memory_dir=memory_dir,
+        handoff_path=handoff_path,
     )[:GUARD_MAX_WARNINGS]
 
     return {
@@ -9401,11 +9453,9 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
     # Lenient read: audit is the gate command, so an undecodable
     # handoff must not abort it. scan_secrets above already emits the blocking
     # `unscannable-file` finding that names the file, so this read stays quiet.
-    handoff_text = (
-        read_text_lenient(memory_dir / "handoff.md")[0]
-        if (memory_dir / "handoff.md").is_file()
-        else ""
-    )
+    from breadcrumbs import handoffs as _handoffs
+
+    handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
     for w in compute_staleness(
         root,
         parse_handoff_meta(handoff_text),
@@ -9414,6 +9464,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         load_open_questions(memory_dir),
         stale_days,
         memory_dir=memory_dir,
+        handoff_path=handoff_path,
     ):
         # The handoff age/distance line is emitted unconditionally; it is only a
         # *warning* when compute_staleness marked it cold (⚠). "handoff is 0
@@ -12293,8 +12344,9 @@ def _add_prune(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     p_prune.add_argument(
         "what",
-        choices=("sessions", "jots"),
-        help="what to prune: machine session snapshots, or expired/retired jots",
+        choices=("sessions", "jots", "handoffs"),
+        help="what to prune: machine session snapshots, expired/retired jots, or branch "
+        "handoffs whose branch is gone",
     )
     p_prune.add_argument(
         "--keep",

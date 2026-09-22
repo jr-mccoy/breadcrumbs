@@ -294,6 +294,13 @@ class BranchMismatchTests(unittest.TestCase):
         base = crumb.git_branch(root)
         git(root, "checkout", "-q", "-b", "feature-a")
         crumb.main(["init", "--project", str(root), "--session-tracking", "full"])
+        # A schema-3 store: from schema 4 a capture on a feature branch writes
+        # handoffs/feature-a.md (WM-50), and these tests are about handoff.md
+        # itself having been written on a branch that later landed — which is
+        # every store written before per-branch handoffs.
+        from breadcrumbs import migrate
+
+        migrate.set_manifest_version(root / crumb.MEMORY_DIRNAME, 3)
         run(["capture", "session", "--project", str(root), "--fast", "--next", "x"])
         crumb.main(
             [
