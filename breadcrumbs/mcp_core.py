@@ -380,6 +380,35 @@ def tool_scan_secrets(root: str | Path | None = None) -> dict:
     }
 
 
+def _locked(fn):
+    """Run an MCP writer under the store's write lock (WM-51).
+
+    A lock held past `MCP_TIMEOUT` returns `{ok: false, error}` like any other
+    refused write, rather than raising into the client.
+    """
+    import functools
+    import inspect
+
+    signature = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        from breadcrumbs import lock as _lock
+
+        root = signature.bind_partial(*args, **kwargs).arguments.get("root")
+        _, mem = resolve(root)
+        if not mem.is_dir():
+            return fn(*args, **kwargs)
+        try:
+            with _lock.store_lock(mem, timeout=_lock.MCP_TIMEOUT):
+                return fn(*args, **kwargs)
+        except _lock.StoreLocked as exc:
+            return {"ok": False, "error": str(exc)}
+
+    return wrapper
+
+
+@_locked
 def tool_record(
     type: str,
     payload: dict,
@@ -504,6 +533,7 @@ def tool_record(
     return out
 
 
+@_locked
 def tool_verify(
     subject: str,
     status: str,
@@ -545,6 +575,7 @@ def tool_verify(
     )
 
 
+@_locked
 def tool_reindex(root: str | Path | None = None) -> dict:
     """`memory_reindex` — wraps `cli.reindex_projections`."""
     project_root, mem = resolve(root)
@@ -554,6 +585,7 @@ def tool_reindex(root: str | Path | None = None) -> dict:
     return {"ok": ok, "path": "generated/resume-packet.md"}
 
 
+@_locked
 def tool_note(
     kind: str,
     text: str,
@@ -615,6 +647,7 @@ def tool_show(id: str, root: str | Path | None = None) -> dict:
     }
 
 
+@_locked
 def tool_jot(
     text: str,
     tags: list[str] | None = None,
@@ -667,6 +700,7 @@ def tool_jot(
     )
 
 
+@_locked
 def tool_inbox_promote(
     id: str,
     target: str,
@@ -705,6 +739,7 @@ def tool_inbox_promote(
     )
 
 
+@_locked
 def tool_mark_status(
     id: str,
     status: str,

@@ -11766,6 +11766,22 @@ def cmd_hook(args: argparse.Namespace) -> int:
         return _hook_session(memory_dir, root, payload)
     if event == "guard":
         return _hook_guard(memory_dir, root, payload)
+    if not memory_dir.is_dir():
+        return _dispatch_writing_hook(event, memory_dir, root, payload)
+    # The writing hooks (WM-51): wait briefly for a parallel session's writer,
+    # then skip rather than block the host. Skipping loses one firing's
+    # snapshot or mined candidates; blocking would stall the agent.
+    from breadcrumbs import lock as _lock
+
+    try:
+        with _lock.store_lock(memory_dir, timeout=_lock.HOOK_TIMEOUT):
+            return _dispatch_writing_hook(event, memory_dir, root, payload)
+    except _lock.StoreLocked:
+        print("{}")
+        return 0
+
+
+def _dispatch_writing_hook(event: str, memory_dir: Path, root: Path, payload: dict) -> int:
     if event == "prompt":
         from breadcrumbs import hooks_prompt
 
@@ -12863,6 +12879,50 @@ def requested_command(argv: list[str]) -> str | None:
     return None
 
 
+# Commands that write the store, and so run under its write lock (WM-51).
+# Everything else only reads — guard included: its telemetry is private,
+# best-effort, and must never wait on a writer on the PreToolUse path. `hook`
+# takes the lock per event, inside `cmd_hook`, with the hook timeout.
+LOCKED_COMMANDS = frozenset(
+    {
+        "remember",
+        "note",
+        "jot",
+        "inbox",
+        "verify",
+        "mark-status",
+        "retitle",
+        "traps",
+        "prune",
+        "migrate",
+        "reindex",
+        "capture",
+        "resume",
+        "promote",
+        "demote",
+        "consolidate",
+        "rollup",
+    }
+)
+
+
+def _run_command(args: argparse.Namespace) -> int:
+    """Run the parsed command, under the store's write lock when it writes."""
+    if args.command not in LOCKED_COMMANDS:
+        return args.func(args)
+    memory_dir = resolve_root(getattr(args, "project", None)) / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        return args.func(args)  # the command reports the missing store itself
+    from breadcrumbs import lock as _lock
+
+    try:
+        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+            return args.func(args)
+    except _lock.StoreLocked as exc:
+        _emit_error(args, str(exc))
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_output()
     parser = build_parser(requested_command(sys.argv[1:] if argv is None else list(argv)))
@@ -12871,7 +12931,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     try:
-        return args.func(args)
+        return _run_command(args)
     except KeyboardInterrupt:
         # Ctrl+C at a prompt aborts the command. 130 is the shell
         # convention for SIGINT; the message goes to stderr so `--json` output is
