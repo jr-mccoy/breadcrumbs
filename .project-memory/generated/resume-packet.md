@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 383832c | inputs_hash: 488a58914c14 | generated_at: 2026-09-22T20:08:22+00:00 -->
+<!-- source_commit: 2581404 | inputs_hash: cb8bffbb717e | generated_at: 2026-09-22T20:18:59+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `383832c` · 18 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `2581404` · 7 uncommitted file(s)
 
 ## Current Focus
 Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
@@ -13,7 +13,13 @@ Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 ## Next Action
 Phase 3 shipped (WM-30..35). Next: cut the 0.5.0/0.6.0 release per CLAUDE.md (bump __version__, CHANGELOG, release.yml from main after merge), or start Phase 4 (WM-40 promotion to long-term memory) from docs/roadmap-working-memory.md; read section 0.8 first.
 
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 2581404 Phase 4: promote to and demote from long-term memory (WM-40 to WM-43)
+- 76ff5d0 Document Phase 3 and fix gaps found while writing the docs
+
 ## Active Decisions
+- `dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes` — An agent writing its own permanent instructions through a tool call is the persistence step of a prompt injection. A separate block keeps the signpost's bloat and removal semantics. A retired rule must not stay in the file every session loads, so demotion cannot be a second manual step.
 - `dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps` — Records about the same files are related (related.json says so), not duplicates. A refusal that fires on related work teaches agents to pass --allow-duplicate by reflex.
 - `dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim` — Deciding that a claim is wrong is the author's job, not a heuristic's. A status written on a clock needs a writer running on a clock and churns committed files; a computed flag does neither.
 - `dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our` — Equivalence is the one rule: indexed search must return exactly the full scan's matches and scores. Our own stems make that true by construction. Computing ubiquity over only the narrowed set changed scores. _inputs_hash reads every file, which cost as much as the scan the index saves.
@@ -28,8 +34,7 @@ Phase 3 shipped (WM-30..35). Next: cut the 0.5.0/0.6.0 release per CLAUDE.md (bu
 - `dec_20260905_path-extraction-is-structural-and-a-mined-path` — Existence on disk was rejected deliberately: a record citing a file that was since deleted or renamed is often exactly the trap worth raising, and a store must mean the same thing in every checkout that reads it. The shape test rejects 15 of the 16 junk tokens the review names and keeps every real path tested. Tiering is the review's own point 3 — a trap author knows which files their trap is about — without a schema change, because the declaration field already exists in both record types.
 - `dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call` — The error was accurate and the cost was everything else on the command line. Content an agent has already synthesised is the most expensive thing in the system to reproduce, and the moment it is lost is the moment the agent has least context left. A guess that lands content under the wrong heading is worse than parking it, so the synonym table stays short.
 - `dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head` — A record's commit: is HEAD at write time, i.e. where the code was, so commit ancestry is unsound: a commit can be an ancestor of HEAD while the record beside it is uncommitted or on an unmerged branch. A file committed at HEAD and clean in the worktree has provably reached this history, and that test also covers squash and rebase merges, where no feature sha survives. Downgrading to a note would keep the noise. Three git calls per staleness pass regardless of store size: rev-parse --show-prefix (the project root may sit below the repo root and ls-tree/status print repo-root-relative paths), ls-tree -r -z HEAD, status --porcelain.
-- `dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned` — A hand-maintained version literal in prose is the same defect the project already removed from pyproject.toml and cli.py; it went four releases stale precisely because nothing checked it. Badge link targets must be absolute because README.md is also the PyPI long description, where a relative href resolves to nothing. GitHub's native badge.svg endpoint could not be verified from this environment (403 through the proxy), so every badge URL used was one that returned 200 and the expected aria-label.
-_(… 12 more omitted to stay within the per-section cap)_
+_(… 13 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -50,6 +55,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (0d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/promote.py
 - breadcrumbs/lifecycle.py
 - breadcrumbs/searchindex.py
 - breadcrumbs/related.py
@@ -71,6 +77,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
+- `ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43` — Phase 4 of the working-memory roadmap (WM-40 to WM-43) is implemented and green: **fixed** · test
 - `ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35` — Phase 3 of the working-memory roadmap (WM-30 to WM-35) is implemented and green: **fixed** · test
 - `ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25` — Phase 2 of the working-memory roadmap (WM-20 to WM-25) is implemented and green: **fixed** · test
 - `ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16` — Phase 1 of the working-memory roadmap (WM-10 to WM-16: capture hooks and the transcript miner): **fixed** · test
@@ -81,10 +88,10 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `ver_20260818_remember-set-validates-section-headings-exactly-as-capture` — remember --set validates section headings exactly as capture session does: **fixed** · test
 - `ver_20260818_crumb-mark-status-can-retire-a-trap-in-0-1-11-fixed` — crumb mark-status can retire a trap in 0.1.11: **fixed** · test
 - `ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically` — python -m breadcrumbs mcp serve speaks MCP stdio identically to the breadcrumbs-mcp console script: **fixed** · runtime
-- `ver_20260816_release-0-1-10-blocked-by-pypi-invalid-publisher-fixed` — release 0.1.10 blocked by PyPI invalid-publisher: **fixed** · static
-_(… 4 more omitted to stay within the per-section cap)_
+_(… 5 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
+- python -m unittest tests.test_promote
 - python -m unittest tests.test_lifecycle
 - python -m unittest tests.test_searchindex
 - python -m unittest tests.test_blockfiles
@@ -96,12 +103,11 @@ _(… 4 more omitted to stay within the per-section cap)_
 - tests/test_guard_precision.py
 - tests/test_sections.py
 - tests/test_resume.py
-- tests/test_audit.py
-_(… 5 more omitted to stay within the per-section cap)_
+_(… 6 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 2 commit(s) behind current HEAD.
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 35 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 35 days old with no update — is this still true?
 - active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 35 days old with no update — is this still true?
@@ -116,5 +122,6 @@ _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 38 days old with no update — is this still true?
 - active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 38 days old with no update — is this still true?
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 38 days — did this ever get resolved?
+- possible drift: `ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43` recorded "Phase 4 of the working-memory roadmap (WM-40 to WM-43) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35` recorded "Phase 3 of the working-memory roadmap (WM-30 to WM-35) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
 - possible drift: `ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25` recorded "Phase 2 of the working-memory roadmap (WM-20 to WM-25) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.

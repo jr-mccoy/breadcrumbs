@@ -106,7 +106,7 @@ three days, **L** a week.
 | 1 | Capture everywhere: new hooks and the transcript miner — **shipped**, see §0.6 | WM-10 to WM-16 | 0.4.0 |
 | 2 | Retrieval by relevance — **shipped**, see §0.7 | WM-20 to WM-25 | 0.5.0 |
 | 3 | Lifecycle: decay, dedup, consolidation, contradiction — **shipped**, see §0.8 | WM-30 to WM-35 | 0.6.0 |
-| 4 | The bridge to long-term memory | WM-40 to WM-43 | 0.7.0 |
+| 4 | The bridge to long-term memory — **shipped**, see §0.9 | WM-40 to WM-43 | 0.7.0 |
 | 5 | Scope and multi-agent | WM-50 to WM-52 | 0.8.0 |
 | 6 | Measurement and evals | WM-60 to WM-62 | 0.9.0 |
 | 7 | Other harnesses | WM-70 | 1.0.0 |
@@ -1404,7 +1404,7 @@ the one way to retire a record in favour of another. Exit code 3 is taken.
 
 ## Phase 4: The bridge to long-term memory
 
-### WM-40 `crumb promote` — **M**
+### WM-40 `crumb promote` — **M** — SHIPPED
 
 **Goal.** A decision that has proven durable belongs in the agent's
 permanent instructions. Today the adapter block is a signpost only and no
@@ -1461,7 +1461,7 @@ superseded record → exit 2; no adapter file → exit 2 and nothing
 created; block stays under the bloat threshold with 20 promoted rules
 (or the audit finding fires and the test asserts it does).
 
-### WM-41 `crumb demote` — **S**
+### WM-41 `crumb demote` — **S** — SHIPPED
 
 `crumb demote <id> [--reason …]` removes the bullet whose `source:` is
 the id, clears `promoted_to`/`promoted_at`, reindexes. If the block
@@ -1471,7 +1471,7 @@ automatically and says so, because a retired rule must not stay in the
 long-term file. Tests: demote removes exactly one bullet; retiring a
 promoted record removes its bullet; the block disappears when empty.
 
-### WM-42 Promotion and demotion suggestions — **S** (after WM-02)
+### WM-42 Promotion and demotion suggestions — **S** — SHIPPED (after WM-02)
 
 In `audit`:
 - `promote-candidate` (`AUDIT_INFO`): an active decision or attempt,
@@ -1484,13 +1484,55 @@ In `audit`:
   auto-demote should make this rare; this catches hand edits.
 - `doctor` prints the count of promoted rules and the block size.
 
-### WM-43 Long-term drift check — **S**
+### WM-43 Long-term drift check — **S** — SHIPPED
 
 `crumb audit` compares each promoted bullet's text with the current
 default rendering of its source record; a mismatch (someone edited the
 bullet by hand, or the record was retitled) is `promoted-drift`
 (`AUDIT_INFO`) with the hint `crumb promote <id>` to re-render. Tests:
 hand-edit a bullet → finding; re-promote → clears.
+
+---
+
+### 0.9 Phase 4: what shipped, and where it differs from this plan
+
+Phase 4 is implemented in one new module, `breadcrumbs/promote.py`, which holds
+the block, `promote`, `demote`, the audit checks, the doctor summary and the
+command surface. Tests are in `tests/test_promote.py`. No schema change.
+
+Seven departures from what this document specified. Read these before Phase 5.
+
+1. **A trap's rule is `<summary>: <safe approach>`**, not the safe approach
+   alone. "Stop the daemon first" says what to do but not when; the summary is
+   the when. An attempt's rule is `Do not retry: <title> — unless <condition>`
+   rather than `Do not <title>`, because titles are noun phrases ("Stopping the
+   gradle daemon") and "Do not stopping…" is what the literal template
+   produced.
+2. **`promoted_rule` is a third frontmatter key.** WM-43 compares a bullet
+   with "the current default rendering". A rule written with `--rule` would
+   then report drift forever. The override is stored, and the drift check
+   renders with it.
+3. **Retiring through any path demotes.** The hook is in `set_record_status`
+   itself (the old body is now `_set_record_status`), so `mark-status`, MCP
+   `memory_mark_status`, `--supersedes` on a writer and `consolidate --merge`
+   all demote. The plan named only `mark-status`.
+4. **`demote` works on an id whose record is gone.** Deleting a record by
+   hand is exactly what leaves an orphan bullet. The demote-candidate finding
+   names the command, so the command has to accept the id.
+5. **Promoting to the other file moves the rule.** `--to AGENTS.md` on a rule
+   already in `CLAUDE.md` removes it there, so one source never has two rules.
+6. **No MCP tool.** The plan did not say either way. An agent writing its
+   own permanent instructions through a tool call is the persistence step of
+   a prompt injection. Promotion is a person's decision, or at least a
+   command a person can see.
+7. **`--remove-integrations` leaves the promoted block.** It removes the
+   signpost it installed. The promoted rules are the project's rules now, and
+   deleting them on uninstall would be data loss.
+
+Notes for Phase 5: `promote.promoted_to()` answers "is this promoted" for a
+record, a trap dict and a `find_item` result alike. A scope field (WM-50)
+should decide whether a user-scoped record can be promoted into a project
+file at all. The answer is probably no.
 
 ---
 

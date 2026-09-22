@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "488a58914c14",
+ "inputs_hash": "cb8bffbb717e",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -106,6 +106,11 @@
    "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim",
    "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
    "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35"
+  ],
+  "dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes": [
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43",
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
   ],
   "dec_20260922_related-records-use-a-pure-overlap-score-so-the-committed": [
    "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
@@ -244,13 +249,18 @@
   ],
   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25": [
    "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35",
-   "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43",
+   "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02"
   ],
   "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35": [
    "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim"
+   "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+  ],
+  "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43": [
+   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
+   "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35",
+   "dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes"
   ]
  },
  "skipped": null

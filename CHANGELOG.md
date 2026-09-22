@@ -8,6 +8,38 @@ prints both.
 
 ## [Unreleased]
 
+### Added — Phase 4: the bridge to long-term memory
+
+Phase 4 of `docs/roadmap-working-memory.md`. Breadcrumbs is short-to-medium-term
+memory. The long-term tier is the agent's own instruction file, `CLAUDE.md` or
+`AGENTS.md`, which every session loads whole. Until now nothing moved a proven
+decision from one tier to the other. No schema change: three new optional
+frontmatter keys.
+
+- **`crumb promote <id>` (WM-40).** It makes a decision, attempt or trap a
+  standing rule. The rule is one line in its own managed block in the
+  instruction file, separate from the `crumb init` signpost, and names its
+  source: `- <rule>. _(why: …; source: \`<id>\`)_`. The record stays active
+  and gains `promoted_to`/`promoted_at`. The resume packet then leaves it out
+  of its lists, since the model already has it through the instruction file,
+  and says how many it left out. Guard still scores it at full weight, and
+  search marks it `promoted`. Promote refuses a retired or
+  `confidence: low` record and never creates the instruction file.
+- **`crumb demote <id>` (WM-41).** It takes the rule back out and removes the
+  block once it is empty. **Retiring a promoted record demotes it**, whether
+  through `mark-status`, a writer's `--supersedes` or `consolidate`: a rule
+  nobody believes any more must not stay in the file every session loads.
+- **Suggestions (WM-42).** `crumb audit` suggests `promote-candidate` for a
+  decision or attempt that has held for 60 days and surfaced in five
+  sessions. It flags `demote-candidate` for a rule whose record is gone or
+  retired. `crumb doctor` counts the rules and what they cost.
+- **Drift (WM-43).** `crumb audit` reports `promoted-drift` when a rule no
+  longer matches its record, because of a hand edit or a retitle.
+  Re-promoting re-renders it.
+- **No MCP tool for promote or demote, on purpose.** An agent writing its own
+  permanent instructions through a tool call is how a prompt injection
+  persists. `memory_mark_status` still demotes what it retires.
+
 ### Added — Phase 3: lifecycle
 
 Phase 3 of `docs/roadmap-working-memory.md`. Memory that stops being true should
