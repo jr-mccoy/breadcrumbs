@@ -107,7 +107,7 @@ three days, **L** a week.
 | 2 | Retrieval by relevance — **shipped**, see §0.7 | WM-20 to WM-25 | 0.5.0 |
 | 3 | Lifecycle: decay, dedup, consolidation, contradiction — **shipped**, see §0.8 | WM-30 to WM-35 | 0.6.0 |
 | 4 | The bridge to long-term memory — **shipped**, see §0.9 | WM-40 to WM-43 | 0.7.0 |
-| 5 | Scope and multi-agent | WM-50 to WM-52 | 0.8.0 |
+| 5 | Scope and multi-agent — **shipped**, see §0.10 | WM-50 to WM-52 | 0.8.0 |
 | 6 | Measurement and evals | WM-60 to WM-62 | 0.9.0 |
 | 7 | Other harnesses | WM-70 | 1.0.0 |
 
@@ -1538,7 +1538,7 @@ file at all. The answer is probably no.
 
 ## Phase 5: Scope and multi-agent
 
-### WM-50 Per-branch handoff — **M**
+### WM-50 Per-branch handoff — **M** — SHIPPED
 
 **Goal.** `handoff.md` and `current.md` are singletons. Two agents on two
 branches overwrite each other's next action, and a feature-branch handoff
@@ -1568,7 +1568,7 @@ is wrong for `main`.
 file and leaves `handoff.md` unchanged; resume on that branch reads it;
 resume on `main` reads `handoff.md`; prune removes an orphan.
 
-### WM-51 Concurrent-writer safety — **S**
+### WM-51 Concurrent-writer safety — **S** — SHIPPED
 
 **Goal.** Hooks from parallel sessions in one checkout write the same
 store. A torn `handoff.md` or a lost jot is plausible.
@@ -1583,7 +1583,7 @@ commands wait the full timeout then fail with exit 1 and `CRUMB-ERROR:
 store is locked by pid N`. Tests: two threads writing jots produce two
 files; a stale lock is broken; a hook with a held lock prints `{}` fast.
 
-### WM-52 Record scope — **S**
+### WM-52 Record scope — **S** — SHIPPED
 
 `scope` is already in frontmatter and always `project`. Allow
 `scope: branch` on jots (default for hook-written jots) and on
@@ -1592,6 +1592,53 @@ verifications (`--scope branch`), storing the branch in the existing
 records only when their `branch` equals the current branch; elsewhere
 they are history. `search` always finds them. Tests: a branch-scoped jot
 disappears from the packet after `git checkout -b other`.
+
+---
+
+### 0.10 Phase 5: what shipped, and where it differs from this plan
+
+Phase 5 is implemented in `breadcrumbs/handoffs.py` (WM-50) and
+`breadcrumbs/lock.py` (WM-51), with WM-52 spread through the readers in
+`cli.py` and `inbox.py`. New tests: `tests/test_handoffs.py`,
+`tests/test_lock.py`, `tests/test_scope.py`. **Record `schema_version` is 4.**
+
+Seven departures from what this document specified. Read these before Phase 6.
+
+1. **`crumb prune handoffs`, not `crumb prune --handoffs`.** `prune` already
+   takes what to prune as a positional (`sessions`, `jots`), and one command
+   with two grammars is worse than a small deviation from the plan.
+2. **A branch's first handoff starts from `handoff.md`.** A branch is usually
+   cut mid-thought from the default branch. Starting its handoff empty would
+   drop the Current Focus the session was just given.
+3. **The lock is taken once per command, at dispatch**, not by wrapping each
+   writer. Every writer reindexes, so per-writer locking would have taken the
+   lock several times per command. A command-level lock also covers the
+   read-modify-write sequences that span several writers (capture writes a
+   session, the handoff, `current.md` and every projection). The lock is
+   re-entrant within a thread for the writers that are also called directly.
+4. **The lock also covers threads and MCP.** An in-process lock per store
+   serialises threads, since two threads of one process share a pid and the
+   lock file alone cannot tell them apart. The MCP writers take it too and
+   return `{ok: false, error}` when it is held. On POSIX, a lock whose process
+   is gone is broken at once instead of after 60 s; on Windows `os.kill(pid, 0)`
+   is not a probe, so the age rule alone applies there.
+5. **The `session` and `guard` hooks never take the lock.** One boots a
+   session and the other runs before every tool call. Neither writes
+   canonical records, and making either wait on a parallel session's capture
+   would stall the agent for a lock it does not need.
+6. **Branch scope applies to any record that carries it**, not just jots and
+   verifications. `remember --scope` already accepted free text. A decision
+   someone scoped to a branch is filtered the same way, since two readers
+   disagreeing about the same field would be a bug. Only jots and
+   verifications get the `--scope` choice and the hook default.
+7. **"Elsewhere" is never true without a branch to compare.** With no git,
+   on a detached HEAD, or for a record with no recorded branch, a
+   branch-scoped record stays live. This matches guard's existing
+   branch-mismatch rule, which already ignores a detached HEAD.
+
+Notes for Phase 6: the lock means an eval harness that runs parallel sessions
+against one store will see skipped hook writes when they collide. Count them
+(`{}` from a writing hook) rather than treating them as lost memory.
 
 ---
 

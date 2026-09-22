@@ -8,6 +8,35 @@ prints both.
 
 ## [Unreleased]
 
+### Added — Phase 5: scope and multi-agent
+
+Phase 5 of `docs/roadmap-working-memory.md`. Several agents, several branches,
+one store. **Record `schema_version` moves to 4**: one `crumb migrate` adds
+`handoffs/`.
+
+- **One handoff per branch (WM-50).** A capture on a branch that is not the
+  repository's default branch (`origin/HEAD`, else `main` or `master`) writes
+  `handoffs/<branch>.md`. Two agents on two branches no longer overwrite each
+  other's next action, and a feature branch's handoff is no longer the first
+  thing a session on `main` reads. Resume, guard and audit read the current
+  branch's handoff and fall back to `handoff.md`; the packet says which one it
+  used. The first branch handoff starts from `handoff.md`, so the focus
+  carries over. `current.md` stays shared. `crumb prune handoffs` removes
+  handoffs whose branch is gone locally and on `origin` and which are at least
+  30 days old.
+- **One writer at a time (WM-51).** Parallel sessions in one checkout could
+  interleave two read-modify-write sequences and silently undo each other.
+  Writing commands, the writing hooks and the MCP writers now take a lock on
+  the store (`private/.write-lock`). The CLI waits 2 s, then exits 1 with
+  `store is locked by pid N`. A hook waits 0.5 s, then skips its write rather
+  than block the agent. A lock left by a crashed writer is broken after 60 s,
+  or immediately on POSIX if its process is gone. Reads never wait.
+- **Branch-scoped records (WM-52).** `crumb jot|verify --scope branch` (and the
+  `scope` parameter on `memory_jot` / `memory_verify`) marks a record about this
+  branch's work in progress. On any other branch it leaves the packet and
+  guard's live set; search always finds it. Jots written by hooks are
+  branch-scoped by default.
+
 ### Added — Phase 4: the bridge to long-term memory
 
 Phase 4 of `docs/roadmap-working-memory.md`. Breadcrumbs is short-to-medium-term
