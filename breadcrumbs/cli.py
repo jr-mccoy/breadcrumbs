@@ -5708,7 +5708,7 @@ def _packet_inbox(memory_dir: Path) -> list[dict]:
 
     out = []
     for row in _inbox.packet_jots(memory_dir):
-        text = row["text"]
+        text = row["title"]
         if len(text) > PACKET_JOT_CHARS:
             text = text[: PACKET_JOT_CHARS - 1].rstrip() + "…"
         out.append(
@@ -8084,6 +8084,30 @@ def _secret_severity(pattern: str) -> str:
     return AUDIT_WARN if pattern in SECRET_WARNING_PATTERNS else AUDIT_FAIL
 
 
+def secret_pattern_hits(text: str, *, blocking_only: bool = True) -> list[str]:
+    """Names of the secret shapes `text` matches — never the matched value.
+
+    Factored out of `scan_secrets` so a caller that holds a string rather than a
+    file can use the same table. The transcript miner is that caller: everything
+    it reads is tool output and user prose, which is exactly where a credential
+    turns up by accident, and a second private copy of these patterns would
+    drift from this one the first time either moved.
+
+    `blocking_only` (the default) consults only the structured shapes. The
+    high-entropy heuristic is deliberately excluded: `scan-secrets` downgraded it
+    to a warning because it has no structure behind it and punished the records
+    that cite a concrete production path, and a caller using this to decide
+    whether to *drop* content needs the stricter, better-evidenced half.
+    """
+    out = []
+    for name, pat in SECRET_PATTERNS:
+        if blocking_only and _secret_severity(name) != AUDIT_FAIL:
+            continue
+        if pat.search(text or ""):
+            out.append(name)
+    return out
+
+
 def scan_secrets(memory_dir: Path) -> list[dict]:
     """Scan committed memory for secret-like strings.
 
@@ -9170,7 +9194,7 @@ def cmd_inbox(args: argparse.Namespace) -> int:
             marks.append(r["status"])
         flag = f" [{', '.join(marks)}]" if marks else ""
         print(f"  {r['id']} ({age}, {r['source']}){flag}")
-        print(f"      {r['text']}")
+        print(f"      {r['title']}")
     print(
         "\nPromote: `crumb inbox promote <id> decision|attempt|verification|trap|question|idea`. "
         "Drop: `crumb inbox drop <id>`."
@@ -9180,12 +9204,20 @@ def cmd_inbox(args: argparse.Namespace) -> int:
 
 # ---- Claude Code hooks ----------------------------------------------------- #
 
-HOOK_EVENTS = ("session", "guard", "capture")
-# breadcrumbs event -> (Claude Code event name, PreToolUse matcher or None)
+HOOK_EVENTS = ("session", "guard", "capture", "prompt", "compact", "subagent")
+# breadcrumbs event -> (Claude Code event name, matcher or None)
+#
+# `Task|Agent` is on the guard matcher because a subagent launch is the best
+# description of an action a session produces and the guard never saw it. Both
+# names are listed because the subagent tool has carried both across harness
+# versions; matching a name that does not exist costs nothing.
 _HOOK_SPECS: dict[str, tuple[str, str | None]] = {
     "session": ("SessionStart", None),
-    "guard": ("PreToolUse", "Bash|Edit|Write|MultiEdit"),
+    "guard": ("PreToolUse", "Bash|Edit|Write|MultiEdit|Task|Agent"),
     "capture": ("Stop", None),
+    "prompt": ("UserPromptSubmit", None),
+    "compact": ("PreCompact", None),
+    "subagent": ("SubagentStop", None),
 }
 
 # The key `init` stamps into each hook entry it owns, valued with the breadcrumbs
@@ -9229,7 +9261,7 @@ HOOK_INACTIVE_CONTEXT = (
 def _hook_fallback_json(event: str) -> str:
     """The hook payload to print when the CLI cannot be found."""
     if event != "session":
-        return "{}"  # PreToolUse/Stop: no opinion is the correct silent answer
+        return "{}"  # every other event: no opinion is the correct silent answer
     return json.dumps(
         {
             "hookSpecificOutput": {
@@ -9342,11 +9374,24 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
         for ev in events:
             cc_event, matcher = _HOOK_SPECS[ev]
             arr = hooks.setdefault(cc_event, [])
-            existing = [h for g in arr for h in _group_entries(g) if _hook_entry_event(h) == ev]
+            existing = [
+                (g, h) for g in arr for h in _group_entries(g) if _hook_entry_event(h) == ev
+            ]
             if existing:
-                for h in existing:
+                for group, h in existing:
                     if h.get("command") in _generated_hook_commands(ev):
                         h["command"] = hook_command(ev)
+                    # An entry we own gets its matcher brought up to date too.
+                    # The guard's matcher grew `Task|Agent` in 0.3.0, and
+                    # without this an existing install would keep the old one
+                    # forever: the hook would stay silent on subagent launches
+                    # while `doctor` reported it healthy. Only for entries
+                    # carrying our marker *and* our command — somebody else's
+                    # launcher may be scoped deliberately.
+                    owned = h.get(HOOK_MARKER) == ev or h.get("command") == hook_command(ev)
+                    if owned and matcher and isinstance(group, dict):
+                        if group.get("matcher") != matcher and len(_group_entries(group)) == 1:
+                            group["matcher"] = matcher
                     h[HOOK_MARKER] = ev
                 continue
             entry: dict = {
@@ -9906,6 +9951,15 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
 # cheap and the risk-regex scan bounded.
 _HOOK_CONTENT_SNIPPET_CHARS = 400
 
+# The tools that launch a subagent. Both names, because the tool has carried
+# both across harness versions and a name that never fires costs nothing.
+SUBAGENT_TOOLS = ("Task", "Agent")
+
+# How much of a subagent's launch prompt feeds the guard. Longer than an edit
+# snippet because the prompt *is* the description of the work, not a sample of
+# it; bounded because a prompt can be an essay.
+_HOOK_SUBAGENT_PROMPT_CHARS = 1200
+
 
 def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] | None]:
     """Derive a guard action string + affected files from a PreToolUse payload.
@@ -9934,6 +9988,17 @@ def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] 
         snippet = " ".join(str(new).split())[:_HOOK_CONTENT_SNIPPET_CHARS]
         action = f"edit {fp}: {snippet}" if snippet else f"edit {fp}"
         return action.strip(), [fp] if fp else None
+    if tool in SUBAGENT_TOOLS:
+        # A subagent starts cold: it does not read the resume packet and has
+        # none of this session's context. Its launch prompt is the best
+        # description of a proposed action the session produces, and until now
+        # the guard never saw it. Paths named in the prompt are mined the same
+        # way a record's prose is, so "rewrite src/auth/session.py" reaches a
+        # trap about that file.
+        prompt = tool_input.get("prompt") or tool_input.get("description") or ""
+        action = " ".join(str(prompt).split())[:_HOOK_SUBAGENT_PROMPT_CHARS]
+        files = sorted(_paths_from_text(action))
+        return action.strip(), files or None
     return "", None
 
 
@@ -9941,6 +10006,11 @@ def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] 
 # in private/ (machine-local, gitignored) because it is per-checkout runtime
 # state, not memory. Best-effort: a read or write failure must never block the
 # hook, and losing the file only means one repeated advisory.
+#
+# The implementation moved to `breadcrumbs/hooks_common.py` when the
+# `UserPromptSubmit` hook needed the same "have I already said this" question
+# (WM-10). These names stay as the compatibility surface — they are what the
+# existing tests and any external reader know this state by.
 _HOOK_SEEN_FILENAME = "hook-guard-seen.json"
 _HOOK_SEEN_MAX_SESSIONS = 8
 _HOOK_SEEN_MAX_KEYS = 200
@@ -9953,33 +10023,9 @@ def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bo
     READ_FIRST that repeats verbatim on every edit trains the agent to ignore
     the one that matters. Only advisories dedupe — PAUSE/ASK_HUMAN always fire.
     """
-    path = memory_dir / "private" / _HOOK_SEEN_FILENAME
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-        if not isinstance(data, dict):
-            data = {}
-    except Exception:
-        data = {}
-    sessions = data.get("sessions")
-    if not isinstance(sessions, dict):
-        sessions = {}
-    entry = sessions.get(session_id)
-    if not isinstance(entry, dict) or not isinstance(entry.get("seen"), list):
-        entry = {"seen": []}
-    if key in entry["seen"]:
-        return True
-    entry["seen"] = (entry["seen"] + [key])[-_HOOK_SEEN_MAX_KEYS:]
-    entry["updated_at"] = now_iso()
-    sessions[session_id] = entry
-    # Keep only the most recent sessions so the state file cannot grow unbounded.
-    keep = sorted(sessions, key=lambda s: sessions[s].get("updated_at") or "", reverse=True)
-    data = {"sessions": {s: sessions[s] for s in keep[:_HOOK_SEEN_MAX_SESSIONS]}}
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(path, json.dumps(data, indent=0, sort_keys=True) + "\n")
-    except Exception:  # pragma: no cover - dedupe state is best-effort
-        pass
-    return False
+    from breadcrumbs import hooks_common
+
+    return hooks_common.advisory_seen(memory_dir, session_id, key, filename=_HOOK_SEEN_FILENAME)
 
 
 # Permission modes in which the user has already told the harness not to
@@ -10046,15 +10092,88 @@ def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
     return "\n".join(lines)
 
 
-def _hook_session(memory_dir: Path, root: Path) -> int:
+# Lines of mined candidates the post-compaction preamble may list. The rest are
+# still in the inbox; `crumb inbox` is one command away.
+_COMPACT_PREAMBLE_MAX_JOTS = 10
+
+# Headroom the preamble may add on top of the packet's own budget. A compaction
+# has just freed the entire context window, so this is the cheapest context in
+# the session and the most valuable — but it is still bounded.
+_COMPACT_PREAMBLE_TOKENS = 1000
+
+
+def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
+    """What was in flight when the context was destroyed, for the model that lost it.
+
+    After a compaction the model holds a summary and has no memory of the
+    records it was shown or the task it was on. `PreCompact` cannot tell it
+    anything — that hook's output never reaches the model — so it left the facts
+    in `private/` and this is where they are read back.
+
+    Empty when there is no marker for this session, which is the normal case:
+    every other `source` value means no compaction happened.
+    """
+    from breadcrumbs import hooks_common
+
+    marker = hooks_common.compaction_marker(memory_dir, session_id)
+    if not marker:
+        return ""
+    lines = [
+        "breadcrumbs: context was compacted. What follows is what was in flight "
+        "before it; the full resume packet comes after.",
+        "",
+    ]
+    state = hooks_common.prompt_state(memory_dir, session_id)
+    if state.get("last_prompt"):
+        lines.append(f"Last prompt before compaction: {state['last_prompt']}")
+    if state.get("matched"):
+        lines.append("Records surfaced for it: " + ", ".join(f"`{i}`" for i in state["matched"]))
+    # Everything this session has waiting, not only what the last firing mined.
+    # A compaction that found nothing new — because the Stop hook already mined
+    # the same range — would otherwise report "nothing salvaged" while the
+    # inbox holds a dozen candidates this very session produced. What the model
+    # needs here is what it can act on, not which firing wrote it.
+    rows = _session_jot_rows(memory_dir, session_id)
+    if rows:
+        shown = rows[:_COMPACT_PREAMBLE_MAX_JOTS]
+        lines += [
+            "",
+            "Mined from this session so far (unconfirmed — promote with "
+            "`crumb inbox promote <id> <type>`, or drop with `crumb inbox drop <id>`):",
+        ]
+        lines += [f"- `{r['id']}` [{r.get('kind', 'note')}] {r['text']}" for r in shown]
+        if len(rows) > len(shown):
+            lines.append(f"- … and {len(rows) - len(shown)} more in `crumb inbox`")
+    else:
+        lines.append("Nothing durable was mined from the transcript before compaction.")
+    text = "\n".join(lines)
+    # Trim the mined list first: the last prompt is the cheapest, most useful
+    # line here, and dropping it to keep candidates would be backwards.
+    while approx_tokens(text) > _COMPACT_PREAMBLE_TOKENS and lines and lines[-1].startswith("- "):
+        lines.pop()
+        text = "\n".join(lines)
+    return text + "\n\n"
+
+
+def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> int:
     out: dict = {}
+    payload = payload or {}
     if memory_dir.is_dir():
         try:
             packet = build_resume_packet(memory_dir, root)
+            context = render_packet_markdown(packet)
+            # `source` says why this SessionStart fired. Absent on older harness
+            # versions, which is `startup` for every practical purpose.
+            if str(payload.get("source") or "startup") == "compact":
+                from breadcrumbs import hooks_common
+
+                context = (
+                    _compaction_preamble(memory_dir, hooks_common.session_id_of(payload)) + context
+                )
             out = {
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",
-                    "additionalContext": render_packet_markdown(packet),
+                    "additionalContext": context,
                 }
             }
             # The packet is about to be injected into a session: this is the
@@ -10094,6 +10213,16 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         return 0
     result = guard(memory_dir, root, action, files=files)
     verdict = result["verdict"]
+    # Launching a subagent is not itself irreversible — the subagent's own tool
+    # calls hit this same guard, where the blast radius actually is. So a launch
+    # caps at READ_FIRST: the memory reaches the agent as context and no prompt
+    # is raised. Asking twice for one piece of work is how a gate becomes noise.
+    if (payload.get("tool_name") or "") in SUBAGENT_TOOLS and verdict not in (
+        "PROCEED",
+        "READ_FIRST",
+    ):
+        verdict = GUARD_READ_ONLY_CEILING
+        result = {**result, "verdict": verdict}
     if verdict == "PROCEED":
         print(json.dumps({}))
         return 0
@@ -10248,7 +10377,19 @@ def _extraction_commits(memory_dir: Path, root: Path) -> list[str]:
     return lines or [f"(HEAD moved to {_short_ref(cur)})"]
 
 
-def _extraction_reason(commits: list[str]) -> str:
+# Mined candidates the extraction prompt lists. Six is enough to cover a busy
+# session's real findings; beyond that the prompt stops being a request and
+# becomes a backlog.
+EXTRACTION_MAX_JOTS_SHOWN = 6
+
+# Mined candidates that, on their own, earn an extraction turn even with no
+# commits. One failed-then-fixed command is a real finding; three notes of any
+# kind means the session produced enough to be worth a minute.
+EXTRACTION_MIN_ATTEMPT_JOTS = 1
+EXTRACTION_MIN_SESSION_JOTS = 3
+
+
+def _extraction_reason(commits: list[str], session_jots: list[dict] | None = None) -> str:
     """The block message: a concrete, one-shot instruction to persist memory.
 
     This is the agent-as-author moment — the request lands while the model
@@ -10256,20 +10397,46 @@ def _extraction_reason(commits: list[str]) -> str:
     it read hundreds of turns ago. `capture session` is the last step, so
     completing the instruction is exactly what clears it (a re-firing Stop sees
     the fresh session record as redundant and stays silent).
+
+    When the miner found candidates, they are listed with their ids. That turns
+    the request from "compose a record about what just happened" — expensive,
+    at the moment the model has least context left — into "promote this one, drop
+    that one", which is a judgement it can still make cheaply and well.
     """
-    shown = commits[:EXTRACTION_MAX_COMMITS_SHOWN]
-    extra = len(commits) - len(shown)
-    listing = "\n".join(f"  {c}" for c in shown)
-    if extra > 0:
-        listing += f"\n  … and {extra} more"
-    # "landed", not "this turn produced": the range is HEAD-based, and the
-    # workspace may be shared with other terminals/agents (P1-7) — attributing
-    # someone else's commit to the agent would ask it to describe work it never
-    # did. The instruction below scopes recording to the session's own work.
-    return (
-        f"breadcrumbs: {len(commits)} new commit(s) landed since the last recorded "
-        f"session (this turn's work, or another actor's if the workspace is "
-        f"shared):\n{listing}\n"
+    parts: list[str] = []
+    if commits:
+        shown = commits[:EXTRACTION_MAX_COMMITS_SHOWN]
+        extra = len(commits) - len(shown)
+        listing = "\n".join(f"  {c}" for c in shown)
+        if extra > 0:
+            listing += f"\n  … and {extra} more"
+        # "landed", not "this turn produced": the range is HEAD-based, and the
+        # workspace may be shared with other terminals/agents (P1-7) —
+        # attributing someone else's commit to the agent would ask it to
+        # describe work it never did. The instruction below scopes recording to
+        # the session's own work.
+        parts.append(
+            f"breadcrumbs: {len(commits)} new commit(s) landed since the last recorded "
+            f"session (this turn's work, or another actor's if the workspace is "
+            f"shared):\n{listing}"
+        )
+    else:
+        parts.append(
+            "breadcrumbs: this session produced findings worth keeping, though no commits landed."
+        )
+
+    jots = list(session_jots or [])[:EXTRACTION_MAX_JOTS_SHOWN]
+    if jots:
+        rows = "\n".join(f"  {j['id']} [{j.get('kind', 'note')}] {j['text']}" for j in jots)
+        parts.append(
+            "Candidates mined from this session (unconfirmed; each is a private jot):\n"
+            f"{rows}\n"
+            "Promote what is durable:  `crumb inbox promote <jot id> "
+            "attempt|verification|trap --evidence commit <sha>`\n"
+            "Drop what is noise:       `crumb inbox drop <jot id>`"
+        )
+
+    parts.append(
         "Before stopping, persist what the next session cannot rediscover — from "
         "this session's own work only; skip commits you did not make:\n"
         '1. A durable choice made here -> `crumb remember decision --title "…" '
@@ -10285,6 +10452,37 @@ def _extraction_reason(commits: list[str]) -> str:
         "Record durable facts only — routine work needs no records; if nothing "
         "durable happened, run just the final capture command."
     )
+    return "\n".join(parts)
+
+
+def _session_jot_rows(memory_dir: Path, session_id: str) -> list[dict]:
+    """Live machine-local jots this session produced, newest first.
+
+    What the extraction prompt offers for promotion. Scoped by `host_session`
+    so one terminal never asks an agent to triage another's findings.
+    """
+    try:
+        from breadcrumbs import inbox as _inbox
+
+        rows = []
+        for rec in _inbox.load_jots(memory_dir):
+            if rec.meta.get("host_session") != session_id:
+                continue
+            tags = rec.meta.get("tags") or []
+            kind = next(
+                (t for t in tags if t in ("attempt", "verification", "trap", "correction")), "note"
+            )
+            rows.append(
+                {
+                    "id": rec.meta.get("id") or rec.stem,
+                    "text": _inbox.jot_title(rec)[:140],
+                    "kind": kind,
+                    "tags": tags,
+                }
+            )
+        return rows
+    except Exception:  # pragma: no cover - the prompt degrades to commits-only
+        return []
 
 
 def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> None:
@@ -10322,6 +10520,21 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     if not memory_dir.is_dir():
         print(json.dumps({}))
         return 0
+    from breadcrumbs import hooks_common
+    from breadcrumbs import transcript as _transcript
+
+    session_key = hooks_common.session_id_of(payload)
+    # Mine first, unconditionally: it is a side effect, not a decision. Even a
+    # firing that will stay silent — a continuation, a redundant snapshot, a
+    # store with the prompt switched off — should still salvage what the
+    # transcript shows, because nothing else will read it again.
+    _transcript.mine_transcript_into_jots(
+        memory_dir,
+        root,
+        payload.get("transcript_path"),
+        session_id=session_key,
+        use_cursor=True,
+    )
     try:
         redundant = _hook_capture_is_redundant(memory_dir, root)
     except Exception:  # pragma: no cover - a dedupe failure must not block Stop
@@ -10342,8 +10555,22 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
         return 0
     if _extraction_enabled(memory_dir):
         commits = _extraction_commits(memory_dir, root)
-        if commits:
-            print(json.dumps({"decision": "block", "reason": _extraction_reason(commits)}))
+        # Candidates this session produced that have not already been offered.
+        # Re-offering a jot the agent declined, every turn until it expires, is
+        # exactly the fatigue that makes an agent start ignoring the prompt.
+        asked = hooks_common.extraction_asked(memory_dir, session_key)
+        jots = [j for j in _session_jot_rows(memory_dir, session_key) if j["id"] not in asked]
+        attempts = [j for j in jots if "attempt" in (j.get("tags") or [])]
+        earned = (
+            bool(commits)
+            or len(attempts) >= EXTRACTION_MIN_ATTEMPT_JOTS
+            or len(jots) >= EXTRACTION_MIN_SESSION_JOTS
+        )
+        if earned:
+            hooks_common.record_extraction_asked(
+                memory_dir, session_key, [j["id"] for j in jots[:EXTRACTION_MAX_JOTS_SHOWN]]
+            )
+            print(json.dumps({"decision": "block", "reason": _extraction_reason(commits, jots)}))
             return 0
     _hook_capture_snapshot(root, host_session)
     print(json.dumps({}))
@@ -10356,15 +10583,26 @@ def cmd_hook(args: argparse.Namespace) -> int:
     # no subcommand used to block on a terminal until EOF and only then report the
     # usage error, which reads as a hang.
     if event not in HOOK_EVENTS:
-        _emit_error(args, "specify: `crumb hook session|guard|capture`")
+        _emit_error(args, "specify: `crumb hook " + "|".join(HOOK_EVENTS) + "`")
         return 2
     payload = _read_hook_stdin()
     root = _hook_root(payload)
     memory_dir = root / MEMORY_DIRNAME
     if event == "session":
-        return _hook_session(memory_dir, root)
+        return _hook_session(memory_dir, root, payload)
     if event == "guard":
         return _hook_guard(memory_dir, root, payload)
+    if event == "prompt":
+        from breadcrumbs import hooks_prompt
+
+        print(json.dumps(hooks_prompt.hook_prompt(memory_dir, root, payload)))
+        return 0
+    if event in ("compact", "subagent"):
+        from breadcrumbs import hooks_compact
+
+        handler = hooks_compact.hook_compact if event == "compact" else hooks_compact.hook_subagent
+        print(json.dumps(handler(memory_dir, root, payload)))
+        return 0
     return _hook_capture(memory_dir, root, payload)
 
 
@@ -11215,7 +11453,10 @@ def _add_hook(sub, global_parser: argparse.ArgumentParser) -> None:
     for ev, _help in (
         ("session", "SessionStart: emit the resume packet as additional context"),
         ("guard", "PreToolUse: cost-aware guard verdict for the proposed tool call"),
-        ("capture", "Stop: snapshot a session record"),
+        ("capture", "Stop: snapshot a session record, mine the transcript, maybe extract"),
+        ("prompt", "UserPromptSubmit: inject memory relevant to this prompt; capture corrections"),
+        ("compact", "PreCompact: mine the transcript before the context is destroyed"),
+        ("subagent", "SubagentStop: mine the finished subagent's transcript"),
     ):
         ph = hook_sub.add_parser(ev, parents=[global_parser], help=_help)
         ph.set_defaults(func=cmd_hook, hook_event=ev)

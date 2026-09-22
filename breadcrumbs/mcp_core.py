@@ -214,7 +214,7 @@ def resource_inbox(root: str | Path | None = None) -> str:
     for r in rows:
         age = f"{r['age_days']}d" if r["age_days"] is not None else "new"
         local = ", local" if r["local"] else ""
-        lines.append(f"- `{r['id']}` ({age}, {r['source']}{local}) {r['text']}")
+        lines.append(f"- `{r['id']}` ({age}, {r['source']}{local}) {r['title']}")
     return "\n".join(lines) + "\n"
 
 

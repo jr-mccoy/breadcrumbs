@@ -116,13 +116,20 @@ def write_jot(
     agent: str | None = None,
     host_session: str | None = None,
     fingerprint: str | None = None,
+    evidence: list[dict] | None = None,
+    title: str | None = None,
 ) -> dict:
     """Write one jot. Same write + validate + revert gate as every other record.
 
     `files` becomes `evidence: [{type: file, ref: …}]` rather than prose, so the
     guard's *declared file* signal reaches a jot exactly as it reaches a record.
     That is the difference between a note that can be found later and one that
-    can only be found by remembering it exists.
+    can only be found by remembering it exists. `evidence` adds refs of any
+    other type (a mined candidate carries the command it ran).
+
+    `title` separates what the jot is *called* from what it *says*. They are the
+    same string for a typed jot, and different for a mined one, whose note holds
+    a snippet of tool output that would make a useless heading.
     """
     memory_dir = Path(memory_dir)
     project_root = Path(project_root)
@@ -141,15 +148,20 @@ def write_jot(
         "host_session": host_session,
         "fingerprint": fingerprint,
     }
+    heading, _ = normalize_jot_text(title) if title else (flat, False)
+    refs = [{"type": "file", "ref": f} for f in (files or []) if f]
+    for ref in evidence or []:
+        if isinstance(ref, dict) and ref.get("ref") and ref not in refs:
+            refs.append(ref)
     try:
         path, meta = cli.write_record(
             memory_dir,
             project_root,
             JOT_TYPE,
-            flat,
+            heading or flat,
             {"Note": flat},
             tags=tags or [],
-            evidence=[{"type": "file", "ref": f} for f in (files or []) if f],
+            evidence=refs,
             # A jot makes no claim it could support with evidence, and is exempt
             # from §16.9 for that reason; `low` is the honest confidence for an
             # unreviewed observation and keeps it from reading as a finding.
@@ -254,6 +266,12 @@ def jot_text(rec: "cli.Record") -> str:
     return _WS_RE.sub(" ", cli._HTML_COMMENT_RE.sub("", raw)).strip()
 
 
+def jot_title(rec: "cli.Record") -> str:
+    """The jot's headline: its frontmatter title, else its note."""
+    title = str(rec.meta.get("title") or "").strip()
+    return title or jot_text(rec)
+
+
 def jot_rows(memory_dir: Path, **kwargs) -> list[dict]:
     """`load_jots` as plain dicts for `--json` and the human listing."""
     memory_dir = Path(memory_dir)
@@ -262,6 +280,11 @@ def jot_rows(memory_dir: Path, **kwargs) -> list[dict]:
         rows.append(
             {
                 "id": rec.meta.get("id") or rec.stem,
+                # `title` is the headline, `text` the body. They are the same
+                # string for a jot somebody typed and different for a mined one,
+                # whose body holds a snippet of tool output — so every listing
+                # shows the title and leaves the detail to `crumb show`.
+                "title": jot_title(rec),
                 "text": jot_text(rec),
                 "source": rec.meta.get("source") or "unknown",
                 "status": rec.meta.get("status") or "active",
@@ -345,7 +368,7 @@ def promote_jot(
             "error": f"{jot_id} is already {rec.meta.get('status')}; only an active jot promotes",
         }
 
-    new_title = (title or jot_text(rec)).strip()
+    new_title = (title or jot_title(rec)).strip()
     # The jot's own file evidence and tags carry over: they are what made it
     # findable, and a promotion that dropped them would produce a record the
     # guard can reach less well than the note it replaced.

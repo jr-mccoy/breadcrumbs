@@ -1,19 +1,21 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: d71a7e3 | inputs_hash: 99f020c63e36 | generated_at: 2026-09-22T16:54:34+00:00 -->
+<!-- source_commit: 1669a96 | inputs_hash: ed62cd012f86 | generated_at: 2026-09-22T17:51:34+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `d71a7e3` · 61 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `1669a96` · 24 uncommitted file(s)
 
 ## Current Focus
-Phase 0 shipped (schema_version 2); Phase 1 capture hooks are next
+Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Next Action
-Start Phase 1 of docs/roadmap-working-memory.md with WM-14 (breadcrumbs/transcript.py: the deterministic transcript miner), since WM-11, WM-13 and WM-15 all depend on it. Read docs/roadmap-working-memory.md §0.5 first — it lists seven places Phase 0 departed from the plan.
+Start Phase 2 of docs/roadmap-working-memory.md with WM-20 (relevance-ordered resume packet), then WM-21 (crumb show) — the prompt hook's footer still points at 'crumb search --json' and should name 'crumb show' once it exists. Read §0.5 and §0.6 first: they list the fourteen places Phases 0 and 1 departed from the plan.
 
 ## Active Decisions
+- `dec_20260922_the-transcript-miner-is-deterministic-and-writes-only` — A model-driven miner would be unreproducible, would cost a round trip exactly when a session is ending, and could not run in PreCompact at all — that hook's output never reaches the model. Four narrow rules that are usually right beat one broad rule that cannot be tested. And what a regex noticed is not a finding: the miner cannot tell whether a file was edited four times because it is fragile or because a feature landed in it.
+- `dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first` — Launching a subagent is not itself irreversible; the subagent's own tool calls hit the same guard, which is where the blast radius actually is. Asking twice for one piece of work is how a gate becomes noise. Both tool names are matched because the tool has carried both across harness versions and a name that never fires costs nothing.
 - `dec_20260922_usage-telemetry-counts-surfacings-at-the-call-sites` — Every mutation reindexes and every reindex builds a packet, so counting inside build_resume_packet would have measured writes rather than surfacings. Splitting guard between the command and the hook avoids double-counting every hook advisory, since the hook shows a filtered subset of the same result. Counters in frontmatter would churn every record on every guard call and break 'records are authored facts'; a committed counter file would conflict on every merge.
 - `dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn` — A machine-local jot in a committed projection makes that file differ between two checkouts of one store while _inputs_hash calls both fresh, since the hash cannot read gitignored input without the same problem. That is the cross-machine ping-pong _hashed_input_dirs already exists to prevent. Excluding private jots from the packet keeps the projection machine-independent by construction.
 - `dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases` — Hook facts were verified against the Claude Code hooks reference: PreCompact output never reaches the model (so it mines and marks; SessionStart source=compact re-injects), SubagentStop can block but the plan defers that behind the existing prompt-fatigue open question, UserPromptSubmit additionalContext reaches the model, and the transcript file may lag the current turn. New code goes in new modules; cli.py is 10.7k lines. Usage telemetry is local-only in v1 to avoid churning records and merge conflicts.
@@ -27,9 +29,7 @@ Start Phase 1 of docs/roadmap-working-memory.md with WM-14 (breadcrumbs/transcri
 - `dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval` — A match's stance decides its verdict ceiling: blocking (an attempt with an explicit Do Not Retry Unless) may reach PAUSE; advisory (trap, decision, verification, open question) is capped at READ_FIRST. The score band is applied per match rather than once from the best score across all matches.
 - `dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one` — The record words do not fit. The dominant way a question retires is that somebody answered it, and no lifecycle value says that — marking an answered question 'stale' records the opposite of what happened. The codebase already has this shape: a verification's outcome is deliberately not its status, for the same reason. The id decides which vocabulary applies and a mismatch is rejected by name, so the two never silently cross.
 - `dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them` — Reusing VALID_STATUS through the existing mark-status entry point keeps one vocabulary and one writer, and gives the MCP memory_mark_status tool the same reach with no new code. search already printed [active] for traps, so the vocabulary was implied by the UI before it existed in the file.
-- `dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20` — Callers could not script on verdicts at all (everything exited 0), and a Windows field-test harness rendered advisory verdicts as tool failures; documented spaced codes make 'block only on ASK_HUMAN' possible and any host-layer weirdness diagnosable.
-- `dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword` — 0.1.10 field test: the unconditional trap keyword floor fired READ_FIRST on 13/13 edits with one relevant hit; an ignored alarm is worse than no alarm.
-_(… 5 more omitted to stay within the per-section cap)_
+_(… 7 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -50,9 +50,10 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (0d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/transcript.py
+- breadcrumbs/cli.py
 - breadcrumbs/usage.py
 - breadcrumbs/inbox.py
-- breadcrumbs/cli.py
 - docs/roadmap-working-memory.md
 - CHANGELOG.md
 - README.md
@@ -66,6 +67,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
+- `ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16` — Phase 1 of the working-memory roadmap (WM-10 to WM-16: capture hooks and the transcript miner): **fixed** · test
 - `ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02` — Phase 0 of the working-memory roadmap (WM-01 migration, WM-02 usage, WM-03 inbox): **fixed** · test
 - `ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re` — the 16 findings of the 0.1.11 crumb-kit field review, re-checked against 0.1.12: **fixed** · static
 - `ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word` — resume's possible-drift line fires on incidental two-word overlap and version fragments: **fixed** · test
@@ -76,10 +78,11 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `ver_20260816_release-0-1-10-blocked-by-pypi-invalid-publisher-fixed` — release 0.1.10 blocked by PyPI invalid-publisher: **fixed** · static
 - `ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed` — ci.yml guard steps survive guard's verdict exit codes: **fixed** · test
 - `ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed` — crumb mark-status can answer an open question: **fixed** · test
-- `ver_20260816_crumb-mark-status-can-retire-a-trap-fixed` — crumb mark-status can retire a trap: **fixed** · test
-_(… 1 more omitted to stay within the per-section cap)_
+_(… 2 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
+- python -m unittest tests.test_transcript
+- python -m unittest tests.test_hooks_phase1
 - python -m unittest tests.test_usage
 - python -m unittest tests.test_inbox
 - tests/test_secret_precision.py
@@ -90,8 +93,7 @@ _(… 1 more omitted to stay within the per-section cap)_
 - python -m unittest discover -s tests
 - python -m unittest tests.test_hooks
 - python -m unittest tests.test_guard
-- python -m build --wheel
-- python crumb.py validate
+_(… 2 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_

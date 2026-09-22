@@ -103,7 +103,7 @@ three days, **L** a week.
 | Phase | Theme | Items | Release |
 |---|---|---|---|
 | 0 | Foundations: migration, inbox, telemetry — **shipped**, see §0.5 | WM-01, WM-02, WM-03 | 0.3.0 |
-| 1 | Capture everywhere: new hooks and the transcript miner | WM-10 to WM-16 | 0.4.0 |
+| 1 | Capture everywhere: new hooks and the transcript miner — **shipped**, see §0.6 | WM-10 to WM-16 | 0.4.0 |
 | 2 | Retrieval by relevance | WM-20 to WM-25 | 0.5.0 |
 | 3 | Lifecycle: decay, dedup, consolidation, contradiction | WM-30 to WM-35 | 0.6.0 |
 | 4 | The bridge to long-term memory | WM-40 to WM-43 | 0.7.0 |
@@ -492,7 +492,7 @@ handle the new events with no other change, because they iterate
 `--with-hooks=session,guard,capture` keeps selecting a subset. Add the new
 names to the help text.
 
-### WM-14 The transcript miner — **L** (build first; WM-11, WM-13, WM-15 depend on it)
+### WM-14 The transcript miner — **L** — SHIPPED (build first; WM-11, WM-13, WM-15 depend on it)
 
 **Goal.** Turn a Claude Code transcript into a bounded list of memory
 *candidates* with no LLM: failed-then-fixed commands, verification
@@ -598,7 +598,7 @@ under `tests/data/transcripts/`:
   calls with the same candidates, and stops at 10.
 - Reading only the last `max_bytes` of a large file yields whole lines.
 
-### WM-10 UserPromptSubmit hook: task-scoped injection and correction capture — **M**
+### WM-10 UserPromptSubmit hook: task-scoped injection and correction capture — **M** — SHIPPED
 
 **Goal.** Inject the records relevant to *this prompt*, not the
 newest-first list, at the moment the task is known. Capture corrections
@@ -674,7 +674,7 @@ importing across test modules is awkward):
   entry with no `matcher` key and the `breadcrumbsHook: "prompt"` marker;
   `remove_claude_hooks` removes it; `doctor` reports it.
 
-### WM-11 PreCompact hook: mine before the context is destroyed — **S** (after WM-14)
+### WM-11 PreCompact hook: mine before the context is destroyed — **S** — SHIPPED (after WM-14)
 
 **Goal.** Compaction is the biggest memory-loss event in a long session.
 The hook cannot speak to the model, so it does the deterministic thing:
@@ -705,7 +705,7 @@ marker naming it; running twice writes no second jot (cursor); missing
 transcript path → `{}` and no files; `install_claude_hooks(root,
 ["compact"])` writes a `PreCompact` entry with no matcher.
 
-### WM-12 SessionStart after compaction: re-orient with what was in flight — **S** (after WM-10, WM-11)
+### WM-12 SessionStart after compaction: re-orient with what was in flight — **S** — SHIPPED (after WM-10, WM-11)
 
 **Goal.** After compaction the model has a summary and no memory of the
 records it was shown. The SessionStart hook already fires with
@@ -738,7 +738,7 @@ both private files present → output contains the header, the last prompt
 and the jot ids; `source: "startup"` → unchanged output; missing private
 files → header only.
 
-### WM-13 SubagentStop hook: subagent findings do not die with the subagent — **S** (after WM-14)
+### WM-13 SubagentStop hook: subagent findings do not die with the subagent — **S** — SHIPPED (after WM-14)
 
 **Goal.** A subagent's failures and verifications currently vanish.
 
@@ -766,7 +766,7 @@ files → header only.
 transcript with nothing to mine writes nothing; the entry installs under
 `SubagentStop` without a matcher.
 
-### WM-15 Stop hook: extraction on more than commits, with candidates in hand — **M** (after WM-14, WM-03)
+### WM-15 Stop hook: extraction on more than commits, with candidates in hand — **M** — SHIPPED (after WM-14, WM-03)
 
 **Goal.** Today `_hook_capture` asks the agent to write records only when
 commits landed, and asks from scratch. Ask also when the transcript
@@ -822,7 +822,7 @@ record with little context left.
   `{}` (already asked).
 - `extraction_prompt: false` → never blocks, jots still mined.
 
-### WM-16 Guard for subagent launches and other tools — **S**
+### WM-16 Guard for subagent launches and other tools — **S** — SHIPPED
 
 **Goal.** A subagent starts cold. Its prompt is the best description of an
 action the session produces, and the guard never sees it.
@@ -853,6 +853,58 @@ action the session produces, and the guard never sees it.
 do-not-retry attempt → `additionalContext` present, no
 `permissionDecision`; matcher upgrade on re-install; an unowned entry's
 matcher is left alone.
+
+---
+
+### 0.6 Phase 1: what shipped, and where it differs from this plan
+
+Phase 1 is implemented. New modules: `breadcrumbs/transcript.py`,
+`breadcrumbs/hooks_common.py`, `breadcrumbs/hooks_prompt.py`,
+`breadcrumbs/hooks_compact.py`; new tests: `tests/test_transcript.py`,
+`tests/test_hooks_phase1.py`, with the shared transcript builders in
+`tests/_jsonl.py`. No schema change — Phase 1 writes only jots, which
+schema 2 already defined.
+
+Seven departures from what this document specified. Read these before Phase 2.
+
+1. **`mine()` returns `(candidates, entries_read)`, not just candidates.** The
+   caller needs to know how far the miner got to store its cursor, and deriving
+   it from `len(entries)` at the call site would have put the same arithmetic in
+   three hooks. `mine_transcript_into_jots()` wraps read, mine, write and cursor
+   into the one call every hook actually makes.
+2. **The post-compaction preamble lists the session's live jots, not the
+   marker's.** The plan said to list what `PreCompact` just mined. A compaction
+   that finds nothing new — because the Stop hook already mined the same range —
+   would then report "nothing salvaged" while the inbox held a dozen candidates
+   from that very session. What the model needs is what it can act on, not which
+   firing wrote it. The marker is still written (and still written when nothing
+   was mined, because "compacted and nothing survived" is a different fact from
+   "no compaction happened"); it is now only the signal that a compaction
+   occurred.
+3. **Candidates carry a `title` separate from their note**, and `write_jot`
+   grew `title` and `evidence` parameters to take them. Without it a churn
+   candidate displayed as "Repeated edits suggest a fragile area…" in every
+   listing, with the file name only visible inside the id.
+4. **`SubagentStop` keys its jots to the parent `session_id`.** The plan did not
+   say. A subagent's own id dies with it, so keying to that would make the
+   candidates unreachable by the Stop hook's "what did this session produce"
+   query — written, and never offered to anyone.
+5. **The extraction turn's "already asked" check covers the jots it showed, not
+   the whole session.** Same intent, but scoped to what was actually listed, so
+   a candidate mined *after* a prompt fired is still offered next time.
+6. **`redact_secrets` uses the blocking half of the secret table only.** The
+   high-entropy heuristic is warn-only for `scan-secrets` precisely because it
+   has no structure behind it; using it here would silently drop candidates that
+   merely cite a build hash.
+7. **A failing command that passes on a bare retry is not an attempt.** The plan
+   required an edit between the two; this makes the reason explicit — it passed
+   with nothing changed, which is a flaky test, not a fix, and recording it as
+   "X failed until 0 files changed" would be a false claim in the store.
+
+Two notes for Phase 2: `cli._hook_guard_advisory_seen` is now a thin shim over
+`hooks_common.advisory_seen` (the name stays because tests and the docs know the
+state by it), and `_HOOK_SPECS` gained no third tuple element — the matcher was
+already the second.
 
 ---
 

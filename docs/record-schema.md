@@ -129,23 +129,31 @@ The per-project control file. Carries the schema version (so `validate` can chec
 forward-compat) and the tracking policies chosen at `init`:
 
 ```yaml
-schema_version: 1
+schema_version: 2
 created_at: 2026-06-25T14:30:00-05:00
 project: <project-name>
 # Tracking policy chosen during `crumb init`:
 session_tracking: full        # full | distillate
 commit_generated_projections: true   # commit generated/*.md (indexes always ignored)
-extraction_prompt: true   # Stop hook may hold the stop once per new-commit turn
+extraction_prompt: true   # Stop hook may hold the stop once per unit of work
                           # to ask the agent for decision/attempt records
+jot_ttl_days: 14          # how long a `crumb jot` stays listed
 ```
 
-`extraction_prompt` (default `true`, and treated as `true` when the key is
-absent — pre-existing stores get the behavior on upgrade) is the kill switch
-for the Stop-hook extraction turn. Set it to `false` and the hook only ever
-takes the silent machine snapshot.
+Behaviour keys, all optional and all with the default that is right for a store
+that has never heard of them — a key absent from an older manifest must never
+change what that store does:
 
-`schema_version` is `1` for this build. `project` is auto-derived from the project
-root directory name. `created_at` is ISO-8601 with timezone.
+| Key | Default | Effect |
+|---|---|---|
+| `extraction_prompt` | `true` | The Stop hook may hold the stop once to ask for records. `false` leaves only the silent machine snapshot — it stops the *prompt*, not the transcript mining. |
+| `jot_ttl_days` | `14` | Days a jot stays listed before it expires. Unparseable values fall back to the default rather than failing a write. |
+| `capture_corrections` | `true` | The `UserPromptSubmit` hook writes a prompt that opens like a correction to `private/inbox/`. `false` turns that off. |
+| `subagent_extraction` | `false` | **Reserved.** Whether a finished subagent may be held for its own extraction turn. Nothing reads it yet; it waits on the prompt-fatigue field test in `open-questions.md`, and it defaults off because the parent's Stop hook already asks once per unit of work. |
+
+`schema_version` is `2` for this build; see §1 for what each version changed.
+`project` is auto-derived from the project root directory name. `created_at` is
+ISO-8601 with timezone.
 
 ---
 
@@ -302,8 +310,13 @@ should be promoted into one. Type-specific frontmatter:
 |---|---|
 | `source` | Who or what wrote it: `human`, `agent`, `prompt`, `transcript`, `hook`. **Required** (validate §16.9c) — a hook-written candidate and a note somebody typed are read very differently by whoever triages the inbox. |
 | `expires_at` | Set automatically to `created_at + jot_ttl_days` (default 14). An expired jot drops out of `crumb inbox` and the resume packet but stays on disk. |
-| `fingerprint` | Content identity for an automatically written jot, so a hook that mines the same source twice does not write the same candidate twice. Optional. |
-| `host_session` | The harness session that wrote it. Optional. |
+| `fingerprint` | Content identity (sha1 of kind + title) for an automatically written jot, so a hook that mines the same source twice does not write the same candidate twice. Scoped per session: the same failure recurring in a *later* session is news again. Optional. |
+| `host_session` | The harness session that wrote it. What the Stop hook's extraction turn scopes its "what did this session produce" query to, so one terminal never asks an agent to triage another's findings. A subagent's candidates carry the *parent* session id, because the subagent's own id dies with it. Optional. |
+
+A jot's `title` is its headline and its `## Note` is the body. They are the same
+string for a jot somebody typed, and different for a mined one, whose note holds
+a snippet of tool output that would make a useless heading — so every listing
+shows the title.
 
 Two rules that are not obvious from the shape:
 

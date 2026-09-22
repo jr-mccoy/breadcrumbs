@@ -3,9 +3,82 @@
 All notable changes to **crumb-kit** (the `breadcrumbs` package) are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the project
 uses semantic versioning. The package version is independent of the on-disk record
-`schema_version` (still `1`); `crumb --version` prints both.
+`schema_version` (now `2` — see `docs/record-schema.md` §1); `crumb --version`
+prints both.
 
 ## [Unreleased]
+
+### Added — Phase 1: capture everywhere
+
+Phase 1 of `docs/roadmap-working-memory.md`. The agent should not have to
+*decide* to remember. Three new hook events, a deterministic transcript miner,
+and the guard's first look at subagent launches. No schema change.
+
+- **`breadcrumbs/transcript.py` — the transcript miner (WM-14).** Four rules over
+  the JSONL transcript, no LLM and no network: a command that failed and passed
+  after an edit (`attempt`), a test command that passed (`verification`), a file
+  edited four or more times (`trap`), and a user message that opens like a
+  correction. Deterministic because everything else in this tool is: a miner
+  that asked a model what was interesting would be unreproducible, would cost a
+  round trip exactly when a session is ending, and could not run in `PreCompact`
+  at all, where nothing can talk to the model.
+- **Candidates are never records.** Everything mined lands in `private/inbox/`
+  as a jot — gitignored, `confidence: low`, never the basis of a guard verdict —
+  after a secret scan that **drops** rather than masks, because a masked
+  credential still proves one was there. Bounded at 10 per firing, deduped by a
+  content fingerprint within a session, and a cursor in
+  `private/miner-cursor.json` stops a later firing re-reading what an earlier
+  one already mined.
+- **`UserPromptSubmit → crumb hook prompt` (WM-10).** Injects up to five records
+  relevant to *this prompt*, at the moment the task is finally known, scored
+  with the same retrieval `guard` uses and capped at 800 approximate tokens.
+  Deduped per session, because an advisory that repeats is one the agent learns
+  to skim. It **never blocks**: that decision is available on this event and it
+  erases the prompt.
+- **Corrections are captured.** A prompt beginning "no, don't…" is a durable
+  constraint arriving as an ordinary message, and nothing wrote it down, so the
+  next session re-violated it. Written to `private/inbox/` only —
+  `capture_corrections: false` in `manifest.yml` turns it off.
+- **`PreCompact → crumb hook compact` (WM-11).** Compaction is the biggest
+  memory-loss event in a long session. The hook cannot speak to the model, so it
+  mines the transcript and leaves a marker.
+- **`SessionStart` is source-aware (WM-12).** With `source: compact` it prepends
+  what was in flight: the last prompt, the records surfaced for it, and the
+  candidates waiting in the inbox. The model that just lost its context is the
+  one reader that cannot reconstruct any of it.
+- **`SubagentStop → crumb hook subagent` (WM-13).** A subagent's findings used to
+  vanish with it; the parent only ever sees the final message. Mined and tagged
+  `subagent` / `agent:<type>`, keyed to the *parent* session so the Stop hook can
+  find them. It does not hold the subagent — that is the prompt-fatigue question
+  `open-questions.md` already asks, and `subagent_extraction` is reserved for it.
+- **The extraction turn fires on findings, not only commits (WM-15).** A
+  failed-then-fixed command, or three candidates of any kind, now earns the turn.
+  The prompt lists the candidates by id, which turns "compose a record about what
+  just happened" — at the moment the model has least context left — into "promote
+  this one, drop that one". A candidate the agent declined is never offered again
+  in the same session.
+- **The guard sees subagent launches (WM-16).** `Task`/`Agent` joined the
+  `PreToolUse` matcher; a launch is scored on its prompt and **capped at
+  `READ_FIRST`**, because the launch is not itself irreversible and the
+  subagent's own calls hit the same guard. Re-running `init --with-hooks` brings
+  an entry breadcrumbs owns up to the current matcher, which is how an existing
+  install picks this up.
+- **`breadcrumbs/hooks_common.py`** — the per-session hook state, all under
+  `private/`, all bounded to the eight most recent sessions.
+- **`cli.secret_pattern_hits(text)`** — the `scan_secrets` table, reachable by a
+  caller holding a string rather than a file, so the miner cannot drift from it.
+
+### Changed — Phase 1
+
+- **`crumb init --with-hooks` installs six hooks, not three.** A subset still
+  works: `--with-hooks=session,guard,capture`.
+- **The Stop hook mines on every firing**, including ones that stay silent — a
+  continuation, a redundant snapshot, a store with the prompt switched off.
+  Mining is a side effect, not a decision, and nothing reads the transcript
+  again.
+- **A jot has a title and a body.** They are the same string for a jot somebody
+  typed and different for a mined one, whose body holds a snippet of tool output
+  that would make a useless heading, so every listing now shows the title.
 
 Phase 0 of `docs/roadmap-working-memory.md`: the foundations the rest of the
 roadmap is built on. **Record `schema_version` moves to 2** — the first time it

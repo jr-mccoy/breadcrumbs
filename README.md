@@ -595,13 +595,21 @@ piece is independent:
   3.9 that command succeeds and installs nothing). Both MCP SDK **1.x and 2.x**
   work — 2.0 renamed the server class, so an older `crumb-kit` paired with a new
   SDK reports "SDK not installed"; upgrade `crumb-kit` if you see that.
-- **Claude Code hooks** (`--with-hooks[=session,guard,capture]`) — merges three
-  hooks into `.claude/settings.json` so memory is consulted **without the agent
-  choosing to**:
+- **Claude Code hooks** (`--with-hooks[=session,guard,capture,prompt,compact,subagent]`)
+  — merges six hooks into `.claude/settings.json` so memory is consulted
+  **without the agent choosing to**:
   - `SessionStart → crumb hook session` loads the resume packet as context.
-  - `PreToolUse → crumb hook guard` runs a cost-aware guard before risky Bash/Edit
-    calls (a cheap local risk pre-filter keeps the common path free of record
-    I/O); it surfaces matched memory but **never decides for you** — it neither
+    After a compaction (`source: compact`) it first says what was in flight:
+    the last prompt, the records that were surfaced for it, and anything the
+    miner salvaged. The model that just lost its context is the one reader who
+    cannot reconstruct that for itself.
+  - `PreToolUse → crumb hook guard` runs a cost-aware guard before risky
+    Bash/Edit calls **and before a subagent launch** (a cheap local risk
+    pre-filter keeps the common path free of record I/O). A subagent starts
+    cold, and its launch prompt is the best description of a proposed action a
+    session produces; a launch caps at `READ_FIRST`, because the launch is not
+    itself the irreversible act and the subagent's own tool calls hit this same
+    guard. it surfaces matched memory but **never decides for you** — it neither
     allows nor denies. `PROCEED`→silent, `READ_FIRST`→the matched records as
     context with the normal permission flow untouched, `PAUSE`/`ASK_HUMAN`→ask,
     with the reason.
@@ -612,16 +620,45 @@ piece is independent:
     decision at all — the matched records still arrive as context, but the
     interruption you turned off stays off. Set `CRUMB_GUARD_ADVISORY=1` to get
     that advisory-only shape in *every* mode.
+  - `UserPromptSubmit → crumb hook prompt` injects the records that are about
+    *this prompt* — the moment the task is finally known, and the one the
+    recency-ordered resume packet cannot serve. It scores the prompt with the
+    same retrieval `guard` uses and shows at most five matches. It **never
+    blocks**: that decision is available on this event and it erases the
+    prompt, which is the worst thing a memory tool could do.
+
+    It also captures **corrections**. A prompt beginning "no, don't…" is a
+    durable constraint arriving as an ordinary message, and nothing used to
+    write it down, so the next session re-violated it. Captured to
+    `private/inbox/` only, after a secret scan; `capture_corrections: false` in
+    `manifest.yml` turns it off.
+  - `PreCompact → crumb hook compact` mines the transcript just before the
+    context is destroyed. Compaction is the biggest memory-loss event in a long
+    session and this hook cannot speak to the model at all (its stdout goes to
+    the debug log), so it writes candidates to `private/inbox/` and leaves a
+    marker that the next `SessionStart` reads.
+  - `SubagentStop → crumb hook subagent` mines a finished subagent's transcript.
+    Its findings otherwise vanish: the parent only ever sees the final message.
+    It does not hold the subagent — that is a prompt-fatigue question awaiting a
+    field test, and `subagent_extraction` is reserved for it.
   - `Stop → crumb hook capture` snapshots a session record when the turn ends —
     once per unit of work, not once per turn: a firing is skipped when the HEAD
     commit and dirty-file set are unchanged since the newest session record, and
     its stand-in Next Action never overwrites one you set.
 
-    When the ending turn produced **new commits**, the hook does more than
-    snapshot: it holds the stop once (**the extraction turn**) and hands the
-    agent a concrete instruction — record any durable decision, failed attempt,
-    or verification from this session (`crumb remember` / `verify` /
-    `mark-status`), then `crumb capture session --next "…"`. That last command
+    It also **mines the transcript** on every firing, which is a side effect
+    and not a decision: even a firing that stays silent should salvage what the
+    transcript shows, because nothing reads it again.
+
+    When the ending turn produced **new commits** — or the miner found a
+    failed-then-fixed command, or three candidates of any kind — the hook does
+    more than snapshot: it holds the stop once (**the extraction turn**) and
+    hands the agent a concrete instruction, with the mined candidates listed by
+    id. That turns the request from "compose a record about what just happened",
+    at the moment the model has least context left, into "promote this one, drop
+    that one". Record any durable decision, failed attempt, or verification
+    (`crumb remember` / `verify` / `mark-status` / `crumb inbox promote`), then
+    `crumb capture session --next "…"`. That last command
     is also what clears the prompt, so completing the instruction and moving on
     are the same act. This is what makes the agent the memory *author* with no
     human in the loop: the request lands while the model still holds the
@@ -630,8 +667,10 @@ piece is independent:
     turns never prompt, a continuation of a held stop is never held again (the
     machine snapshot is the floor if the agent ignores the instruction), and
     the very first firing in a store takes a silent baseline instead of
-    interrogating the agent about pre-existing history. Opt out per project
-    with `extraction_prompt: false` in `manifest.yml`.
+    interrogating the agent about pre-existing history. A candidate the agent
+    declined is never offered again in the same session. Opt out per project
+    with `extraction_prompt: false` in `manifest.yml` — which stops the prompt,
+    not the mining.
 
   The installed command is a small POSIX-`sh` resolver, not a bare `crumb`: it
   tries `$PATH`, then `./.venv` (POSIX and Windows layouts), then any interpreter

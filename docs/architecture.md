@@ -63,6 +63,8 @@ taxonomy, and build philosophy for `breadcrumbs`. It is the conceptual map;
 | Idea | Potential future direction | `ideas/YYYY-MM-DD-slug.md` | reviewed periodically | yes |
 | Session | What happened in one work session | `sessions/YYYY-MM-DD-tool-topic.md` | historical | yes (lower priority) |
 | Evidence | Pointers to commits/tests/docs/issues/PRs | each record's `evidence:` frontmatter | with its record | yes |
+| Jot | A short-term observation with a TTL: one line, no evidence rule | `inbox/YYYY-MM-DD-slug-xxxx.md` | `jot_ttl_days` (default 14) | yes, until promoted |
+| Mined candidate | A jot a hook wrote from a transcript or prompt — unconfirmed | `private/inbox/` | same TTL | **no** — a candidate, never source of truth until promoted |
 | Private note | Local-only personal/sensitive context | `private/` | local policy | local-only |
 | Resume packet | Bounded generated boot summary | `generated/resume-packet.md` | regenerated | no |
 | Guard pre-filter | Token/path index the `PreToolUse` hook reads before a risky call | `generated/guard-prefilter.json` | regenerated | no |
@@ -83,6 +85,15 @@ One row is still reserved space rather than working machinery: nothing builds an
 gitignored and therefore costs a user nothing — the difference from `refs.yml`,
 which shipped committed, with example entries to clean up.
 
+**Mined candidates are proposals, not findings.** A hook writes what four
+deterministic regex rules noticed in a transcript. That is enough to be worth
+offering and nowhere near enough to be a record: the miner has no idea whether a
+file was edited four times because it is fragile or because a feature landed in
+it. Candidates live in `private/inbox/` — gitignored, so a machine's guesses
+never reach a teammate's clone — carry `confidence: low`, and become memory only
+when somebody promotes them through the real writer, which applies the evidence
+rule and the validate gate as usual.
+
 **Ideas are searchable but never judged.** `ideas/` is in `search`'s corpus and
 deliberately absent from `guard`'s: an idea is a proposal, exempt from the
 evidence rule, and `guard`'s scoring band is kind-agnostic, so a speculative note
@@ -99,6 +110,9 @@ git-tracking policy.
 ```text
 plain files  →  CLI  →  agent signposts  →  MCP  →  hooks  →  indexes/vectors
 (always)        (built) (built)            (built) (built)   (not built)
+
+hooks, in the order a session fires them:
+  SessionStart → UserPromptSubmit → PreToolUse → (SubagentStop) → PreCompact → Stop
 ```
 
 The baseline (plain files) must always work. Each higher layer is optional and

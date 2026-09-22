@@ -3,11 +3,11 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Phase 0 shipped (schema_version 2); Phase 1 capture hooks are next
+Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Recently Changed
-- d71a7e3 docs: roadmap from ledger to working memory (phases 0-7)
+- 1669a96 feat: phase 0 of the working-memory roadmap (schema_version 2)
 
-_Prefill window: `99b60a0`..HEAD — 1 commit(s) since the last session record._
+_Prefill window: `d71a7e3`..HEAD — 1 commit(s) since the last session record._
 
 ## Watch Out For
