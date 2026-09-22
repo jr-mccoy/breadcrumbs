@@ -8,6 +8,57 @@ prints both.
 
 ## [Unreleased]
 
+### Added — Phase 3: lifecycle
+
+Phase 3 of `docs/roadmap-working-memory.md`. Memory that stops being true should
+say so. Nothing here deletes a claim: expiry hides, duplicates are refused with
+the id they duplicate, and contradictions are questions in the packet, because
+deciding a claim is wrong is the author's job. No schema change.
+
+- **Typed time-to-live (WM-30).** Each type has a lifespan, overridable per
+  store with `ttl_<type>_days` in `manifest.yml`. A settled verification
+  (`fixed`, `not_applicable`) now expires after 90 days. It is the type that
+  silently goes stale, and an open problem never expires. An expired record
+  stays on disk and in `crumb search`, marked `expired`, but leaves the
+  packet's lists and guard's live set. The packet also asks about an actionable
+  verification past 90 days, a trap nobody has confirmed in 180, and a
+  `current.md` untouched for 14. `crumb expired` lists what aged out, and
+  `crumb questions --aging` lists questions open past 45 days.
+- **Evidence-driven staleness (WM-31).** A record citing a file that is neither
+  on disk nor in HEAD is flagged in the packet and by `crumb audit`
+  (`evidence-missing-file`). The record may describe code that no longer
+  exists. Guard scoring is unchanged. `crumb verify --recheck <id>` (or
+  `--all`) reruns a verification's recorded commands and writes the result as a
+  new verification that supersedes the old one. It always asks first: without
+  `--yes` and without a terminal it exits 2 having run nothing, and there is no
+  MCP equivalent.
+- **A near-duplicate gate on every writer (WM-32).** `remember`, `note`,
+  `verify` and `jot`, and their MCP tools, refuse a record that says what a
+  live record of the same type already says. The CLI exits **3**, the MCP
+  tools return `error: "near-duplicate"`, and both name the id.
+  `--supersedes <id>` replaces that record; `--allow-duplicate` keeps both.
+  `crumb audit` sweeps a store that predates the gate (`near-duplicates`).
+- **`crumb consolidate` (WM-33).** It lists clusters of near-duplicates.
+  `--merge <id>… --title "…"` writes one record from their sections in date
+  order, each tagged with its source, and supersedes them all. The merged body
+  is a starting point to edit; nothing merges automatically.
+- **Contradiction detection (WM-34).** It flags two patterns: a decision
+  written after an attempt that said "do not retry", doing much the same
+  thing; and two live decisions that overlap heavily, written more than a week
+  apart. They are listed in `generated/conflicts.json`, in the packet (up to 3)
+  and in `crumb audit` (`possible-contradiction`), each phrased as a question.
+- **`crumb rollup sessions --before YYYY-MM-DD` (WM-35).** It folds old
+  machine snapshots into one session record. Sessions somebody wrote are never
+  touched. `crumb audit`'s sessions-growth note names it.
+
+### Changed — Phase 3
+
+- **New exit code 3**: a write refused as a near-duplicate. It is distinct from
+  1 (the write failed) and 2 (bad usage).
+- **`crumb verify --status` is required only when not rechecking.**
+- **`ttl_jot_days`** is the new spelling of `jot_ttl_days`. The old key still
+  works.
+
 ### Added — Phase 2: retrieval by relevance
 
 Phase 2 of `docs/roadmap-working-memory.md`. What reaches the agent should be

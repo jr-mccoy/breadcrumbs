@@ -105,7 +105,7 @@ three days, **L** a week.
 | 0 | Foundations: migration, inbox, telemetry — **shipped**, see §0.5 | WM-01, WM-02, WM-03 | 0.3.0 |
 | 1 | Capture everywhere: new hooks and the transcript miner — **shipped**, see §0.6 | WM-10 to WM-16 | 0.4.0 |
 | 2 | Retrieval by relevance — **shipped**, see §0.7 | WM-20 to WM-25 | 0.5.0 |
-| 3 | Lifecycle: decay, dedup, consolidation, contradiction | WM-30 to WM-35 | 0.6.0 |
+| 3 | Lifecycle: decay, dedup, consolidation, contradiction — **shipped**, see §0.8 | WM-30 to WM-35 | 0.6.0 |
 | 4 | The bridge to long-term memory | WM-40 to WM-43 | 0.7.0 |
 | 5 | Scope and multi-agent | WM-50 to WM-52 | 0.8.0 |
 | 6 | Measurement and evals | WM-60 to WM-62 | 0.9.0 |
@@ -1164,7 +1164,7 @@ the block writers, as `cli.note` does.
 
 ## Phase 3: Lifecycle
 
-### WM-30 Typed time-to-live — **M**
+### WM-30 Typed time-to-live — **M** — SHIPPED
 
 **Goal.** Short-term memory must decay. `expires_at` exists and is never
 set. `current.md`'s "days to two weeks" is a doc convention.
@@ -1200,7 +1200,7 @@ temp store and monkeypatched clock (`_dt_sort_key`/`now_iso` are the
 seams; add `_now()` indirection if needed); manifest overrides work; an
 expired verification is in guard's history and not its live matches.
 
-### WM-31 Evidence-driven staleness — **M**
+### WM-31 Evidence-driven staleness — **M** — SHIPPED
 
 **Goal.** A record whose evidence points at a file that no longer exists,
 or a verification whose command can be rerun, should tell you so instead
@@ -1235,7 +1235,7 @@ does not; `--recheck --yes` on `true` produces `fixed`, on `false`
 produces `open` and supersedes; without `--yes` and no TTY exits 2 having
 run nothing.
 
-### WM-32 Near-duplicate detection on write — **M**
+### WM-32 Near-duplicate detection on write — **M** — SHIPPED
 
 **Goal.** Two decisions saying the same thing coexist untouched. Catch it
 at write time, where the author can still choose supersede or append.
@@ -1274,7 +1274,7 @@ copy; the `fixtures/` stores produce **no** `near-duplicates` finding as
 they are (adjust the threshold or the fixture if they do, and say which
 in the commit message).
 
-### WM-33 Consolidation — **M** (after WM-32)
+### WM-33 Consolidation — **M** — SHIPPED (after WM-32)
 
 **Goal.** Give a human or agent a guided way to merge a cluster of
 near-duplicates or roll up a supersede chain, with no automatic merging.
@@ -1294,7 +1294,7 @@ body.
 `supersedes` lists both; sources are superseded; mixed types refuse with
 exit 2; `guard` no longer lists the sources as live.
 
-### WM-34 Contradiction detection — **M**
+### WM-34 Contradiction detection — **M** — SHIPPED
 
 **Goal.** Memory that argues with itself is worse than no memory. Only
 focus-versus-verification conflicts are detected today.
@@ -1322,7 +1322,7 @@ A pair already listed by `near-duplicates` is not listed again here.
 with the attempt superseded does not; two overlapping decisions 10 days
 apart warn, 2 days apart do not; fixtures produce none.
 
-### WM-35 Session rollup — **S**
+### WM-35 Session rollup — **S** — SHIPPED
 
 **Goal.** `prune` deletes machine snapshots but nothing summarises them,
 so the audit's `sessions-growth` advice is "promote and prune by hand".
@@ -1341,6 +1341,64 @@ command.
 human session survives; `--dry-run` deletes nothing; the Stop-hook
 redundancy check still works after a rollup (the newest record is
 untouched because `--before` excludes it).
+
+---
+
+### 0.8 Phase 3: what shipped, and where it differs from this plan
+
+Phase 3 is implemented. New modules: `breadcrumbs/lifecycle.py` (all six items)
+and `breadcrumbs/lifecycle_cmds.py` (the `expired`, `questions`, `consolidate`,
+`rollup` and `verify --recheck` command surface, imported only when one of them
+runs). New tests: `tests/test_lifecycle.py`. No schema change.
+
+Nine departures from what this document specified. Read these before Phase 4.
+
+1. **Expiry is computed, not a status.** An expired record keeps `status:
+   active`. Items carry an `expired` flag, guard's liveness test checks it, and
+   the packet filters on it. Writing a new status would have needed a writer
+   running on a clock, and "expired" is a fact about now, not about the record.
+   The clock is one seam, `cli._now()`.
+2. **"Missing" means neither on disk nor in HEAD (WM-31)**, not "not in HEAD".
+   A file the author just created is uncommitted and plainly not missing. The
+   check lives in packet assembly and `lifecycle.audit_findings`, not in
+   `compute_staleness`, so audit gets its own `evidence-missing-file` finding
+   rather than a `staleness` line.
+3. **Recheck:** `--recheck` is repeatable and `--all` is its own flag. A
+   verification with several commands is `fixed` only if every one exits 0, and
+   a timeout counts as `open`.
+4. **The duplicate measure has two guards the plan did not.** A pair needs at
+   least three shared stems (Jaccard on five words is noise), and the file and
+   tag bonus is capped at 0.2. Uncapped, four shared files alone cleared the
+   0.6 threshold on this repository's own store at 0.24 text overlap: two
+   related decisions, not duplicates. Section headings are excluded from the
+   text, because every record of a type shares them.
+5. **The gate is off at the core and on at the edges.** `note()` and `verify()`
+   take `dedupe=False` by default. `crumb` and the MCP tools pass it on.
+   Internal writers (inbox promotion, migrations, the transcript miner) write
+   what they were given. An exact repeat (same question text, same trap slug)
+   keeps its old exit-1 "reopen it" error, which is more useful than "similar".
+6. **Superseding a trap or question:** the new file carries no `supersedes`
+   key (the block writer has nowhere to put one), and a question retires as
+   `closed` with `superseded_by`, since its vocabulary has no `superseded`.
+   Jots take `--allow-duplicate` only. Superseding a jot is promotion.
+7. **Consolidate merges decisions, attempts, verifications and ideas only.**
+   Traps and questions have their own writers and retirement, and a merged
+   trap would need the block shape at schema 2.
+8. **WM-34 rule 2 wins over the near-duplicate finding, not the reverse.** Two
+   decisions at 0.7 are always also near-duplicates at 0.6. The plan's "a pair
+   already listed by `near-duplicates` is not listed again" would have hidden
+   rule 2 forever. The contradiction is the more specific finding, so the
+   near-duplicate one is suppressed for that pair.
+9. **The rollup is dated at its last source (WM-35).** Stamped "now", it would
+   become the newest session record, and the Stop hook diffs from the newest
+   session's commit. Every commit made since the last kept snapshot would
+   silently fall out of the next capture. `created_at`, `updated_at`, `branch`
+   and `commit` are pinned to the last snapshot it replaces, and earlier
+   rollups are never rolled up again.
+
+Notes for Phase 4: `lifecycle.find_near_duplicates` is the similarity measure
+to reuse for promotion candidates (WM-40), and `lifecycle.mark_superseded` is
+the one way to retire a record in favour of another. Exit code 3 is taken.
 
 ---
 
