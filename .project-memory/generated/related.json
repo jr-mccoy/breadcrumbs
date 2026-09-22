@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "c06ff1eb472a",
+ "inputs_hash": "b1bc0c6278bd",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -90,22 +90,22 @@
   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
   ],
   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
    "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
   ],
   "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim": [
    "dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps",
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
   ],
   "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store": [
    "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
   ],
   "dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps": [
    "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim",
@@ -115,7 +115,7 @@
   "dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
   ],
   "dec_20260922_related-records-use-a-pure-overlap-score-so-the-committed": [
    "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
@@ -129,8 +129,13 @@
   ],
   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first",
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
+  ],
+  "dec_20260922_the-user-pre-approves-store-migrations-of-this-repo-s-own": [
+   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
+   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
+   "dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store"
   ],
   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases": [
    "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
@@ -146,11 +151,6 @@
    "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
-  ],
-  "q_migrate-this-repo-s-own-project-memory-store-to-5562a0": [
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
-   "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
-   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",

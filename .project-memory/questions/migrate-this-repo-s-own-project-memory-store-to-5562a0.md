@@ -3,9 +3,9 @@ id: q_migrate-this-repo-s-own-project-memory-store-to-5562a0
 type: question
 slug: migrate-this-repo-s-own-project-memory-store-to-5562a0
 title: Migrate this repo's own .project-memory store to schema 4 (adds handoffs/)?
-status: open
+status: answered
 created_at: 2026-09-22T22:07:14+00:00
-updated_at: 2026-09-22T22:07:14+00:00
+updated_at: 2026-09-22T22:22:54+00:00
 created_by: unknown
 agent: claude-code
 project: breadcrumbs
@@ -34,3 +34,5 @@ crumb guard returned ASK_HUMAN for the migration during the Phase 5 session; unt
 
 ## Needs
 human input
+
+<!-- status: open -> answered (user approved; migrated to schema 4 (handoffs/ added)) by claude-code at 2026-09-22T22:22:54+00:00 -->
