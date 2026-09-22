@@ -1,14 +1,14 @@
 # Project Handoff
 
-_Last updated: 2026-09-05T01:35:59+00:00_
-_Branch: claude/artifact-388cc819-sm0ipj_
-_Commit: 9037d68_
+_Last updated: 2026-09-22T03:50:02+00:00_
+_Branch: claude/agentic-memory-system-mybkpi_
+_Commit: 99b60a0_
 
 ## Current Focus
-0.2.0 is cut and waiting on the PR #49 merge; the field-review work is done
+Roadmap written; Phase 0 (foundations) is next
 
 ## Next Action
-Merge PR #49 to main, then run release.yml from main: mode=dry-run first to confirm the artifact, then mode=publish. Do not hand-tag — the workflow cuts the tag and the Release on the commit it builds.
+Start Phase 0 of docs/roadmap-working-memory.md: WM-01 (breadcrumbs/migrate.py + crumb migrate + validate schema-version check), then WM-02 usage telemetry, then WM-03 inbox jots; release 0.3.0 when the phase is green.
 
 ## Blockers / Open Questions
 

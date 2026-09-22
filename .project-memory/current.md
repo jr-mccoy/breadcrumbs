@@ -3,9 +3,14 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-0.2.0 is cut and waiting on the PR #49 merge; the field-review work is done
+Roadmap written; Phase 0 (foundations) is next
 
 ## Recently Changed
-Bumped __version__ to 0.2.0 and dated the CHANGELOG section. Chose 0.2.0 over 0.1.13 because four behaviour changes can surprise a 0.1.12 consumer (scan-secrets exit code, --set exit code, session id shape, dirty_files contents); they are collected under a Changed heading.
+- 99b60a0 memory: rebuild the resume packet at 53b5dac
+- 53b5dac Merge pull request #50 from jr-mccoy/claude/artifact-388cc819-sm0ipj
+- 583963b memory: hand off the 0.2.0 release
+- abd2bfd Merge pull request #49 from jr-mccoy/claude/artifact-388cc819-sm0ipj
+
+_Prefill window: `9037d68`..HEAD — 4 commit(s) since the last session record._
 
 ## Watch Out For

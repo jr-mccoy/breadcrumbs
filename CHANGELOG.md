@@ -5,6 +5,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and the proj
 uses semantic versioning. The package version is independent of the on-disk record
 `schema_version` (still `1`); `crumb --version` prints both.
 
+## [Unreleased]
+
+### Docs
+
+- **`docs/roadmap-working-memory.md`** — the plan for turning breadcrumbs
+  from a ledger into a short- and medium-term working memory for agents,
+  with `CLAUDE.md`/`AGENTS.md` as the long-term tier. Seven phases, each
+  a release: migration machinery and an `inbox/` jot tier; hooks for
+  `UserPromptSubmit`, `PreCompact`, `SubagentStop` and a deterministic
+  transcript miner; relevance-ordered packets, `crumb show`, per-record
+  traps, an FTS5 recall index; typed TTLs, near-duplicate and
+  contradiction detection, consolidation and rollup; `crumb promote` /
+  `demote` into the agent-instruction file; per-branch handoffs and a
+  store lock; usage telemetry and a relevance eval harness. Written for
+  implementers who have not read the codebase: every item names files,
+  functions, data shapes, tests and acceptance checks.
+
 ## [0.2.0] — 2026-09-05
 
 A field review of 0.1.11 against a 310-session production store, worked end to

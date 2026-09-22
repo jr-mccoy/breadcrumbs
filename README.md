@@ -675,7 +675,8 @@ required for baseline use. The **Integrations** layer (`crumb init --with-*`,
 `crumb doctor`, `crumb hook`) wires that engine into your agent so the store is consulted
 automatically rather than only when an agent remembers to. See [`docs/`](docs/)
 for the architecture, record schema, CLI spec, [MCP spec](docs/mcp-spec.md), and
-security posture.
+security posture, and [`docs/roadmap-working-memory.md`](docs/roadmap-working-memory.md)
+for the phased plan that takes the tool from a ledger to a working memory.
 
 ---
 
