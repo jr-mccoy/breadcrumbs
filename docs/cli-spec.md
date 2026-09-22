@@ -62,7 +62,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff (**not** ideas) | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). Exits with the verdict-mapped code — see `guard` section. | **5 (built)** |
 | `audit` | all memory + adapters | health report | Find stale / unsafe / bloated memory (incl. secret + instruction-like heuristics). Heuristic — does NOT gate `validate`. | **6 (built)** |
 | `scan-secrets` | committed memory | secret report | Scan committed memory for secret-like strings; non-zero on a hit. Run before committing memory. | **6 (built)** |
-| `mark-status <id> <status>` | one record, **one trap, or one open question** | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. A `trap_<slug>` or `q_<slug>` id (legacy `q:<slug>` accepted) resolves too. At schema 3 each is its own file, so its frontmatter `status` is edited like any record's; on a schema-2 store — or for a block somebody typed into a singleton since the last reindex — the block's `- Status:` bullet is edited in place (every other byte preserved). Retiring a trap drops it from the resume packet and the hook pre-filter and stops it driving a `guard` verdict; answering a question drops it from the packet, from `guard`'s open-blocker floor and from the aged-unresolved staleness warning. Both stay findable in `search` under their real status. Questions carry their own vocabulary (`open`/`answered`/`closed`) because the record words do not fit — the id decides which vocabulary applies, and a mismatch is rejected by name. A block with no `- Status:` bullet counts as `active` (trap) / `open` (question). Marking a promoted decision, attempt or trap `superseded`, `stale`, `rejected` or `disputed` also demotes it (see `promote` and `demote`); the output adds `also demoted: …` and `--json` a `demoted` object. | **built** |
+| `mark-status <id> <status>` | one record, **one trap, or one open question** | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. A `trap_<slug>` or `q_<slug>` id (legacy `q:<slug>` accepted) resolves too. At schema 3 each is its own file, so its frontmatter `status` is edited like any record's; on a schema-2 store — or for a block somebody typed into a singleton since the last reindex — the block's `- Status:` bullet is edited in place (every other byte preserved). Retiring a trap drops it from the resume packet and the hook pre-filter and stops it driving a `guard` verdict; answering a question drops it from the packet, from `guard`'s open-blocker floor and from the aged-unresolved staleness warning. Both stay findable in `search` under their real status. Questions carry their own vocabulary (`open`/`answered`/`closed`) because the record words do not fit — the id decides which vocabulary applies, and a mismatch is rejected by name. A block with no `- Status:` bullet counts as `active` (trap) / `open` (question). Marking a promoted decision, attempt or trap `superseded`, `stale`, `rejected`, `disputed` or `quarantined` also demotes it (see `promote` and `demote`); the output adds `also demoted: …` and `--json` a `demoted` object. | **built** |
 | `prune sessions` | `sessions/` | deletions + reindex | Delete old **machine** session snapshots (placeholder Next Action) beyond the newest `--keep N` (default 20). Human handoffs are never candidates; `--dry-run` lists. The Stop hook creates snapshots eagerly (an interrupted session is a handoff worth keeping) — retention is this separate, explicit act. | **built** |
 | `rollup sessions --before YYYY-MM-DD` | `sessions/` | one session record, deletions + reindex | Fold the machine snapshots created before the date (at least two) into one session record that supersedes them, then delete them. Human/agent sessions are never touched; `--dry-run` lists. See `rollup sessions` below. | **built (WM-35)** |
 | `prune jots` | `inbox/`, `private/inbox/` | deletions + reindex | Delete jots that are expired or retired **and** older than 30 days. An active, unexpired jot is never deleted however old the store is: it is still waiting for somebody to promote or drop it. `--dry-run` lists. | **built (WM-03)** |
@@ -422,7 +422,7 @@ crumb migrate             # back the store up, then apply them in order
 block to `questions/<slug>.md`, keeping the id (lowercased; a trap slug that is
 still not a usable filename is slugified, and the step's output names that
 change) and every line of the block: content bullets become sections, bookkeeping bullets
-(`Status`, `Last confirmed`, `Superseded by`, `Opened`) become frontmatter, and
+(`Status`, `Last confirmed`, `Promoted to`, `Superseded by`, `Opened`) become frontmatter, and
 anything else — free prose, provenance comments — becomes the `Notes` section.
 It then rewrites both singletons as indexes. The written files are validated
 once; on failure they are removed and the step raises, leaving the store at
@@ -553,8 +553,8 @@ Behavior (deltas from `search` — everything there applies here too):
   under `history` (context only), like a superseded one, and never drives the
   verdict.
 - **A promoted record is scored at full weight.** Promotion takes a record out
-  of the packet's lists, not out of `guard`: the rule in the instruction file
-  may be read or not, and the verdict should not depend on which.
+  of the packet's lists only; `guard` matches and scores it like any other
+  active record.
 - **Exit codes are verdict-mapped** so callers can script on the verdict
   without parsing output: `PROCEED` = 0, `READ_FIRST` = 10, `PAUSE` = 15,
   `ASK_HUMAN` = 20 (`>= 15` means a human belongs in the loop); `2` = usage
@@ -599,7 +599,8 @@ carry a severity:
   never executed: matched memory is data, not command), **generated-packet drift**
   (a committed projection — `generated/*.md`, `related.json` or `conflicts.json` — whose stamped
   `inputs_hash` no longer matches the canonical inputs → regenerate), bloat
-  (adapter files duplicating memory; over-budget packet), the validate-failing
+  (adapter files duplicating memory, judged with the promoted-rules block
+  removed, since its rules mirror records on purpose; over-budget packet), the validate-failing
   health conditions re-surfaced for one health view (missing evidence, invalid
   status, private-path violation, id/frontmatter disagreement),
   **`unadopted-block`** (at schema 3, a hand-written trap/question block in a
@@ -617,8 +618,27 @@ carry a severity:
     supersede one or merge them (up to 10 pairs). A pair already reported as a
     possible contradiction is not reported again here. A type with more than
     2000 live items is not swept.
+
+  and two checks on the promoted-rules block in `CLAUDE.md`/`AGENTS.md` (see
+  `promote` and `demote`):
+  - **`promoted-bloat`** — the block (markers included) is over
+    `ADAPTER_BLOAT_CHARS` (4000). Measured on its own, separately from the
+    signpost block;
+  - **`demote-candidate`** — a rule that names no `source:` record, whose
+    source record no longer exists, or whose source is no longer `active`. The
+    message names `crumb demote <id>`; a rule with no source has no id to
+    demote and is removed by hand.
 - **info** — context note (e.g. `sessions/` growth → the note names `crumb
-  rollup sessions --before YYYY-MM-DD`, and `crumb prune sessions`).
+  rollup sessions --before YYYY-MM-DD`, and `crumb prune sessions`), and:
+  - **`promoted-drift`** — a promoted rule differs from what `crumb promote`
+    would write for its record now: the line was edited by hand, or the record
+    was retitled or its rationale changed. A stored `--rule` override counts as
+    the expected text. The hint is `crumb promote <id>`, which re-renders it;
+  - **`promote-candidate`** — an active decision or attempt, not `confidence:
+    low` and not promoted, at least 60 days old and surfaced in at least 5
+    distinct sessions according to `private/usage.json`. The message names
+    `crumb promote <id>`. The session count is machine-local, so two clones can
+    disagree.
 
 Exit codes: `1` when any **fail** finding is present (a secret), else `0`; `2` when no
 `.project-memory/` store is present.
@@ -809,6 +829,110 @@ is a no-op.
   validation (nothing deleted), `2` a `--before` that is not a `YYYY-MM-DD`
   date, or no store. `--json`: `{rolled_up, ids, dry_run, id, path}` (`title`
   instead of `id`/`path` on a dry run).
+
+---
+
+## `promote` and `demote` (built, WM-40 to WM-43)
+
+```bash
+crumb promote dec_20260625_repo-local-memory-source-of-truth    # into CLAUDE.md, else AGENTS.md
+crumb promote att_… --to AGENTS.md                               # a named file (moves it if promoted elsewhere)
+crumb promote trap_gradlew-stop --rule "stop the Gradle daemon by pid, never with --stop"
+crumb demote dec_… --reason "no longer a hard rule"
+```
+
+The bridge from the store (short- and medium-term memory) to the long-term
+tier: the agent's instruction file, which the harness loads whole every
+session. `promote` writes one rule line for a record into that file; `demote`
+takes it out.
+
+**The promoted-rules block.** Rules go into a second managed block, separate
+from the `crumb init` signpost block, appended to the end of the file the first
+time and rewritten in place after that:
+
+```markdown
+<!-- >>> breadcrumbs promoted rules (managed by `crumb promote`) — edit with crumb promote/demote, not by hand >>> -->
+## Project rules promoted from memory
+- Use sqlite for the cache. _(why: concurrent writers corrupted the JSON file; source: `dec_20260922_use-sqlite-for-the-cache`)_
+<!-- <<< breadcrumbs promoted rules <<< -->
+```
+
+One bullet per source id: `- <rule>. _(why: <rationale>; source: \`<id>\`)_`,
+or `_(source: \`<id>\`)_` when there is no rationale (or when the rationale only
+repeats the rule). The rule's case is left alone — it may start with a command —
+and it is clipped to 200 characters and the rationale to 160 (whitespace collapsed,
+trailing `.` dropped, `…` marking a cut). The `source:` id is how `demote` and
+the audit checks find the line again. See
+[`record-schema.md`](record-schema.md) §13.
+
+**`promote <id>`:**
+
+- Takes a decision, attempt or trap id. Any other kind, an unknown id, a record
+  that is not `active`, or one at `confidence: low` → exit 2 with the reason.
+- **Target:** `--to CLAUDE.md|AGENTS.md`, else the first of `CLAUDE.md`,
+  `AGENTS.md` that exists in the project root. Neither exists, or the named one
+  does not → exit 2. The file is never created. Other adapter files
+  (`.cursorrules`, …) take the signpost only.
+- **Default rule text**, rendered from the record:
+
+  | Kind | Rule | Why |
+  |---|---|---|
+  | decision | its title | the first line of *Rationale*, else of *Decision*, else the title |
+  | attempt | `Do not retry: <title> — unless <first line of Do Not Retry Unless>` (the `— unless` part only when that section has text) | the first line of *Why It Failed / Succeeded*, else of *Result* |
+  | trap | `<summary>: <Safe approach>` (the summary alone when there is no safe approach) | the trap's *Why* |
+
+  `--rule "…"` replaces the rule text (one line; a newline → exit 2) and is
+  stored on the record as `promoted_rule`; later promotions keep it until a new
+  `--rule` or `--default-rule` (back to the rendered text). The *why* part is
+  always rendered from the record.
+- **On the record:** `promoted_to: <file>` and `promoted_at: <iso>` (plus
+  `promoted_rule` for an override) in frontmatter; on a schema-2 trap block, a
+  `- Promoted to: <file>` bullet. Written through the validate gate; if that
+  fails, the line is taken back out of the file (and, on a move, put back in
+  the file it came from) and the command exits 1.
+  `status` stays `active`: the record is still true, and now also long-term.
+- **Idempotent.** Promoting again replaces the bullet with a fresh rendering
+  (there is only ever one per id), which is how a `promoted-drift` finding is
+  answered; an earlier `--rule` override is kept. Promoting to the other file
+  moves the bullet.
+- Reindexes. `--json`: `{id, kind, to, rule}`, `rule` being the bullet written.
+- Exit codes: `0` promoted, `1` the promotion could not be recorded on the
+  record, `2` a refusal above or no store.
+
+**What promotion changes elsewhere.** The resume packet leaves the record out
+of its lists and says how many it left out (see `resume`); `guard` still scores
+it at full weight; `search` marks it `promoted`; the missing-evidence warning
+still checks it. `audit` reports `promoted-bloat`, `demote-candidate`,
+`promoted-drift` and `promote-candidate`, and `doctor` a `promoted_rules` row
+(see `audit` and the command table).
+
+**`demote <id>`:**
+
+- Removes the bullet for `<id>` from whichever of `CLAUDE.md`/`AGENTS.md` has
+  it, and clears `promoted_to`, `promoted_at` and `promoted_rule` (or the
+  block's `- Promoted to:` bullet). A block left with no rules is removed,
+  markers and heading included. The record is otherwise unchanged.
+- Works on an id whose record no longer exists, as long as a bullet names it:
+  that is the answer to a `demote-candidate` finding.
+- `--reason` is echoed in the output (`reason:` line; `--json`:
+  `{id, removed_from, reason}`); it is not written anywhere.
+- Exit codes: `0` demoted, `1` the id is a record that is not promoted, `2` an
+  unknown id that no bullet names, or no store.
+
+**Retiring a promoted record demotes it.** `set_record_status` to
+`superseded`, `stale`, `rejected`, `disputed` or `quarantined` removes the rule
+and clears the fields in the same call, whichever route gets there: `crumb
+mark-status`, `memory_mark_status`, a writer's `--supersedes`, `consolidate
+--merge`. Every route reports it: `mark-status` prints `also demoted: its
+promoted rule was removed from <file>`, the writers print `also demoted: <id>`,
+and the `--json` / MCP results carry `demoted`. `quarantined` above all — a
+record suspected of carrying injected text must not stay in the file every
+session loads.
+
+**No MCP tool, on purpose.** An agent writing its own permanent instructions
+through a tool call is the persistence step of a prompt injection. A person
+runs `crumb promote`, or an agent runs it where a person can see the command.
+`memory_mark_status` still auto-demotes.
 
 ---
 

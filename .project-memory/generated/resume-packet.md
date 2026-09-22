@@ -1,22 +1,17 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 2581404 | inputs_hash: cb8bffbb717e | generated_at: 2026-09-22T20:18:59+00:00 -->
+<!-- source_commit: 4c8f9d0 | inputs_hash: 779cb17edaf4 | generated_at: 2026-09-22T20:27:05+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `2581404` · 7 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `4c8f9d0` · 17 uncommitted file(s)
 
 ## Current Focus
 Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Next Action
-Phase 3 shipped (WM-30..35). Next: cut the 0.5.0/0.6.0 release per CLAUDE.md (bump __version__, CHANGELOG, release.yml from main after merge), or start Phase 4 (WM-40 promotion to long-term memory) from docs/roadmap-working-memory.md; read section 0.8 first.
-
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- 2581404 Phase 4: promote to and demote from long-term memory (WM-40 to WM-43)
-- 76ff5d0 Document Phase 3 and fix gaps found while writing the docs
+Phase 4 shipped (WM-40..43). Next: cut a release per CLAUDE.md (bump __version__ and CHANGELOG, merge to main, run release.yml), or start Phase 5 (WM-50 scope) from docs/roadmap-working-memory.md; read section 0.9 first.
 
 ## Active Decisions
 - `dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes` — An agent writing its own permanent instructions through a tool call is the persistence step of a prompt injection. A separate block keeps the signpost's bloat and removal semantics. A retired rule must not stay in the file every session loads, so demotion cannot be a second manual step.
@@ -107,7 +102,7 @@ _(… 6 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 2 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 35 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 35 days old with no update — is this still true?
 - active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 35 days old with no update — is this still true?

@@ -2,8 +2,9 @@
 
 The concrete data contract for `.project-memory/`: directory layout, git-tracking
 policy, the manifest, canonical frontmatter, record identity, field population, the
-status/privacy vocabularies, the body templates, store aliases, and the generated
-projections and search index.
+status/privacy vocabularies, the body templates, store aliases, the generated
+projections and search index, and the promoted-rules block `crumb promote`
+writes outside the store.
 
 ---
 
@@ -215,6 +216,9 @@ supersedes: []
 superseded_by: null
 expires_at: null
 # last_confirmed: 2026-09-01   # traps only, optional — set by `crumb traps --confirm`
+# promoted_to: CLAUDE.md       # decisions, attempts, traps — set by `crumb promote` (§13)
+# promoted_at: 2026-09-22T20:17:34+00:00
+# promoted_rule: <one line>    # only when `crumb promote --rule` overrode the rendered rule
 tags:
   - memory
   - architecture
@@ -254,6 +258,16 @@ linked by `supersedes` as settled, not as a conflict.
 — a match is shown under `history` instead of driving the verdict. `crumb
 expired` lists such records. Expiry is not a status and nothing rewrites the
 file: record the claim again if it still holds, or `mark-status` it `stale`.
+
+**`promoted_to` / `promoted_at` / `promoted_rule`** (WM-40) say that a
+decision, attempt or trap has been made a standing rule in the long-term tier:
+the instruction file it went to (`CLAUDE.md` or `AGENTS.md`), when, and — only
+when `crumb promote --rule` overrode the rendered text — the rule as given.
+They are placed after `last_confirmed`, written by `crumb promote` and removed
+by `crumb demote` or by retiring the record (§8, §13). Promotion is not a
+status: the record stays `active`, stays in `search` (marked `promoted`) and in
+`guard` at full weight, and leaves the resume packet's decision, attempt and
+trap lists, which count it instead. `promoted_to` is what every reader keys on.
 
 ---
 
@@ -359,6 +373,10 @@ word says "somebody answered this":
 
 `validate` checks a question file's `status` against this list and every other
 record's against the one above.
+
+Setting a promoted record (§13) to `superseded`, `stale`, `rejected`,
+`disputed` or `quarantined` also demotes it: its rule leaves the instruction
+file and its `promoted_*` keys are removed.
 
 ## 9. Privacy meanings
 
@@ -486,7 +504,8 @@ One type-specific key, optional: **`last_confirmed`** (a date, placed after
 `expires_at`), the last time somebody checked the trap still holds — written by
 `crumb traps --confirm <id>`, read by `crumb traps --stale` and by the
 packet's `ttl_trap_days` warning (§3), which falls back to `created_at` for a
-trap never confirmed. Write one with
+trap never confirmed. A promoted trap also carries `promoted_to` /
+`promoted_at` (§4, §13). Write one with
 `crumb note trap "<summary>" --area … --symptom … --why … --safe … --verify …`;
 `crumb schema trap --template` prints that skeleton. Only filled sections are
 written.
@@ -519,6 +538,13 @@ bullets, and a question a `## Q: <question>` block in `open-questions.md` with
 `- Opened:`, `- Why it matters:`, `- Needs:` and `- Status:`. A block with no
 `- Status:` bullet counts as `active` (trap) / `open` (question). `crumb
 migrate` step 3 moves each block into a file.
+
+A promoted trap block also has a `- Promoted to: <file>` bullet (there is no
+block form of `promoted_at` or `promoted_rule`). Like `- Status:` it is
+bookkeeping, left out of the text keyword matching and the guard pre-filter
+see. Migration step 3, and adoption of a hand-typed block at schema 3, turn it
+into `promoted_to` frontmatter; a trap file's `promoted_to` is rendered back as
+that bullet in the block-shaped view the readers share.
 
 **From schema 3 the two singletons are generated indexes.** `known-traps.md` and
 `open-questions.md` are rewritten at every reindex as one line per record —
@@ -650,3 +676,49 @@ ideas and committed jots. It is built only once those number at least 200
 `search` returns exactly the same results with or without it. It needs the
 standard-library `sqlite3` module and is skipped where that is missing.
 Deleting `index/` is always safe.
+
+---
+
+## 13. The promoted-rules block (`CLAUDE.md` / `AGENTS.md`)
+
+The one thing breadcrumbs writes into the long-term tier besides the `crumb
+init` signpost. It lives in the project root's `CLAUDE.md` or `AGENTS.md`, not
+in `.project-memory/`, and is not a projection: `reindex` never rebuilds it,
+and the records' `promoted_*` keys (§4) are the other half of each entry.
+
+```markdown
+<!-- >>> breadcrumbs promoted rules (managed by `crumb promote`) — edit with crumb promote/demote, not by hand >>> -->
+## Project rules promoted from memory
+- Use sqlite for the cache. _(why: concurrent writers corrupted the JSON file; source: `dec_20260922_use-sqlite-for-the-cache`)_
+- Do not retry: pickling the cache — unless the classes are frozen. _(why: class paths moved between releases; source: `att_20260922_pickle-the-cache`)_
+- Gradle --stop corrupts the R.jar lock: stop the daemon by pid. _(why: the daemon holds the lock; source: `trap_gradlew-stop`)_
+<!-- <<< breadcrumbs promoted rules <<< -->
+```
+
+- **Markers.** `PROMOTED_BEGIN` / `PROMOTED_END` in `breadcrumbs/promote.py`,
+  distinct from the signpost block's, so each block can be rewritten, measured
+  and removed without touching the other. `crumb init --remove-integrations`
+  removes the signpost block only.
+- **One bullet per source id**, the most recently (re)promoted last:
+  `- <Rule>. _(why: <rationale>; source: \`<id>\`)_`, or `_(source: \`<id>\`)_`
+  when there is no rationale. The rule is at most 200 characters and the
+  rationale 160, whitespace collapsed; the rule's case is left alone (it may
+  start with a command), a trailing `.` is dropped from both, and a rationale
+  that only repeats the rule is left out. The rendering rules per
+  kind are in `cli-spec.md` → `promote` and `demote`.
+- **`source:`** is how the tool finds a line again. A bullet is any line in the
+  block starting `- `; `demote`, the drift check and the demote-candidate check
+  match it on the id in `` source: `…` ``. A line without one is reported by
+  `audit` as a `demote-candidate` and can only be removed by hand.
+- **Size.** `audit` measures the block, markers included, against
+  `ADAPTER_BLOAT_CHARS` (4000) as `promoted-bloat`, separately from the
+  signpost; `doctor`'s `promoted_rules` row reports rules and characters per
+  file and fails when any one file's block is over that limit.
+- **Empty means absent.** Demoting the last rule removes the block, markers
+  and heading included.
+
+Rules are added only by `crumb promote`; no MCP tool adds one
+(`mcp-spec.md`). They are removed by `crumb demote` and by retiring the source
+record (§8), which includes `memory_mark_status`. A hand edit that keeps the
+`source:` id is read like any other line, and shows up in `audit` as
+`promoted-drift` until `crumb promote <id>` re-renders it.

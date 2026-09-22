@@ -164,7 +164,7 @@ class PromoteTests(unittest.TestCase):
             self.assertIn("Do not retry: Stopping the gradle daemon between builds — unless", text)
             self.assertIn("why: it killed the live test daemons", text)
             self.assertIn(
-                "The daemon holds the sqlite lock: stop the daemon before migrating", text
+                "the daemon holds the sqlite lock: stop the daemon before migrating", text
             )
             packet = crumb.build_resume_packet(mem, Path(tmp))
             self.assertEqual(packet["failed_attempts"], [])
@@ -251,6 +251,112 @@ class PromoteTests(unittest.TestCase):
             self.assertNotIn("Promoted", trap["content"])
             run(["demote", tid, "--project", tmp])
             self.assertNotIn("Promoted to", (mem / "known-traps.md").read_text("utf-8"))
+
+
+class PromoteFixTests(unittest.TestCase):
+    def test_repromoting_keeps_a_rule_override_unless_asked(self):
+        # The drift hint says `crumb promote <id>`; following it must not throw
+        # away the wording the author chose.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = store(tmp)
+            rid = decide(tmp)
+            run(["promote", rid, "--rule", "Never UPDATE the ledger table", "--project", tmp])
+            run(["promote", rid, "--project", tmp])
+            self.assertIn("- Never UPDATE the ledger table.", claude(tmp))
+            run(["promote", rid, "--default-rule", "--project", tmp])
+            self.assertIn("- Ledger rows are append-only.", claude(tmp))
+            self.assertNotIn("promoted_rule", crumb.find_record_by_id(mem, rid).meta)
+
+    def test_a_rule_starting_with_a_command_keeps_its_case(self):
+        self.assertTrue(
+            promote.render_bullet("trap_x", "gradlew --stop kills daemons", "").startswith(
+                "- gradlew --stop"
+            )
+        )
+
+    def test_a_rationale_that_repeats_the_rule_is_dropped(self):
+        self.assertEqual(
+            promote.render_bullet("dec_x", "Same", "Same"), "- Same. _(source: `dec_x`)_"
+        )
+
+    def test_quarantine_demotes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store(tmp)
+            rid = decide(tmp)
+            run(["promote", rid, "--project", tmp])
+            run(["mark-status", rid, "quarantined", "--project", tmp, "--reason", "suspicious"])
+            self.assertNotIn(rid, claude(tmp))
+
+    def test_a_superseding_writer_reports_the_demotion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store(tmp)
+            rid = decide(tmp)
+            run(["promote", rid, "--project", tmp])
+            code, out, err = run(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    tmp,
+                    "--title",
+                    "Ledger rows are append-only, compacted nightly",
+                    "--confidence",
+                    "low",
+                    "--supersedes",
+                    rid,
+                    "--json",
+                ]
+            )
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)["demoted"], [rid])
+
+    def test_a_failed_move_puts_the_old_rule_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store(tmp)
+            agents = Path(tmp) / "AGENTS.md"
+            agents.write_text("# Agents\n", encoding="utf-8")
+            rid = decide(tmp)
+            run(["promote", rid, "--project", tmp])
+            before = claude(tmp)
+            with mock.patch.object(
+                promote, "_set_fields", return_value={"ok": False, "error": "boom"}
+            ):
+                code, _o, _e = run(["promote", rid, "--to", "AGENTS.md", "--project", tmp])
+            self.assertEqual(code, 1)
+            self.assertEqual(claude(tmp), before)
+            self.assertNotIn(rid, agents.read_text("utf-8"))
+
+    def test_doctor_judges_each_file_like_audit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store(tmp)
+            path = Path(tmp) / "CLAUDE.md"
+            big = "\n".join(
+                f"- rule {i} " + "x" * 90 + f". _(source: `dec_2026010{i % 9 + 1}_r{i}`)_"
+                for i in range(50)
+            )
+            path.write_text(
+                CLAUDE_MD
+                + "\n"
+                + promote.PROMOTED_BEGIN
+                + "\n"
+                + promote.PROMOTED_HEADING
+                + "\n"
+                + big
+                + "\n"
+                + promote.PROMOTED_END
+                + "\n",
+                encoding="utf-8",
+            )
+            (Path(tmp) / "AGENTS.md").write_text(
+                promote.PROMOTED_BEGIN
+                + "\n- small. _(source: `dec_20260101_s`)_\n"
+                + promote.PROMOTED_END
+                + "\n",
+                encoding="utf-8",
+            )
+            _code, out, _err = run(["doctor", "--project", tmp])
+            row = next(line for line in out.splitlines() if "promoted_rules" in line)
+            self.assertNotIn("✓", row)
 
 
 class DemoteTests(unittest.TestCase):

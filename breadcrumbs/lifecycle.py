@@ -617,6 +617,11 @@ def mark_superseded(
     return results
 
 
+def demoted_ids(results: list[dict]) -> list[str]:
+    """Ids among `mark_superseded` results whose promoted rule was also removed."""
+    return [r["id"] for r in results if r.get("ok") and r.get("demoted")]
+
+
 def near_duplicate_pairs(memory_dir: Path) -> list[dict]:
     """The retrospective sweep: live same-type pairs over the threshold.
 
@@ -864,6 +869,7 @@ def merge_records(
         "path": str(path),
         "supersedes": extra["supersedes"],
         "retired": [r.get("id") for r in results if r.get("ok")],
+        "demoted": demoted_ids(results),
     }
 
 

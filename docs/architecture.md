@@ -38,7 +38,9 @@ taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual
 2. Generated projections are convenience only.
 3. SQLite/FTS/vector indexes are disposable.
 4. Agent-specific files (`AGENTS.md`, `CLAUDE.md`, Cursor/Gemini rules) are
-   signposts only.
+   signposts. `CLAUDE.md` / `AGENTS.md` may also carry rules promoted from
+   records (`crumb promote`); each names its source record, which stays the
+   source of truth.
 5. Memory cannot override: current user instruction, source code, tests, build
    output, current authoritative docs, or security policy.
 6. If memory conflicts with reality, mark it `disputed` or `stale` and link
@@ -75,6 +77,7 @@ taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual
 | Trap / question index | One line per trap or question, for a reader without the CLI | `known-traps.md`, `open-questions.md` (schema 3) | regenerated | no |
 | Search index | Inverted index that narrows `search`'s candidate set | `index/search.sqlite` | regenerated; machine-local | no |
 | Store aliases | The project's synonyms for the stemmer | `aliases.txt` | hand-maintained | yes (configuration) |
+| Promoted rule | A decision, attempt or trap made a standing instruction, one line naming its source | the promoted-rules block in `CLAUDE.md` / `AGENTS.md` (outside the store) | until demoted or its record is retired | no — the record is |
 
 Evidence is **not a file of its own**. It is a frontmatter field on the record it
 supports, which is what makes it consumable: `resume` builds *Likely Relevant
@@ -137,6 +140,24 @@ overlap rules write `generated/conflicts.json` at reindex, from `created_at`
 dates rather than the clock so every clone computes the same file, and the
 packet and `audit` word each hit as a question. The one deletion is `rollup
 sessions`, which folds machine snapshots into a single session record.
+
+**The three tiers connect (Phase 4).** Short-term memory is what is in flight
+(`current.md`, `handoff.md`, jots, mined candidates); medium-term is the typed
+records; long-term is the agent's instruction file, `CLAUDE.md` or
+`AGENTS.md`, which the harness loads whole every session. `inbox promote`
+already moved a jot into a record. `crumb promote` moves a record one tier
+further: it writes one rule line, naming the record's id, into a managed block
+of its own in the instruction file — separate from the signpost block, so
+`--remove-integrations` and the signpost's bloat check keep their meaning —
+and marks the record `promoted_to`. The record stays `active` and stays the
+source of truth. The packet leaves it out of its lists, since the harness
+already injects the rule; `guard` and `search` still see it. Demotion is the
+way back down, and it is automatic when the record is retired: a rule nobody
+believes any more must not stay in the file every session loads. `audit`
+closes the loop in both directions — `promote-candidate` from the local usage
+counts, `demote-candidate` and `promoted-drift` from comparing each rule with
+its record. Promotion is CLI-only: an MCP tool that let an agent write its own
+permanent instructions would be a persistence path for a prompt injection.
 
 See [`record-schema.md`](record-schema.md) for the directory layout and the
 git-tracking policy.
@@ -208,6 +229,7 @@ Everything is in the `breadcrumbs` package, standard library only.
 | `inbox.py` | Jots: writing, listing, promotion, dropping. |
 | `lifecycle.py` | Record lifecycle (Phase 3): per-type TTLs and expiry, the packet's lifecycle and missing-evidence warnings, `verify --recheck`, near-duplicate similarity and the write gate, `supersedes` handling, clusters and `--merge`, contradiction rules and `generated/conflicts.json`, session rollup, and its `audit` findings. Reads the clock only through `cli._now()`. |
 | `lifecycle_cmds.py` | The CLI surface of `lifecycle.py`: `expired`, `questions`, `consolidate`, `rollup` and the `verify --recheck` runner, imported only when one of them runs. |
+| `promote.py` | The bridge to long-term memory (Phase 4): `promote` / `demote` and their CLI surface, the promoted-rules block in `CLAUDE.md` / `AGENTS.md` (rendering, reading, rewriting), the `promoted_*` fields and the trap-block bullet, auto-demote on retire (called from `set_record_status`), the "is it promoted" predicates the packet uses, and the `promoted-bloat` / `demote-candidate` / `promoted-drift` / `promote-candidate` audit checks and the doctor summary. |
 | `transcript.py` | Deterministic transcript mining into jot candidates. |
 | `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook, the `PreCompact` / `SubagentStop` hooks. |
 | `usage.py` | Local surfacing counts (`private/usage.json`). |

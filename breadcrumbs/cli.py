@@ -3386,8 +3386,11 @@ def cmd_remember(args: argparse.Namespace) -> int:
         _emit_error(args, "new record failed validation: " + "; ".join(f["message"] for f in fails))
         return 1
 
+    demoted: list[str] = []
     if supersedes:
-        _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=args.agent)
+        demoted = _lifecycle.demoted_ids(
+            _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=args.agent)
+        )
 
     # Reindex-on-write: keep generated/ in step with the new record.
     reindex_projections(memory_dir, root)
@@ -3401,6 +3404,8 @@ def cmd_remember(args: argparse.Namespace) -> int:
     }
     if supersedes:
         summary["supersedes"] = [supersedes]
+    if demoted:
+        summary["demoted"] = demoted
     # F-4: decisions and attempts are covered by audit's [unreachable] check too,
     # so they get the same warning at the same moment. `--confidence low` is a
     # documented way to write a decision with no evidence at all, which is exactly
@@ -3419,6 +3424,8 @@ def cmd_remember(args: argparse.Namespace) -> int:
             print("  note: no evidence; confidence set to low.")
         if hint:
             print(f"  note: {hint}")
+        if demoted:
+            print(f"  also demoted: {', '.join(demoted)} (its promoted rule was removed)")
     return 0
 
 
@@ -3927,8 +3934,10 @@ def note(
         supersedes=supersedes,
     )
     if result.get("ok") and supersedes:
-        _lifecycle.mark_superseded(memory_dir, [supersedes], result["id"], agent=agent)
+        results = _lifecycle.mark_superseded(memory_dir, [supersedes], result["id"], agent=agent)
         result["supersedes"] = [supersedes]
+        if _lifecycle.demoted_ids(results):
+            result["demoted"] = _lifecycle.demoted_ids(results)
     return result
 
 
@@ -4198,6 +4207,8 @@ def cmd_note(args: argparse.Namespace) -> int:
         print(f"  file: {result['path']}")
         if result.get("hint"):
             print(f"  note: {result['hint']}")
+        if result.get("demoted"):
+            print(f"  also demoted: {', '.join(result['demoted'])} (its promoted rule was removed)")
     return 0
 
 
@@ -4314,8 +4325,11 @@ def verify(
             "error": "verification rejected by validate: " + "; ".join(f["message"] for f in fails),
         }
 
+    demoted: list[str] = []
     if supersedes:
-        _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=agent)
+        demoted = _lifecycle.demoted_ids(
+            _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=agent)
+        )
     reindex_projections(memory_dir, project_root)
     out = {
         "ok": True,
@@ -4329,6 +4343,8 @@ def verify(
     }
     if supersedes:
         out["supersedes"] = [supersedes]
+    if demoted:
+        out["demoted"] = demoted
     # F-4: verifications are the record type this bites hardest — the audit found
     # four unreachable ones in a single store — because `crumb verify "<claim>"
     # --status fixed` is a complete, valid call that carries neither tags nor
@@ -4390,6 +4406,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print("  note: no evidence; confidence set to low.")
         if result.get("hint"):
             print(f"  note: {result['hint']}")
+        if result.get("demoted"):
+            print(f"  also demoted: {', '.join(result['demoted'])} (its promoted rule was removed)")
     return 0
 
 
@@ -10904,7 +10922,10 @@ def doctor_report(root: Path) -> dict:
                 for name, v in promo["files"].items()
             )
             add(
-                "promoted_rules", promo["chars"] <= ADAPTER_BLOAT_CHARS * len(promo["files"]), where
+                "promoted_rules",
+                # Per file, exactly as audit's promoted-bloat judges it.
+                all(v["chars"] <= ADAPTER_BLOAT_CHARS for v in promo["files"].values()),
+                where,
             )
 
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))

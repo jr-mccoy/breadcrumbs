@@ -48,7 +48,9 @@ PROMOTED_HEADING = "## Project rules promoted from memory"
 PROMOTE_TARGETS = ("CLAUDE.md", "AGENTS.md")
 PROMOTABLE_TYPES = ("decision", "attempt", "trap")
 # A status that retires a record also demotes it (WM-41).
-RETIRING_STATUSES = ("superseded", "stale", "rejected", "disputed")
+# `quarantined` above all: a record suspected of carrying injected text is the
+# last thing that should stay in the file every session loads.
+RETIRING_STATUSES = ("superseded", "stale", "rejected", "disputed", "quarantined")
 
 RULE_MAX_CHARS = 200
 RATIONALE_MAX_CHARS = 160
@@ -106,9 +108,12 @@ def _item_texts(item: dict) -> tuple[str, str]:
 
 
 def render_bullet(rid: str, rule: str, why: str) -> str:
+    # No case change: a rule can start with a command or an identifier
+    # (`gradlew --stop …`), and capitalising it would change what it says.
     rule = _clip(rule, RULE_MAX_CHARS).rstrip(".")
-    rule = rule[:1].upper() + rule[1:]
     why = _clip(why, RATIONALE_MAX_CHARS).rstrip(".")
+    if why == rule:
+        why = ""  # a rationale that only repeats the rule says nothing
     note = f"why: {why}; source: `{rid}`" if why else f"source: `{rid}`"
     return f"- {rule}. _({note})_"
 
@@ -269,9 +274,21 @@ def _resolve_target(root: Path, to: str | None) -> tuple[Path | None, str | None
 
 
 def promote(
-    memory_dir: Path, root: Path, rid: str, *, to: str | None = None, rule: str | None = None
+    memory_dir: Path,
+    root: Path,
+    rid: str,
+    *,
+    to: str | None = None,
+    rule: str | None = None,
+    default_rule: bool = False,
 ) -> dict:
-    """Write `rid` into the long-term file as one rule. Returns `{ok, code?, …}`."""
+    """Write `rid` into the long-term file as one rule. Returns `{ok, code?, …}`.
+
+    Re-promoting keeps an earlier `--rule` override unless a new `rule` is
+    given or `default_rule` asks for the rendered text again — so the drift
+    check's hint (`crumb promote <id>`) re-renders a rule without discarding
+    the wording its author chose.
+    """
     memory_dir, root = Path(memory_dir), Path(root)
     item = cli.find_item(memory_dir, rid)
     if item is None:
@@ -300,13 +317,21 @@ def promote(
     rule = (rule or "").strip() or None
     if rule and "\n" in rule:
         return {"ok": False, "code": 2, "error": "--rule must be one line"}
+    if rule is None and not default_rule:
+        rule = (item.get("meta") or {}).get("promoted_rule") or None
 
-    # Moving between files: take it out of the old one first.
+    # Moving between files: take it out of the old one — and remember what it
+    # said, so a failure below can put it back rather than lose the rule.
     previous = promoted_to({**item, "body": ""}) or promoted_to(
         cli.find_trap_by_id(memory_dir, item["id"]) or {}
     )
+    moved_from: tuple[Path, str] | None = None
     if previous and previous != target.name and (root / previous).is_file():
-        _remove(root / previous, item["id"])
+        old_line = next(
+            (line for sid, line in read_bullets(root / previous) if sid == item["id"]), None
+        )
+        if _remove(root / previous, item["id"]) and old_line:
+            moved_from = (root / previous, old_line)
 
     bullet = expected_bullet(
         memory_dir, {**item, "meta": {**(item.get("meta") or {}), "promoted_rule": rule}}
@@ -316,6 +341,8 @@ def promote(
     res = _set_fields(memory_dir, item, fields)
     if not res.get("ok"):
         _remove(target, item["id"])
+        if moved_from:
+            _upsert(moved_from[0], item["id"], moved_from[1])
         return {"ok": False, "code": 1, "error": f"could not record the promotion: {res['error']}"}
     cli.reindex_projections(memory_dir, root)
     return {"ok": True, "id": item["id"], "kind": item["kind"], "to": target.name, "rule": bullet}
@@ -523,7 +550,14 @@ def add_promote(sub, global_parser) -> None:
         help="instruction file (default: the first of CLAUDE.md, AGENTS.md that exists)",
     )
     p.add_argument(
-        "--rule", default=None, help="one-line rule text (default: rendered from the record)"
+        "--rule",
+        default=None,
+        help="one-line rule text (default: rendered from the record, or the rule given last time)",
+    )
+    p.add_argument(
+        "--default-rule",
+        action="store_true",
+        help="drop an earlier --rule and render the rule from the record again",
     )
     p.set_defaults(func=cmd_promote)
 
@@ -536,7 +570,7 @@ def add_demote(sub, global_parser) -> None:
     )
     p.add_argument("record_id", metavar="ID", help="the promoted record's id")
     p.add_argument(
-        "--reason", default=None, help="why (printed; the record is not changed otherwise)"
+        "--reason", default=None, help="why (echoed in the output; the record is not changed)"
     )
     p.set_defaults(func=cmd_demote)
 
@@ -554,7 +588,9 @@ def cmd_promote(args) -> int:
     memory_dir, root = _memory_dir(args)
     if memory_dir is None:
         return 2
-    res = promote(memory_dir, root, args.record_id, to=args.to, rule=args.rule)
+    res = promote(
+        memory_dir, root, args.record_id, to=args.to, rule=args.rule, default_rule=args.default_rule
+    )
     if not res.get("ok"):
         cli._emit_error(args, res["error"])
         return res.get("code", 1)
@@ -583,4 +619,6 @@ def cmd_demote(args) -> int:
         return 0
     where = ", ".join(res["removed_from"]) or "its record"
     print(f"Demoted {res['id']} (removed from {where}). The record itself is unchanged.")
+    if res.get("reason"):
+        print(f"  reason: {res['reason']}")
     return 0

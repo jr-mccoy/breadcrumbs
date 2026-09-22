@@ -153,7 +153,7 @@ current instruction, the code, the tests, or authoritative docs.
 | `memory_build_resume_packet` | `(task?)` | `cli.build_resume_packet` | `{ok, …packet}` (`task` is passed to the engine: scoped `likely_files`, echoed `requested_task`, `starting cold` label, list sections ordered by relevance with `ordering: "relevance"` — identical to `crumb resume --task`) |
 | `memory_show` | `(id)` | `cli.find_item` + `generated/related.json` | `{ok, id, kind, status, path, text, related}` or `{ok:false, error}` |
 | `memory_validate` | `()` | `cli.run_validate` | `{ok, fail_count, findings[]}` (includes the projection-freshness check) |
-| `memory_mark_status` | `(id, status, reason, superseded_by?)` | `cli.set_record_status`, reindex | `{ok, id, from, to, path}` or `{ok:false, error}` |
+| `memory_mark_status` | `(id, status, reason, superseded_by?)` | `cli.set_record_status`, reindex | `{ok, id, from, to, path, demoted?}` or `{ok:false, error}` |
 | `memory_scan_secrets` | `()` | `cli.scan_secrets` | `{ok, clean, count, findings[]}` (pattern names + locations only) |
 
 **`recommended_action` (guard) and `next_action` (resume packet) are not the same
@@ -226,6 +226,22 @@ verifications, unconfirmed traps, an untouched `current.md`, cited files
 missing from HEAD, possible contradictions) and leave expired records out of
 their lists. `memory_search` matches carry an `expired` boolean, and
 `memory_guard_before_action` lists an expired match under `history`.
+
+**No promote or demote tool.** `crumb promote` writes a rule into `CLAUDE.md` /
+`AGENTS.md`, the file the harness loads into every session. An agent writing
+its own permanent instructions through a tool call is the persistence step of a
+prompt injection: text planted in a record, a file or a web page could ask for
+exactly that call. So promotion is CLI-only — a person runs it, or an agent
+runs it where a person can see the command — and `crumb demote` is CLI-only
+with it. What promotion changes is visible over MCP:
+`memory_build_resume_packet` leaves promoted decisions, attempts and traps out
+of its lists and counts them under `promoted` (`{active_decisions,
+failed_attempts, known_traps}`, non-zero sections only), and the rendered
+`memory://resume-packet` ends each of those sections with `_(N promoted to the
+instruction file — see its "Project rules promoted from memory")_`;
+`memory_search` matches carry a `promoted` boolean; `memory_guard_before_action`
+scores a promoted record at full weight. Retiring one through
+`memory_mark_status` does demote it (below).
 
 **Paths are store-relative.** Every `path` a tool returns is relative to
 `.project-memory/` — `decisions/2026-07-24-x.md`, `open-questions.md`,
@@ -345,6 +361,16 @@ floor and from the aged-unresolved staleness warning. Both stay in the verdict's
 context-only history and stay findable through `memory_search` under their new
 status.
 
+**Retiring a promoted record demotes it.** Setting a decision, attempt or trap
+that `crumb promote` made a standing rule to `superseded`, `stale`, `rejected`,
+`disputed` or `quarantined` also removes its line from `CLAUDE.md`/`AGENTS.md` and clears its
+`promoted_*` keys, and the result carries `demoted: {ok, id, removed_from,
+reason}` (`removed_from` lists file names, e.g. `["CLAUDE.md"]`). A rule nobody
+believes any more must not stay in the file every session loads. The writers'
+`supersedes` retires the old record the same way, so it demotes too, and
+their results carry `demoted: [id]`. These are the only ways an MCP call changes the
+instruction file, and they only ever take a rule out.
+
 Questions take their own vocabulary — `open`, `answered`, `closed` — for the
 same reason a verification's `outcome` is not its `status`: no lifecycle value
 says "somebody answered this". The id decides which vocabulary applies, and a
@@ -366,6 +392,9 @@ name rather than silently written.
   share the CLI's near-duplicate gate.
 - **Nothing runs a command.** No tool executes recorded evidence; rechecking a
   verification's commands is `crumb verify --recheck`, CLI-only.
+- **Nothing writes the agent's instructions.** No tool adds a rule to
+  `CLAUDE.md`/`AGENTS.md`; `crumb promote` is CLI-only. `memory_mark_status`
+  can only take a promoted rule out, by retiring its record.
 - **Secret-scan before commit.** `memory_scan_secrets` is available so an agent
   can check before any "commit memory" step (§2.6, §15, Fixture 6).
 - **No new identity scheme.** `find_record_by_id` and `find_item` use the same

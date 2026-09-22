@@ -1,14 +1,14 @@
 # Project Handoff
 
-_Last updated: 2026-09-22T20:08:16+00:00_
+_Last updated: 2026-09-22T20:27:05+00:00_
 _Branch: claude/agentic-memory-system-mybkpi_
-_Commit: 383832c_
+_Commit: 4c8f9d0_
 
 ## Current Focus
 Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Next Action
-Phase 3 shipped (WM-30..35). Next: cut the 0.5.0/0.6.0 release per CLAUDE.md (bump __version__, CHANGELOG, release.yml from main after merge), or start Phase 4 (WM-40 promotion to long-term memory) from docs/roadmap-working-memory.md; read section 0.8 first.
+Phase 4 shipped (WM-40..43). Next: cut a release per CLAUDE.md (bump __version__ and CHANGELOG, merge to main, run release.yml), or start Phase 5 (WM-50 scope) from docs/roadmap-working-memory.md; read section 0.9 first.
 
 ## Blockers / Open Questions
 

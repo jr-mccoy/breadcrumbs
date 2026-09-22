@@ -43,7 +43,8 @@ This tool deliberately does **not**:
 4. Require MCP, hooks, or a daemon for baseline functionality (plain files + CLI
    work first).
 5. Use `AGENTS.md` / `CLAUDE.md` / Cursor / Gemini rules as the memory database
-   (those are signposts only).
+   (they hold a signpost, plus the few rules you explicitly `crumb promote`
+   into `CLAUDE.md` / `AGENTS.md`).
 6. Store secrets, credentials, customer PII, or sensitive local notes in committed
    project memory.
 7. Make capture so heavy that humans stop using it (routine capture targets under
@@ -126,6 +127,8 @@ crumb questions --aging          # open questions older than the question TTL
 crumb verify --recheck "ver_…"   # rerun a verification's commands; record the result (asks first)
 crumb consolidate                # clusters of near-duplicate records; --merge them into one
 crumb rollup sessions --before 2026-09-01   # fold old machine session snapshots into one record
+crumb promote "dec_…"            # make a proven record a standing rule in CLAUDE.md / AGENTS.md
+crumb demote "dec_…"             # ...and take it back out (the record stays)
 crumb capture session            # record session end (git-prefilled); updates handoff + current
 crumb resume                     # print a bounded resume packet with computed staleness
 crumb reindex                    # rebuild generated/ projections (mutations reindex automatically)
@@ -697,6 +700,52 @@ one-line summary per snapshot — and deletes them. Sessions somebody wrote are
 never touched. The rollup takes the date and commit of the last snapshot it
 replaces, so the Stop hook's next capture still diffs from the right commit.
 
+### `crumb promote` and `crumb demote` — the long-term tier
+
+```bash
+python crumb.py promote dec_…                     # into CLAUDE.md, else AGENTS.md (never creates either)
+python crumb.py promote att_… --to AGENTS.md      # a named file
+python crumb.py promote trap_… --rule "stop the daemon by pid, never with --stop"
+python crumb.py demote dec_…                      # take the rule back out
+```
+
+Memory here comes in three tiers. The **short term** — `current.md`,
+`handoff.md`, jots — is what is in flight. The **medium term** is the typed
+records: decisions, attempts, traps, questions, verifications, which can go
+stale and are surfaced by the packet, `guard` and the hooks. The **long term**
+is the agent's own instruction file, `CLAUDE.md` or `AGENTS.md`, which the
+harness loads whole every session and nothing ages out of. Breadcrumbs keeps
+the first two; `promote` is the bridge to the third.
+
+`crumb promote <id>` turns an active decision, attempt or trap into one line in
+a managed block of its own, separate from the `init` signpost:
+
+```markdown
+## Project rules promoted from memory
+- Use sqlite for the cache. _(why: concurrent writers corrupted the JSON file; source: `dec_20260922_use-sqlite-for-the-cache`)_
+```
+
+The rule is rendered from the record (a decision's title, an attempt's "do
+not retry … unless …", a trap's summary and safe approach), or given with
+`--rule`. A record that is not active, or is `confidence: low`, is refused.
+The record stays `active`; the resume packet leaves it out of its lists (the
+instruction file already carries it) and says how many it left out, `guard`
+still uses it, and `search` marks it `promoted`. Promoting again re-renders
+the line; there is only ever one per record.
+
+`crumb demote <id>` removes the line; so does retiring the record with
+`mark-status … stale` (or `superseded`, `rejected`, `disputed`), because a
+rule nobody believes any more must not stay in the file every session loads.
+`crumb audit` suggests decisions and attempts that have held for at least 60
+days and surfaced in at least five sessions (`promote-candidate`), and flags rules whose record is gone or retired
+(`demote-candidate`), rules that no longer match their record
+(`promoted-drift`), and a block over 4000 characters (`promoted-bloat`).
+
+There is no MCP tool for this, on purpose: an agent writing its own permanent
+instructions through a tool call is how a prompt injection makes itself
+permanent. A person runs `crumb promote`, or an agent runs it where a person
+can see the command.
+
 ## Integrations — make the store actually get used
 
 A memory store only helps if the agent consults it. `crumb init` can wire the
@@ -716,7 +765,9 @@ piece is independent:
   managed block into the agent-guidance files that already exist, telling the
   agent to read the resume packet, `guard` before risky actions, and `note`/
   `capture` as it goes. It never creates a file you don't already have, and stays
-  well under the bloat threshold so `audit` stays green.
+  well under the bloat threshold so `audit` stays green. `--remove-integrations`
+  removes this block only: rules added with `crumb promote` sit in a block of
+  their own and stay, since they are the project's instructions now.
 - **MCP registration** (`--with-mcp`) — merges a `breadcrumbs` server into
   `.mcp.json` (preserving any other servers). Needs the optional `[mcp]` extra to
   actually run: `pip install "crumb-kit[mcp]"` (the SDK needs Python ≥ 3.10; on
@@ -824,6 +875,8 @@ piece is independent:
 
 `crumb doctor` reports whether each piece is in place (and whether the resume
 packet is stale), exiting non-zero when a store exists but nothing is wired up.
+When rules have been promoted it also reports how many, and their size, per
+instruction file.
 
 `crumb mcp serve` runs the server over stdio (same as `breadcrumbs-mcp`); `crumb
 mcp register` is the standalone form of `--with-mcp`.
@@ -911,6 +964,7 @@ automatically so it stays in step.)
 | `retitle` (rewrite a record's title; id/slug/filename unchanged) | implemented |
 | `traps` (staleness + always-on context cost, `--stale`, `--confirm`) | implemented |
 | Lifecycle: per-type TTLs, `expired`, `questions --aging`, `verify --recheck`, near-duplicate gate (exit 3), `consolidate`, contradiction warnings, `rollup sessions` | implemented |
+| `promote` / `demote` (the long-term tier: rules in `CLAUDE.md`/`AGENTS.md`, auto-demote on retire, audit suggestions and drift) | implemented |
 | `pipx`/`pip` packaging (`crumb` console script, bundled templates) | implemented |
 | MCP server (`breadcrumbs-mcp`: 14 resources, 6 prompts, 13 tools) | implemented (**optional**) |
 | Integrations: `init` bootstrapper, `doctor`, `mcp`, `hook` (adapter + `.mcp.json` + hooks) | implemented |

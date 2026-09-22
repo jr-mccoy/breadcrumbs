@@ -482,8 +482,11 @@ def tool_record(
             "ok": False,
             "error": "record rejected by validate: " + "; ".join(f["message"] for f in fails),
         }
+    demoted: list[str] = []
     if supersedes:
-        _lifecycle.mark_superseded(mem, [supersedes], meta["id"], agent=_agent_label())
+        demoted = _lifecycle.demoted_ids(
+            _lifecycle.mark_superseded(mem, [supersedes], meta["id"], agent=_agent_label())
+        )
     # Reindex-on-write: an MCP write must refresh the projections too —
     # an agent will not remember to `crumb reindex` after each `memory_record`.
     cli.reindex_projections(mem, project_root)
@@ -496,6 +499,8 @@ def tool_record(
     }
     if supersedes:
         out["supersedes"] = [supersedes]
+    if demoted:
+        out["demoted"] = demoted
     return out
 
 

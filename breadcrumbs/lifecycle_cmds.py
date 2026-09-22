@@ -240,6 +240,8 @@ def cmd_consolidate(args: argparse.Namespace) -> int:
         print(f"Merged {len(res['supersedes'])} {res['type']}s into {res['id']}")
         print(f"  file: {res['path']}")
         print(f"  superseded: {', '.join(res['supersedes'])}")
+        if res.get("demoted"):
+            print(f"  also demoted (promoted rules removed): {', '.join(res['demoted'])}")
         print(
             "  note: the merged body is each source's text in date order — edit it into "
             "one account before relying on it."
