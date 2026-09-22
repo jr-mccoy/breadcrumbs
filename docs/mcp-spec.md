@@ -83,7 +83,7 @@ Pythons it installs on.
 
 ---
 
-## Resources (8) — read-only
+## Resources (9) — read-only
 
 | URI | Returns | Backed by |
 |---|---|---|
@@ -95,8 +95,16 @@ Pythons it installs on.
 | `memory://attempts/{id}` | verbatim text of one attempt record | `find_record_by_id` |
 | `memory://open-questions` | verbatim `open-questions.md` | plain file |
 | `memory://known-traps` | verbatim `known-traps.md` | plain file |
+| `memory://inbox` | rendered list of live jots, both inboxes | `inbox.jot_rows` |
 
-Reading `memory://*` returns the same bytes the CLI / plain files show. An
+`memory://inbox` is the one resource that is *rendered* rather than a file: the
+inbox is two directories (committed and machine-local) and the useful view is
+both together with the id needed to promote or drop each one. It includes the
+private half, which the committed resume packet deliberately excludes — this
+resource is read live by the agent working in this checkout, not written to a
+file somebody else will read.
+
+Reading the other `memory://*` returns the same bytes the CLI / plain files show. An
 unknown `{id}` raises (surfaced to the client as a resource error). A missing
 `.project-memory/` is a clear `FileNotFoundError`, not a crash.
 
@@ -114,7 +122,7 @@ unknown `{id}` raises (surfaced to the client as a resource error). A missing
 Prompts return guidance text only. They carry **no authority** over the user's
 current instruction, the code, the tests, or authoritative docs.
 
-## Tools (10) — wrap existing functions
+## Tools (12) — wrap existing functions
 
 | Tool | Signature | Wraps | Output |
 |---|---|---|---|
@@ -122,6 +130,8 @@ current instruction, the code, the tests, or authoritative docs.
 | `memory_record` | `(type, payload)` | `cli.write_record` + validate gate, reindex | `{ok, id, type, path, confidence}` or `{ok:false, error}` |
 | `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, path}` or `{ok:false, error}` |
 | `memory_note` | `(kind, text, fields?, tags?)` | `cli.note` | `{ok, kind, ref|id, path}` or `{ok:false, error}` |
+| `memory_jot` | `(text, tags?, files?, local?)` | `inbox.write_jot` + validate gate, reindex | `{ok, id, path, local, expires_at, source}` or `{ok:false, error}` |
+| `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path}` or `{ok:false, error}` |
 | `memory_reindex` | `()` | `cli.reindex_projections` | `{ok, path}` |
 | `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
 | `memory_build_resume_packet` | `(task?)` | `cli.build_resume_packet` | `{ok, …packet}` (`task` is passed to the engine: scoped `likely_files`, echoed `requested_task`, `starting cold` label — identical to `crumb resume --task`) |

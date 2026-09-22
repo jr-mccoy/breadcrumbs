@@ -7,6 +7,80 @@ uses semantic versioning. The package version is independent of the on-disk reco
 
 ## [Unreleased]
 
+Phase 0 of `docs/roadmap-working-memory.md`: the foundations the rest of the
+roadmap is built on. **Record `schema_version` moves to 2** — the first time it
+has ever moved — so an existing store needs one `crumb migrate`.
+
+### Added
+
+- **`crumb migrate`** — the machinery that makes a store-format change safe to
+  ship (WM-01). Steps are ordered and idempotent; `manifest.yml` is written
+  after each one, so a failure halts at the last version that actually
+  completed rather than at one whose step did not finish; and the whole
+  committed store is copied to `private/migrations/<timestamp>/` first — the
+  *whole* store, not the paths a step declares, because a step that
+  under-declares is a silent data-loss bug on somebody else's store and the
+  thing being copied is a few hundred kilobytes of markdown. `--dry-run` lists
+  the steps and changes nothing. A migration never creates `generated/` in a
+  store that does not have one: a format upgrade has no business inventing a
+  committed artifact.
+- **`crumb jot` / `crumb inbox` — the short-term tier** (WM-03). Every durable
+  write asks for a title, body sections, and evidence or an explicit
+  `--confidence low`. That is the right price for a decision and the wrong price
+  for "the flaky test only fails under `-n auto`", so observations at that size
+  were not written down at all. A jot is one line, a TTL (`jot_ttl_days`,
+  default 14) and no evidence rule. `--file` becomes file evidence, which is
+  what makes one findable later. `crumb inbox promote <id> <type>` turns it into
+  a durable record **through that type's normal writer**, evidence rule
+  included — a jot is a shortcut into memory, not around its contract — and
+  marks the jot `superseded` rather than deleting it, so the trail survives.
+  `crumb inbox drop` retires one as noise; `crumb prune jots` deletes expired and
+  retired jots older than 30 days, and never an active unexpired one.
+- **Two inboxes, as a privacy boundary.** `inbox/` is committed; everything
+  written *automatically* goes to the gitignored `private/inbox/`, because a
+  hook cannot know whether what it just saw is publishable. Machine-written
+  content earns a commit by being promoted. For the same reason the committed
+  resume packet lists committed jots only: a machine-local jot in a committed
+  projection would make that file differ between two checkouts of one store
+  while `inputs_hash` called both fresh — the cross-machine ping-pong
+  `_hashed_input_dirs` exists to prevent.
+- **A jot is searchable and never judged.** `crumb search --type jot` finds one;
+  `guard` never rests a verdict on one, for the same reason it never rests one
+  on an idea. An unconfirmed note that happens to name the file being edited
+  must not gate the edit.
+- **`crumb usage`** — which records actually get *shown* (WM-02). A record counts
+  when a packet was printed or injected, a guard verdict cited it, or a hook
+  spent context on it; deliberately **not** when a write triggers a reindex,
+  which would make the counts measure writes rather than surfacings. `--never`
+  lists active records nothing has ever reached — the question `audit`'s
+  `[unreachable]` check cannot answer, since it asks whether a record *could* be
+  found, not whether it ever *was*. Counts live in `private/usage.json` and are
+  never committed: in frontmatter they would churn every record on every guard
+  call, and in a committed file they would conflict on every merge.
+- **`audit` finding `never-surfaced`** (info): an active record older than 90
+  days that nothing has ever surfaced. Suppressed entirely when the store has no
+  usage history, because on a fresh clone the finding is true of every record and
+  useful about none.
+- **MCP**: resource `memory://inbox` (9 now) and tools `memory_jot`,
+  `memory_inbox_promote` (12 now).
+
+### Changed
+
+- **`validate` splits the schema-version check out of `manifest`** and names the
+  remedy directionally: an older store says ``run `crumb migrate` ``, a newer one
+  says `upgrade crumb-kit`. One message for both sent half of each case to the
+  wrong remedy — and a build must never write its own format into a store that is
+  ahead of it.
+- **A `local-private` record is no longer rejected for being a directory
+  record.** The rule is, and always was, "it must live where git cannot see it";
+  it was written as an unconditional failure because every record directory used
+  to be committed. `private/inbox/` is the first that is not. The inverse is now
+  checked too: a `repo-safe` record under `private/` is a finding.
+- **`crumb prune` takes `jots` as well as `sessions`.**
+- **`crumb schema jot --template`** emits a `crumb jot` skeleton, not a `crumb
+  remember jot` one — `remember` takes decisions and attempts only, and a
+  template naming a command that does not exist is worse than no template.
+
 ### Docs
 
 - **`docs/roadmap-working-memory.md`** — the plan for turning breadcrumbs

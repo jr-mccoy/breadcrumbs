@@ -1,7 +1,7 @@
 # .project-memory/manifest.yml — per-project control file.
 # NOTE: `crumb init` overwrites this file with computed values. The tokens in
 # <angle brackets> below are placeholders, never literals to copy.
-schema_version: 1
+schema_version: 2
 created_at: <ISO-8601-with-timezone>
 project: <project-name>
 # Tracking policy chosen during `crumb init` (see docs/record-schema.md):
@@ -9,3 +9,4 @@ session_tracking: <full|distillate>        # full | distillate
 #   full       = commit dated session records under sessions/
 #   distillate = sessions/ stays local; commit only promoted decisions/attempts
 commit_generated_projections: <true|false>   # commit generated/*.md summaries (indexes always ignored)
+jot_ttl_days: 14   # days a `crumb jot` stays listed before it expires

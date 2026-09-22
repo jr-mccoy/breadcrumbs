@@ -25,6 +25,7 @@ status/privacy vocabularies, and the body templates.
   verifications/  .gitkeep
   sessions/       .gitkeep
   ideas/          .gitkeep
+  inbox/          .gitkeep      # committed jots (schema_version 2+)
 
   generated/
     README.md
@@ -34,10 +35,23 @@ status/privacy vocabularies, and the body templates.
 
   private/
     README.md
+    inbox/                    # machine-local jots — never committed
+    # usage.json              — local surfacing counts, written on demand
+    # migrations/<stamp>/     — pre-migration store backup
 
   index/
     README.md
 ```
+
+**Schema versions.** `manifest.yml` records the on-disk format version and
+`crumb migrate` moves a store forward; `validate` fails a store that is behind
+(`run \`crumb migrate\``) or ahead (`upgrade crumb-kit`). Readers tolerate the
+previous shape for one major version, so an un-migrated store keeps working.
+
+| Version | Change |
+|---|---|
+| 1 | The original layout. |
+| 2 | `inbox/` and `private/inbox/` — the jot tier (WM-03). Both are created empty; a store that never migrates simply has no jots. |
 
 ---
 
@@ -274,6 +288,37 @@ degrades gracefully (age-based signals still apply).
 ---
 
 ## 10. Body templates
+
+### Jot record (`inbox/` or `private/inbox/`, schema_version 2+)
+
+```markdown
+## Note
+```
+
+One section, because the moment it needs a second one it has become a record and
+should be promoted into one. Type-specific frontmatter:
+
+| Key | Meaning |
+|---|---|
+| `source` | Who or what wrote it: `human`, `agent`, `prompt`, `transcript`, `hook`. **Required** (validate §16.9c) — a hook-written candidate and a note somebody typed are read very differently by whoever triages the inbox. |
+| `expires_at` | Set automatically to `created_at + jot_ttl_days` (default 14). An expired jot drops out of `crumb inbox` and the resume packet but stays on disk. |
+| `fingerprint` | Content identity for an automatically written jot, so a hook that mines the same source twice does not write the same candidate twice. Optional. |
+| `host_session` | The harness session that wrote it. Optional. |
+
+Two rules that are not obvious from the shape:
+
+- **Exempt from the evidence rule (§16.9).** A jot makes no claim it could
+  support, which is the whole reason the tier exists. `confidence` is always
+  `low`.
+- **Never in a `guard` verdict.** A jot rides the same corpus switch as an idea
+  (`include_ideas`): findable by `search`, never the basis of a verdict. An
+  unconfirmed one-line note that happens to name the file being edited must not
+  gate the edit.
+
+`private/inbox/` is the only record directory outside the committed tree. It is
+where every *automatic* writer must put things, because a hook cannot know
+whether what it just saw is publishable. Promotion is what moves the content
+into committed memory; the jot file itself stays private.
 
 ### Decision record
 

@@ -20,6 +20,11 @@ but is **plain files first**: any human or agent can read it without the tool.
 3. Review relevant records under `decisions/`, `attempts/`, `known-traps.md`, and
    `open-questions.md`.
 4. If the CLI is available, run `crumb guard "<proposed action>"`.
+5. Check the inbox for untriaged short-term notes: `crumb inbox`.
+
+**Mid-task:** a quick observation that is worth remembering but not worth a
+record goes in with `crumb jot "<text>" --file <path>`. It expires on its own;
+promote it with `crumb inbox promote <id> <type>` if it turns out to be durable.
 
 **At session end:**
 
@@ -49,8 +54,9 @@ A read-only cloud agent with no CLI can resume from these files directly:
 | `sessions/` | One record per work session. |
 | `verifications/` | One record per `crumb verify` — "I checked X; here is its state". |
 | `ideas/` | Potential future directions. Searchable (`crumb search --type idea`), but never the basis of a `guard` verdict — an idea is a proposal, not a finding. |
+| `inbox/` | Short-term jots (`crumb jot`): one observation, a TTL, no evidence rule. Searchable, never the basis of a `guard` verdict. Promote the durable ones with `crumb inbox promote <id> <type>`; the rest expire. |
 | `generated/` | Rebuildable projections — **not source of truth**. |
-| `private/` | Local-only notes — **never committed**. |
+| `private/` | Local-only notes — **never committed**. Holds `inbox/` (jots written automatically, which must earn a commit by being promoted), `usage.json` (local surfacing counts) and `migrations/` (pre-migration store backups). |
 | `index/` | Reserved slot for a disposable search index — **never committed** (except this kind of README). Nothing builds one today. |
 
 Evidence — a commit, a test, a file, a PR — is recorded **per record**, in each

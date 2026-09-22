@@ -187,6 +187,37 @@ def resource_attempt(rid: str, root: str | Path | None = None) -> str:
 
 
 # The declared resource surface. `mcp_server.build_server` binds each URI
+def resource_inbox(root: str | Path | None = None) -> str:
+    """`memory://inbox` — live jots, rendered as a list.
+
+    Unlike the other singleton resources this is *rendered*, not a file: the
+    inbox is two directories (committed and machine-local), and the useful view
+    is both of them together with the id an agent needs to promote or drop each
+    one. The private half is included here and deliberately excluded from the
+    committed resume packet — this resource is read live by the agent working in
+    this checkout, not written to a file anybody else will read.
+    """
+    from breadcrumbs import inbox as _inbox
+
+    _, mem = resolve(root)
+    _require_memory(mem)
+    rows = _inbox.jot_rows(mem)
+    if not rows:
+        return '_(inbox empty — leave a note with the `memory_jot` tool or `crumb jot "…"`)_'
+    lines = [
+        "# Inbox (short-term jots)",
+        "",
+        "_Candidates, not findings. Promote with `crumb inbox promote <id> <type>`,",
+        "drop with `crumb inbox drop <id>`, or let them expire._",
+        "",
+    ]
+    for r in rows:
+        age = f"{r['age_days']}d" if r["age_days"] is not None else "new"
+        local = ", local" if r["local"] else ""
+        lines.append(f"- `{r['id']}` ({age}, {r['source']}{local}) {r['text']}")
+    return "\n".join(lines) + "\n"
+
+
 # explicitly rather than looping over these dicts — one visible endpoint per
 # resource, and a stable function per binding — so these are a *manifest*, not a
 # dispatch table: the thing the README and `docs/mcp-spec.md` count when they say
@@ -200,6 +231,7 @@ STATIC_RESOURCES = {
     "memory://decisions": resource_decisions,
     "memory://open-questions": resource_open_questions,
     "memory://known-traps": resource_known_traps,
+    "memory://inbox": resource_inbox,
 }
 TEMPLATE_RESOURCES = {
     "memory://decisions/{id}": resource_decision,
@@ -459,6 +491,82 @@ def tool_note(
             text or "",
             fields=fields or {},
             tags=tags or [],
+            agent=_agent_label(),
+        ),
+        mem,
+    )
+
+
+def tool_jot(
+    text: str,
+    tags: list[str] | None = None,
+    files: list[str] | None = None,
+    local: bool = False,
+    root: str | Path | None = None,
+) -> dict:
+    """`memory_jot` — wraps `breadcrumbs.inbox.write_jot`.
+
+    The low-friction write: one observation, a TTL, no evidence rule. Use it for
+    something worth remembering for the next session but not worth a decision
+    record. `files` becomes file evidence, which is what makes a jot findable
+    later. `local: true` keeps it out of the committed store — pass it for
+    anything derived from a user's own words rather than from the work.
+
+    A jot never raises a `guard` verdict; promote it to a decision, attempt,
+    verification or trap when it turns out to be durable.
+    """
+    from breadcrumbs import inbox as _inbox
+
+    project_root, mem = resolve(root)
+    if (missing := _memory_missing(mem)) is not None:
+        return missing
+    return _relativize(
+        _inbox.write_jot(
+            mem,
+            project_root,
+            text or "",
+            tags=tags or [],
+            files=files or [],
+            local=bool(local),
+            source="agent",
+            agent=_agent_label(),
+        ),
+        mem,
+    )
+
+
+def tool_inbox_promote(
+    id: str,
+    target: str,
+    title: str | None = None,
+    sections: dict | None = None,
+    evidence: list[dict] | None = None,
+    tags: list[str] | None = None,
+    confidence: str | None = None,
+    root: str | Path | None = None,
+) -> dict:
+    """`memory_inbox_promote` — wraps `breadcrumbs.inbox.promote_jot`.
+
+    Turns a jot into a durable record through the normal writer for that type,
+    so the evidence rule and the validate gate apply exactly as they would to a
+    record written directly. The jot is marked superseded, not deleted.
+    """
+    from breadcrumbs import inbox as _inbox
+
+    project_root, mem = resolve(root)
+    if (missing := _memory_missing(mem)) is not None:
+        return missing
+    return _relativize(
+        _inbox.promote_jot(
+            mem,
+            project_root,
+            id,
+            target,
+            title=title,
+            sections=sections or {},
+            evidence=evidence or [],
+            tags=tags or [],
+            confidence=confidence,
             agent=_agent_label(),
         ),
         mem,

@@ -233,6 +233,10 @@ def build_server():  # -> FastMCP
     def known_traps() -> str:
         return mcp_core.resource_known_traps(_root())
 
+    @mcp.resource("memory://inbox")
+    def inbox() -> str:
+        return mcp_core.resource_inbox(_root())
+
     # ---------------- Prompts (6) — flows mapping to CLI ------------------- #
 
     @mcp.prompt()
@@ -291,6 +295,38 @@ def build_server():  # -> FastMCP
     def memory_validate() -> dict:
         """Run deterministic structural validation (wraps `crumb validate`)."""
         return mcp_core.tool_validate(root=_root())
+
+    @mcp.tool()
+    def memory_jot(
+        text: str,
+        tags: list[str] | None = None,
+        files: list[str] | None = None,
+        local: bool = False,
+    ) -> dict:
+        """Leave a short-term note with a TTL (wraps `crumb jot`); no evidence needed."""
+        return mcp_core.tool_jot(text, tags=tags, files=files, local=local, root=_root())
+
+    @mcp.tool()
+    def memory_inbox_promote(
+        id: str,
+        target: str,
+        title: str | None = None,
+        sections: dict | None = None,
+        evidence: list[dict] | None = None,
+        tags: list[str] | None = None,
+        confidence: str | None = None,
+    ) -> dict:
+        """Turn a jot into a durable record (wraps `crumb inbox promote`)."""
+        return mcp_core.tool_inbox_promote(
+            id,
+            target,
+            title=title,
+            sections=sections,
+            evidence=evidence,
+            tags=tags,
+            confidence=confidence,
+            root=_root(),
+        )
 
     @mcp.tool()
     def memory_note(

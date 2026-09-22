@@ -32,6 +32,19 @@ fixtures/**/.project-memory/generated/resume-packet.md
 !fixtures/fixture-09-cloud-fallback/.project-memory/generated/resume-packet.md
 !fixtures/fixture-11-multi-machine/.project-memory/generated/resume-packet.md
 
+# Same rule for the other projection: any `resume`/`reindex`/`migrate` run on a
+# fixture writes one, and it is rebuildable. Fixture 11 is the exception for the
+# same reason as above — two machines must agree on it byte-for-byte.
+fixtures/**/.project-memory/generated/guard-prefilter.json
+!fixtures/fixture-11-multi-machine/.project-memory/generated/guard-prefilter.json
+!fixtures/fixture-01-fresh-resume/.project-memory/generated/guard-prefilter.json
+
+# A fixture's private/ is machine-local for the same reason any store's is, and
+# the managed block below cannot reach it (its patterns are anchored at the repo
+# root). The test suite runs `resume` and `audit` against these stores, which
+# writes `private/usage.json`; nothing there belongs in the history.
+fixtures/**/.project-memory/private/**
+
 # >>> breadcrumbs managed block (managed by `crumb init`) >>>
 .project-memory/private/**
 .project-memory/index/**

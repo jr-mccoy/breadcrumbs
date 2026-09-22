@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 created_at: 2026-08-15T01:24:11+00:00
 project: breadcrumbs
 # Tracking policy chosen during `crumb init` (see docs/record-schema.md):

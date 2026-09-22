@@ -439,9 +439,11 @@ class GracefulDegradationTests(unittest.TestCase):
     def test_missing_memory_dir_tools_return_structured_error(self):
         """*Every* tool reports a missing store as {ok: False, error} (issue #7).
 
-        All ten, checked by name against the documented surface: the tuple used to
-        cover eight, and the two it omitted (`tool_verify`, `tool_reindex`) are
-        exactly the ones whose envelope nothing else exercised.
+        All twelve, checked by name against the documented surface: the tuple
+        used to cover eight, and the two it omitted (`tool_verify`,
+        `tool_reindex`) are exactly the ones whose envelope nothing else
+        exercised. `tool_jot` and `tool_inbox_promote` (WM-03) are the eleventh
+        and twelfth.
         """
         empty = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
@@ -460,6 +462,10 @@ class GracefulDegradationTests(unittest.TestCase):
             ),
             "tool_verify": lambda: mcp_core.tool_verify("subj", "open", root=empty),
             "tool_reindex": lambda: mcp_core.tool_reindex(root=empty),
+            "tool_jot": lambda: mcp_core.tool_jot("x", root=empty),
+            "tool_inbox_promote": lambda: mcp_core.tool_inbox_promote(
+                "jot_x", "decision", root=empty
+            ),
         }
         # No tool may be added without an entry here.
         exported = {n for n in dir(mcp_core) if n.startswith("tool_")}
@@ -530,8 +536,11 @@ class ResourceRegistryTests(unittest.TestCase):
         declared = set(mcp_core.STATIC_RESOURCES) | set(mcp_core.TEMPLATE_RESOURCES)
         self.assertEqual(self._bound_uris(), declared)
 
-    def test_the_advertised_count_is_eight(self):
-        self.assertEqual(len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 8)
+    def test_the_advertised_count_is_nine(self):
+        # Eight through 0.2.0; `memory://inbox` is the ninth (WM-03, the jot
+        # tier). The number is pinned because the README and docs/mcp-spec.md
+        # both state it, and a silent drift makes the docs wrong.
+        self.assertEqual(len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 9)
 
     def test_every_registry_target_is_callable(self):
         for uri, fn in {**mcp_core.STATIC_RESOURCES, **mcp_core.TEMPLATE_RESOURCES}.items():

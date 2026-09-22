@@ -102,7 +102,7 @@ three days, **L** a week.
 
 | Phase | Theme | Items | Release |
 |---|---|---|---|
-| 0 | Foundations: migration, inbox, telemetry | WM-01, WM-02, WM-03 | 0.3.0 |
+| 0 | Foundations: migration, inbox, telemetry — **shipped**, see §0.5 | WM-01, WM-02, WM-03 | 0.3.0 |
 | 1 | Capture everywhere: new hooks and the transcript miner | WM-10 to WM-16 | 0.4.0 |
 | 2 | Retrieval by relevance | WM-20 to WM-25 | 0.5.0 |
 | 3 | Lifecycle: decay, dedup, consolidation, contradiction | WM-30 to WM-35 | 0.6.0 |
@@ -113,6 +113,56 @@ three days, **L** a week.
 
 Each phase ends with a release. A release is only the two steps in
 `CLAUDE.md`: bump `__version__`, add the CHANGELOG entry, run `release.yml`.
+
+### 0.5 Phase 0: what shipped, and where it differs from this plan
+
+Phase 0 is implemented. `SCHEMA_VERSION` is 2. New modules:
+`breadcrumbs/migrate.py`, `breadcrumbs/usage.py`, `breadcrumbs/inbox.py`; new
+tests: `tests/test_migrate.py`, `tests/test_usage.py`, `tests/test_inbox.py`.
+
+Seven places where the implementation departed from what this document
+specified. Each is a decision a later phase inherits, so read these before
+building on Phase 0.
+
+1. **Telemetry is recorded at the call sites, not inside `build_resume_packet`
+   or `guard`.** The plan put it in `build_resume_packet`; every mutation
+   reindexes and every reindex builds a packet, so that would have counted
+   *writes*, which is the one thing the metric is not for. It lives in
+   `cmd_resume`, `_hook_session`, `cmd_guard` and `_hook_guard` instead — the
+   places a packet or a verdict is genuinely shown. Splitting `guard` between
+   the command and the hook also avoids double-counting every hook advisory,
+   since the hook shows a filtered subset of the same result.
+2. **`private/usage.json` carries a `sessions` list per record** as well as the
+   counts. WM-42 asks how many *sessions* a record reached, and a raw count
+   cannot answer it: one session firing the hook forty times is not forty
+   pieces of evidence. Bounded at 20 ids per record.
+3. **Jots reuse the existing `include_ideas` corpus switch** rather than the
+   parallel `include_jots` flag the plan described. The semantics are identical
+   — findable by lookup, never the basis of a verdict — so a second flag would
+   have been two names for one rule. `SPECULATIVE_ITEM_TYPES` is now
+   `("idea", "jot")`.
+4. **`crumb prune jots`, not `crumb prune --inbox`.** `prune` already takes a
+   positional `what`; a flag would have been a second grammar for one command.
+5. **The committed packet lists committed jots only**, where the plan said
+   "open jots". A machine-local jot in a committed projection makes that file
+   differ between two checkouts of one store while `_inputs_hash` — which
+   cannot read gitignored input without the same problem — calls both fresh.
+   That is exactly the ping-pong `_hashed_input_dirs` exists to prevent. Private
+   jots reach an agent through `crumb inbox`, the `memory://inbox` resource, and
+   (from Phase 1) the hooks that wrote them. **WM-12 and WM-15 must surface them
+   explicitly; they will not arrive via the packet.**
+6. **A migration backs up the whole store, not the paths a step declares.** A
+   step that under-declares its paths is a silent data-loss bug that only
+   appears on somebody else's store, and the thing being copied is a few
+   hundred kilobytes of markdown.
+7. **A migration reindexes only when `generated/` already exists.** Creating it
+   would invent a committed artifact in a store whose owner chose not to have
+   one — which is what happened to nine fixtures on the first run.
+
+Two smaller notes for implementers of later phases: the validate check for the
+version is named `schema-version` (the `manifest` check now only covers the file
+being present), and the `local-private` privacy rule is now path-aware, because
+`private/inbox/` is the first record directory that is not committed.
 
 ---
 
@@ -183,7 +233,7 @@ warnings, never failures.
 
 ## Phase 0: Foundations
 
-### WM-01 Schema migration machinery — **M**
+### WM-01 Schema migration machinery — **M** — SHIPPED
 
 **Goal.** Make store-format changes safe to ship. Later items (WM-03,
 WM-22, WM-30, WM-40, WM-50) add directories, frontmatter keys and a new
@@ -240,7 +290,7 @@ quickstart line.
 **Acceptance.** `crumb migrate` on this repo's store prints "nothing to
 do" and exits 0. All fixtures still validate.
 
-### WM-02 Record usage telemetry — **S**
+### WM-02 Record usage telemetry — **S** — SHIPPED
 
 **Goal.** Know which records actually get surfaced and used, so ranking
 (Phase 2), decay (Phase 3) and promotion suggestions (Phase 4) have a
@@ -290,7 +340,7 @@ creates the file with the surfaced ids; `--never` lists an active decision
 that was never surfaced; `audit` emits `never-surfaced` only when the file
 exists.
 
-### WM-03 The inbox: a low-friction short-term tier — **M**
+### WM-03 The inbox: a low-friction short-term tier — **M** — SHIPPED
 
 **Goal.** Give agents and hooks a place to put a two-line observation
 without a title, sections and evidence. Every durable write today requires

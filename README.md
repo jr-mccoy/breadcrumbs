@@ -114,6 +114,10 @@ crumb mark-status "dec_…" stale --reason "superseded by reality"   # record li
 crumb mark-status "trap_…" stale --reason "fixed in 2.1"           # ...retire a trap the same way
 crumb mark-status "q:…" answered --reason "see dec_…"              # ...and answer an open question
 crumb note question|trap|idea    # leave a note for the next agent (no hand-editing)
+crumb jot "flaky under -n auto"  # short-term note: a TTL, no evidence rule
+crumb inbox                      # triage the jots; promote the durable ones
+crumb migrate                    # bring an older store up to this build's schema
+crumb usage --never              # which records nothing has ever surfaced
 crumb retitle "ses_…" "what that session was really about"   # fix a title that says nothing
 crumb traps --stale              # traps nobody has confirmed lately, and what they cost
 crumb capture session            # record session end (git-prefilled); updates handoff + current
@@ -473,6 +477,74 @@ be tuned from dogfood feedback without rearchitecting.
 
 ---
 
+### `crumb jot` and `crumb inbox` — the short-term tier
+
+```bash
+python crumb.py jot "the flaky screenshot test only fails under pytest -n auto" \
+  --file tests/test_shot.py --tags flaky,ci
+python crumb.py jot "the user said not to touch the migration" --local
+python crumb.py inbox                                   # triage queue
+python crumb.py inbox promote jot_… trap --area tests/test_shot.py --why "…"
+python crumb.py inbox drop jot_…                        # noise
+```
+
+Every durable write asks for a title, body sections, and evidence or an explicit
+`--confidence low`. That is the right price for a decision and the wrong price
+for a two-line observation — so observations at that size were simply not
+written down. A **jot** is that observation: one line, a TTL (14 days by
+default, `jot_ttl_days` in `manifest.yml`), and no evidence rule.
+
+A jot is **searchable and never judged**. It rides the same corpus switch as an
+idea: `crumb search --type jot` finds it; `guard` never rests a verdict on it.
+An unconfirmed one-line note that happens to name the file you are editing must
+not gate the edit.
+
+`--file` is what makes one findable later — it becomes file evidence, so
+`search --file` and the guard's declared-file signal both reach it.
+
+**Two inboxes, and the split is a privacy boundary.** `inbox/` is committed:
+somebody chose to write this. `private/inbox/` is gitignored and is where every
+*automatic* writer must put things, because a hook cannot know whether the
+prompt it just saw is publishable. Machine-written content earns a commit by
+being promoted, never by default. For the same reason the committed resume
+packet lists committed jots only: a machine-local jot in a committed projection
+would make that file differ between two checkouts of one store while the
+freshness hash called both current.
+
+**Promotion goes through the normal writer.** `crumb inbox promote <id>
+decision` runs the same validate gate a hand-written decision does, evidence
+rule included — a jot is a shortcut into memory, not around its contract. The
+jot's file evidence and tags carry over, and the jot is marked `superseded` with
+`superseded_by` pointing at the new record, so the trail from one-line note to
+record survives. `crumb prune jots` deletes expired and dropped jots older than
+30 days; an active, unexpired one is never deleted however old the store is.
+
+### `crumb migrate` and `crumb usage`
+
+```bash
+python crumb.py migrate --dry-run        # what would change
+python crumb.py migrate                  # apply; backs the store up first
+python crumb.py usage                    # most-surfaced records
+python crumb.py usage --never            # active records nothing has ever reached
+```
+
+`migrate` moves a store's on-disk format up to this build's `schema_version`.
+Steps are ordered and idempotent, `manifest.yml` is written after each one (so a
+failure halts at the last version that actually completed, never at one whose
+step did not finish), and the whole committed store is copied to
+`private/migrations/<timestamp>/` first. `validate` names the remedy in each
+direction: an older store says `run crumb migrate`, a newer one says `upgrade
+crumb-kit` — a build must never write its own format into a store that is ahead
+of it.
+
+`usage` answers the question `audit`'s `[unreachable]` check cannot: not whether
+a record *could* be found, but whether it ever *was*. A record counts when it
+was shown — a packet printed or injected, a guard verdict, a hook advisory —
+and deliberately not when a write triggers a reindex, which would make the
+counts measure writes. The counts live in `private/usage.json` and are never
+committed: in frontmatter they would churn every record on every guard call, and
+in a committed file they would conflict on every merge.
+
 ### `crumb scan-secrets` and `crumb traps`
 
 ```bash
@@ -661,10 +733,13 @@ automatically so it stays in step.)
 | `scan-secrets` (committed-memory secret gate) | implemented |
 | `schema` (record contract introspection + template) | implemented |
 | `note question` / `note trap` / `note idea` (write-surface) | implemented |
+| `jot` / `inbox` / `inbox promote` / `inbox drop` (short-term tier) | implemented |
+| `migrate` (store-format upgrade, backed up and idempotent) | implemented |
+| `usage` (local surfacing counts, `--never`) | implemented |
 | `retitle` (rewrite a record's title; id/slug/filename unchanged) | implemented |
 | `traps` (staleness + always-on context cost, `--stale`, `--confirm`) | implemented |
 | `pipx`/`pip` packaging (`crumb` console script, bundled templates) | implemented |
-| MCP server (`breadcrumbs-mcp`: 8 resources, 6 prompts, 10 tools) | implemented (**optional**) |
+| MCP server (`breadcrumbs-mcp`: 9 resources, 6 prompts, 12 tools) | implemented (**optional**) |
 | Integrations: `init` bootstrapper, `doctor`, `mcp`, `hook` (adapter + `.mcp.json` + hooks) | implemented |
 
 The full loop (capture → resume → trust) is complete and CI-guarded, and ships as

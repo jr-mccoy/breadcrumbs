@@ -105,6 +105,10 @@ breadcrumbs = [
     "templates/project-memory/*/*.md",
     "templates/project-memory/*/*.yml",
     "templates/project-memory/*/.gitkeep",
+    # depth-3: `private/inbox/` is the one record directory that lives inside
+    # another (machine-local jots), and its .gitkeep is what makes `init`
+    # recreate it.
+    "templates/project-memory/*/*/.gitkeep",
 ]
 
 # --------------------------------------------------------------------------- #

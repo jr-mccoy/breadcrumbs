@@ -39,7 +39,11 @@ from pathlib import Path, PurePosixPath
 # Constants
 # --------------------------------------------------------------------------- #
 
-SCHEMA_VERSION = 1
+# The on-disk record format version. Independent of the package version: it
+# moves only when the shape of the store changes, and every move ships with a
+# step in `breadcrumbs/migrate.py` plus readers that tolerate the older shape.
+#   1 -> 2: `inbox/` and `private/inbox/` (the jot tier, WM-03).
+SCHEMA_VERSION = 2
 MEMORY_DIRNAME = ".project-memory"
 
 # Templates are package data: they live next to this module inside the
@@ -168,14 +172,23 @@ VALID_QUESTION_STATUS = (
 # vocabulary actually applies; the resolver rejects a mismatch by name.
 MARK_STATUS_CHOICES = tuple(dict.fromkeys(VALID_STATUS + VALID_QUESTION_STATUS))
 
-# Directory name -> record type.
+# Directory name -> record type. These are the *committed* record directories,
+# which is also what `_hashed_input_dirs` walks — `private/inbox/` is
+# deliberately absent (machine-local jots are not a shared input), and
+# `load_records` adds it separately.
 DIR_TYPES = {
     "decisions": "decision",
     "attempts": "attempt",
     "sessions": "session",
     "ideas": "idea",
     "verifications": "verification",
+    "inbox": "jot",
 }
+
+# Record directories that exist outside the committed tree, as store-relative
+# POSIX paths -> record type. `load_records` walks these too; nothing that
+# computes a shared hash does.
+LOCAL_DIR_TYPES = {"private/inbox": "jot"}
 
 # Record type -> id prefix.
 TYPE_PREFIX = {
@@ -186,6 +199,7 @@ TYPE_PREFIX = {
     "trap": "trap",
     "question": "q",
     "verification": "ver",
+    "jot": "jot",
 }
 
 # Verification outcome vocabulary. The record-level `status` stays the
@@ -204,6 +218,17 @@ VALID_VERIFICATION_OUTCOME = (
 ACTIONABLE_VERIFICATION_OUTCOMES = ("open", "regressed", "inconclusive")
 # Verification method vocabulary (how the subject was checked).
 VALID_VERIFICATION_METHOD = ("static", "runtime", "test")
+
+# What `crumb inbox promote` can turn a jot into. Lives here rather than in
+# `breadcrumbs/inbox.py` because the argparse choices need it at parser-build
+# time, and `inbox` imports this module — one definition, no cycle.
+INBOX_PROMOTE_TARGETS = ("decision", "attempt", "verification", "trap", "question", "idea")
+
+# Default jot TTL, written into `manifest.yml` at init so a store can change it
+# without reading the source. `breadcrumbs.inbox.JOT_TTL_DAYS` is the same
+# number; this copy exists because `manifest_content` runs before that module
+# would be importable without a cycle.
+JOT_TTL_DAYS_DEFAULT = 14
 
 # Singleton core files that must exist.
 CORE_FILES = ("current.md", "handoff.md", "open-questions.md", "known-traps.md")
@@ -377,6 +402,8 @@ def manifest_content(
         f"   # commit generated/*.md summaries (indexes always ignored)\n"
         f"extraction_prompt: true   # Stop hook may ask the agent (once per new-commit\n"
         f"#   turn) to write decision/attempt records before ending; false = snapshot only\n"
+        f"jot_ttl_days: {JOT_TTL_DAYS_DEFAULT}   # days a `crumb jot` stays listed before it\n"
+        f"#   expires; promote the durable ones with `crumb inbox promote`\n"
     )
 
 
@@ -1124,14 +1151,21 @@ class Record:
 
 
 def load_records(memory_dir: Path, types: tuple[str, ...] | None = None) -> list[Record]:
-    """Load every directory record under decisions/attempts/sessions/ideas.
+    """Load every directory record: the committed type directories plus `private/inbox/`.
 
     Parse errors are captured on the Record (`.error`), not raised, so `validate`
     can report them as findings. Singleton core files are NOT durable records and
     are intentionally excluded here.
+
+    `LOCAL_DIR_TYPES` is walked as well as `DIR_TYPES` so a machine-local jot is
+    a first-class record everywhere it should be — `validate` checks it, `search`
+    finds it, `crumb inbox` lists it. The places that must *not* see it (the
+    committed resume packet, `_inputs_hash`) select by directory rather than by
+    asking this function for less, because a reader that silently drops records
+    is the harder bug to find.
     """
     records: list[Record] = []
-    for dirname, rtype in DIR_TYPES.items():
+    for dirname, rtype in list(DIR_TYPES.items()) + list(LOCAL_DIR_TYPES.items()):
         if types and rtype not in types:
             continue
         d = Path(memory_dir) / dirname
@@ -1418,18 +1452,50 @@ def run_validate(memory_dir: Path) -> list[dict]:
     if manifest is None:
         findings.append(_finding("manifest", "fail", "manifest.yml", "manifest.yml is missing"))
     else:
+        # A version mismatch has two opposite causes and two opposite remedies,
+        # and one message for both sent everyone to the wrong one. An *older*
+        # store needs migrating; a *newer* store means this build is behind and
+        # must not touch it, because writing schema-N records into a schema-N+1
+        # store is how a store gets corrupted by a well-meaning downgrade.
         sv = manifest.get("schema_version")
-        if sv != str(SCHEMA_VERSION):
+        try:
+            sv_int = int(str(sv).strip())
+        except (TypeError, ValueError):
+            sv_int = None
+        if sv_int is None:
             findings.append(
                 _finding(
-                    "manifest",
+                    "schema-version",
                     "fail",
                     "manifest.yml",
-                    f"unsupported schema_version {sv!r} (this build supports {SCHEMA_VERSION})",
+                    f"unreadable schema_version {sv!r} (this build supports {SCHEMA_VERSION})",
+                )
+            )
+        elif sv_int < SCHEMA_VERSION:
+            findings.append(
+                _finding(
+                    "schema-version",
+                    "fail",
+                    "manifest.yml",
+                    f"store is schema_version {sv_int}, this crumb understands "
+                    f"{SCHEMA_VERSION} — run `crumb migrate`",
+                )
+            )
+        elif sv_int > SCHEMA_VERSION:
+            findings.append(
+                _finding(
+                    "schema-version",
+                    "fail",
+                    "manifest.yml",
+                    f"store is schema_version {sv_int}, this crumb understands "
+                    f"{SCHEMA_VERSION} — upgrade crumb-kit",
                 )
             )
         else:
-            findings.append(_finding("manifest", "pass", "manifest.yml", f"schema_version {sv}"))
+            findings.append(
+                _finding("schema-version", "pass", "manifest.yml", f"schema_version {sv_int}")
+            )
+        findings.append(_finding("manifest", "pass", "manifest.yml", "manifest.yml present"))
 
     # 16.2 — required core files exist, and are readable. An undecodable core
     # file used to pass silently here while aborting `audit` and `resume`
@@ -1545,14 +1611,27 @@ def run_validate(memory_dir: Path) -> list[dict]:
                     "privacy: secret-prohibited must not be stored in memory",
                 )
             )
-        elif privacy == "local-private":
-            # durable directory records are committed paths; local-private must be under private/.
+        elif privacy == "local-private" and not rel.replace("\\", "/").startswith("private/"):
+            # A local-private record has to live where git cannot see it. Most
+            # record directories are committed, so this used to be unconditional
+            # — `private/inbox/` is the first record directory that is not, and
+            # an unconditional fail would reject every machine-local jot.
             findings.append(
                 _finding(
                     "privacy",
                     "fail",
                     rel,
                     "privacy: local-private record is under a committed path (must live under private/)",
+                )
+            )
+        elif rel.replace("\\", "/").startswith("private/") and privacy == "repo-safe":
+            findings.append(
+                _finding(
+                    "privacy",
+                    "fail",
+                    rel,
+                    "privacy: repo-safe record is under private/, where nothing is "
+                    "committed — mark it local-private or move it into the store proper",
                 )
             )
 
@@ -1569,6 +1648,18 @@ def run_validate(memory_dir: Path) -> list[dict]:
                         f"{rec.rtype} has no evidence and confidence is not 'low'",
                     )
                 )
+
+        # 16.9c — a jot names where it came from. A hook-written candidate and a
+        # note somebody typed are read very differently by whoever triages the
+        # inbox, and without this the two are indistinguishable on disk.
+        if rec.rtype == "jot":
+            src = rec.meta.get("source")
+            if not (isinstance(src, str) and src.strip()):
+                findings.append(
+                    _finding("jot", "fail", rel, "jot has no source (who or what wrote it)")
+                )
+            else:
+                findings.append(_finding("jot", "pass", rel, f"source {src}"))
 
         # 16.9b — verifications carry a subject and a valid outcome.
         if rec.rtype == "verification":
@@ -1819,6 +1910,13 @@ BODY_SECTIONS = {
         "Evidence",
         "Notes",
     ],
+    # A jot is one observation with a TTL — the short-term tier. One section,
+    # because the moment it needs a second one it has become a record and should
+    # be promoted into one (`crumb inbox promote`). Exempt from the §16.9
+    # evidence rule for the same reason an idea is: it makes no claim.
+    "jot": [
+        "Note",
+    ],
 }
 
 # Where content lands when its `--set` heading matches nothing in the record
@@ -1975,6 +2073,10 @@ FRONTMATTER_ORDER = [
     "updated_at",
     "created_by",
     "agent",
+    # How a record came to exist, on jots only: `agent`/`human` when somebody
+    # wrote it, `prompt`/`transcript`/`hook` when something automatic did. It is
+    # what lets a reader tell a machine-mined candidate from an authored note.
+    "source",
     "project",
     "scope",
     "branch",
@@ -1983,6 +2085,9 @@ FRONTMATTER_ORDER = [
     # Harness session id, on machine snapshots only — the key that lets one
     # session's repeated Stop firings coalesce into one record (F-6).
     "host_session",
+    # Content identity for an automatically written jot: a hook that mines the
+    # same transcript twice must not write the same candidate twice.
+    "fingerprint",
     "confidence",
     "privacy",
     "review_status",
@@ -2185,7 +2290,10 @@ def truncate_slug(slug: str, limit: int = SLUG_MAX_CHARS) -> str:
 # files, not just renaming one, and a store like this repo's routinely has five
 # concurrent sessions. Four hex characters of entropy cannot collide across
 # actors who cannot see each other, which the ordinal never could.
-UNIQUE_SUFFIX_TYPES = ("session",)
+# Jots are here for the same reason sessions are, only more so: hooks write them
+# automatically, several can land in one second, and two checkouts of one store
+# cannot see each other's.
+UNIQUE_SUFFIX_TYPES = ("session", "jot")
 UNIQUE_SUFFIX_BYTES = 2  # -> 4 hex characters
 
 
@@ -2242,6 +2350,7 @@ def write_record(
     agent: str | None = None,
     extra: dict | None = None,
     include_memory: bool = False,
+    subdir: str | None = None,
 ) -> tuple[Path, dict]:
     """Assemble + write a durable record; return (path, frontmatter dict).
 
@@ -2259,7 +2368,11 @@ def write_record(
     derived = derive_fields(project_root, agent=agent, include_memory=include_memory)
     defaults = default_fields()
     date = derived["created_at"][:10]
-    directory = Path(memory_dir) / TYPE_DIR[rtype]
+    # `subdir` overrides the type's home directory. Exactly one type has two
+    # homes — a jot is committed under `inbox/` or machine-local under
+    # `private/inbox/` — and which one it lands in is the caller's privacy
+    # decision, not a property of the type.
+    directory = Path(memory_dir) / (subdir or TYPE_DIR[rtype])
     directory.mkdir(parents=True, exist_ok=True)
     path, slug = _unique_record_path(
         directory,
@@ -3079,6 +3192,21 @@ def record_schema() -> dict:
 
 def _record_template(rtype: str) -> str:
     """A copy-pasteable command skeleton for a record type."""
+    if rtype == "jot":
+        # Jots are written with `crumb jot`; `remember` takes decisions and
+        # attempts only, and a template naming a command that does not exist is
+        # worse than no template.
+        return "\n".join(
+            [
+                "crumb jot 'ONE OBSERVATION, NO CEREMONY' \\",
+                "  --file path/to/file.py   # what it is about, so it can be found again \\",
+                "  --tags area,topic \\",
+                "  --local                  # machine-local: never committed",
+                "",
+                "# It expires on its own. If it turns out to be durable:",
+                "#   crumb inbox promote <jot id> decision|attempt|verification|trap|question|idea",
+            ]
+        )
     if rtype == "verification":
         # Verifications are written with `crumb verify`, not `crumb remember`.
         return "\n".join(
@@ -4378,6 +4506,23 @@ def cmd_prune(args: argparse.Namespace) -> int:
     if not memory_dir.is_dir():
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
+    if args.what == "jots":
+        from breadcrumbs import inbox as _inbox
+
+        res = _inbox.prune_jots(memory_dir, root, dry_run=args.dry_run)
+        if args.json:
+            _print_json(args, {**res, "items": res["deleted"]})
+            return 0
+        verb = "would delete" if res["dry_run"] else "deleted"
+        print(
+            f"prune jots: {res['jots']} jot(s), {verb} {len(res['deleted'])} "
+            f"expired/retired older than {res['after_days']} day(s)"
+        )
+        for rid in res["deleted"]:
+            print(f"  - {rid}")
+        if res["dry_run"] and res["deleted"]:
+            print("Re-run without --dry-run to delete.")
+        return 0
     res = prune_sessions(memory_dir, root, keep=args.keep, dry_run=args.dry_run)
     if args.json:
         _print_json(args, res)
@@ -4626,6 +4771,10 @@ SECTION_CAPS = {
     "likely_files": 20,
     "verification": 12,
     "verifications": 12,
+    # Lower than the durable sections on purpose: the inbox is a triage queue,
+    # and a packet that spends more context on unsorted notes than on decisions
+    # has inverted what it is for.
+    "inbox": 10,
     # Warnings are capped too: every aged decision/question emits
     # a warning, so a neglected store could blow the token bound through the one
     # section the trimmer never touched.
@@ -4638,6 +4787,9 @@ SECTION_CAPS = {
 # substantive section is empty, so the hard token bound holds.
 TRIM_ORDER = [
     "verification",
+    # Trimmed early: an unpromoted jot is the least load-bearing thing in the
+    # packet by construction — it is a candidate nobody has confirmed.
+    "inbox",
     "likely_files",
     "open_questions",
     "verifications",
@@ -5516,6 +5668,60 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     return h.hexdigest()[:12]
 
 
+# How much of a jot's text the packet spends. A jot is capped at
+# JOT_MAX_CHARS; the packet shows the opening of it and the id to fetch the
+# rest, because ten full jots would outweigh every decision in the section above.
+PACKET_JOT_CHARS = 120
+
+
+def _packet_record_ids(packet: dict) -> list[str]:
+    """Every record id the rendered packet actually names.
+
+    Read from the packet *after* capping and budget trimming, so a record that
+    was computed and then dropped is not counted as surfaced — it was not.
+    """
+    ids: list[str] = []
+    for key in ("active_decisions", "failed_attempts", "verifications", "inbox"):
+        ids += [
+            item["id"] for item in packet.get(key, []) if isinstance(item, dict) and item.get("id")
+        ]
+    # Traps render as their heading (`trap_<slug>: summary`), which is how the
+    # id is spelled in that file; take the id half.
+    ids += [str(t).split(":", 1)[0].strip() for t in packet.get("known_traps", [])]
+    return [i for i in ids if i]
+
+
+def _record_packet_surfacings(memory_dir: Path, packet: dict, source: str = "resume") -> None:
+    """Best-effort usage counts for a packet that was just shown to somebody."""
+    from breadcrumbs import usage as _usage
+
+    _usage.record_surfaced(memory_dir, _packet_record_ids(packet), source)
+
+
+def _packet_inbox(memory_dir: Path) -> list[dict]:
+    """Live committed jots for the packet's Inbox section.
+
+    Imported here rather than at module scope: `breadcrumbs.inbox` imports this
+    module, so a top-level import would be a cycle.
+    """
+    from breadcrumbs import inbox as _inbox
+
+    out = []
+    for row in _inbox.packet_jots(memory_dir):
+        text = row["text"]
+        if len(text) > PACKET_JOT_CHARS:
+            text = text[: PACKET_JOT_CHARS - 1].rstrip() + "…"
+        out.append(
+            {
+                "id": row["id"],
+                "text": text,
+                "source": row["source"],
+                "age_days": row["age_days"],
+            }
+        )
+    return out
+
+
 def build_resume_packet(
     memory_dir: Path,
     root: Path,
@@ -5628,6 +5834,11 @@ def build_resume_packet(
         ],
         "known_traps": [t["heading"] for t in traps],
         "open_questions": [q["question"] for q in questions if q["status"] == "open"],
+        # Committed jots only. A machine-local jot in this list would make the
+        # committed packet differ between two checkouts of one store while
+        # `_inputs_hash` — which cannot read gitignored input without the same
+        # problem — still called both fresh. See `breadcrumbs/inbox.py`.
+        "inbox": _packet_inbox(memory_dir),
         "likely_files": [],
         "verification": [],
         "verifications": [
@@ -5749,6 +5960,7 @@ _FAST_DROP = (
     "likely_files",
     "verification",
     "verifications",
+    "inbox",
 )
 
 
@@ -5892,6 +6104,21 @@ def render_packet_markdown(packet: dict) -> str:
         out += _omitted_note(packet, "open_questions")
         out.append("")
 
+        # Only when there is something in it. An empty Inbox heading in every
+        # packet is a line of context spent saying nothing, and most stores will
+        # never use the tier at all.
+        if packet.get("inbox"):
+            out += ["## Inbox (unsorted, expires)"]
+            out.append(
+                "_(candidates, not findings — promote with `crumb inbox promote <id> "
+                "<type>` or drop with `crumb inbox drop <id>`)_"
+            )
+            for j in packet["inbox"]:
+                age = f"{j['age_days']}d" if j["age_days"] is not None else "new"
+                out.append(f"- `{j['id']}` ({age}, {j['source']}) {j['text']}")
+            out += _omitted_note(packet, "inbox")
+            out.append("")
+
         out += ["## Likely Relevant Files"]
         if packet["likely_files"]:
             out += [f"- {f}" for f in packet["likely_files"]]
@@ -5950,6 +6177,11 @@ def cmd_resume(args: argparse.Namespace) -> int:
     packet = build_resume_packet(memory_dir, root, stale_days=stale_days, fast=args.fast, task=task)
     md = render_packet_markdown(packet)
     packet["approx_tokens"] = approx_tokens(md)
+    # Telemetry goes here, not inside `build_resume_packet`: every write
+    # reindexes, and every reindex builds a packet, so counting there would
+    # measure how often the store was *written* rather than how often a record
+    # was shown to anybody. This is a place a packet is genuinely shown.
+    _record_packet_surfacings(memory_dir, packet)
 
     # The full packet is the committed cloud-fallback artifact; --fast is a
     # print-only quick view and must not overwrite that artifact with a reduced one.
@@ -6760,7 +6992,12 @@ def _item_from_question(q: dict) -> dict:
 # The corpus every ranked lookup draws from. Two corpora, not one — see
 # `_candidate_items`.
 JUDGING_ITEM_TYPES = ("decision", "attempt", "verification")
-SPECULATIVE_ITEM_TYPES = ("idea",)
+# Types a lookup should find but a verdict must never rest on. An idea is a
+# proposal; a jot is an unconfirmed observation with a TTL. Neither has been
+# through the evidence rule, and `_decide_verdict`'s score band is kind-agnostic,
+# so either would otherwise gate a real edit on the strength of nobody having
+# done the work yet.
+SPECULATIVE_ITEM_TYPES = ("idea", "jot")
 
 
 def _candidate_items(memory_dir: Path, *, include_ideas: bool = False) -> list[dict]:
@@ -6782,6 +7019,10 @@ def _candidate_items(memory_dir: Path, *, include_ideas: bool = False) -> list[d
     - **Judging** (`guard`, the `PreToolUse` hook path, `resume --task`'s likely-file
       scoping) leaves it False. These turn matches into advice or into a packet, and
       speculation is not evidence.
+
+    Jots ride the same switch as ideas, for the same reason: an unconfirmed
+    one-line note that happens to name the file being edited must not raise a
+    verdict. It is findable, and that is all it is.
 
     Sessions stay out of both: they are narrative, and under
     `session_tracking: distillate` a clone may not have them at all, so including
@@ -7482,6 +7723,20 @@ def cmd_search(args: argparse.Namespace) -> int:
     return 0
 
 
+def _record_guard_surfacings(
+    memory_dir: Path, matches: list[dict], source: str, session_id: str | None = None
+) -> None:
+    """Best-effort usage counts for guard matches that were actually shown."""
+    from breadcrumbs import usage as _usage
+
+    _usage.record_surfaced(
+        memory_dir,
+        [m.get("id") for m in matches if isinstance(m, dict)],
+        source,
+        session_id=session_id,
+    )
+
+
 def cmd_guard(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
@@ -7498,6 +7753,10 @@ def cmd_guard(args: argparse.Namespace) -> int:
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
     result = guard(memory_dir, root, action, files=args.files, stale_days=stale_days)
+    # Counted at the call sites rather than inside `guard()`: the hook path runs
+    # the same function but shows a filtered subset, and counting in both places
+    # would double-count every hook advisory.
+    _record_guard_surfacings(memory_dir, result.get("matches", []), "guard")
 
     if args.json:
         _print_json(args, result)
@@ -7531,6 +7790,12 @@ def cmd_guard(args: argparse.Namespace) -> int:
 AUDIT_FAIL = "fail"  # blocks (non-zero) — secrets only
 AUDIT_WARN = "warn"  # flag for human review — never changes the exit code
 AUDIT_INFO = "info"  # health/context note
+
+# A record has to be old enough that never having been reached is a fact about
+# the record rather than about the week. Bounded, because a neglected store
+# would otherwise report every record it has.
+AUDIT_NEVER_SURFACED_DAYS = 90
+AUDIT_NEVER_SURFACED_MAX = 10
 
 # Directories under .project-memory/ the secret scan skips: private/ is gitignored
 # local context, index/ is a disposable accelerator, generated/ holds derived
@@ -8146,6 +8411,29 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         if vf["status"] == "fail" and vf["check"] in _AUDIT_HEALTH_CHECKS:
             findings.append(_audit_finding(vf["check"], AUDIT_WARN, vf["path"], vf["message"]))
 
+    # B (cont). Records nothing has ever reached. `audit`'s [unreachable] check
+    # asks whether a record *could* be found; this asks whether it ever *was* —
+    # the one question only observation can answer. Gated on there being any
+    # history at all, because on a fresh clone the answer is "all of them" and
+    # that is a fact about the clone, not about the records.
+    from breadcrumbs import usage as _usage
+
+    if _usage.has_usage_data(memory_dir):
+        never = _usage.never_surfaced(memory_dir)
+        for row in never[:AUDIT_NEVER_SURFACED_MAX]:
+            if (row["age_days"] or 0) < AUDIT_NEVER_SURFACED_DAYS:
+                continue
+            findings.append(
+                _audit_finding(
+                    "never-surfaced",
+                    AUDIT_INFO,
+                    None,
+                    f"{row['id']} is {row['age_days']} days old and has never been "
+                    "surfaced by a packet or a guard verdict — consider retiring it "
+                    "(`crumb mark-status`) or making it reachable (--tags / --evidence file)",
+                )
+            )
+
     # C. Instruction-like text (flag only; never a gate — §16 note, Fixture 7).
     for il in scan_instruction_like(memory_dir):
         findings.append(
@@ -8620,6 +8908,10 @@ def adapter_block() -> str:
                 "  `PAUSE` / `ASK_HUMAN` verdict.",
                 "- **After a durable decision or a failed approach:**",
                 "  `crumb remember decision|attempt …`.",
+                '- **A quick observation mid-task, no ceremony:** `crumb jot "<text>"`',
+                "  (add `--file <path>` so it can be found again). Triage later with",
+                "  `crumb inbox`, then `crumb inbox promote <id> <type>` or",
+                "  `crumb inbox drop <id>` — an unpromoted jot expires on its own.",
                 "- **After checking whether something is still true / fixed:**",
                 '  `crumb verify "<subject>" --status fixed|open|regressed|… --evidence …`.',
                 "- **Leaving a note for the next agent:** `crumb note question|trap|idea …`",
@@ -8668,6 +8960,222 @@ def remove_adapter_block(root: Path, name: str) -> bool:
     had = ADAPTER_BEGIN in path.read_text(encoding="utf-8")
     rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, None)
     return had
+
+
+# --------------------------------------------------------------------------- #
+# migrate — bring a store up to this build's SCHEMA_VERSION
+# --------------------------------------------------------------------------- #
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import migrate as _migrate
+
+    result = _migrate.migrate(memory_dir, root, dry_run=args.dry_run)
+    if args.json:
+        _print_json(args, {**result, "items": result.get("steps", [])}, ok=result["ok"])
+        return 0 if result["ok"] else 1
+    if not result["ok"]:
+        _emit_error(args, result["error"] or "migration failed")
+        if result.get("backup"):
+            print(f"  the store was backed up first: {result['backup']}", file=sys.stderr)
+        return 1
+    if not result["steps"]:
+        print(f"migrate: nothing to do — store is schema_version {result['to']}.")
+        return 0
+    verb = "would apply" if args.dry_run else "applied"
+    print(f"migrate: {verb} {len(result['steps'])} step(s), {result['from']} -> {result['target']}")
+    for step in result["steps"]:
+        print(f"  schema_version {step['version']}: {step['summary']}")
+        for line in step["changed"]:
+            print(f"      {line}")
+    if args.dry_run:
+        print("\nRe-run without --dry-run to apply.")
+    else:
+        print(f"\nBackup of the pre-migration store: {result['backup']}")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# usage — which records actually get surfaced
+# --------------------------------------------------------------------------- #
+
+
+def cmd_usage(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import usage as _usage
+
+    if args.never:
+        rows = _usage.never_surfaced(memory_dir)
+        if args.json:
+            _print_json(args, {"never_surfaced": rows, "items": rows})
+            return 0
+        if not rows:
+            print("usage: every active record has been surfaced at least once.")
+            return 0
+        print(f"usage: {len(rows)} active record(s) never surfaced, oldest first\n")
+        for r in rows[: args.top]:
+            age = f"{r['age_days']}d" if r["age_days"] is not None else "age unknown"
+            print(f"  [{r['type']}] {r['id']} — {age}")
+            if r["title"]:
+                print(f"      {r['title']}")
+        print(
+            "\nCounts are local to this machine "
+            f"({MEMORY_DIRNAME}/private/usage.json, never committed)."
+        )
+        return 0
+
+    rows = _usage.usage_rows(memory_dir)
+    if args.json:
+        _print_json(args, {"usage": rows, "items": rows}, summary={"records": len(rows)})
+        return 0
+    if not rows:
+        print(
+            "usage: no history yet. Counts accrue when a record is shown — "
+            "a resume packet, a guard verdict, a hook advisory."
+        )
+        return 0
+    print(f"usage: {len(rows)} record(s) with surfacing history, most-surfaced first\n")
+    for r in rows[: args.top]:
+        by = ", ".join(f"{k} {v}" for k, v in sorted(r["by"].items()))
+        print(f"  {r['surfaced']:>4}x  {r['id']}  ({by}; {r['sessions']} session(s))")
+    print(
+        "\nCounts are local to this machine "
+        f"({MEMORY_DIRNAME}/private/usage.json, never committed)."
+    )
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# jot / inbox — the short-term tier
+# --------------------------------------------------------------------------- #
+
+
+def cmd_jot(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import inbox as _inbox
+
+    result = _inbox.write_jot(
+        memory_dir,
+        root,
+        args.text or "",
+        tags=_split_tags(args.tags),
+        files=args.file or [],
+        local=args.local,
+        source="human" if args.agent == "human" else "agent",
+        agent=args.agent,
+    )
+    if not result.get("ok"):
+        _emit_error(args, result.get("error", "jot failed"))
+        return 1
+    if args.json:
+        _print_json(args, result)
+    else:
+        where = "private/inbox" if result["local"] else "inbox"
+        print(f"Jotted: {result['id']} ({where}, expires {result['expires_at'][:10]})")
+        print(f"  file: {result['path']}")
+        if result.get("hint"):
+            print(f"  note: {result['hint']}")
+    return 0
+
+
+def cmd_inbox(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import inbox as _inbox
+
+    what = getattr(args, "inbox_what", None)
+
+    if what == "promote":
+        result = _inbox.promote_jot(
+            memory_dir,
+            root,
+            args.jot_id,
+            args.target,
+            title=args.title,
+            sections=_collect_set_sections(args.target, args.set)[0]
+            if args.target in BODY_SECTIONS
+            else None,
+            evidence=_parse_evidence_pairs(args.evidence),
+            tags=_split_tags(args.tags),
+            confidence=args.confidence,
+            status=args.status,
+            method=args.method,
+            fields={"why": args.why, "area": args.area, "safe": args.safe},
+            agent=args.agent,
+        )
+        if not result.get("ok"):
+            _emit_error(args, result.get("error", "promote failed"))
+            return 1
+        if args.json:
+            _print_json(args, result)
+        else:
+            print(f"Promoted {result['jot']} -> {result['promoted_to']} ({result['type']})")
+            if result.get("path"):
+                print(f"  file: {result['path']}")
+            if result.get("warning"):
+                print(f"  warning: {result['warning']}")
+        return 0
+
+    if what == "drop":
+        result = _inbox.drop_jot(
+            memory_dir, root, args.jot_id, reason=args.reason, agent=args.agent
+        )
+        if not result.get("ok"):
+            _emit_error(args, result.get("error", "drop failed"))
+            return 1
+        if args.json:
+            _print_json(args, result)
+        else:
+            print(f"Dropped {args.jot_id} (kept as history; `crumb prune jots` deletes).")
+        return 0
+
+    rows = _inbox.jot_rows(
+        memory_dir,
+        include_expired=bool(args.expired or args.all),
+        include_retired=bool(args.all),
+    )
+    if args.expired and not args.all:
+        rows = [r for r in rows if r["expired"]]
+    if args.json:
+        _print_json(args, {"jots": rows, "items": rows}, summary={"count": len(rows)})
+        return 0
+    if not rows:
+        print('inbox: empty. Leave a note with `crumb jot "<text>"`.')
+        return 0
+    print(f"inbox: {len(rows)} jot(s)\n")
+    for r in rows:
+        age = f"{r['age_days']}d" if r["age_days"] is not None else "new"
+        marks = []
+        if r["local"]:
+            marks.append("local")
+        if r["expired"]:
+            marks.append("expired")
+        if r["status"] != "active":
+            marks.append(r["status"])
+        flag = f" [{', '.join(marks)}]" if marks else ""
+        print(f"  {r['id']} ({age}, {r['source']}){flag}")
+        print(f"      {r['text']}")
+    print(
+        "\nPromote: `crumb inbox promote <id> decision|attempt|verification|trap|question|idea`. "
+        "Drop: `crumb inbox drop <id>`."
+    )
+    return 0
 
 
 # ---- Claude Code hooks ----------------------------------------------------- #
@@ -9549,6 +10057,9 @@ def _hook_session(memory_dir: Path, root: Path) -> int:
                     "additionalContext": render_packet_markdown(packet),
                 }
             }
+            # The packet is about to be injected into a session: this is the
+            # single most load-bearing surfacing the tool performs.
+            _record_packet_surfacings(memory_dir, packet)
         except Exception:  # pragma: no cover - never fail a session start on memory
             out = {}
     print(json.dumps(out))
@@ -9594,6 +10105,12 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     # deliberate behaviour of this tool, not something to silence from here.
     shown = _hook_surfacing_matches(result) or result.get("matches", [])
     reason = _hook_guard_reason(result, shown)
+    # Only what the agent is shown, and keyed by host session so WM-42 can ask
+    # "how many *sessions* did this record reach" rather than "how many times
+    # did one session fire the hook".
+    _record_guard_surfacings(
+        memory_dir, shown, "hook-guard", session_id=str(payload.get("session_id") or "") or None
+    )
     if verdict == "READ_FIRST":
         # Dedupe within the host session: the same records surfacing for the
         # same file is information exactly once (P0-2b/P0-3). Keyed on the
@@ -10337,8 +10854,8 @@ def _add_prune(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     p_prune.add_argument(
         "what",
-        choices=("sessions",),
-        help="what to prune (only `sessions` exists today)",
+        choices=("sessions", "jots"),
+        help="what to prune: machine session snapshots, or expired/retired jots",
     )
     p_prune.add_argument(
         "--keep",
@@ -10448,9 +10965,9 @@ def _add_search(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     p_search.add_argument(
         "--type",
-        choices=("decision", "attempt", "verification", "idea", "trap", "question"),
-        help="narrow the corpus to one record type ('idea' is searchable but never "
-        "reaches a guard verdict)",
+        choices=("decision", "attempt", "verification", "idea", "trap", "question", "jot"),
+        help="narrow the corpus to one record type ('idea' and 'jot' are searchable "
+        "but never reach a guard verdict)",
     )
     p_search.add_argument(
         "--status",
@@ -10558,6 +11075,125 @@ def _add_mcp(sub, global_parser: argparse.ArgumentParser) -> None:
 
 
 # doctor — integration health
+# migrate — bring a store's on-disk format up to this build
+def _add_migrate(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "migrate",
+        parents=[global_parser],
+        help=f"upgrade the store's on-disk format to schema_version {SCHEMA_VERSION}",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="list the steps that would run; change nothing",
+    )
+    p.set_defaults(func=cmd_migrate)
+
+
+# usage — local surfacing counts
+def _add_usage(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "usage",
+        parents=[global_parser],
+        help="which records actually get surfaced (local counts, never committed)",
+    )
+    p.add_argument(
+        "--never",
+        action="store_true",
+        help="instead list active records that have never been surfaced, oldest first",
+    )
+    p.add_argument("--top", type=int, default=25, metavar="N", help="rows to print (default: 25)")
+    p.set_defaults(func=cmd_usage)
+
+
+# jot — one observation, no ceremony
+def _add_jot(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "jot",
+        parents=[global_parser],
+        help="leave a short-term note with a TTL (promote it later, or let it expire)",
+    )
+    p.add_argument("text", help="the observation, in a line or two")
+    p.add_argument("--tags", help="comma-separated tags")
+    p.add_argument(
+        "--file",
+        action="append",
+        metavar="PATH",
+        help="a file this is about (repeatable); recorded as file evidence so "
+        "`search --file` and the guard's file signal can reach it",
+    )
+    p.add_argument(
+        "--local",
+        action="store_true",
+        help=f"write to {MEMORY_DIRNAME}/private/inbox/ instead — never committed",
+    )
+    p.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
+    p.set_defaults(func=cmd_jot)
+
+
+# inbox — list / promote / drop
+def _add_inbox(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "inbox",
+        parents=[global_parser],
+        help="list short-term jots; promote the durable ones, drop the noise",
+    )
+    p.add_argument("--all", action="store_true", help="include expired and retired jots")
+    p.add_argument("--expired", action="store_true", help="only jots past their TTL")
+    p.set_defaults(func=cmd_inbox, inbox_what=None)
+    inbox_sub = p.add_subparsers(dest="inbox_what", metavar="<what>")
+
+    pp = inbox_sub.add_parser(
+        "promote",
+        parents=[global_parser],
+        help="turn a jot into a durable record (same validate gate as writing one by hand)",
+    )
+    pp.add_argument("jot_id", metavar="ID", help="the jot id, e.g. jot_20260922_flaky-test-a3f2")
+    pp.add_argument("target", choices=INBOX_PROMOTE_TARGETS, help="the record type to create")
+    pp.add_argument("--title", help="override the record title (default: the jot's text)")
+    pp.add_argument(
+        "--set",
+        nargs=2,
+        action="append",
+        metavar=("HEADING", "TEXT"),
+        help="body section on the new record (repeatable)",
+    )
+    pp.add_argument(
+        "--evidence",
+        nargs=2,
+        action="append",
+        metavar=("TYPE", "REF"),
+        help="evidence on the new record (repeatable); the jot's own file evidence carries over",
+    )
+    pp.add_argument("--tags", help="comma-separated tags to add")
+    pp.add_argument("--confidence", choices=("low", "medium", "high"), default=None)
+    pp.add_argument(
+        "--status",
+        default=None,
+        choices=VALID_VERIFICATION_OUTCOME,
+        help="verification outcome (only with `promote <id> verification`)",
+    )
+    pp.add_argument(
+        "--method",
+        default=None,
+        choices=VALID_VERIFICATION_METHOD,
+        help="verification method (only with `promote <id> verification`)",
+    )
+    pp.add_argument("--why", default=None, help="trap/question: the mechanism, or why it matters")
+    pp.add_argument("--area", default=None, help="trap: where this bites (files / area)")
+    pp.add_argument("--safe", default=None, help="trap: the safe approach to use instead")
+    pp.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
+    pp.set_defaults(func=cmd_inbox, all=False, expired=False)
+
+    pd = inbox_sub.add_parser(
+        "drop", parents=[global_parser], help="retire a jot as noise (kept as history)"
+    )
+    pd.add_argument("jot_id", metavar="ID", help="the jot id")
+    pd.add_argument("--reason", default=None, help="why it is noise")
+    pd.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
+    pd.set_defaults(func=cmd_inbox, all=False, expired=False)
+
+
 def _add_doctor(sub, global_parser: argparse.ArgumentParser) -> None:
     p_doctor = sub.add_parser(
         "doctor",
@@ -10599,11 +11235,15 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "remember": _add_remember,
     "schema": _add_schema,
     "note": _add_note,
+    "jot": _add_jot,
+    "inbox": _add_inbox,
     "verify": _add_verify,
     "mark-status": _add_mark_status,
     "retitle": _add_retitle,
     "traps": _add_traps,
     "prune": _add_prune,
+    "migrate": _add_migrate,
+    "usage": _add_usage,
     "reindex": _add_reindex,
     "capture": _add_capture,
     "resume": _add_resume,
