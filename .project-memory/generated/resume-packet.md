@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: ce0d42f | inputs_hash: d8511d1ac907 | generated_at: 2026-09-22T19:27:04+00:00 -->
+<!-- source_commit: 94ee273 | inputs_hash: d8511d1ac907 | generated_at: 2026-09-22T19:54:51+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `ce0d42f` · 7 uncommitted file(s)
+branch `claude/agentic-memory-system-mybkpi` · commit `94ee273` · 5 uncommitted file(s)
 
 ## Current Focus
 Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
@@ -15,6 +15,8 @@ Decide whether to migrate this repo's own .project-memory to schema 3 (guard sai
 
 ## Landed Since The Handoff Was Written
 _(check Current Focus / Next Action against these before redoing work)_
+- 94ee273 Phase 3, part 1: time-to-live, evidence staleness, near-duplicate gate
+- 5d14f13 Migrate the repo's own memory store to schema 3
 - ce0d42f Finish Phase 2 docs and fix inconsistencies found while writing them
 
 ## Active Decisions
@@ -104,7 +106,7 @@ _(… 4 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 3 commit(s) behind current HEAD.
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 35 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 35 days old with no update — is this still true?
 - active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 35 days old with no update — is this still true?

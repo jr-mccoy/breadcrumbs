@@ -653,7 +653,23 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
                 ref=ref,
             )
         )
-    for pair in near_duplicate_pairs(memory_dir)[:AUDIT_DUP_PAIRS_MAX]:
+    conflicts = find_contradictions(memory_dir)
+    for c in conflicts[:AUDIT_CONFLICTS_MAX]:
+        findings.append(
+            cli._audit_finding(
+                "possible-contradiction",
+                cli.AUDIT_WARN,
+                None,
+                c["message"],
+                ids=c["ids"],
+                rule=c["rule"],
+            )
+        )
+    # A pair already raised as a possible contradiction is not raised again
+    # as a near-duplicate: one finding per pair, the more specific one.
+    raised = {tuple(sorted(c["ids"])) for c in conflicts}
+    pairs = [p for p in near_duplicate_pairs(memory_dir) if (p["a"], p["b"]) not in raised]
+    for pair in pairs[:AUDIT_DUP_PAIRS_MAX]:
         findings.append(
             cli._audit_finding(
                 "near-duplicates",
@@ -667,3 +683,396 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
             )
         )
     return findings
+
+
+# --------------------------------------------------------------------------- #
+# WM-33: consolidation
+# --------------------------------------------------------------------------- #
+
+# Types `consolidate --merge` writes. Sessions are narratives of work and are
+# never merged; traps, questions and jots have their own writers and their own
+# retirement (`mark-status`, `inbox promote`), and a merged trap would need the
+# block writer's shape at schema 2.
+MERGEABLE_TYPES = ("decision", "attempt", "verification", "idea")
+_CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
+
+
+def duplicate_clusters(memory_dir: Path, rtype: str | None = None) -> list[dict]:
+    """Connected components of the near-duplicate pair graph, biggest first.
+
+    `[{kind, ids, titles{id: title}, pairs[{a, b, similarity}]}]`.
+    """
+    pairs = [p for p in near_duplicate_pairs(memory_dir) if rtype in (None, p["kind"])]
+    parent: dict[str, str] = {}
+
+    def find(x: str) -> str:
+        while parent.setdefault(x, x) != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for p in pairs:
+        parent[find(p["a"])] = find(p["b"])
+    groups: dict[str, list[str]] = {}
+    for x in parent:
+        groups.setdefault(find(x), []).append(x)
+    titles: dict[str, str] = {}
+    for kind in {p["kind"] for p in pairs}:
+        for cand in live_candidates(memory_dir, kind):
+            titles[cand["id"]] = cand["title"]
+    clusters = []
+    for members in groups.values():
+        ids = sorted(members)
+        kind = next(p["kind"] for p in pairs if p["a"] in ids)
+        clusters.append(
+            {
+                "kind": kind,
+                "ids": ids,
+                "titles": {i: titles.get(i, "") for i in ids},
+                "pairs": [p for p in pairs if p["a"] in ids],
+            }
+        )
+    clusters.sort(key=lambda c: (-len(c["ids"]), c["ids"]))
+    return clusters
+
+
+def merge_records(
+    memory_dir: Path,
+    root: Path,
+    ids: list[str],
+    *,
+    title: str,
+    sections: dict[str, str] | None = None,
+    agent: str | None = None,
+) -> dict:
+    """Write one record that replaces `ids`, then supersede every source.
+
+    Each section is the sources' non-empty text for that heading, oldest first,
+    each paragraph prefixed `_(from <id>)_`; `sections` overrides a heading
+    outright. Evidence and tags are the unions, confidence the lowest, and
+    `supersedes` lists every source. Nothing is merged automatically: this runs
+    only when someone names the ids, and it prints a reminder that the merged
+    body is a starting point to edit.
+    """
+    memory_dir = Path(memory_dir)
+    ids = list(dict.fromkeys(i.strip() for i in ids if i and i.strip()))
+    if len(ids) < 2:
+        return {"ok": False, "code": 2, "error": "--merge needs at least two ids"}
+    if not (title or "").strip():
+        return {"ok": False, "code": 2, "error": "--merge needs --title for the merged record"}
+    recs = []
+    for rid in ids:
+        rec = cli.find_record_by_id(memory_dir, rid)
+        if rec is None or rec.error:
+            return {"ok": False, "code": 2, "error": f"{rid}: no record with that id"}
+        recs.append(rec)
+    kinds = {r.rtype for r in recs}
+    if len(kinds) > 1:
+        return {
+            "ok": False,
+            "code": 2,
+            "error": f"cannot merge different types ({', '.join(sorted(kinds))})",
+        }
+    rtype = recs[0].rtype
+    if rtype not in MERGEABLE_TYPES:
+        return {
+            "ok": False,
+            "code": 2,
+            "error": f"consolidate merges {', '.join(MERGEABLE_TYPES)}; not {rtype}s",
+        }
+    retired = [r.meta.get("id") for r in recs if (r.meta.get("status") or "active") != "active"]
+    if retired:
+        return {"ok": False, "code": 2, "error": f"already retired: {', '.join(retired)}"}
+
+    recs.sort(key=lambda r: (cli._dt_sort_key(r.meta.get("created_at")), r.stem))
+    merged: dict[str, str] = {}
+    for heading in cli.BODY_SECTIONS[rtype]:
+        parts = []
+        for rec in recs:
+            text = cli._strip_html_comments(rec.sections.get(heading, "")).strip()
+            if text and not cli._is_placeholder(text):
+                parts.append(f"_(from {rec.meta.get('id')})_ {text}")
+        if parts:
+            merged[heading] = "\n\n".join(parts)
+    merged.update({k: v for k, v in (sections or {}).items() if v is not None})
+
+    evidence, seen = [], set()
+    for rec in recs:
+        for e in rec.meta.get("evidence") or []:
+            key = (e.get("type"), e.get("ref")) if isinstance(e, dict) else None
+            if key and key not in seen:
+                seen.add(key)
+                evidence.append({"type": key[0], "ref": key[1]})
+    tags = sorted({str(t) for rec in recs for t in (rec.meta.get("tags") or [])})
+    confidence = min(
+        (str(r.meta.get("confidence") or "medium") for r in recs),
+        key=lambda c: _CONFIDENCE_ORDER.get(c, 1),
+    )
+    extra: dict = {"supersedes": [r.meta.get("id") for r in recs]}
+    if rtype == "verification":
+        newest = recs[-1]
+        extra.update(
+            {
+                "subject": title.strip(),
+                "outcome": newest.meta.get("outcome") or "open",
+                "method": newest.meta.get("method"),
+            }
+        )
+    try:
+        path, meta = cli.write_record(
+            memory_dir,
+            root,
+            rtype,
+            title.strip(),
+            merged,
+            tags=tags,
+            evidence=evidence,
+            confidence=confidence,
+            agent=agent,
+            extra=extra,
+        )
+    except ValueError as exc:
+        return {"ok": False, "code": 1, "error": str(exc)}
+    fails = cli._validate_new_file(memory_dir, path)
+    if fails:
+        path.unlink()
+        return {
+            "ok": False,
+            "code": 1,
+            "error": "merged record rejected by validate: "
+            + "; ".join(f["message"] for f in fails),
+        }
+    results = mark_superseded(memory_dir, [r.meta.get("id") for r in recs], meta["id"], agent=agent)
+    cli.reindex_projections(memory_dir, root)
+    return {
+        "ok": True,
+        "id": meta["id"],
+        "type": rtype,
+        "path": str(path),
+        "supersedes": extra["supersedes"],
+        "retired": [r.get("id") for r in results if r.get("ok")],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# WM-34: contradiction detection
+# --------------------------------------------------------------------------- #
+
+CONFLICTS_FILENAME = "conflicts.json"
+PACKET_CONFLICTS_MAX = 3
+AUDIT_CONFLICTS_MAX = 10
+# Rule 1: an attempt said "do not retry unless …", and a later decision does
+# something close to what it tried.
+CONFLICT_RETRY_SIMILARITY = 0.5
+# Rule 2: two live decisions this alike, written this far apart, with neither
+# superseding the other — the later one may have quietly replaced the earlier.
+CONFLICT_DECISION_SIMILARITY = 0.7
+CONFLICT_DECISION_MIN_GAP_DAYS = 7
+
+
+def _section_candidate(rec, heading: str) -> dict:
+    return _candidate(
+        rec.meta.get("id", rec.stem),
+        rec.rtype,
+        "",
+        cli._strip_html_comments(rec.sections.get(heading, "")),
+        cli._evidence_refs(rec, ("file", "path")),
+        (),
+    )
+
+
+def _supersede_linked(a, b) -> bool:
+    aid, bid = a.meta.get("id"), b.meta.get("id")
+    return bid in (a.meta.get("supersedes") or []) or aid in (b.meta.get("supersedes") or [])
+
+
+def find_contradictions(memory_dir: Path) -> list[dict]:
+    """Records that may argue with each other. Two overlap heuristics, worded as questions.
+
+    `[{rule, ids, message, similarity}]`. Deterministic and machine-independent
+    — it reads created dates, never "now" — so the committed `conflicts.json`
+    does not churn between checkouts.
+    """
+    memory_dir = Path(memory_dir)
+    decisions = [
+        r for r in cli.active_records(memory_dir, "decision") if not cli.record_expired(r.meta)
+    ]
+    attempts = [
+        r
+        for r in cli.active_records(memory_dir, "attempt")
+        if not cli.record_expired(r.meta) and cli._attempt_has_do_not_retry(r)
+    ]
+    out: list[dict] = []
+
+    for att in attempts:
+        tried = _section_candidate(att, "Tried")
+        att_at = cli._dt_sort_key(att.meta.get("created_at"))
+        for dec in decisions:
+            if cli._dt_sort_key(dec.meta.get("created_at")) <= att_at:
+                continue
+            chose = _section_candidate(dec, "Decision")
+            shared_file = bool(tried["files"] & chose["files"])
+            union = tried["specific"] | chose["specific"]
+            text_sim = (
+                round(len(tried["specific"] & chose["specific"]) / len(union), 2) if union else 0.0
+            )
+            if text_sim < CONFLICT_RETRY_SIMILARITY and not shared_file:
+                continue
+            did, aid = dec.meta.get("id"), att.meta.get("id")
+            out.append(
+                {
+                    "rule": "retry-after-do-not-retry",
+                    "ids": [did, aid],
+                    "similarity": text_sim,
+                    "message": (
+                        f"decision {did} may do what attempt {aid} says not to retry — "
+                        "confirm the retry condition was met, or mark one stale"
+                    ),
+                }
+            )
+
+    cands = {candidate_from_record(r)["id"]: candidate_from_record(r) for r in decisions}
+    for i, a in enumerate(decisions):
+        for b in decisions[i + 1 :]:
+            if _supersede_linked(a, b):
+                continue
+            gap = abs(
+                cli._dt_sort_key(a.meta.get("created_at"))
+                - cli._dt_sort_key(b.meta.get("created_at"))
+            )
+            if gap <= CONFLICT_DECISION_MIN_GAP_DAYS * 86400:
+                continue
+            sim = similarity(cands[a.meta.get("id")], cands[b.meta.get("id")])
+            if sim < CONFLICT_DECISION_SIMILARITY:
+                continue
+            x, y = sorted((a.meta.get("id"), b.meta.get("id")))
+            out.append(
+                {
+                    "rule": "overlapping-decisions",
+                    "ids": [x, y],
+                    "similarity": sim,
+                    "message": (
+                        f"decisions {x} and {y} overlap heavily — supersede one or "
+                        "consolidate (`crumb consolidate`)"
+                    ),
+                }
+            )
+    out.sort(key=lambda c: (c["rule"], -c["similarity"], c["ids"]))
+    return out
+
+
+def render_conflicts(memory_dir: Path, root: Path) -> str:
+    """`generated/conflicts.json`, stamped like `related.json`."""
+    import json
+
+    doc = {
+        "_generated": "GENERATED PROJECTION — do not edit. Rebuilt by `crumb reindex`.",
+        "inputs_hash": cli._inputs_hash(Path(memory_dir), Path(root)),
+        "conflicts": find_contradictions(memory_dir),
+    }
+    return json.dumps(doc, indent=1, sort_keys=True) + "\n"
+
+
+def conflict_warnings(memory_dir: Path) -> list[str]:
+    found = find_contradictions(memory_dir)
+    lines = [c["message"] + "." for c in found[:PACKET_CONFLICTS_MAX]]
+    if len(found) > PACKET_CONFLICTS_MAX:
+        lines.append(
+            f"(+{len(found) - PACKET_CONFLICTS_MAX} more possible contradiction(s) — `crumb audit`)"
+        )
+    return lines
+
+
+# --------------------------------------------------------------------------- #
+# WM-35: session rollup
+# --------------------------------------------------------------------------- #
+
+
+def rollup_candidates(memory_dir: Path, before: str) -> list:
+    """Machine-snapshot sessions created before `before` (YYYY-MM-DD), oldest first.
+
+    A session a person or agent wrote — one with a real Next Action — is never
+    a candidate: it is the narrative somebody chose to leave, not a snapshot.
+    """
+    cutoff = cli._dt_sort_key(before)
+    recs = [
+        r
+        for r in cli.load_records(Path(memory_dir), types=("session",))
+        if not r.error
+        and cli._is_machine_snapshot(r)
+        and not (r.meta.get("title") or "").startswith("rollup:")
+        and cli._dt_sort_key(r.meta.get("created_at")) < cutoff
+    ]
+    recs.sort(key=lambda r: (cli._dt_sort_key(r.meta.get("created_at")), r.stem))
+    return recs
+
+
+def rollup_sessions(
+    memory_dir: Path,
+    root: Path,
+    before: str,
+    *,
+    dry_run: bool = False,
+    agent: str | None = None,
+) -> dict:
+    """Fold old machine snapshots into one session record, then delete them."""
+    memory_dir = Path(memory_dir)
+    if cli._parse_iso(before) is None:
+        return {"ok": False, "code": 2, "error": f"--before {before!r} is not a YYYY-MM-DD date"}
+    recs = rollup_candidates(memory_dir, before)
+    ids = [r.meta.get("id", r.stem) for r in recs]
+    if len(recs) < 2:
+        return {"ok": True, "rolled_up": 0, "ids": ids, "dry_run": dry_run, "id": None}
+    first = str(recs[0].meta.get("created_at") or "")[:10]
+    last = str(recs[-1].meta.get("created_at") or "")[:10]
+    title = f"rollup: {first}..{last} ({len(recs)} sessions)"
+    if dry_run:
+        return {"ok": True, "rolled_up": len(recs), "ids": ids, "dry_run": True, "title": title}
+    lines = []
+    for rec in recs:
+        date = str(rec.meta.get("created_at") or "")[:10]
+        work = cli._strip_html_comments(rec.sections.get("Work Completed", "")).strip()
+        if work and not cli._is_placeholder(work):
+            flat = " ".join(work.split())
+            lines.append(f"- {date}: {flat}")
+    sections = {
+        "Work Completed": "\n".join(lines) or "_(no work recorded in the rolled-up snapshots)_",
+        "Next Action": "(rolled up)",
+    }
+    # The rollup stands where its sources stood: dated, and pinned to the commit,
+    # of the last snapshot it replaces. Stamped "now" it would become the newest
+    # session record, and the Stop hook diffs from the newest session's commit —
+    # every commit made since the last kept snapshot would silently fall out of
+    # the next capture.
+    newest = recs[-1].meta
+    pinned = {k: newest.get(k) for k in ("created_at", "updated_at", "branch", "commit")}
+    pinned["dirty_files"] = []
+    path, meta = cli.write_record(
+        memory_dir,
+        root,
+        "session",
+        title,
+        sections,
+        agent=agent,
+        extra={"supersedes": ids, **{k: v for k, v in pinned.items() if v is not None}},
+    )
+    fails = cli._validate_new_file(memory_dir, path)
+    if fails:
+        path.unlink()
+        return {
+            "ok": False,
+            "code": 1,
+            "error": "rollup record rejected by validate: "
+            + "; ".join(f["message"] for f in fails),
+        }
+    for rec in recs:
+        rec.path.unlink()
+    cli.reindex_projections(memory_dir, root)
+    return {
+        "ok": True,
+        "rolled_up": len(recs),
+        "ids": ids,
+        "dry_run": False,
+        "id": meta["id"],
+        "path": str(path),
+    }

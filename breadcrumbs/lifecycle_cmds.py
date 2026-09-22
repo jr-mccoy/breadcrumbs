@@ -174,3 +174,151 @@ def run_recheck(args: argparse.Namespace, memory_dir: Path, root: Path) -> int:
             },
         )
     return 1 if failed else 0
+
+
+# --------------------------------------------------------------------------- #
+# crumb consolidate (WM-33)
+# --------------------------------------------------------------------------- #
+
+
+def add_consolidate(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "consolidate",
+        parents=[global_parser],
+        help="list clusters of near-duplicate records, or --merge some into one record",
+    )
+    p.add_argument(
+        "--type",
+        dest="consolidate_type",
+        choices=lifecycle.DEDUP_TYPES,
+        default=None,
+        help="only clusters of this type",
+    )
+    p.add_argument(
+        "--merge",
+        nargs="+",
+        metavar="ID",
+        default=None,
+        help="write one record replacing these (same type); each is marked superseded",
+    )
+    p.add_argument("--title", help="title of the merged record (required with --merge)")
+    p.add_argument(
+        "--set",
+        nargs=2,
+        action="append",
+        metavar=("HEADING", "TEXT"),
+        help="replace one section of the merged body outright (repeatable)",
+    )
+    p.add_argument("--agent", default=None, help="record author label")
+    p.set_defaults(func=cmd_consolidate)
+
+
+def cmd_consolidate(args: argparse.Namespace) -> int:
+    memory_dir = _memory_dir(args)
+    if memory_dir is None:
+        return 2
+    root = memory_dir.parent
+    if args.merge:
+        sections = {}
+        for heading, text in args.set or []:
+            sections[heading] = text
+        res = lifecycle.merge_records(
+            memory_dir,
+            root,
+            args.merge,
+            title=args.title or "",
+            sections=sections,
+            agent=args.agent,
+        )
+        if not res.get("ok"):
+            cli._emit_error(args, res["error"])
+            return res.get("code", 1)
+        if args.json:
+            cli._print_json(args, {k: v for k, v in res.items() if k != "code"})
+            return 0
+        print(f"Merged {len(res['supersedes'])} {res['type']}s into {res['id']}")
+        print(f"  file: {res['path']}")
+        print(f"  superseded: {', '.join(res['supersedes'])}")
+        print(
+            "  note: the merged body is each source's text in date order — edit it into "
+            "one account before relying on it."
+        )
+        return 0
+
+    clusters = lifecycle.duplicate_clusters(memory_dir, args.consolidate_type)
+    if args.json:
+        cli._print_json(
+            args, {"clusters": clusters, "items": clusters}, summary={"count": len(clusters)}
+        )
+        return 0
+    if not clusters:
+        print("consolidate: no near-duplicate clusters.")
+        return 0
+    print(f"consolidate: {len(clusters)} cluster(s) of near-duplicates\n")
+    for c in clusters:
+        print(f"  [{c['kind']}] {len(c['ids'])} records")
+        for rid in c["ids"]:
+            print(f"    {rid} — {c['titles'].get(rid, '')}")
+        for p in c["pairs"]:
+            print(f"      {p['a']} ~ {p['b']}: {p['similarity']:.2f}")
+    print(
+        '\nMerge a cluster: `crumb consolidate --merge <id> <id>… --title "…"`. '
+        "Or keep one and retire the rest: `crumb mark-status <id> superseded "
+        "--superseded-by <id>`."
+    )
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# crumb rollup sessions (WM-35)
+# --------------------------------------------------------------------------- #
+
+
+def add_rollup(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "rollup",
+        parents=[global_parser],
+        help="fold old machine-snapshot sessions into one record",
+    )
+    p.add_argument("what", choices=("sessions",), help="what to roll up (sessions)")
+    p.add_argument(
+        "--before",
+        required=True,
+        metavar="YYYY-MM-DD",
+        help="roll up snapshots created before this date",
+    )
+    p.add_argument("--dry-run", action="store_true", help="list what would be rolled up")
+    p.add_argument("--agent", default=None, help="record author label")
+    p.set_defaults(func=cmd_rollup)
+
+
+def cmd_rollup(args: argparse.Namespace) -> int:
+    memory_dir = _memory_dir(args)
+    if memory_dir is None:
+        return 2
+    res = lifecycle.rollup_sessions(
+        memory_dir, memory_dir.parent, args.before, dry_run=args.dry_run, agent=args.agent
+    )
+    if not res.get("ok"):
+        cli._emit_error(args, res["error"])
+        return res.get("code", 1)
+    if args.json:
+        cli._print_json(args, {**res, "items": res["ids"]})
+        return 0
+    if res["rolled_up"] == 0:
+        n = len(res["ids"])
+        print(
+            f"rollup sessions: {n} machine snapshot(s) before {args.before} — "
+            "nothing to roll up (it takes two)."
+        )
+        return 0
+    if res["dry_run"]:
+        print(f"rollup sessions (dry run): would fold {res['rolled_up']} snapshot(s) into")
+        print(f"  {res['title']}")
+        for rid in res["ids"]:
+            print(f"    {rid}")
+        return 0
+    print(f"rollup sessions: folded {res['rolled_up']} snapshot(s) into {res['id']}")
+    print(f"  file: {res['path']}")
+    print("  Sessions with a real Next Action were left alone.")
+    return 0

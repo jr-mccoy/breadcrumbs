@@ -3681,6 +3681,14 @@ def try_reindex_projections(
         write_text_atomic(
             gen / _related.RELATED_FILENAME, _related.render_related(memory_dir, project_root)
         )
+        # Records that may argue with each other (WM-34). Same stamp, same drift
+        # detection; the packet renders the first few as warnings.
+        from breadcrumbs import lifecycle as _lifecycle
+
+        write_text_atomic(
+            gen / _lifecycle.CONFLICTS_FILENAME,
+            _lifecycle.render_conflicts(memory_dir, project_root),
+        )
         # The disposable search index (WM-23). Built last, so it is stamped with
         # the same inputs as everything above; its own failures are swallowed
         # inside, because a missing index only means the full scan.
@@ -4650,7 +4658,7 @@ def _coalescible_snapshot(
     # always tz-aware; that helper is day-resolution and this needs minutes.
     if stamped.tzinfo is None:
         stamped = stamped.astimezone()
-    delta = (datetime.now().astimezone() - stamped).total_seconds()
+    delta = (_now() - stamped).total_seconds()
     return rec if 0 <= delta <= window_minutes * 60 else None
 
 
@@ -6510,6 +6518,8 @@ def build_resume_packet(
     packet["warnings"] += _lifecycle.missing_evidence_warnings(
         root, listed_decisions + listed_attempts + listed_verifications
     )
+    # WM-34: memory that argues with itself, worded as a question.
+    packet["warnings"] += _lifecycle.conflict_warnings(memory_dir)
 
     # Likely files: handoff section + file-type evidence refs (deduped, order-stable).
     files = _section_lines(handoff_sections, "Likely Relevant Files")
@@ -9219,8 +9229,9 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 "path": "sessions/",
                 "message": (
                     f"{n} session records — promote what still matters with `crumb "
-                    "remember`, then `crumb prune sessions` to drop old machine "
-                    "snapshots so the store stays navigable"
+                    "remember`, then `crumb rollup sessions --before YYYY-MM-DD` to fold "
+                    "old machine snapshots into one record (or `crumb prune sessions` to "
+                    "drop them) so the store stays navigable"
                 ),
             }
         )
@@ -12109,6 +12120,18 @@ def _add_questions(sub, global_parser: argparse.ArgumentParser) -> None:
     lifecycle_cmds.add_questions(sub, global_parser)
 
 
+def _add_consolidate(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import lifecycle_cmds
+
+    lifecycle_cmds.add_consolidate(sub, global_parser)
+
+
+def _add_rollup(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import lifecycle_cmds
+
+    lifecycle_cmds.add_rollup(sub, global_parser)
+
+
 # retitle — repair a record whose title carries no information
 def _add_retitle(sub, global_parser: argparse.ArgumentParser) -> None:
     p_retitle = sub.add_parser(
@@ -12540,7 +12563,9 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "traps": _add_traps,
     "questions": _add_questions,
     "expired": _add_expired,
+    "consolidate": _add_consolidate,
     "prune": _add_prune,
+    "rollup": _add_rollup,
     "migrate": _add_migrate,
     "usage": _add_usage,
     "reindex": _add_reindex,

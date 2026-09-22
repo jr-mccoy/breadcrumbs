@@ -473,5 +473,311 @@ class NearDuplicateTests(unittest.TestCase):
                 self.assertEqual(lifecycle.near_duplicate_pairs(mem), [])
 
 
+# --------------------------------------------------------------------------- #
+# WM-33 consolidation
+# --------------------------------------------------------------------------- #
+
+
+class ConsolidateTests(unittest.TestCase):
+    def _pair(self, tmp: str) -> tuple[Path, str, str]:
+        mem = init_store(tmp)
+        a = remember(tmp, "Ledger rows are append-only", body=DECISION[2])
+        with days_later(1):
+            b = remember(
+                tmp, "Ledger rows are append only in sqlite", body=DECISION[2] + " Always."
+            )
+        return mem, a, b
+
+    def test_clusters_are_listed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _mem, a, b = self._pair(tmp)
+            code, out = run(["consolidate", "--project", tmp, "--json"])
+            self.assertEqual(code, 0)
+            clusters = json.loads(out)["items"]
+            self.assertEqual([c["ids"] for c in clusters], [sorted([a, b])])
+
+    def test_merge_writes_one_record_and_supersedes_the_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, a, b = self._pair(tmp)
+            code, out = run(
+                [
+                    "consolidate",
+                    "--merge",
+                    a,
+                    b,
+                    "--title",
+                    "Ledger rows are append-only in sqlite",
+                    "--project",
+                    tmp,
+                    "--json",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            new_id = json.loads(out)["id"]
+            new = crumb.find_record_by_id(mem, new_id)
+            self.assertEqual(sorted(new.meta["supersedes"]), sorted([a, b]))
+            self.assertIn(f"_(from {a})_", new.body)
+            self.assertIn(f"_(from {b})_", new.body)
+            self.assertLess(new.body.index(a), new.body.index(b), "oldest source first")
+            self.assertEqual(new.meta["evidence"], [{"type": "file", "ref": "src/ledger.py"}])
+            for old in (a, b):
+                rec = crumb.find_record_by_id(mem, old)
+                self.assertEqual(rec.meta["status"], "superseded")
+                self.assertEqual(rec.meta["superseded_by"], new_id)
+            g = crumb.guard(mem, Path(tmp), "rewrite src/ledger.py", files=["src/ledger.py"])
+            live = [m["id"] for m in g["matches"]]
+            self.assertIn(new_id, live)
+            self.assertNotIn(a, live)
+            self.assertNotIn(b, live)
+
+    def test_mixed_types_refuse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, a, _b = self._pair(tmp)
+            vid = crumb.verify(mem, Path(tmp), "ledger rows checked", status="fixed")["id"]
+            code, _out, err = run_err(
+                ["consolidate", "--merge", a, vid, "--title", "x", "--project", tmp]
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("different types", err)
+
+    def test_sessions_are_never_merged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            ids = []
+            for i in range(2):
+                path, meta = _cli.write_record(
+                    mem, Path(tmp), "session", f"session {i}", {"Next Action": "ship"}
+                )
+                ids.append(meta["id"])
+            code, _out, err = run_err(
+                ["consolidate", "--merge", *ids, "--title", "x", "--project", tmp]
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("not sessions", err)
+
+
+# --------------------------------------------------------------------------- #
+# WM-34 contradiction detection
+# --------------------------------------------------------------------------- #
+
+
+def attempt(tmp: str, title: str, tried: str, file: str) -> str:
+    code, out = run(
+        [
+            "remember",
+            "attempt",
+            "--project",
+            tmp,
+            "--title",
+            title,
+            "--problem",
+            "builds hang on CI",
+            "--tried",
+            tried,
+            "--result",
+            "failed",
+            "--why",
+            "it killed the live test daemons",
+            "--do-not-retry",
+            "the daemon owner changes",
+            "--evidence",
+            "file",
+            file,
+            "--allow-duplicate",
+            "--json",
+        ]
+    )
+    assert code == 0, out
+    return json.loads(out)["id"]
+
+
+class ContradictionTests(unittest.TestCase):
+    TRIED = "run gradlew --stop before every build to reset the gradle daemon"
+
+    def test_a_later_decision_redoing_a_do_not_retry_attempt_is_flagged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            aid = attempt(tmp, "Stopping the gradle daemon", self.TRIED, "app/build.gradle.kts")
+            with days_later(3):
+                did = remember(
+                    tmp,
+                    "Reset the gradle daemon before builds",
+                    file="app/build.gradle.kts",
+                    body="Run gradlew --stop before every build to reset the gradle daemon.",
+                )
+                found = lifecycle.find_contradictions(mem)
+                self.assertEqual(
+                    [(c["rule"], c["ids"]) for c in found],
+                    [("retry-after-do-not-retry", [did, aid])],
+                )
+                warnings = crumb.build_resume_packet(mem, Path(tmp))["warnings"]
+                self.assertTrue(
+                    any(f"decision {did} may do what attempt {aid}" in w for w in warnings)
+                )
+                audit = [
+                    f
+                    for f in crumb.run_audit(mem, Path(tmp))
+                    if f["check"] == "possible-contradiction"
+                ]
+                self.assertEqual(len(audit), 1)
+
+    def test_a_retired_attempt_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            aid = attempt(tmp, "Stopping the gradle daemon", self.TRIED, "app/build.gradle.kts")
+            run(["mark-status", aid, "stale", "--project", tmp, "--reason", "owner changed"])
+            with days_later(3):
+                remember(
+                    tmp, "Reset the gradle daemon", file="app/build.gradle.kts", body=self.TRIED
+                )
+                self.assertEqual(lifecycle.find_contradictions(mem), [])
+
+    def test_a_decision_written_before_the_attempt_is_not_flagged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            remember(tmp, "Reset the gradle daemon", file="app/build.gradle.kts", body=self.TRIED)
+            with days_later(3):
+                attempt(tmp, "Stopping the gradle daemon", self.TRIED, "app/build.gradle.kts")
+                self.assertEqual(lifecycle.find_contradictions(mem), [])
+
+    def _overlapping(self, tmp: str, gap_days: int) -> Path:
+        mem = init_store(tmp)
+        remember(tmp, "Ledger rows are append-only", body=DECISION[2])
+        with days_later(gap_days):
+            remember(tmp, "Ledger rows are append only in sqlite", body=DECISION[2])
+        return mem
+
+    def test_overlapping_decisions_far_apart_are_flagged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._overlapping(tmp, 10)
+            rules = [c["rule"] for c in lifecycle.find_contradictions(mem)]
+            self.assertEqual(rules, ["overlapping-decisions"])
+            # One finding per pair: the contradiction, not also a near-duplicate.
+            checks = [f["check"] for f in crumb.run_audit(mem, Path(tmp))]
+            self.assertIn("possible-contradiction", checks)
+            self.assertNotIn("near-duplicates", checks)
+
+    def test_overlapping_decisions_close_together_are_not(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._overlapping(tmp, 2)
+            self.assertEqual(lifecycle.find_contradictions(mem), [])
+
+    def test_the_projection_is_written_at_reindex(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._overlapping(tmp, 10)
+            crumb.main(["reindex", "--project", tmp])
+            doc = json.loads((mem / "generated" / lifecycle.CONFLICTS_FILENAME).read_text("utf-8"))
+            self.assertEqual(len(doc["conflicts"]), 1)
+            self.assertEqual(doc["inputs_hash"], _cli._inputs_hash(mem, Path(tmp)))
+
+    def test_the_fixtures_hold_no_contradictions(self):
+        for fixture in sorted((REPO_ROOT / "fixtures").glob("fixture-*")):
+            with self.subTest(fixture=fixture.name):
+                self.assertEqual(lifecycle.find_contradictions(fixture / crumb.MEMORY_DIRNAME), [])
+
+
+# --------------------------------------------------------------------------- #
+# WM-35 session rollup
+# --------------------------------------------------------------------------- #
+
+
+class RollupTests(unittest.TestCase):
+    def _sessions(self, tmp: str) -> tuple[Path, list[str], str]:
+        mem = init_store(tmp)
+        snapshots = []
+        for day in range(10):
+            with days_later(day):
+                _path, meta = _cli.write_record(
+                    mem,
+                    Path(tmp),
+                    "session",
+                    f"snapshot {day}",
+                    {
+                        "Work Completed": f"worked on the parser, part {day}",
+                        "Next Action": _cli.HOOK_SESSION_NEXT_ACTION,
+                    },
+                )
+                snapshots.append(meta["id"])
+        with days_later(4):
+            _path, human = _cli.write_record(
+                mem,
+                Path(tmp),
+                "session",
+                "the parser rewrite",
+                {"Work Completed": "rewrote the parser", "Next Action": "ship the parser"},
+            )
+        return mem, snapshots, human["id"]
+
+    def _before(self, days: int) -> str:
+        return (_cli._now() + timedelta(days=days)).date().isoformat()
+
+    def test_snapshots_roll_into_one_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, snaps, human = self._sessions(tmp)
+            code, out = run(
+                ["rollup", "sessions", "--before", self._before(8), "--project", tmp, "--json"]
+            )
+            self.assertEqual(code, 0, out)
+            res = json.loads(out)
+            self.assertEqual(res["rolled_up"], 8)
+            rolled = crumb.find_record_by_id(mem, res["id"])
+            self.assertEqual(rolled.meta["supersedes"], snaps[:8])
+            self.assertIn("rollup:", rolled.meta["title"])
+            self.assertIn("part 0", rolled.body)
+            self.assertIn("part 7", rolled.body)
+            for sid in snaps[:8]:
+                self.assertIsNone(crumb.find_record_by_id(mem, sid))
+            # The newest snapshots and the human session are untouched.
+            for sid in snaps[8:] + [human]:
+                self.assertIsNotNone(crumb.find_record_by_id(mem, sid))
+
+    def test_ten_snapshots_give_ten_supersedes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, snaps, human = self._sessions(tmp)
+            code, out = run(
+                ["rollup", "sessions", "--before", self._before(11), "--project", tmp, "--json"]
+            )
+            res = json.loads(out)
+            self.assertEqual(len(crumb.find_record_by_id(mem, res["id"]).meta["supersedes"]), 10)
+            self.assertIsNotNone(crumb.find_record_by_id(mem, human))
+
+    def test_dry_run_deletes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, snaps, _human = self._sessions(tmp)
+            code, out = run(
+                [
+                    "rollup",
+                    "sessions",
+                    "--before",
+                    self._before(8),
+                    "--dry-run",
+                    "--project",
+                    tmp,
+                    "--json",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(json.loads(out)["rolled_up"], 8)
+            for sid in snaps:
+                self.assertIsNotNone(crumb.find_record_by_id(mem, sid))
+
+    def test_the_rollup_does_not_become_the_newest_session(self):
+        # The Stop hook diffs from the newest session's commit and coalesces into
+        # the newest snapshot; a rollup stamped "now" would hijack both.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, snaps, _human = self._sessions(tmp)
+            run(["rollup", "sessions", "--before", self._before(8), "--project", tmp])
+            self.assertEqual(_cli._newest_session_record(mem).meta["id"], snaps[-1])
+            with days_later(10):
+                code, _ = run(["capture", "session", "--fast", "--project", tmp, "--next", "go"])
+            self.assertEqual(code, 0)
+
+    def test_a_bad_date_is_usage_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            code, _, _ = run_err(["rollup", "sessions", "--before", "yesterday", "--project", tmp])
+            self.assertEqual(code, 2)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
