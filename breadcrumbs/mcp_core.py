@@ -123,9 +123,16 @@ def resource_current(root: str | Path | None = None) -> str:
 
 
 def resource_handoff(root: str | Path | None = None) -> str:
-    """`memory://handoff` — verbatim handoff.md."""
-    _, mem = resolve(root)
-    return _read_singleton(mem, "handoff.md")
+    """`memory://handoff` — the current branch's handoff, verbatim.
+
+    `handoffs/<branch>.md` on a feature branch that has one (WM-50), else
+    `handoff.md` — the same file `memory://resume-packet` is built from.
+    """
+    from breadcrumbs import handoffs as _handoffs
+
+    project_root, mem = resolve(root)
+    path, _label = _handoffs.read_path(mem, project_root)
+    return _read_singleton(mem, str(path.relative_to(mem)))
 
 
 def resource_open_questions(root: str | Path | None = None) -> str:
@@ -186,11 +193,84 @@ def resource_attempt(rid: str, root: str | Path | None = None) -> str:
     return _record_text(mem, rid, kind="attempt")
 
 
+def _item_text(rid: str, root: str | Path | None, *, kinds: tuple[str, ...] | None) -> str:
+    """The text `crumb show <id>` prints, restricted to `kinds` when given.
+
+    The kind check is what makes `memory://traps/{id}` mean a trap: without it
+    one URI template would serve any record whose id happened to be passed,
+    which is the confusion `_record_text` already guards against for decisions
+    and attempts.
+    """
+    _, mem = resolve(root)
+    _require_memory(mem)
+    item = cli.find_item(mem, rid)
+    if item is None or (kinds is not None and item["kind"] not in kinds):
+        what = " or ".join(kinds) if kinds else "record, trap, question or jot"
+        raise KeyError(f"no {what} with id {rid!r}")
+    return item["text"]
+
+
+def resource_record(rid: str, root: str | Path | None = None) -> str:
+    """`memory://records/{id}` — any id the tool prints, same text as `crumb show`."""
+    return _item_text(rid, root, kinds=None)
+
+
+def resource_trap(rid: str, root: str | Path | None = None) -> str:
+    """`memory://traps/{id}` — one trap."""
+    return _item_text(rid, root, kinds=("trap",))
+
+
+def resource_question(rid: str, root: str | Path | None = None) -> str:
+    """`memory://questions/{id}` — one question (`q_…`; `q:…` accepted)."""
+    return _item_text(rid, root, kinds=("question",))
+
+
+def resource_verification(rid: str, root: str | Path | None = None) -> str:
+    """`memory://verifications/{id}` — one verification record."""
+    return _item_text(rid, root, kinds=("verification",))
+
+
+def resource_inbox_item(rid: str, root: str | Path | None = None) -> str:
+    """`memory://inbox/{id}` — one jot, committed or machine-local."""
+    return _item_text(rid, root, kinds=("jot",))
+
+
+def resource_inbox(root: str | Path | None = None) -> str:
+    """`memory://inbox` — live jots, rendered as a list.
+
+    Unlike the other singleton resources this is *rendered*, not a file: the
+    inbox is two directories (committed and machine-local), and the useful view
+    is both of them together with the id an agent needs to promote or drop each
+    one. The private half is included here and deliberately excluded from the
+    committed resume packet — this resource is read live by the agent working in
+    this checkout, not written to a file anybody else will read.
+    """
+    from breadcrumbs import inbox as _inbox
+
+    _, mem = resolve(root)
+    _require_memory(mem)
+    rows = _inbox.jot_rows(mem)
+    if not rows:
+        return '_(inbox empty — leave a note with the `memory_jot` tool or `crumb jot "…"`)_'
+    lines = [
+        "# Inbox (short-term jots)",
+        "",
+        "_Candidates, not findings. Promote with `crumb inbox promote <id> <type>`,",
+        "drop with `crumb inbox drop <id>`, or let them expire._",
+        "",
+    ]
+    for r in rows:
+        age = f"{r['age_days']}d" if r["age_days"] is not None else "new"
+        local = ", local" if r["local"] else ""
+        lines.append(f"- `{r['id']}` ({age}, {r['source']}{local}) {r['title']}")
+    return "\n".join(lines) + "\n"
+
+
 # The declared resource surface. `mcp_server.build_server` binds each URI
 # explicitly rather than looping over these dicts — one visible endpoint per
 # resource, and a stable function per binding — so these are a *manifest*, not a
 # dispatch table: the thing the README and `docs/mcp-spec.md` count when they say
-# "8 resources". `tests/test_mcp.py` asserts the bound URIs equal these keys, so
+# "14 resources". `tests/test_mcp.py` asserts the bound URIs equal these keys, so
 # the two cannot drift. (They previously carried a comment claiming the server
 # consumed them, which nothing did.)
 STATIC_RESOURCES = {
@@ -200,10 +280,16 @@ STATIC_RESOURCES = {
     "memory://decisions": resource_decisions,
     "memory://open-questions": resource_open_questions,
     "memory://known-traps": resource_known_traps,
+    "memory://inbox": resource_inbox,
 }
 TEMPLATE_RESOURCES = {
     "memory://decisions/{id}": resource_decision,
     "memory://attempts/{id}": resource_attempt,
+    "memory://records/{id}": resource_record,
+    "memory://traps/{id}": resource_trap,
+    "memory://questions/{id}": resource_question,
+    "memory://verifications/{id}": resource_verification,
+    "memory://inbox/{id}": resource_inbox_item,
 }
 
 
@@ -301,6 +387,35 @@ def tool_scan_secrets(root: str | Path | None = None) -> dict:
     }
 
 
+def _locked(fn):
+    """Run an MCP writer under the store's write lock (WM-51).
+
+    A lock held past `MCP_TIMEOUT` returns `{ok: false, error}` like any other
+    refused write, rather than raising into the client.
+    """
+    import functools
+    import inspect
+
+    signature = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        from breadcrumbs import lock as _lock
+
+        root = signature.bind_partial(*args, **kwargs).arguments.get("root")
+        _, mem = resolve(root)
+        if not mem.is_dir():
+            return fn(*args, **kwargs)
+        try:
+            with _lock.store_lock(mem, timeout=_lock.MCP_TIMEOUT):
+                return fn(*args, **kwargs)
+        except _lock.StoreLocked as exc:
+            return {"ok": False, "error": str(exc)}
+
+    return wrapper
+
+
+@_locked
 def tool_record(
     type: str,
     payload: dict,
@@ -347,6 +462,34 @@ def tool_record(
                 "add payload.evidence or set payload.confidence to 'low'",
             }
 
+    # WM-32: the same near-duplicate gate as `crumb remember`.
+    from breadcrumbs import lifecycle as _lifecycle
+
+    supersedes = payload.get("supersedes")
+    problem = _lifecycle.check_supersedes(mem, type, supersedes)
+    if problem:
+        return {"ok": False, "error": problem}
+    if not supersedes and not payload.get("allow_duplicate"):
+        dups = _lifecycle.find_near_duplicates(
+            mem,
+            type,
+            title,
+            "\n".join(str(v) for v in sections.values()),
+            files=[
+                e.get("ref")
+                for e in evidence
+                if isinstance(e, dict) and e.get("type") in ("file", "path")
+            ],
+            tags=tags,
+        )
+        if dups:
+            return {
+                "ok": False,
+                "error": "near-duplicate",
+                "duplicates": dups,
+                "message": _lifecycle.duplicate_message(dups),
+            }
+
     try:
         path, meta = cli.write_record(
             mem,
@@ -361,6 +504,7 @@ def tool_record(
             scope=payload.get("scope"),
             status=payload.get("status"),
             agent=payload.get("agent") or _agent_label(),
+            extra={"supersedes": [supersedes]} if supersedes else None,
         )
     except ValueError as exc:
         # Same envelope every other writer uses. Bare, any value the
@@ -374,18 +518,29 @@ def tool_record(
             "ok": False,
             "error": "record rejected by validate: " + "; ".join(f["message"] for f in fails),
         }
+    demoted: list[str] = []
+    if supersedes:
+        demoted = _lifecycle.demoted_ids(
+            _lifecycle.mark_superseded(mem, [supersedes], meta["id"], agent=_agent_label())
+        )
     # Reindex-on-write: an MCP write must refresh the projections too —
     # an agent will not remember to `crumb reindex` after each `memory_record`.
     cli.reindex_projections(mem, project_root)
-    return {
+    out = {
         "ok": True,
         "id": meta["id"],
         "type": type,
         "path": _rel(path, mem),
         "confidence": meta["confidence"],
     }
+    if supersedes:
+        out["supersedes"] = [supersedes]
+    if demoted:
+        out["demoted"] = demoted
+    return out
 
 
+@_locked
 def tool_verify(
     subject: str,
     status: str,
@@ -395,6 +550,9 @@ def tool_verify(
     tags: list[str] | None = None,
     confidence: str | None = None,
     root: str | Path | None = None,
+    allow_duplicate: bool = False,
+    supersedes: str | None = None,
+    scope: str | None = None,
 ) -> dict:
     """`memory_verify` — wraps `cli.verify`.
 
@@ -404,6 +562,8 @@ def tool_verify(
     same validate gate as every other write, and refreshes the projections.
     """
     project_root, mem = resolve(root)
+    if scope is not None and scope not in cli.RECORD_SCOPES:
+        return {"ok": False, "error": f"scope must be one of {', '.join(cli.RECORD_SCOPES)}"}
     if (missing := _memory_missing(mem)) is not None:
         return missing
     return _relativize(
@@ -418,11 +578,15 @@ def tool_verify(
             tags=tags,
             confidence=confidence,
             agent=_agent_label(),
+            dedupe=not allow_duplicate,
+            supersedes=supersedes,
+            scope=scope,
         ),
         mem,
     )
 
 
+@_locked
 def tool_reindex(root: str | Path | None = None) -> dict:
     """`memory_reindex` — wraps `cli.reindex_projections`."""
     project_root, mem = resolve(root)
@@ -432,12 +596,15 @@ def tool_reindex(root: str | Path | None = None) -> dict:
     return {"ok": ok, "path": "generated/resume-packet.md"}
 
 
+@_locked
 def tool_note(
     kind: str,
     text: str,
     fields: dict | None = None,
     tags: list[str] | None = None,
     root: str | Path | None = None,
+    allow_duplicate: bool = False,
+    supersedes: str | None = None,
 ) -> dict:
     """`memory_note` — wraps `cli.note`.
 
@@ -460,11 +627,134 @@ def tool_note(
             fields=fields or {},
             tags=tags or [],
             agent=_agent_label(),
+            dedupe=not allow_duplicate,
+            supersedes=supersedes,
         ),
         mem,
     )
 
 
+def tool_show(id: str, root: str | Path | None = None) -> dict:
+    """`memory_show` — `crumb show` for clients without resource support.
+
+    Returns `{ok, id, kind, status, text, related}`. `related` is the "see also"
+    list from `generated/related.json`: the records that share files, tags or
+    specific vocabulary with this one.
+    """
+    _, mem = resolve(root)
+    if (missing := _memory_missing(mem)) is not None:
+        return missing
+    item = cli.find_item(mem, id)
+    if item is None:
+        return {"ok": False, "error": f"no record, trap, question or jot with id {id!r}"}
+    return {
+        "ok": True,
+        "id": item["id"],
+        "kind": item["kind"],
+        "status": item["status"],
+        "path": _rel(item["path"], mem),
+        "text": item["text"],
+        "related": cli.load_related(mem).get(item["id"], []),
+    }
+
+
+@_locked
+def tool_jot(
+    text: str,
+    tags: list[str] | None = None,
+    files: list[str] | None = None,
+    local: bool = False,
+    root: str | Path | None = None,
+    allow_duplicate: bool = False,
+    scope: str | None = None,
+) -> dict:
+    """`memory_jot` — wraps `breadcrumbs.inbox.write_jot`.
+
+    The low-friction write: one observation, a TTL, no evidence rule. Use it for
+    something worth remembering for the next session but not worth a decision
+    record. `files` becomes file evidence, which is what makes a jot findable
+    later. `local: true` keeps it out of the committed store — pass it for
+    anything derived from a user's own words rather than from the work.
+
+    A jot never raises a `guard` verdict; promote it to a decision, attempt,
+    verification or trap when it turns out to be durable.
+    """
+    from breadcrumbs import inbox as _inbox
+
+    project_root, mem = resolve(root)
+    if scope is not None and scope not in cli.RECORD_SCOPES:
+        return {"ok": False, "error": f"scope must be one of {', '.join(cli.RECORD_SCOPES)}"}
+    if (missing := _memory_missing(mem)) is not None:
+        return missing
+    if not allow_duplicate:
+        from breadcrumbs import lifecycle as _lifecycle
+
+        dups = _lifecycle.find_near_duplicates(
+            mem, "jot", text or "", files=files or [], tags=tags or []
+        )
+        if dups:
+            return {
+                "ok": False,
+                "error": "near-duplicate",
+                "duplicates": dups,
+                "message": _lifecycle.duplicate_message(dups, allow_supersede=False),
+            }
+    return _relativize(
+        _inbox.write_jot(
+            mem,
+            project_root,
+            text or "",
+            tags=tags or [],
+            files=files or [],
+            local=bool(local),
+            source="agent",
+            agent=_agent_label(),
+            scope=scope,
+        ),
+        mem,
+    )
+
+
+@_locked
+def tool_inbox_promote(
+    id: str,
+    target: str,
+    title: str | None = None,
+    sections: dict | None = None,
+    evidence: list[dict] | None = None,
+    tags: list[str] | None = None,
+    confidence: str | None = None,
+    root: str | Path | None = None,
+) -> dict:
+    """`memory_inbox_promote` — wraps `breadcrumbs.inbox.promote_jot`.
+
+    Turns a jot into a durable record through the normal writer for that type,
+    so the evidence rule and the validate gate apply exactly as they would to a
+    record written directly. The jot is marked superseded, not deleted.
+    """
+    from breadcrumbs import inbox as _inbox
+
+    project_root, mem = resolve(root)
+    if (missing := _memory_missing(mem)) is not None:
+        return missing
+    return _relativize(
+        _inbox.promote_jot(
+            mem,
+            project_root,
+            id,
+            target,
+            title=title,
+            sections=sections or {},
+            evidence=evidence or [],
+            tags=tags or [],
+            confidence=confidence,
+            agent=_agent_label(),
+        ),
+        mem,
+    )
+
+
+@_locked
 def tool_mark_status(
     id: str,
     status: str,

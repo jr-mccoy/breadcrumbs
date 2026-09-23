@@ -319,8 +319,12 @@ class ToolPathTests(unittest.TestCase):
 
     def test_note_paths_are_store_relative(self):
         for kind, text, expected in (
-            ("question", "Does the cache need eviction?", "open-questions.md"),
-            ("trap", "the daemon holds a lock", "known-traps.md"),
+            (
+                "question",
+                "Does the cache need eviction?",
+                "questions/does-the-cache-need-eviction.md",
+            ),
+            ("trap", "the daemon holds a lock", "traps/the-daemon-holds-a-lock.md"),
         ):
             with self.subTest(kind=kind):
                 res = mcp_core.tool_note(kind, text, root=self.tmp)
@@ -439,9 +443,11 @@ class GracefulDegradationTests(unittest.TestCase):
     def test_missing_memory_dir_tools_return_structured_error(self):
         """*Every* tool reports a missing store as {ok: False, error} (issue #7).
 
-        All ten, checked by name against the documented surface: the tuple used to
-        cover eight, and the two it omitted (`tool_verify`, `tool_reindex`) are
-        exactly the ones whose envelope nothing else exercised.
+        All twelve, checked by name against the documented surface: the tuple
+        used to cover eight, and the two it omitted (`tool_verify`,
+        `tool_reindex`) are exactly the ones whose envelope nothing else
+        exercised. `tool_jot` and `tool_inbox_promote` (WM-03) are the eleventh
+        and twelfth.
         """
         empty = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
@@ -460,6 +466,11 @@ class GracefulDegradationTests(unittest.TestCase):
             ),
             "tool_verify": lambda: mcp_core.tool_verify("subj", "open", root=empty),
             "tool_reindex": lambda: mcp_core.tool_reindex(root=empty),
+            "tool_jot": lambda: mcp_core.tool_jot("x", root=empty),
+            "tool_show": lambda: mcp_core.tool_show("dec_x", root=empty),
+            "tool_inbox_promote": lambda: mcp_core.tool_inbox_promote(
+                "jot_x", "decision", root=empty
+            ),
         }
         # No tool may be added without an entry here.
         exported = {n for n in dir(mcp_core) if n.startswith("tool_")}
@@ -530,8 +541,12 @@ class ResourceRegistryTests(unittest.TestCase):
         declared = set(mcp_core.STATIC_RESOURCES) | set(mcp_core.TEMPLATE_RESOURCES)
         self.assertEqual(self._bound_uris(), declared)
 
-    def test_the_advertised_count_is_eight(self):
-        self.assertEqual(len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 8)
+    def test_the_advertised_count_is_fourteen(self):
+        # Eight through 0.2.0; `memory://inbox` is the ninth (WM-03), and WM-21
+        # adds five per-id templates (records, traps, questions, verifications,
+        # inbox). The number is pinned because the README and docs/mcp-spec.md
+        # both state it, and a silent drift makes the docs wrong.
+        self.assertEqual(len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES), 14)
 
     def test_every_registry_target_is_callable(self):
         for uri, fn in {**mcp_core.STATIC_RESOURCES, **mcp_core.TEMPLATE_RESOURCES}.items():
@@ -631,7 +646,19 @@ class InputSchemaTests(unittest.TestCase):
         self.assertEqual(set(mcp_server.RecordPayload.__required_keys__), {"title"})
         self.assertEqual(
             set(mcp_server.RecordPayload.__optional_keys__),
-            {"sections", "evidence", "tags", "confidence", "privacy", "scope", "status", "agent"},
+            {
+                "sections",
+                "evidence",
+                "tags",
+                "confidence",
+                "privacy",
+                "scope",
+                "status",
+                "agent",
+                # WM-32: the near-duplicate gate's two answers.
+                "allow_duplicate",
+                "supersedes",
+            },
         )
 
     def test_evidence_item_keys(self):

@@ -21,6 +21,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
+from _schema2 import downgrade_to_schema2  # noqa: E402
 from breadcrumbs import mcp_core  # noqa: E402
 
 
@@ -368,8 +369,15 @@ class TrapLifecycleTests(unittest.TestCase):
 
     def test_pre_existing_traps_have_no_status_bullet_and_count_as_active(self):
         # Every trap in every store written before traps had a lifecycle.
+        for schema in (2, 3):
+            with self.subTest(schema=schema):
+                self._pre_existing_trap(schema)
+
+    def _pre_existing_trap(self, schema: int):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
+            if schema == 2:
+                downgrade_to_schema2(mem)
             path = mem / "known-traps.md"
             path.write_text(
                 path.read_text(encoding="utf-8")
@@ -391,11 +399,27 @@ class TrapLifecycleTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertEqual(crumb.active_traps(mem), [])
-            # the bullet joins the block's field list; the prose survives
+            # the bullet joins the block's field list; the prose survives —
+            # at schema 3 in the trap's own file, which the hand-written block
+            # was adopted into
+            if schema == 3:
+                path = Path(crumb.find_trap_by_id(mem, "trap_legacy")["record_path"])
             self.assertIn("Some loose prose.", path.read_text(encoding="utf-8"))
 
-    def test_only_the_target_block_is_touched(self):
+    def test_only_the_target_file_is_touched(self):
         with tempfile.TemporaryDirectory() as tmp:
+            mem = self._trap(tmp, "First trap", "one", area="a/one.py")
+            self._trap(tmp, "Second trap", "two", area="b/two.py")
+            other = mem / "traps" / "two.md"
+            before = other.read_bytes()
+            run(["mark-status", "trap_one", "stale", "--project", tmp, "--reason", "done"])
+            self.assertEqual(other.read_bytes(), before)
+            self.assertIn("status: stale", (mem / "traps" / "one.md").read_text("utf-8"))
+            self.assertEqual(crumb.find_trap_by_id(mem, "trap_two")["status"], "active")
+
+    def test_only_the_target_block_is_touched_in_a_schema2_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            downgrade_to_schema2(init_store(tmp))
             mem = self._trap(tmp, "First trap", "one", area="a/one.py")
             self._trap(tmp, "Second trap", "two", area="b/two.py")
             path = mem / "known-traps.md"
@@ -569,11 +593,12 @@ class QuestionLifecycleTests(unittest.TestCase):
         # this there was no way to make it stop short of hand-editing.
         with tempfile.TemporaryDirectory() as tmp:
             mem, qid = self._ask(tmp, "Is the migration reversible?")
-            path = mem / "open-questions.md"
+            path = Path(crumb.find_questions_by_id(mem, qid)[0]["record_path"])
+            text = path.read_text(encoding="utf-8")
+            today = crumb.now_iso()[:10]
+            self.assertIn(f"created_at: {today}", text)
             path.write_text(
-                path.read_text(encoding="utf-8").replace(
-                    f"- Opened: {crumb.now_iso()[:10]}", "- Opened: 2020-01-01"
-                ),
+                text.replace(f"created_at: {today}", "created_at: 2020-01-01", 1),
                 encoding="utf-8",
             )
             aged = crumb.compute_staleness(
@@ -614,13 +639,27 @@ class QuestionLifecycleTests(unittest.TestCase):
                 "or wait for the row store rewrite?"
             )
             mem, qid = self._ask(tmp, text)
-            self.assertNotEqual(qid, "q:" + crumb.slugify(text))
+            self.assertNotEqual(qid, crumb.QUESTION_ID_PREFIX + crumb.slugify(text))
             code, _ = run(["mark-status", qid, "answered", "--project", tmp, "--reason", "wait"])
             self.assertEqual(code, 0)
             self.assertEqual(crumb.open_questions(mem), [])
 
-    def test_only_the_target_block_is_touched(self):
+    def test_only_the_target_file_is_touched(self):
         with tempfile.TemporaryDirectory() as tmp:
+            mem, first = self._ask(tmp, "First question?", why="it blocks the export")
+            _, second = self._ask(tmp, "Second question?", needs="a decision")
+            first_path = Path(crumb.find_questions_by_id(mem, first)[0]["record_path"])
+            other = Path(crumb.find_questions_by_id(mem, second)[0]["record_path"])
+            before = other.read_bytes()
+            run(["mark-status", first, "answered", "--project", tmp, "--reason", "done"])
+            self.assertEqual(other.read_bytes(), before)
+            self.assertIn("status: answered", first_path.read_text("utf-8"))
+            self.assertIn("it blocks the export", first_path.read_text("utf-8"))
+            self.assertEqual(crumb.find_questions_by_id(mem, second)[0]["status"], "open")
+
+    def test_only_the_target_block_is_touched_in_a_schema2_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            downgrade_to_schema2(init_store(tmp))
             mem, first = self._ask(tmp, "First question?", why="it blocks the export")
             _, second = self._ask(tmp, "Second question?", needs="a decision")
             path = mem / "open-questions.md"
@@ -663,7 +702,7 @@ class QuestionLifecycleTests(unittest.TestCase):
             mem, qid = self._ask(tmp, "Reachable over MCP?")
             res = mcp_core.tool_mark_status(qid, "answered", "yes", root=tmp)
             self.assertTrue(res["ok"], res)
-            self.assertEqual(res["path"], "open-questions.md")
+            self.assertEqual(res["path"], f"questions/{qid[len(crumb.QUESTION_ID_PREFIX) :]}.md")
             self.assertEqual(crumb.find_questions_by_id(mem, qid)[0]["status"], "answered")
 
 

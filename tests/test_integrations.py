@@ -282,7 +282,7 @@ class WrappedHookIdentityTests(unittest.TestCase):
             crumb.install_claude_hooks(root, list(crumb.HOOK_EVENTS))  # adopt: stamps the marker
             code, out = run(["init", "--project", tmp, "--remove-integrations"])
             self.assertEqual(code, 0)
-            self.assertIn("3 crumb hook(s) removed", out)
+            self.assertIn(f"{len(crumb.HOOK_EVENTS)} crumb hook(s) removed", out)
             self.assertNotIn("LEFT IN PLACE", out)
             hooks = _read_settings(root)["hooks"]
             self.assertNotIn("SessionStart", hooks)
@@ -375,7 +375,12 @@ class WrappedHookIdentityTests(unittest.TestCase):
                 encoding="utf-8",
             )
             crumb.install_claude_hooks(root, list(crumb.HOOK_EVENTS))
-            self.assertEqual(len(crumb.remove_claude_hooks(root)["removed"]), 3)
+            # Derived, not a literal: the event set grows (Phase 1 added
+            # UserPromptSubmit, PreCompact and SubagentStop), and what this test
+            # is about is that *ours* are removed and the wrapper is not.
+            self.assertEqual(
+                len(crumb.remove_claude_hooks(root)["removed"]), len(crumb.HOOK_EVENTS)
+            )
             data = json.loads((root / ".claude" / "settings.json").read_text())
             cmds = [h["command"] for g in data["hooks"].get("PreToolUse", []) for h in g["hooks"]]
             self.assertEqual(cmds, ["mine"])
@@ -491,7 +496,7 @@ class MarkerAuthoritativeRemovalTests(unittest.TestCase):
             code, out = run(["init", "--project", tmp, "--remove-integrations", "--json"])
             self.assertEqual(code, 0)
             hooks = json.loads(out)["removed"]["hooks"]
-            self.assertEqual(len(hooks["removed"]), 3)
+            self.assertEqual(len(hooks["removed"]), len(crumb.HOOK_EVENTS))
             self.assertEqual(hooks["left"], [])
 
 

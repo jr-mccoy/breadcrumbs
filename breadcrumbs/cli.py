@@ -39,7 +39,14 @@ from pathlib import Path, PurePosixPath
 # Constants
 # --------------------------------------------------------------------------- #
 
-SCHEMA_VERSION = 1
+# The on-disk record format version. Independent of the package version: it
+# moves only when the shape of the store changes, and every move ships with a
+# step in `breadcrumbs/migrate.py` plus readers that tolerate the older shape.
+#   1 -> 2: `inbox/` and `private/inbox/` (the jot tier, WM-03).
+#   2 -> 3: traps and questions become one file each under `traps/` and
+#           `questions/`; the singletons become generated indexes (WM-22).
+#   3 -> 4: `handoffs/` — one handoff per non-default branch (WM-50).
+SCHEMA_VERSION = 4
 MEMORY_DIRNAME = ".project-memory"
 
 # Templates are package data: they live next to this module inside the
@@ -168,14 +175,36 @@ VALID_QUESTION_STATUS = (
 # vocabulary actually applies; the resolver rejects a mismatch by name.
 MARK_STATUS_CHOICES = tuple(dict.fromkeys(VALID_STATUS + VALID_QUESTION_STATUS))
 
-# Directory name -> record type.
+# Directory name -> record type. These are the *committed* record directories,
+# which is also what `_hashed_input_dirs` walks — `private/inbox/` is
+# deliberately absent (machine-local jots are not a shared input), and
+# `load_records` adds it separately.
 DIR_TYPES = {
     "decisions": "decision",
     "attempts": "attempt",
     "sessions": "session",
     "ideas": "idea",
     "verifications": "verification",
+    "inbox": "jot",
+    # One file per trap and per question from schema_version 3 (WM-22). Before
+    # that they are `## ` blocks in known-traps.md / open-questions.md; the
+    # directories simply do not exist, and readers use the blocks.
+    "traps": "trap",
+    "questions": "question",
 }
+
+# Types whose files are named by slug alone, with no date. A trap's id is
+# `trap_<slug>` and a question's `q_<slug>` — ids that predate these being files
+# at all, that are cited in decision records, commit messages and people's
+# notes, and that a migration therefore must not change. Every other record's
+# id carries its creation date, because its filename does.
+UNDATED_ID_PREFIX = {"trap": "trap_", "question": "q_"}
+UNDATED_STEM_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
+
+# Record directories that exist outside the committed tree, as store-relative
+# POSIX paths -> record type. `load_records` walks these too; nothing that
+# computes a shared hash does.
+LOCAL_DIR_TYPES = {"private/inbox": "jot"}
 
 # Record type -> id prefix.
 TYPE_PREFIX = {
@@ -186,6 +215,7 @@ TYPE_PREFIX = {
     "trap": "trap",
     "question": "q",
     "verification": "ver",
+    "jot": "jot",
 }
 
 # Verification outcome vocabulary. The record-level `status` stays the
@@ -204,6 +234,17 @@ VALID_VERIFICATION_OUTCOME = (
 ACTIONABLE_VERIFICATION_OUTCOMES = ("open", "regressed", "inconclusive")
 # Verification method vocabulary (how the subject was checked).
 VALID_VERIFICATION_METHOD = ("static", "runtime", "test")
+
+# What `crumb inbox promote` can turn a jot into. Lives here rather than in
+# `breadcrumbs/inbox.py` because the argparse choices need it at parser-build
+# time, and `inbox` imports this module — one definition, no cycle.
+INBOX_PROMOTE_TARGETS = ("decision", "attempt", "verification", "trap", "question", "idea")
+
+# Default jot TTL, written into `manifest.yml` at init so a store can change it
+# without reading the source. `breadcrumbs.inbox.JOT_TTL_DAYS` is the same
+# number; this copy exists because `manifest_content` runs before that module
+# would be importable without a cycle.
+JOT_TTL_DAYS_DEFAULT = 14
 
 # Singleton core files that must exist.
 CORE_FILES = ("current.md", "handoff.md", "open-questions.md", "known-traps.md")
@@ -311,9 +352,19 @@ def read_text_lenient(path: Path) -> tuple[str, str | None]:
         )
 
 
+def _now() -> datetime:
+    """The current local time, timezone-aware. The one clock seam.
+
+    Everything that ages a record — `now_iso`, `_age_days`, the TTL checks in
+    `breadcrumbs.lifecycle` — reads the time through here, so a test can move
+    the clock by patching one function.
+    """
+    return datetime.now().astimezone()
+
+
 def now_iso() -> str:
     """Local time, ISO-8601, timezone-aware (e.g. 2026-06-25T14:30:00-05:00)."""
-    return datetime.now().astimezone().replace(microsecond=0).isoformat()
+    return _now().replace(microsecond=0).isoformat()
 
 
 # Memo for `is_git_repo`, keyed by (path, does `.git` exist there) so the answer is
@@ -377,6 +428,8 @@ def manifest_content(
         f"   # commit generated/*.md summaries (indexes always ignored)\n"
         f"extraction_prompt: true   # Stop hook may ask the agent (once per new-commit\n"
         f"#   turn) to write decision/attempt records before ending; false = snapshot only\n"
+        f"jot_ttl_days: {JOT_TTL_DAYS_DEFAULT}   # days a `crumb jot` stays listed before it\n"
+        f"#   expires; promote the durable ones with `crumb inbox promote`\n"
     )
 
 
@@ -492,6 +545,36 @@ def merge_json_file(path: Path, mutate) -> None:
 # --------------------------------------------------------------------------- #
 # init
 # --------------------------------------------------------------------------- #
+
+
+def _replace_store_contents(memory_dir: Path, staging: Path) -> None:
+    """`init --force`: replace everything in the store with `staging`'s contents,
+    except the write lock this very command is holding (WM-51).
+
+    Deleting the directory wholesale took `private/.write-lock` with it and left
+    the rest of `init` — the new scaffold, the integrations, the reindex —
+    running unlocked. The command holds the lock throughout, so the swap does
+    not need to be a single rename to be safe from other writers.
+    """
+    from breadcrumbs import lock as _lock
+
+    keep = _lock.lock_path(memory_dir)
+    for entry in list(memory_dir.iterdir()):
+        if entry == keep.parent:
+            for sub in list(entry.iterdir()):
+                if sub != keep:
+                    shutil.rmtree(sub) if sub.is_dir() else sub.unlink()
+            continue
+        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+    for entry in list(staging.iterdir()):
+        target = memory_dir / entry.name
+        if entry.is_dir() and target.is_dir():
+            for sub in list(entry.iterdir()):
+                sub.rename(target / sub.name)
+            entry.rmdir()
+        else:
+            entry.rename(target)
+    staging.rmdir()
 
 
 def copy_template_tree(dest: Path) -> None:
@@ -659,8 +742,9 @@ def cmd_init(args: argparse.Namespace) -> int:
             shutil.rmtree(staging)
         raise
     if memory_dir.exists():
-        shutil.rmtree(memory_dir)
-    staging.rename(memory_dir)
+        _replace_store_contents(memory_dir, staging)
+    else:
+        staging.rename(memory_dir)
 
     block = gitignore_block(session_tracking, commit_generated)
     write_gitignore(root, block)
@@ -831,6 +915,50 @@ def _emit_warning(args: argparse.Namespace, message: str) -> None:
     """
     if not getattr(args, "json", False):
         print(f"{WARN_PREFIX} {command_label(args)}: {message}", file=sys.stderr)
+
+
+# `crumb remember|note|verify|jot` refused a near-duplicate (WM-32). Distinct
+# from 1 (the write failed) and 2 (bad usage): the input was fine, and the
+# caller has a decision to make — supersede the existing record or write anyway.
+EXIT_NEAR_DUPLICATE = 3
+
+
+def _emit_duplicate(args: argparse.Namespace, result: dict) -> int:
+    """Report a near-duplicate refusal and return its exit code (3)."""
+    if getattr(args, "json", False):
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "command": command_label(args),
+                    "items": result.get("duplicates", []),
+                    "error": "near-duplicate",
+                    "message": result.get("message"),
+                    "duplicates": result.get("duplicates", []),
+                },
+                indent=2,
+            )
+        )
+    else:
+        print(f"{ERROR_PREFIX} {command_label(args)}: {result.get('message')}", file=sys.stderr)
+    return EXIT_NEAR_DUPLICATE
+
+
+def _add_duplicate_flags(parser: argparse.ArgumentParser, *, supersede: bool = True) -> None:
+    """`--allow-duplicate` (and `--supersedes ID`) for a writer that gates duplicates."""
+    parser.add_argument(
+        "--allow-duplicate",
+        action="store_true",
+        help="write even if a live record of this type says nearly the same thing",
+    )
+    if supersede:
+        parser.add_argument(
+            "--supersedes",
+            metavar="ID",
+            default=None,
+            help="replace this live record of the same type: it is marked superseded by "
+            "the new one (also answers a near-duplicate refusal)",
+        )
 
 
 def _emit_error(args: argparse.Namespace, message: str) -> None:
@@ -1053,7 +1181,15 @@ def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
     The date must be a real calendar date: `2026-02-30` and `9999-99-99` are shaped
     like dates but name no day, and an id built from one sorts and reads as if it
     did.
+
+    Traps and questions are the exception (`UNDATED_ID_PREFIX`): their filename
+    is the slug alone and their id is prefix + slug, so the ids they had as
+    blocks survive becoming files.
     """
+    if rtype in UNDATED_ID_PREFIX:
+        if not UNDATED_STEM_RE.match(stem):
+            return None
+        return UNDATED_ID_PREFIX[rtype] + stem, stem
     m = RECORD_STEM_RE.match(stem)
     if not m:
         return None
@@ -1124,14 +1260,21 @@ class Record:
 
 
 def load_records(memory_dir: Path, types: tuple[str, ...] | None = None) -> list[Record]:
-    """Load every directory record under decisions/attempts/sessions/ideas.
+    """Load every directory record: the committed type directories plus `private/inbox/`.
 
     Parse errors are captured on the Record (`.error`), not raised, so `validate`
     can report them as findings. Singleton core files are NOT durable records and
     are intentionally excluded here.
+
+    `LOCAL_DIR_TYPES` is walked as well as `DIR_TYPES` so a machine-local jot is
+    a first-class record everywhere it should be — `validate` checks it, `search`
+    finds it, `crumb inbox` lists it. The places that must *not* see it (the
+    committed resume packet, `_inputs_hash`) select by directory rather than by
+    asking this function for less, because a reader that silently drops records
+    is the harder bug to find.
     """
     records: list[Record] = []
-    for dirname, rtype in DIR_TYPES.items():
+    for dirname, rtype in list(DIR_TYPES.items()) + list(LOCAL_DIR_TYPES.items()):
         if types and rtype not in types:
             continue
         d = Path(memory_dir) / dirname
@@ -1418,18 +1561,50 @@ def run_validate(memory_dir: Path) -> list[dict]:
     if manifest is None:
         findings.append(_finding("manifest", "fail", "manifest.yml", "manifest.yml is missing"))
     else:
+        # A version mismatch has two opposite causes and two opposite remedies,
+        # and one message for both sent everyone to the wrong one. An *older*
+        # store needs migrating; a *newer* store means this build is behind and
+        # must not touch it, because writing schema-N records into a schema-N+1
+        # store is how a store gets corrupted by a well-meaning downgrade.
         sv = manifest.get("schema_version")
-        if sv != str(SCHEMA_VERSION):
+        try:
+            sv_int = int(str(sv).strip())
+        except (TypeError, ValueError):
+            sv_int = None
+        if sv_int is None:
             findings.append(
                 _finding(
-                    "manifest",
+                    "schema-version",
                     "fail",
                     "manifest.yml",
-                    f"unsupported schema_version {sv!r} (this build supports {SCHEMA_VERSION})",
+                    f"unreadable schema_version {sv!r} (this build supports {SCHEMA_VERSION})",
+                )
+            )
+        elif sv_int < SCHEMA_VERSION:
+            findings.append(
+                _finding(
+                    "schema-version",
+                    "fail",
+                    "manifest.yml",
+                    f"store is schema_version {sv_int}, this crumb understands "
+                    f"{SCHEMA_VERSION} — run `crumb migrate`",
+                )
+            )
+        elif sv_int > SCHEMA_VERSION:
+            findings.append(
+                _finding(
+                    "schema-version",
+                    "fail",
+                    "manifest.yml",
+                    f"store is schema_version {sv_int}, this crumb understands "
+                    f"{SCHEMA_VERSION} — upgrade crumb-kit",
                 )
             )
         else:
-            findings.append(_finding("manifest", "pass", "manifest.yml", f"schema_version {sv}"))
+            findings.append(
+                _finding("schema-version", "pass", "manifest.yml", f"schema_version {sv_int}")
+            )
+        findings.append(_finding("manifest", "pass", "manifest.yml", "manifest.yml present"))
 
     # 16.2 — required core files exist, and are readable. An undecodable core
     # file used to pass silently here while aborting `audit` and `resume`
@@ -1505,15 +1680,17 @@ def run_validate(memory_dir: Path) -> list[dict]:
                 # identity pass that would inflate the passed count.
                 findings.append(_finding("identity", "pass", rel, f"id {rid}"))
 
-        # 16.5 — status in vocabulary.
+        # 16.5 — status in vocabulary. A question has its own (open / answered /
+        # closed); everything else, traps included, uses the record lifecycle.
         status = rec.meta.get("status")
-        if status is not None and status not in VALID_STATUS:
+        vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
+        if status is not None and status not in vocab:
             findings.append(
                 _finding(
                     "status",
                     "fail",
                     rel,
-                    f"invalid status {status!r} (allowed: {', '.join(VALID_STATUS)})",
+                    f"invalid status {status!r} (allowed: {', '.join(vocab)})",
                 )
             )
 
@@ -1545,14 +1722,27 @@ def run_validate(memory_dir: Path) -> list[dict]:
                     "privacy: secret-prohibited must not be stored in memory",
                 )
             )
-        elif privacy == "local-private":
-            # durable directory records are committed paths; local-private must be under private/.
+        elif privacy == "local-private" and not rel.replace("\\", "/").startswith("private/"):
+            # A local-private record has to live where git cannot see it. Most
+            # record directories are committed, so this used to be unconditional
+            # — `private/inbox/` is the first record directory that is not, and
+            # an unconditional fail would reject every machine-local jot.
             findings.append(
                 _finding(
                     "privacy",
                     "fail",
                     rel,
                     "privacy: local-private record is under a committed path (must live under private/)",
+                )
+            )
+        elif rel.replace("\\", "/").startswith("private/") and privacy == "repo-safe":
+            findings.append(
+                _finding(
+                    "privacy",
+                    "fail",
+                    rel,
+                    "privacy: repo-safe record is under private/, where nothing is "
+                    "committed — mark it local-private or move it into the store proper",
                 )
             )
 
@@ -1569,6 +1759,18 @@ def run_validate(memory_dir: Path) -> list[dict]:
                         f"{rec.rtype} has no evidence and confidence is not 'low'",
                     )
                 )
+
+        # 16.9c — a jot names where it came from. A hook-written candidate and a
+        # note somebody typed are read very differently by whoever triages the
+        # inbox, and without this the two are indistinguishable on disk.
+        if rec.rtype == "jot":
+            src = rec.meta.get("source")
+            if not (isinstance(src, str) and src.strip()):
+                findings.append(
+                    _finding("jot", "fail", rel, "jot has no source (who or what wrote it)")
+                )
+            else:
+                findings.append(_finding("jot", "pass", rel, f"source {src}"))
 
         # 16.9b — verifications carry a subject and a valid outcome.
         if rec.rtype == "verification":
@@ -1819,6 +2021,31 @@ BODY_SECTIONS = {
         "Evidence",
         "Notes",
     ],
+    # A jot is one observation with a TTL — the short-term tier. One section,
+    # because the moment it needs a second one it has become a record and should
+    # be promoted into one (`crumb inbox promote`). Exempt from the §16.9
+    # evidence rule for the same reason an idea is: it makes no claim.
+    "jot": [
+        "Note",
+    ],
+    # Traps and questions as files (schema 3, WM-22). The sections are the
+    # bullets the block format always had, one heading each, plus `Notes` for
+    # anything a block carried that fits no bullet — a migration keeps every
+    # line, and this is where the lines with no other home go.
+    "trap": [
+        "Area / files",
+        "Symptom",
+        "Why",
+        "Safe approach",
+        "Verification",
+        "Notes",
+    ],
+    "question": [
+        "Question",
+        "Why it matters",
+        "Needs",
+        "Notes",
+    ],
 }
 
 # Where content lands when its `--set` heading matches nothing in the record
@@ -1975,6 +2202,10 @@ FRONTMATTER_ORDER = [
     "updated_at",
     "created_by",
     "agent",
+    # How a record came to exist, on jots only: `agent`/`human` when somebody
+    # wrote it, `prompt`/`transcript`/`hook` when something automatic did. It is
+    # what lets a reader tell a machine-mined candidate from an authored note.
+    "source",
     "project",
     "scope",
     "branch",
@@ -1983,6 +2214,9 @@ FRONTMATTER_ORDER = [
     # Harness session id, on machine snapshots only — the key that lets one
     # session's repeated Stop firings coalesce into one record (F-6).
     "host_session",
+    # Content identity for an automatically written jot: a hook that mines the
+    # same transcript twice must not write the same candidate twice.
+    "fingerprint",
     "confidence",
     "privacy",
     "review_status",
@@ -1990,6 +2224,14 @@ FRONTMATTER_ORDER = [
     "supersedes",
     "superseded_by",
     "expires_at",
+    # When somebody last checked that a trap is still true (R6) — frontmatter on
+    # a trap file, the `- Last confirmed:` bullet on a trap block.
+    "last_confirmed",
+    # Where a record was promoted to long-term memory (WM-40), when, and the
+    # rule text if the author overrode the rendered one.
+    "promoted_to",
+    "promoted_at",
+    "promoted_rule",
     "subject",
     "outcome",
     "method",
@@ -2185,7 +2427,10 @@ def truncate_slug(slug: str, limit: int = SLUG_MAX_CHARS) -> str:
 # files, not just renaming one, and a store like this repo's routinely has five
 # concurrent sessions. Four hex characters of entropy cannot collide across
 # actors who cannot see each other, which the ordinal never could.
-UNIQUE_SUFFIX_TYPES = ("session",)
+# Jots are here for the same reason sessions are, only more so: hooks write them
+# automatically, several can land in one second, and two checkouts of one store
+# cannot see each other's.
+UNIQUE_SUFFIX_TYPES = ("session", "jot")
 UNIQUE_SUFFIX_BYTES = 2  # -> 4 hex characters
 
 
@@ -2242,6 +2487,7 @@ def write_record(
     agent: str | None = None,
     extra: dict | None = None,
     include_memory: bool = False,
+    subdir: str | None = None,
 ) -> tuple[Path, dict]:
     """Assemble + write a durable record; return (path, frontmatter dict).
 
@@ -2259,7 +2505,11 @@ def write_record(
     derived = derive_fields(project_root, agent=agent, include_memory=include_memory)
     defaults = default_fields()
     date = derived["created_at"][:10]
-    directory = Path(memory_dir) / TYPE_DIR[rtype]
+    # `subdir` overrides the type's home directory. Exactly one type has two
+    # homes — a jot is committed under `inbox/` or machine-local under
+    # `private/inbox/` — and which one it lands in is the caller's privacy
+    # decision, not a property of the type.
+    directory = Path(memory_dir) / (subdir or TYPE_DIR[rtype])
     directory.mkdir(parents=True, exist_ok=True)
     path, slug = _unique_record_path(
         directory,
@@ -2383,7 +2633,104 @@ def find_record_by_id(memory_dir: Path, rid: str) -> "Record | None":
     return None
 
 
+def find_item(memory_dir: Path, rid: str) -> dict | None:
+    """Resolve any id the tool prints to `{id, kind, status, path, text, meta}`.
+
+    One resolver for every kind of thing an id can name — a directory record
+    (decision, attempt, verification, idea, session, jot), a trap, a question —
+    so `crumb show`, the `memory://…/{id}` resources and `memory_show` can never
+    disagree about what an id means. The resolution order is the one
+    `set_record_status` already uses: records first, then traps, then questions.
+
+    `text` is the thing a reader wants to see: the whole file for a record, the
+    block for a trap or question that still lives in an aggregate file. None when
+    nothing matches, or when a question id is ambiguous (two slug-derived ids
+    collide) — naming one of two things silently is worse than naming neither.
+    """
+    memory_dir = Path(memory_dir)
+    rid = normalize_question_id(rid)
+    if not rid:
+        return None
+    rec = find_record_by_id(memory_dir, rid)
+    if rec is not None and not rec.error:
+        try:
+            text = rec.path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        return {
+            "id": rec.meta.get("id") or rec.stem,
+            "kind": rec.rtype,
+            "status": rec.meta.get("status") or "active",
+            "path": rec.path,
+            "text": text,
+            "meta": dict(rec.meta),
+        }
+    trap = find_trap_by_id(memory_dir, rid)
+    if trap is not None:
+        return _block_item(memory_dir, trap, "trap", "known-traps.md", f"## {trap['heading']}")
+    found = find_questions_by_id(memory_dir, rid)
+    if len(found) == 1:
+        q = found[0]
+        return _block_item(memory_dir, q, "question", "open-questions.md", f"## Q: {q['question']}")
+    return None
+
+
+def _block_item(memory_dir: Path, block: dict, kind: str, singleton: str, heading: str) -> dict:
+    """A trap or question as a `find_item` result.
+
+    When the block is backed by its own file (schema 3+, WM-22) the file is the
+    text. Otherwise the block is re-rendered from its heading and body, which is
+    exactly what sits in the aggregate file.
+    """
+    record_path = block.get("record_path")
+    if record_path:
+        path = Path(record_path)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            text = heading + "\n" + (block.get("body") or "")
+    else:
+        path = memory_dir / singleton
+        text = heading + "\n" + (block.get("body") or "").rstrip() + "\n"
+    return {
+        "id": block["id"],
+        "kind": kind,
+        "status": block.get("status") or ("open" if kind == "question" else "active"),
+        "path": path,
+        "text": text,
+        "meta": {},
+    }
+
+
 def set_record_status(
+    memory_dir: Path,
+    rid: str,
+    status: str,
+    reason: str,
+    *,
+    agent: str | None = None,
+    superseded_by: str | None = None,
+) -> dict:
+    """Change a record's, trap's or question's status; retiring a promoted one
+    also demotes it (WM-41) and says so in `demoted`.
+
+    A rule nobody believes any more must not stay in the instruction file every
+    session loads, and "retire it here, then remember to delete the line there"
+    is the two-step nobody completes.
+    """
+    result = _set_record_status(
+        memory_dir, rid, status, reason, agent=agent, superseded_by=superseded_by
+    )
+    if result.get("ok"):
+        from breadcrumbs import promote as _promote
+
+        demoted = _promote.auto_demote(Path(memory_dir), result.get("id") or rid, status)
+        if demoted and demoted.get("ok"):
+            result["demoted"] = demoted
+    return result
+
+
+def _set_record_status(
     memory_dir: Path,
     rid: str,
     status: str,
@@ -2405,10 +2752,11 @@ def set_record_status(
     # Resolution comes before the status check, because which vocabulary applies
     # depends on what the id names: a question is `open`/`answered`/`closed`,
     # never `superseded`.
+    rid = normalize_question_id(rid)
     rec = find_record_by_id(memory_dir, rid)
     if rec is None:
-        # Traps and open questions are `## ` blocks inside aggregate files, not
-        # one file per record, so neither ever resolved here — which left every
+        # Through schema 2 traps and open questions were `## ` blocks inside
+        # aggregate files, so neither ever resolved here — which left every
         # trap and every question permanently live, still scoring in `search`
         # and still driving `guard`, with no way to retire one but hand-editing
         # known-traps.md / open-questions.md.
@@ -2429,10 +2777,15 @@ def set_record_status(
             )
         return {"ok": False, "error": f"no record, trap or question with id {rid!r}"}
 
-    if status not in VALID_STATUS:
+    # A question file (schema 3) keeps its own vocabulary, exactly as a question
+    # block always did: `answered` is how a question retires, and no record
+    # lifecycle word says that.
+    vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
+    if status not in vocab:
+        what = "question status" if rec.rtype == "question" else "status"
         return {
             "ok": False,
-            "error": f"invalid status {status!r}; valid: {', '.join(VALID_STATUS)}",
+            "error": f"invalid {what} {status!r}; valid: {', '.join(vocab)}",
         }
 
     original = rec.path.read_text(encoding="utf-8")
@@ -2650,6 +3003,13 @@ def set_trap_confirmed(memory_dir: Path, rid: str, *, when: str | None = None) -
     if trap is None:
         return {"ok": False, "error": f"no trap with id {rid!r}"}
     tid = trap["id"]
+    from breadcrumbs import blockfiles
+
+    if trap.get("record_path"):
+        result = blockfiles.set_last_confirmed(memory_dir, tid, when or now_iso()[:10])
+        if result.get("ok"):
+            reindex_projections(memory_dir)
+        return result
     path = memory_dir / "known-traps.md"
     try:
         original = path.read_text(encoding="utf-8")
@@ -2702,8 +3062,19 @@ def set_trap_status(
 
     Fail-closed like `note()`: the file is reverted unless the edited block reads
     back with the requested status and leaves `validate` clean.
+
+    At schema 3 a trap is its own file, so this is simply the record path.
     """
     memory_dir = Path(memory_dir)
+    # Dispatch on the trap itself, not on the store version: at schema 3 a trap
+    # is normally a file, but one a person typed into known-traps.md since the
+    # last reindex is still a block. The record path gets the canonical id,
+    # because trap lookup is case-insensitive and record lookup is exact.
+    found_trap = find_trap_by_id(memory_dir, rid)
+    if found_trap is not None and found_trap.get("record_path"):
+        return set_record_status(
+            memory_dir, found_trap["id"], status, reason, agent=agent, superseded_by=superseded_by
+        )
     if status not in VALID_STATUS:
         return {
             "ok": False,
@@ -2771,7 +3142,7 @@ def set_trap_status(
 
 
 def find_questions_by_id(memory_dir: Path, rid: str) -> list[dict]:
-    """Every question block whose `q:<slug>` id == `rid` — normally zero or one.
+    """Every question whose `q_<slug>` id == `rid` (`q:<slug>` accepted) — normally zero or one.
 
     A list, not an Optional, because question ids are slug-derived: two questions
     can collide on one id (`question_item_id` only disambiguates the *truncated*
@@ -2779,7 +3150,7 @@ def find_questions_by_id(memory_dir: Path, rid: str) -> list[dict]:
     address a block by. The caller refuses an ambiguous edit rather than guessing
     which of two questions the user meant.
     """
-    wanted = (rid or "").strip().lower()
+    wanted = normalize_question_id(rid).lower()
     if not wanted:
         return []
     return [q for q in load_open_questions(Path(memory_dir)) if q["id"].lower() == wanted]
@@ -2804,8 +3175,16 @@ def set_question_status(
 
     Reached through `set_record_status`, so the CLI and `memory_mark_status` both
     get it with no second entry point. Same result shape as the record path.
+
+    At schema 3 a question is its own file, so this is simply the record path.
     """
     memory_dir = Path(memory_dir)
+    # Dispatch on the question itself — see `set_trap_status`.
+    matches = find_questions_by_id(memory_dir, rid)
+    if len(matches) == 1 and matches[0].get("record_path"):
+        return set_record_status(
+            memory_dir, matches[0]["id"], status, reason, agent=agent, superseded_by=superseded_by
+        )
     if status not in VALID_QUESTION_STATUS:
         return {
             "ok": False,
@@ -2987,6 +3366,30 @@ def cmd_remember(args: argparse.Namespace) -> int:
             )
             return 2
 
+    # WM-32: refuse a near-duplicate of a live record of the same type, unless
+    # the author said which one this replaces or that they want both.
+    from breadcrumbs import lifecycle as _lifecycle
+
+    supersedes = getattr(args, "supersedes", None)
+    problem = _lifecycle.check_supersedes(memory_dir, rtype, supersedes)
+    if problem:
+        _emit_error(args, problem)
+        return 2
+    if not supersedes and not getattr(args, "allow_duplicate", False):
+        dups = _lifecycle.find_near_duplicates(
+            memory_dir,
+            rtype,
+            title,
+            "\n".join(str(v) for v in sections.values()),
+            files=[e["ref"] for e in evidence if e.get("type") in ("file", "path")],
+            tags=tags or (),
+        )
+        if dups:
+            return _emit_duplicate(
+                args,
+                {"duplicates": dups, "message": _lifecycle.duplicate_message(dups)},
+            )
+
     try:
         path, meta = write_record(
             memory_dir,
@@ -3001,6 +3404,7 @@ def cmd_remember(args: argparse.Namespace) -> int:
             scope=args.scope,
             status=args.status,
             agent=args.agent,
+            extra={"supersedes": [supersedes]} if supersedes else None,
         )
     except ValueError as exc:
         # e.g. a newline in a frontmatter field — rendering refuses to corrupt.
@@ -3014,6 +3418,12 @@ def cmd_remember(args: argparse.Namespace) -> int:
         _emit_error(args, "new record failed validation: " + "; ".join(f["message"] for f in fails))
         return 1
 
+    demoted: list[str] = []
+    if supersedes:
+        demoted = _lifecycle.demoted_ids(
+            _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=args.agent)
+        )
+
     # Reindex-on-write: keep generated/ in step with the new record.
     reindex_projections(memory_dir, root)
 
@@ -3024,6 +3434,10 @@ def cmd_remember(args: argparse.Namespace) -> int:
         "slug": meta["slug"],
         "confidence": meta["confidence"],
     }
+    if supersedes:
+        summary["supersedes"] = [supersedes]
+    if demoted:
+        summary["demoted"] = demoted
     # F-4: decisions and attempts are covered by audit's [unreachable] check too,
     # so they get the same warning at the same moment. `--confidence low` is a
     # documented way to write a decision with no evidence at all, which is exactly
@@ -3042,6 +3456,8 @@ def cmd_remember(args: argparse.Namespace) -> int:
             print("  note: no evidence; confidence set to low.")
         if hint:
             print(f"  note: {hint}")
+        if demoted:
+            print(f"  also demoted: {', '.join(demoted)} (its promoted rule was removed)")
     return 0
 
 
@@ -3079,6 +3495,21 @@ def record_schema() -> dict:
 
 def _record_template(rtype: str) -> str:
     """A copy-pasteable command skeleton for a record type."""
+    if rtype == "jot":
+        # Jots are written with `crumb jot`; `remember` takes decisions and
+        # attempts only, and a template naming a command that does not exist is
+        # worse than no template.
+        return "\n".join(
+            [
+                "crumb jot 'ONE OBSERVATION, NO CEREMONY' \\",
+                "  --file path/to/file.py   # what it is about, so it can be found again \\",
+                "  --tags area,topic \\",
+                "  --local                  # machine-local: never committed",
+                "",
+                "# It expires on its own. If it turns out to be durable:",
+                "#   crumb inbox promote <jot id> decision|attempt|verification|trap|question|idea",
+            ]
+        )
     if rtype == "verification":
         # Verifications are written with `crumb verify`, not `crumb remember`.
         return "\n".join(
@@ -3088,6 +3519,27 @@ def _record_template(rtype: str) -> str:
                 "  --method static  # static|runtime|test \\",
                 "  --evidence file path/to/file.py:LINE \\",
                 "  --note 'what the evidence shows'",
+            ]
+        )
+    if rtype == "trap":
+        # Traps and questions are files from schema 3, but they are still
+        # written with `crumb note`, which fills the sections from flags.
+        return "\n".join(
+            [
+                "crumb note trap 'ONE-LINE TRAP SUMMARY' \\",
+                "  --area 'files / area where this bites' \\",
+                "  --symptom 'what goes wrong' \\",
+                "  --why 'the mechanism, not vibes' \\",
+                "  --safe 'the safe approach to use instead' \\",
+                "  --verify 'a command that proves it is OK'",
+            ]
+        )
+    if rtype == "question":
+        return "\n".join(
+            [
+                "crumb note question 'THE QUESTION, IN ONE LINE?' \\",
+                "  --why 'why it matters / what is blocked' \\",
+                "  --needs 'human input | investigation | a decision'",
             ]
         )
     lines = [f"crumb remember {rtype} \\", "  --title 'SHORT IMPERATIVE TITLE' \\"]
@@ -3241,6 +3693,7 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     hardcoding any particular trap in a regex and without record I/O on the
     common hook path — the near-miss class that motivated hooks in the first place.
     """
+    activate_store_aliases(memory_dir)
     tokens: set[str] = set()
     paths: set[str] = set()
     for trap in active_traps(memory_dir):
@@ -3275,6 +3728,13 @@ def try_reindex_projections(
     memory_dir = Path(memory_dir)
     project_root = Path(project_root) if project_root is not None else memory_dir.parent
     try:
+        # At schema 3 known-traps.md and open-questions.md are indexes of the
+        # trap and question files (WM-22). Rebuilt first; they are not inputs to
+        # the freshness hash, so the order only matters to a human reading them.
+        from breadcrumbs import blockfiles
+
+        if blockfiles.uses_files(memory_dir):
+            blockfiles.write_indexes(memory_dir, project_root)
         packet = build_resume_packet(memory_dir, project_root, stale_days=STALE_AGE_DAYS)
         gen = memory_dir / "generated"
         gen.mkdir(parents=True, exist_ok=True)
@@ -3286,6 +3746,27 @@ def try_reindex_projections(
             gen / GUARD_PREFILTER_FILENAME,
             json.dumps(_build_guard_prefilter(memory_dir), indent=0, sort_keys=True) + "\n",
         )
+        # "See also" for every live item (WM-25). Stamped like the packet, so
+        # drift detection covers it.
+        from breadcrumbs import related as _related
+
+        write_text_atomic(
+            gen / _related.RELATED_FILENAME, _related.render_related(memory_dir, project_root)
+        )
+        # Records that may argue with each other (WM-34). Same stamp, same drift
+        # detection; the packet renders the first few as warnings.
+        from breadcrumbs import lifecycle as _lifecycle
+
+        write_text_atomic(
+            gen / _lifecycle.CONFLICTS_FILENAME,
+            _lifecycle.render_conflicts(memory_dir, project_root),
+        )
+        # The disposable search index (WM-23). Built last, so it is stamped with
+        # the same inputs as everything above; its own failures are swallowed
+        # inside, because a missing index only means the full scan.
+        from breadcrumbs import searchindex as _searchindex
+
+        _searchindex.build_index(memory_dir, project_root)
         return True, None
     except Exception as exc:  # pragma: no cover - defensive; never block a write
         return False, f"{type(exc).__name__}: {exc}"
@@ -3313,6 +3794,103 @@ def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> b
 _refresh_resume_packet = reindex_projections
 
 
+def _note_as_file(
+    memory_dir: Path, project_root: Path, kind: str, text: str, fields: dict, *, agent: str | None
+) -> dict:
+    """`note trap|question` at schema 3: one file per record (WM-22).
+
+    Same checks, same result shape and the same hints as the block writer, so a
+    caller cannot tell which storage it wrote to — which is the point.
+    """
+    from breadcrumbs import blockfiles
+
+    if kind == "question":
+        qstatus = (fields.get("status") or "open").strip().lower()
+        if qstatus not in VALID_QUESTION_STATUS:
+            return {
+                "ok": False,
+                "error": f"invalid question status {fields.get('status')!r}; valid: "
+                + ", ".join(VALID_QUESTION_STATUS),
+            }
+        if any(q["question"] == text for q in load_open_questions(memory_dir)):
+            return {
+                "ok": False,
+                "error": f"question already recorded: {text!r} (reopen it with "
+                "`crumb mark-status <id> open`)",
+            }
+        written = blockfiles.write_question(
+            memory_dir,
+            project_root,
+            text,
+            why=fields.get("why"),
+            needs=fields.get("needs"),
+            status=qstatus,
+            agent=agent,
+        )
+        if not written.get("ok"):
+            return written
+        result = {
+            "ok": True,
+            "kind": "question",
+            "id": written["id"],
+            "ref": text,
+            "path": written["path"],
+        }
+        hint = _block_reachability_hint(
+            "\n".join(str(fields.get(k) or "") for k in ("why", "needs")) + "\n" + text,
+            "question",
+        )
+    else:
+        slug = fields.get("slug") or truncate_slug(slugify(text))
+        if find_trap_by_id(memory_dir, f"trap_{slug}") is not None:
+            return {
+                "ok": False,
+                "error": f"trap trap_{slug} already exists; reopen it with "
+                f"`crumb mark-status trap_{slug} active`, or pass a distinct "
+                "slug (--slug / fields.slug) to record a separate trap",
+            }
+        written = blockfiles.write_trap(
+            memory_dir,
+            project_root,
+            text,
+            slug=slug,
+            area=fields.get("area"),
+            symptom=fields.get("symptom"),
+            why=fields.get("why"),
+            safe=fields.get("safe"),
+            verify=fields.get("verify"),
+            agent=agent,
+        )
+        if not written.get("ok"):
+            return written
+        result = {
+            "ok": True,
+            "kind": "trap",
+            "id": written["id"],
+            "ref": written["id"],
+            "path": written["path"],
+        }
+        if not any(fields.get(k) for k in ("area", "symptom", "why", "safe", "verify")):
+            hint = (
+                "summary line only — a trap records Area / Symptom / Why / Safe "
+                "approach / Verification; pass --area/--symptom/--why/--safe/--verify "
+                "so the next agent gets the mechanism, not just the warning"
+            )
+        else:
+            hint = _block_reachability_hint(
+                "\n".join(
+                    str(fields.get(k) or "") for k in ("area", "symptom", "why", "safe", "verify")
+                )
+                + "\n"
+                + text,
+                "trap",
+            )
+    if hint:
+        result["hint"] = hint
+    reindex_projections(memory_dir, project_root)
+    return result
+
+
 def note(
     memory_dir: Path,
     project_root: Path,
@@ -3322,6 +3900,89 @@ def note(
     fields: dict | None = None,
     tags: list[str] | None = None,
     agent: str | None = None,
+    dedupe: bool = False,
+    supersedes: str | None = None,
+) -> dict:
+    """Write a question / trap / idea, refusing a near-duplicate when `dedupe` (WM-32).
+
+    `dedupe` is off by default and on for the two writers a person or agent
+    calls directly — `crumb note` and `memory_note`. Internal callers (inbox
+    promotion, the migration, tests building a store) write exactly what they
+    were given. `supersedes` names a live item of the same kind that the new one
+    replaces; it skips the duplicate check, because superseding the duplicate is
+    precisely the answer to it.
+    """
+    from breadcrumbs import lifecycle as _lifecycle
+
+    fields = fields or {}
+    problem = _lifecycle.check_supersedes(memory_dir, kind, supersedes)
+    if problem:
+        return {"ok": False, "error": problem, "usage": True}
+    # An exact repeat (same question text, same trap slug) has its own, more
+    # useful refusal in `_note_write` — "reopen it with mark-status" — so the
+    # similarity gate stands aside for it.
+    exact = (
+        kind == "question"
+        and any(
+            q["question"] == _sanitize_note_text(text.strip())
+            for q in load_open_questions(memory_dir)
+        )
+    ) or (
+        kind == "trap"
+        and find_trap_by_id(
+            memory_dir, f"trap_{fields.get('slug') or truncate_slug(slugify(text.strip()))}"
+        )
+        is not None
+    )
+    if dedupe and not supersedes and not exact and kind in ("question", "trap", "idea"):
+        body = "\n".join(
+            str(v) for k, v in fields.items() if isinstance(v, str) and k not in ("slug", "status")
+        )
+        if kind == "idea":
+            body = "\n".join(str(v) for v in (fields.get("sections") or {}).values())
+        dups = _lifecycle.find_near_duplicates(
+            memory_dir,
+            kind,
+            text.strip(),
+            body,
+            files=_paths_from_text(str(fields.get("area") or "")),
+            tags=tags or (),
+        )
+        if dups:
+            return {
+                "ok": False,
+                "error": "near-duplicate",
+                "duplicates": dups,
+                "message": _lifecycle.duplicate_message(dups),
+            }
+    result = _note_write(
+        memory_dir,
+        project_root,
+        kind,
+        text,
+        fields=fields,
+        tags=tags,
+        agent=agent,
+        supersedes=supersedes,
+    )
+    if result.get("ok") and supersedes:
+        results = _lifecycle.mark_superseded(memory_dir, [supersedes], result["id"], agent=agent)
+        result["supersedes"] = [supersedes]
+        if _lifecycle.demoted_ids(results):
+            result["demoted"] = _lifecycle.demoted_ids(results)
+    return result
+
+
+def _note_write(
+    memory_dir: Path,
+    project_root: Path,
+    kind: str,
+    text: str,
+    *,
+    fields: dict | None = None,
+    tags: list[str] | None = None,
+    agent: str | None = None,
+    supersedes: str | None = None,
 ) -> dict:
     """Write an open-question / known-trap / idea and refresh projections.
 
@@ -3342,6 +4003,11 @@ def note(
         fields = {
             k: (_sanitize_note_text(v) if isinstance(v, str) else v) for k, v in fields.items()
         }
+
+    from breadcrumbs import blockfiles
+
+    if kind in ("question", "trap") and blockfiles.uses_files(memory_dir):
+        return _note_as_file(memory_dir, project_root, kind, text, fields, agent=agent)
 
     if kind == "question":
         path = memory_dir / "open-questions.md"
@@ -3466,7 +4132,14 @@ def note(
         sections = dict(fields.get("sections") or {})
         try:
             path, meta = write_record(
-                memory_dir, project_root, "idea", text, sections, tags=tags, agent=agent
+                memory_dir,
+                project_root,
+                "idea",
+                text,
+                sections,
+                tags=tags,
+                agent=agent,
+                extra={"supersedes": [supersedes]} if supersedes else None,
             )
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
@@ -3548,10 +4221,14 @@ def cmd_note(args: argparse.Namespace) -> int:
         fields=fields,
         tags=tags,
         agent=getattr(args, "agent", None),
+        dedupe=not getattr(args, "allow_duplicate", False),
+        supersedes=getattr(args, "supersedes", None),
     )
+    if result.get("error") == "near-duplicate":
+        return _emit_duplicate(args, result)
     if not result.get("ok"):
         _emit_error(args, result.get("error", "note failed"))
-        return 1
+        return 2 if result.get("usage") else 1
 
     if section_notes:
         result["warnings"] = section_notes
@@ -3562,6 +4239,8 @@ def cmd_note(args: argparse.Namespace) -> int:
         print(f"  file: {result['path']}")
         if result.get("hint"):
             print(f"  note: {result['hint']}")
+        if result.get("demoted"):
+            print(f"  also demoted: {', '.join(result['demoted'])} (its promoted rule was removed)")
     return 0
 
 
@@ -3580,8 +4259,14 @@ def verify(
     tags: list[str] | None = None,
     confidence: str | None = None,
     agent: str | None = None,
+    dedupe: bool = False,
+    supersedes: str | None = None,
+    scope: str | None = None,
 ) -> dict:
     """Record a verification result — a finding about reality.
+
+    `dedupe` / `supersedes` are the WM-32 gate, as on `note`: on for the CLI and
+    MCP writers, off for internal callers.
 
     The single most common agentic output ("I checked X; here is its state") had
     no home: it was mis-filed as a decision/attempt, polluting those categories.
@@ -3611,6 +4296,32 @@ def verify(
     if not evidence and confidence != "low":
         confidence = "low"
 
+    from breadcrumbs import lifecycle as _lifecycle
+
+    problem = _lifecycle.check_supersedes(memory_dir, "verification", supersedes)
+    if problem:
+        return {"ok": False, "error": problem, "usage": True}
+    if dedupe and not supersedes:
+        dups = _lifecycle.find_near_duplicates(
+            memory_dir,
+            "verification",
+            f"{subject} — {status}",
+            "\n".join(x for x in (subject, status, method or "", note or "") if x),
+            files=[e.get("ref") for e in evidence if e.get("type") in ("file", "path")],
+            tags=tags or (),
+        )
+        if dups:
+            return {
+                "ok": False,
+                "error": "near-duplicate",
+                "duplicates": dups,
+                "message": _lifecycle.duplicate_message(dups),
+            }
+
+    # WM-30: a settled verification (fixed / not_applicable) is the kind that
+    # silently goes stale, so it expires; an actionable one never does.
+    expires_at = _lifecycle.verification_expiry(memory_dir, status, now_iso())
+
     sections = {"Subject": subject, "Outcome": status}
     if method:
         sections["Method"] = method
@@ -3628,7 +4339,14 @@ def verify(
             evidence=evidence,
             confidence=confidence,
             agent=agent,
-            extra={"subject": subject, "outcome": status, "method": method},
+            scope=scope,
+            extra={
+                "subject": subject,
+                "outcome": status,
+                "method": method,
+                "expires_at": expires_at,
+                "supersedes": [supersedes] if supersedes else None,
+            },
         )
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
@@ -3641,6 +4359,11 @@ def verify(
             "error": "verification rejected by validate: " + "; ".join(f["message"] for f in fails),
         }
 
+    demoted: list[str] = []
+    if supersedes:
+        demoted = _lifecycle.demoted_ids(
+            _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=agent)
+        )
     reindex_projections(memory_dir, project_root)
     out = {
         "ok": True,
@@ -3649,8 +4372,13 @@ def verify(
         "outcome": status,
         "method": method,
         "confidence": meta["confidence"],
+        "expires_at": meta.get("expires_at"),
         "path": str(path),
     }
+    if supersedes:
+        out["supersedes"] = [supersedes]
+    if demoted:
+        out["demoted"] = demoted
     # F-4: verifications are the record type this bites hardest — the audit found
     # four unreachable ones in a single store — because `crumb verify "<claim>"
     # --status fixed` is a complete, valid call that carries neither tags nor
@@ -3666,6 +4394,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
     memory_dir = root / MEMORY_DIRNAME
     if not memory_dir.is_dir():
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+
+    if getattr(args, "recheck", None) or getattr(args, "recheck_all", False):
+        from breadcrumbs import lifecycle_cmds
+
+        return lifecycle_cmds.run_recheck(args, memory_dir, root)
+    if not args.status:
+        _emit_error(args, "--status is required (or --recheck <id> / --all to rerun commands)")
         return 2
 
     subject = args.subject
@@ -3686,10 +4422,15 @@ def cmd_verify(args: argparse.Namespace) -> int:
         tags=_split_tags(args.tags),
         confidence=args.confidence,
         agent=getattr(args, "agent", None),
+        dedupe=not getattr(args, "allow_duplicate", False),
+        supersedes=getattr(args, "supersedes", None),
+        scope=getattr(args, "scope", None),
     )
+    if result.get("error") == "near-duplicate":
+        return _emit_duplicate(args, result)
     if not result.get("ok"):
         _emit_error(args, result.get("error", "verify failed"))
-        return 1
+        return 2 if result.get("usage") else 1
 
     if args.json:
         _print_json(args, result)
@@ -3700,6 +4441,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
             print("  note: no evidence; confidence set to low.")
         if result.get("hint"):
             print(f"  note: {result['hint']}")
+        if result.get("demoted"):
+            print(f"  also demoted: {', '.join(result['demoted'])} (its promoted rule was removed)")
     return 0
 
 
@@ -3759,6 +4502,10 @@ def cmd_traps(args: argparse.Namespace) -> int:
         return 0
 
     stale_days = args.stale if args.stale is not None else None
+    if stale_days == -1:
+        from breadcrumbs import lifecycle as _lifecycle
+
+        stale_days = _lifecycle.ttl_days(memory_dir, "trap")
     rows = trap_report(memory_dir, stale_days=stale_days, status=args.status)
     total = sum(r["approx_tokens"] for r in rows)
     if args.json:
@@ -3785,7 +4532,8 @@ def cmd_traps(args: argparse.Namespace) -> int:
             print(f"      {r['summary']}")
     print(
         "\nStill true? `crumb traps --confirm <id>`. "
-        'No longer? `crumb mark-status <id> resolved --reason "..."`.'
+        'No longer? `crumb mark-status <id> stale --reason "..."` '
+        "(or `rejected` if it was never true)."
     )
     return 0
 
@@ -3809,6 +4557,48 @@ def cmd_retitle(args: argparse.Namespace) -> int:
             "  note: the id, slug and filename are unchanged — they are what "
             "other records reference."
         )
+    return 0
+
+
+def cmd_show(args: argparse.Namespace) -> int:
+    """`crumb show <id>` — the body behind a one-line mention.
+
+    Packets and hook injections carry one line per record, deliberately: a line
+    is what a reader can afford to skim on every turn. This is the other half of
+    that bargain — the way to fetch the rest when a line looks relevant.
+    """
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    item = find_item(memory_dir, args.record_id)
+    if item is None:
+        _emit_error(
+            args,
+            f"no record, trap, question or jot with id {args.record_id!r} "
+            "(`crumb search` lists ids)",
+        )
+        return 1
+    related = load_related(memory_dir).get(item["id"], [])
+    if args.json:
+        _print_json(
+            args,
+            {
+                "id": item["id"],
+                "kind": item["kind"],
+                "status": item["status"],
+                "path": str(item["path"]),
+                "text": item["text"],
+                "related": related,
+                "items": related,
+            },
+        )
+        return 0
+    print(item["text"].rstrip())
+    if related:
+        print()
+        print("See also: " + ", ".join(f"`{r}`" for r in related))
     return 0
 
 
@@ -3858,6 +4648,9 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
     else:
         print(f"Marked {result['id']}: {result['from']} -> {result['to']}")
         print(f"  file: {result['path']}")
+        if result.get("demoted"):
+            where = ", ".join(result["demoted"].get("removed_from") or []) or "the instruction file"
+            print(f"  also demoted: its promoted rule was removed from {where}")
     return 0
 
 
@@ -3958,7 +4751,7 @@ def _coalescible_snapshot(
     # always tz-aware; that helper is day-resolution and this needs minutes.
     if stamped.tzinfo is None:
         stamped = stamped.astimezone()
-    delta = (datetime.now().astimezone() - stamped).total_seconds()
+    delta = (_now() - stamped).total_seconds()
     return rec if 0 <= delta <= window_minutes * 60 else None
 
 
@@ -4295,7 +5088,17 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     # which is also the honest reading of "the caller said nothing about focus".
     focus = args.focus or ""
     recently = sections.get("Work Completed", "")
-    update_handoff(memory_dir, meta["branch"], meta["commit"], focus, sections["Next Action"])
+    from breadcrumbs import handoffs as _handoffs
+
+    handoff_path = _handoffs.write_path(memory_dir, root, meta["branch"])
+    update_handoff(
+        memory_dir,
+        meta["branch"],
+        meta["commit"],
+        focus,
+        sections["Next Action"],
+        path=handoff_path,
+    )
     update_current(memory_dir, focus, recently)
     # Reindex-on-write: capture mutates three packet inputs (the
     # session record, handoff.md, current.md), so the projections must follow —
@@ -4306,7 +5109,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     summary = {
         "session": str(path),
         "id": meta["id"],
-        "handoff": str(memory_dir / "handoff.md"),
+        "handoff": str(handoff_path),
         "current": str(memory_dir / "current.md"),
         "session_tracking": tracking,
         "fast": bool(args.fast),
@@ -4320,7 +5123,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     else:
         print(f"{'Updated' if coalesce is not None else 'Captured'} session: {meta['id']}")
         print(f"  file:    {path}")
-        print("  handoff: updated")
+        print(f"  handoff: {handoff_path.relative_to(memory_dir).as_posix()} (updated)")
         print("  current: updated")
         if tracking == "distillate":
             print("  note: session_tracking=distillate — sessions/ stays local (gitignored);")
@@ -4378,6 +5181,40 @@ def cmd_prune(args: argparse.Namespace) -> int:
     if not memory_dir.is_dir():
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
+    if args.what == "handoffs":
+        from breadcrumbs import handoffs as _handoffs
+
+        res = _handoffs.prune_handoffs(memory_dir, root, dry_run=args.dry_run)
+        if args.json:
+            _print_json(args, {**res, "items": res["pruned"]})
+            return 0
+        verb = "would delete" if res["dry_run"] else "deleted"
+        print(
+            f"prune handoffs: {verb} {len(res['pruned'])} branch handoff(s) whose branch is "
+            f"gone locally and on origin and which are {_handoffs.PRUNE_MIN_AGE_DAYS}+ days old"
+        )
+        for o in res["pruned"]:
+            print(f"  - {o['path']} ({o['age_days']}d)")
+        if res["dry_run"] and res["pruned"]:
+            print("Re-run without --dry-run to delete.")
+        return 0
+    if args.what == "jots":
+        from breadcrumbs import inbox as _inbox
+
+        res = _inbox.prune_jots(memory_dir, root, dry_run=args.dry_run)
+        if args.json:
+            _print_json(args, {**res, "items": res["deleted"]})
+            return 0
+        verb = "would delete" if res["dry_run"] else "deleted"
+        print(
+            f"prune jots: {res['jots']} jot(s), {verb} {len(res['deleted'])} "
+            f"expired/retired older than {res['after_days']} day(s)"
+        )
+        for rid in res["deleted"]:
+            print(f"  - {rid}")
+        if res["dry_run"] and res["deleted"]:
+            print("Re-run without --dry-run to delete.")
+        return 0
     res = prune_sessions(memory_dir, root, keep=args.keep, dry_run=args.dry_run)
     if args.json:
         _print_json(args, res)
@@ -4508,10 +5345,25 @@ def _user_preamble(preamble: list[str]) -> list[str]:
 
 
 def update_handoff(
-    memory_dir: Path, branch: str, commit: str, focus: str, next_action: str
+    memory_dir: Path,
+    branch: str,
+    commit: str,
+    focus: str,
+    next_action: str,
+    *,
+    path: Path | None = None,
 ) -> None:
-    path = Path(memory_dir) / "handoff.md"
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    """Rewrite a handoff with fresh metadata and the given focus / next action.
+
+    `path` is `handoff.md` unless a branch handoff is being written (WM-50); a
+    branch handoff that does not exist yet starts from `handoff.md`'s content,
+    so the focus the session was cut from carries over.
+    """
+    from breadcrumbs import handoffs as _handoffs
+
+    path = Path(path) if path is not None else Path(memory_dir) / "handoff.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing = _handoffs.seed_text(memory_dir, path)
     preamble, ordered = split_md_ordered(existing)
     sec = split_md_sections(existing)
     focus = "" if _is_placeholder(focus) else focus
@@ -4626,6 +5478,10 @@ SECTION_CAPS = {
     "likely_files": 20,
     "verification": 12,
     "verifications": 12,
+    # Lower than the durable sections on purpose: the inbox is a triage queue,
+    # and a packet that spends more context on unsorted notes than on decisions
+    # has inverted what it is for.
+    "inbox": 10,
     # Warnings are capped too: every aged decision/question emits
     # a warning, so a neglected store could blow the token bound through the one
     # section the trimmer never touched.
@@ -4638,6 +5494,9 @@ SECTION_CAPS = {
 # substantive section is empty, so the hard token bound holds.
 TRIM_ORDER = [
     "verification",
+    # Trimmed early: an unpromoted jot is the least load-bearing thing in the
+    # packet by construction — it is a candidate nobody has confirmed.
+    "inbox",
     "likely_files",
     "open_questions",
     "verifications",
@@ -4672,10 +5531,42 @@ def _age_days(value: str | None) -> int | None:
     dt = _parse_iso(value)
     if dt is None:
         return None
-    now = datetime.now().astimezone()
+    now = _now()
     if dt.tzinfo is None:
         dt = dt.astimezone()
     return (now - dt).days
+
+
+def record_expired(meta: dict) -> bool:
+    """Has a record passed its `expires_at` (WM-30)? None or unparseable never does.
+
+    Expiry is decay, not retirement: the status stays `active` and the record
+    stays on disk, but it leaves the packet's lists and guard's live set.
+    """
+    age = _age_days(meta.get("expires_at"))
+    return age is not None and age >= 0
+
+
+# `scope` values (WM-52). `project` is every record's default; `branch` says the
+# record describes this branch's state — a verification of work in progress, an
+# observation a hook mined mid-session — and applies only while that branch is
+# checked out. The branch is the record's existing `branch` key.
+RECORD_SCOPES = ("project", "branch")
+
+
+def branch_scoped_elsewhere(meta: dict, current_branch: str) -> bool:
+    """Is this a `scope: branch` record written on a branch other than the current one?
+
+    Such a record stays on disk and in `search`, but leaves the packet's lists
+    and guard's live set: it is about a branch that is not checked out. With no
+    git (or no recorded branch) nothing is "elsewhere".
+    """
+    if str(meta.get("scope") or "project") != "branch":
+        return False
+    rb = meta.get("branch")
+    if not rb or rb in (NO_GIT_BRANCH, "") or current_branch in (NO_GIT_BRANCH, "HEAD"):
+        return False
+    return rb != current_branch
 
 
 def _dt_sort_key(value: str | None) -> float:
@@ -4889,6 +5780,8 @@ def _md_blocks(path: Path, head_predicate) -> list[dict]:
 _BLOCK_STATUS_LINE_RE = re.compile(r"\s*-\s*status\s*:\s*(.+)", re.I)
 _BLOCK_SUPERSEDED_LINE_RE = re.compile(r"\s*-\s*superseded[ _]by\s*:\s*(.+)", re.I)
 _BLOCK_OPENED_LINE_RE = re.compile(r"\s*-\s*opened\s*:\s*(.+)", re.I)
+# Where a trap block was promoted to (WM-40) — bookkeeping, not content.
+_BLOCK_PROMOTED_LINE_RE = re.compile(r"\s*-\s*promoted[ _]to\s*:\s*(.+)", re.I)
 # When somebody last checked that a trap is still true (R6). Authored, not
 # derived: age says a trap is old, and an old trap may be perfectly live — only
 # a person or an agent re-checking it can say it still applies.
@@ -4939,11 +5832,34 @@ def _block_content(body: str) -> str:
             _BLOCK_STATUS_LINE_RE.match(ln)
             or _BLOCK_SUPERSEDED_LINE_RE.match(ln)
             or _BLOCK_OPENED_LINE_RE.match(ln)
+            or _BLOCK_PROMOTED_LINE_RE.match(ln)
         )
     )
 
 
 def load_traps(memory_dir: Path) -> list[dict]:
+    """Every trap, with `{heading, body, id, summary, status, content}`.
+
+    From schema 3 each trap is its own file under `traps/` (WM-22); before that
+    it is a block in known-traps.md. Either way the dicts are the same shape,
+    and `body` is the same bullet text — which is why nothing that reads traps
+    had to change when their storage did.
+    """
+    from breadcrumbs import blockfiles
+
+    if blockfiles.uses_files(memory_dir):
+        # Files, plus any block a person typed into known-traps.md since the
+        # last reindex — a schema-3 store must not silently ignore what somebody
+        # wrote in the place they have always written it. The next reindex
+        # adopts such a block into a file; until then it is read as a block.
+        # A file wins over a block with the same id.
+        files = blockfiles.load_trap_files(memory_dir)
+        seen = {t["id"].lower() for t in files}
+        return files + [t for t in _load_trap_blocks(memory_dir) if t["id"].lower() not in seen]
+    return _load_trap_blocks(memory_dir)
+
+
+def _load_trap_blocks(memory_dir: Path) -> list[dict]:
     """Trap blocks from known-traps.md (each `## trap_<slug>: <summary>`).
 
     Each block is returned with its `id` (the `trap_<slug>` heading prefix — the
@@ -4980,9 +5896,25 @@ def active_traps(memory_dir: Path) -> list[dict]:
 
 
 def load_open_questions(memory_dir: Path) -> list[dict]:
+    """Every question, with `{id, question, opened, status, content, body}`.
+
+    Files under `questions/` from schema 3 (WM-22), `## Q:` blocks before. Same
+    shape either way — see `load_traps`.
+    """
+    from breadcrumbs import blockfiles
+
+    if blockfiles.uses_files(memory_dir):
+        # Files plus any hand-written block not yet adopted — see `load_traps`.
+        files = blockfiles.load_question_files(memory_dir)
+        seen = {q["id"].lower() for q in files}
+        return files + [q for q in _load_question_blocks(memory_dir) if q["id"].lower() not in seen]
+    return _load_question_blocks(memory_dir)
+
+
+def _load_question_blocks(memory_dir: Path) -> list[dict]:
     """Parse `## Q: <question>` blocks into {id, question, opened, status, body}.
 
-    `id` is the `q:<slug>` id `search` lists and `mark-status` takes. The name is
+    `id` is the `q_<slug>` id `search` lists and `mark-status` takes. The name is
     historical: this returns *all* questions with their status, open or not —
     every caller filters on `status == "open"` itself, or uses `open_questions`.
     """
@@ -5169,6 +6101,7 @@ def compute_staleness(
     *,
     risks_only: bool = False,
     memory_dir: Path | None = None,
+    handoff_path: Path | None = None,
 ) -> list[str]:
     """All computed staleness/risk warnings (§12, §15). Order: primary first.
 
@@ -5191,7 +6124,8 @@ def compute_staleness(
     cur_branch = git_branch(root)
     detached = is_git_repo(root) and cur_branch == "HEAD"
     reached = HeadTree(root)
-    handoff_path = Path(memory_dir) / "handoff.md" if memory_dir is not None else None
+    if handoff_path is None and memory_dir is not None:
+        handoff_path = Path(memory_dir) / "handoff.md"
 
     # (5) Primary signal: handoff age + commit-distance ("train of thought cold").
     age = _age_days(handoff_meta.get("updated_at"))
@@ -5271,10 +6205,9 @@ def compute_staleness(
     # (8) Expired + low-confidence records.
     for r in decisions + attempts:
         exp = r.meta.get("expires_at")
-        if exp:
+        if exp and record_expired(r.meta):
             a = _age_days(exp)
-            if a is not None and a > 0:
-                warnings.append(f"{r.meta.get('id', r.stem)} expired on {exp} ({a} days ago).")
+            warnings.append(f"{r.meta.get('id', r.stem)} expired on {exp} ({a} days ago).")
         if r.meta.get("confidence") == "low":
             warnings.append(
                 f"{r.meta.get('id', r.stem)} is low-confidence — verify before relying on it."
@@ -5497,11 +6430,26 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     # the hash — otherwise the freshness check certifies a packet built from a
     # since-edited manifest.
     paths = [memory_dir / f for f in CORE_FILES]
+    # At schema 3 the trap and question singletons are generated indexes of the
+    # files under traps/ and questions/ (WM-22), which are hashed below as
+    # record directories. Hashing a projection as an input would make every
+    # reindex change the stamp it just wrote.
+    from breadcrumbs import blockfiles
+
+    if blockfiles.uses_files(memory_dir):
+        paths = [p for p in paths if p.name not in ("known-traps.md", "open-questions.md")]
     paths.append(memory_dir / "manifest.yml")
+    # The alias table changes what every stem means, so it is an input to every
+    # projection built from stems (the guard prefilter most of all).
+    paths.append(memory_dir / ALIASES_FILENAME)
     for d in dirs:
         dd = memory_dir / d
         if dd.is_dir():
             paths.extend(sorted(dd.glob("*.md")))
+    # Branch handoffs (WM-50) are packet inputs like handoff.md.
+    handoffs_dir = memory_dir / "handoffs"
+    if handoffs_dir.is_dir():
+        paths.extend(sorted(handoffs_dir.glob("*.md")))
     for p in sorted(set(paths)):
         if p.is_file():
             # Path *and* separators, not bare contents: record ids
@@ -5514,6 +6462,60 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
             h.update(p.read_bytes())
             h.update(b"\0")
     return h.hexdigest()[:12]
+
+
+# How much of a jot's text the packet spends. A jot is capped at
+# JOT_MAX_CHARS; the packet shows the opening of it and the id to fetch the
+# rest, because ten full jots would outweigh every decision in the section above.
+PACKET_JOT_CHARS = 120
+
+
+def _packet_record_ids(packet: dict) -> list[str]:
+    """Every record id the rendered packet actually names.
+
+    Read from the packet *after* capping and budget trimming, so a record that
+    was computed and then dropped is not counted as surfaced — it was not.
+    """
+    ids: list[str] = []
+    for key in ("active_decisions", "failed_attempts", "verifications", "inbox"):
+        ids += [
+            item["id"] for item in packet.get(key, []) if isinstance(item, dict) and item.get("id")
+        ]
+    # Traps render as their heading (`trap_<slug>: summary`), which is how the
+    # id is spelled in that file; take the id half.
+    ids += [str(t).split(":", 1)[0].strip() for t in packet.get("known_traps", [])]
+    return [i for i in ids if i]
+
+
+def _record_packet_surfacings(memory_dir: Path, packet: dict, source: str = "resume") -> None:
+    """Best-effort usage counts for a packet that was just shown to somebody."""
+    from breadcrumbs import usage as _usage
+
+    _usage.record_surfaced(memory_dir, _packet_record_ids(packet), source)
+
+
+def _packet_inbox(memory_dir: Path) -> list[dict]:
+    """Live committed jots for the packet's Inbox section.
+
+    Imported here rather than at module scope: `breadcrumbs.inbox` imports this
+    module, so a top-level import would be a cycle.
+    """
+    from breadcrumbs import inbox as _inbox
+
+    out = []
+    for row in _inbox.packet_jots(memory_dir):
+        text = row["title"]
+        if len(text) > PACKET_JOT_CHARS:
+            text = text[: PACKET_JOT_CHARS - 1].rstrip() + "…"
+        out.append(
+            {
+                "id": row["id"],
+                "text": text,
+                "source": row["source"],
+                "age_days": row["age_days"],
+            }
+        )
+    return out
 
 
 def build_resume_packet(
@@ -5547,13 +6549,15 @@ def build_resume_packet(
     if problem:
         unreadable.append(f"current.md: {problem}")
     current_sections = split_md_sections(current_text)
+    # WM-50: this branch's own handoff when it has one, else handoff.md.
+    from breadcrumbs import handoffs as _handoffs
+
+    handoff_path, handoff_label = _handoffs.read_path(memory_dir, root)
     handoff_text, problem = (
-        read_text_lenient(memory_dir / "handoff.md")
-        if (memory_dir / "handoff.md").is_file()
-        else ("", None)
+        read_text_lenient(handoff_path) if handoff_path.is_file() else ("", None)
     )
     if problem:
-        unreadable.append(f"handoff.md: {problem}")
+        unreadable.append(f"{handoff_label}: {problem}")
     handoff_sections = split_md_sections(handoff_text)
     handoff_meta = parse_handoff_meta(handoff_text)
 
@@ -5562,6 +6566,38 @@ def build_resume_packet(
     traps = active_traps(memory_dir)
     questions = load_open_questions(memory_dir)
     verifications = active_verifications(memory_dir)
+    # WM-30: a record past its `expires_at` leaves the lists (it is still on
+    # disk, still searchable, and `crumb expired` names it). The staleness
+    # warnings below still see every active record, so "X expired on …" is said.
+    listed_decisions = [r for r in decisions if not record_expired(r.meta)]
+    listed_attempts = [r for r in attempts if not record_expired(r.meta)]
+    listed_verifications = [r for r in verifications if not record_expired(r.meta)]
+    # WM-52: branch-scoped records from another branch leave the lists too.
+    current_branch = git_branch(root)
+    listed_decisions = [
+        r for r in listed_decisions if not branch_scoped_elsewhere(r.meta, current_branch)
+    ]
+    listed_attempts = [
+        r for r in listed_attempts if not branch_scoped_elsewhere(r.meta, current_branch)
+    ]
+    listed_verifications = [
+        r for r in listed_verifications if not branch_scoped_elsewhere(r.meta, current_branch)
+    ]
+    # WM-40: a promoted record is already in the model's context through the
+    # instruction file; listing it again spends the packet's budget twice. Only
+    # the list sections drop it — guard, search and the warnings still see it.
+    from breadcrumbs import promote as _promote
+
+    promoted_counts = {
+        "active_decisions": sum(1 for r in listed_decisions if _promote.is_promoted_record(r)),
+        "failed_attempts": sum(1 for r in listed_attempts if _promote.is_promoted_record(r)),
+        "known_traps": sum(1 for t in traps if _promote.is_promoted_trap(t)),
+    }
+    listed_decisions_all = listed_decisions
+    listed_attempts_all = listed_attempts
+    listed_decisions = [r for r in listed_decisions if not _promote.is_promoted_record(r)]
+    listed_attempts = [r for r in listed_attempts if not _promote.is_promoted_record(r)]
+    listed_traps = [t for t in traps if not _promote.is_promoted_trap(t)]
 
     # Project snapshot (git is the live source; handoff metadata is advisory).
     dirty = git_dirty_files(root)
@@ -5578,6 +6614,7 @@ def build_resume_packet(
         "commit": git_commit(root),
         "dirty": len(dirty),
         "dirty_state": (f"{len(dirty)} uncommitted file(s)" if dirty else "clean"),
+        "handoff": handoff_label,
     }
 
     def _focus() -> str:
@@ -5616,7 +6653,7 @@ def build_resume_packet(
                 "title": r.meta.get("title", ""),
                 "rationale": _decision_rationale(r),
             }
-            for r in decisions
+            for r in listed_decisions
         ],
         "failed_attempts": [
             {
@@ -5624,10 +6661,16 @@ def build_resume_packet(
                 "title": r.meta.get("title", ""),
                 "do_not_retry": _attempt_do_not_retry(r),
             }
-            for r in attempts
+            for r in listed_attempts
         ],
-        "known_traps": [t["heading"] for t in traps],
+        "known_traps": [t["heading"] for t in listed_traps],
+        "promoted": {k: v for k, v in promoted_counts.items() if v},
         "open_questions": [q["question"] for q in questions if q["status"] == "open"],
+        # Committed jots only. A machine-local jot in this list would make the
+        # committed packet differ between two checkouts of one store while
+        # `_inputs_hash` — which cannot read gitignored input without the same
+        # problem — still called both fresh. See `breadcrumbs/inbox.py`.
+        "inbox": _packet_inbox(memory_dir),
         "likely_files": [],
         "verification": [],
         "verifications": [
@@ -5637,7 +6680,7 @@ def build_resume_packet(
                 "outcome": (r.meta.get("outcome") or "open"),
                 "method": r.meta.get("method"),
             }
-            for r in verifications
+            for r in listed_verifications
         ],
         "commits_since_handoff": _commits_since(
             root, handoff_meta.get("commit"), PACKET_COMMITS_SINCE_HANDOFF_MAX
@@ -5652,6 +6695,7 @@ def build_resume_packet(
                 questions,
                 stale_days,
                 memory_dir=memory_dir,
+                handoff_path=handoff_path,
             )
         ),
         "omitted": {},
@@ -5662,6 +6706,19 @@ def build_resume_packet(
     packet["warnings"] += _focus_verification_conflicts(
         packet["next_action"], packet["current_focus"], verifications
     )
+    from breadcrumbs import lifecycle as _lifecycle
+
+    packet["warnings"] += _lifecycle.lifecycle_warnings(
+        memory_dir, root, verifications=listed_verifications, traps=traps
+    )
+    # WM-31: a record citing a file that is gone may describe code that is gone.
+    # Promoted records too: a standing rule citing a deleted file is exactly the
+    # one that must be rechecked.
+    packet["warnings"] += _lifecycle.missing_evidence_warnings(
+        root, listed_decisions_all + listed_attempts_all + listed_verifications
+    )
+    # WM-34: memory that argues with itself, worded as a question.
+    packet["warnings"] += _lifecycle.conflict_warnings(memory_dir)
 
     # Likely files: handoff section + file-type evidence refs (deduped, order-stable).
     files = _section_lines(handoff_sections, "Likely Relevant Files")
@@ -5680,15 +6737,79 @@ def build_resume_packet(
     # likely_files with files drawn from the records that actually match the task,
     # and label an empty result so the consumer knows the store is cold here rather
     # than trusting noise.
+    packet["ordering"] = "recency"
     if task:
         packet["requested_task"] = task
         scoped, note = _task_scoped_files(memory_dir, root, task, stale_days=stale_days)
         packet["likely_files"] = scoped
         if note:
             packet["likely_files_note"] = note
+        _order_by_relevance(packet, memory_dir, root, task, stale_days=stale_days)
 
     _bound_packet(packet, fast=fast)
     return packet
+
+
+# How many of the newest items in each section keep their place when a packet
+# is ordered by relevance. Without a floor, a record written ten minutes ago that
+# happens to share no words with the task would sink below a year-old one that
+# does — and "what just changed" is the one thing a resuming reader cannot
+# afford to miss, whatever they are about to work on.
+RECENCY_FLOOR = 3
+
+# The packet's list sections and how to get a search id out of each entry. Two
+# of them hold strings rather than dicts: a trap is rendered as its heading
+# (`trap_<slug>: summary`) and a question as its text.
+_RELEVANCE_SECTIONS: dict[str, "object"] = {
+    "active_decisions": lambda e: e["id"],
+    "failed_attempts": lambda e: e["id"],
+    "verifications": lambda e: e["id"],
+    "known_traps": lambda e: str(e).split(":", 1)[0].strip(),
+    "open_questions": lambda e: question_item_id(str(e)),
+}
+
+
+def task_relevance_scores(
+    memory_dir: Path, root: Path, task: str, *, stale_days: int = STALE_AGE_DAYS
+) -> dict[str, float]:
+    """`{record_id: score}` for `task`: what a task-ordered packet sorts by.
+
+    Deliberately loose (one shared word is enough): it only orders, it never
+    hides. The relevance evals (`evals/run.py`) rank the packet by this too, so
+    the packet and its measurement cannot drift apart.
+    """
+    matches, _ = search(
+        memory_dir, root, task, include_ideas=False, min_keyword=1, stale_days=stale_days
+    )
+    return {m["id"]: float(m.get("score") or 0) for m in matches}
+
+
+def _order_by_relevance(
+    packet: dict, memory_dir: Path, root: Path, task: str, *, stale_days: int
+) -> None:
+    """Reorder every list section by relevance to `task`, in place (WM-20).
+
+    Ordering only — nothing is hidden. The newest `RECENCY_FLOOR` entries stay
+    first, then everything the task scores against, best first, then the rest
+    in their original order. Caps and the token budget apply afterwards exactly
+    as before, so what relevance changes is *which* entries survive a trim: the
+    ones about the task instead of whichever happened to be newest.
+
+    One `search` over the whole corpus, reused for every section, so the cost is
+    the same as `--task`'s likely-file scoping already paid.
+    """
+    scores = task_relevance_scores(memory_dir, root, task, stale_days=stale_days)
+    if not scores:
+        return
+    for key, id_of in _RELEVANCE_SECTIONS.items():
+        entries = packet.get(key) or []
+        head, rest = entries[:RECENCY_FLOOR], entries[RECENCY_FLOOR:]
+        scored = [e for e in rest if scores.get(id_of(e), 0) > 0]
+        unscored = [e for e in rest if scores.get(id_of(e), 0) <= 0]
+        # sort() is stable, so equal scores keep their recency order.
+        scored.sort(key=lambda e: -scores[id_of(e)])
+        packet[key] = head + scored + unscored
+    packet["ordering"] = "relevance"
 
 
 def active_verifications(memory_dir: Path) -> list[Record]:
@@ -5749,6 +6870,7 @@ _FAST_DROP = (
     "likely_files",
     "verification",
     "verifications",
+    "inbox",
 )
 
 
@@ -5795,11 +6917,18 @@ def _bound_packet(packet: dict, *, fast: bool) -> None:
 
 
 def _omitted_note(packet: dict, key: str) -> list[str]:
+    out = []
     n = packet.get("omitted", {}).get(key, 0)
-    if not n:
-        return []
-    reason = packet.get("omitted_reason", {}).get(key, "the token budget")
-    return [f"_(… {n} more omitted to stay within {reason})_"]
+    if n:
+        reason = packet.get("omitted_reason", {}).get(key, "the token budget")
+        out.append(f"_(… {n} more omitted to stay within {reason})_")
+    promoted = (packet.get("promoted") or {}).get(key, 0)
+    if promoted:
+        out.append(
+            f"_({promoted} promoted to the instruction file — see its "
+            '"Project rules promoted from memory")_'
+        )
+    return out
 
 
 def render_packet_markdown(packet: dict) -> str:
@@ -5832,7 +6961,17 @@ def render_packet_markdown(packet: dict) -> str:
     out += [
         "## Project",
         f"**{proj['name']}** — `{proj['path']}`  ",
-        f"branch `{proj['branch']}` · commit `{proj['commit']}` · {proj['dirty_state']}",
+        f"branch `{proj['branch']}` · commit `{proj['commit']}` · {proj['dirty_state']}"
+        + (f" · handoff: {proj['handoff']}" if proj.get("handoff") else ""),
+    ]
+    # Say which order the reader is looking at. A relevance-ordered list read as
+    # if it were newest-first would suggest a year-old decision is the latest.
+    if packet.get("ordering") == "relevance" and packet.get("requested_task"):
+        out.append(
+            f"_(sections ordered by relevance to: {packet['requested_task']}; "
+            f"the {RECENCY_FLOOR} newest in each stay first)_"
+        )
+    out += [
         "",
         "## Current Focus",
         cf or "_(not recorded — see current.md / handoff.md)_",
@@ -5892,6 +7031,21 @@ def render_packet_markdown(packet: dict) -> str:
         out += _omitted_note(packet, "open_questions")
         out.append("")
 
+        # Only when there is something in it. An empty Inbox heading in every
+        # packet is a line of context spent saying nothing, and most stores will
+        # never use the tier at all.
+        if packet.get("inbox"):
+            out += ["## Inbox (unsorted, expires)"]
+            out.append(
+                "_(candidates, not findings — promote with `crumb inbox promote <id> "
+                "<type>` or drop with `crumb inbox drop <id>`)_"
+            )
+            for j in packet["inbox"]:
+                age = f"{j['age_days']}d" if j["age_days"] is not None else "new"
+                out.append(f"- `{j['id']}` ({age}, {j['source']}) {j['text']}")
+            out += _omitted_note(packet, "inbox")
+            out.append("")
+
         out += ["## Likely Relevant Files"]
         if packet["likely_files"]:
             out += [f"- {f}" for f in packet["likely_files"]]
@@ -5950,6 +7104,11 @@ def cmd_resume(args: argparse.Namespace) -> int:
     packet = build_resume_packet(memory_dir, root, stale_days=stale_days, fast=args.fast, task=task)
     md = render_packet_markdown(packet)
     packet["approx_tokens"] = approx_tokens(md)
+    # Telemetry goes here, not inside `build_resume_packet`: every write
+    # reindexes, and every reindex builds a packet, so counting there would
+    # measure how often the store was *written* rather than how often a record
+    # was shown to anybody. This is a place a packet is genuinely shown.
+    _record_packet_surfacings(memory_dir, packet)
 
     # The full packet is the committed cloud-fallback artifact; --fast is a
     # print-only quick view and must not overwrite that artifact with a reduced one.
@@ -5994,10 +7153,20 @@ def cmd_reindex(args: argparse.Namespace) -> int:
     summary = {"reindexed": ok, "path": str(memory_dir / "generated" / "resume-packet.md")}
     if problem:
         summary["error"] = problem
+    if getattr(args, "search_index", False):
+        # Build even below the size threshold — for a test, or to see whether it
+        # helps a particular store. Search still consults it only past the threshold.
+        from breadcrumbs import searchindex as _searchindex
+
+        summary["search_index"] = _searchindex.build_index(memory_dir, root, force=True)
     if args.json:
         _print_json(args, summary)
     elif ok:
         print(f"Reindexed projections: {summary['path']}")
+        if summary.get("search_index"):
+            si = summary["search_index"]
+            state = "built" if si["built"] else f"not built ({si['reason']})"
+            print(f"Search index: {state}, {si['records']} record(s)")
     else:
         # Naming the cause: "Reindex failed" alone left the user with a store
         # whose projections had silently stopped refreshing.
@@ -6262,13 +7431,22 @@ GUARD_VERDICT_EXIT_CODES = {"PROCEED": 0, "READ_FIRST": 10, "PAUSE": 15, "ASK_HU
 # toward keyword overlap (the core of the false-positive control, Fixture 3).
 # Action-class verbs that DO carry signal (delete/remove/migrate/deploy/refactor/
 # rewrite/upgrade…) are intentionally absent.
-GUARD_STOPWORDS = frozenset(
+# English function words: never evidence of anything. Split out of
+# GUARD_STOPWORDS because the short-query title rule (`_score_item`) must keep
+# the generic *development* words ("test" in `npm test`) that the keyword
+# overlap ignores.
+_FUNCTION_WORDS = frozenset(
     """
     the a an and or but to of in on for with at by from as is are be this that it
     its if then else so not no do does did we you i my our your their them they he
     she was were will would should can could may might must have has had about into
     over under out up down off than too very just also via per after before when
     while where which who what how here there all any some more most less few each
+    """.split()
+)
+
+GUARD_STOPWORDS = _FUNCTION_WORDS | frozenset(
+    """
     add added adding update updated updating change changed changing fix fixed
     fixing new old make made making run running set get got use used using create
     created creating build built work working file files code project thing things
@@ -6420,7 +7598,101 @@ GUARD_STEM_ALIASES = {
 }
 
 
+# ---- store-local aliases (WM-24) ------------------------------------------- #
+#
+# `GUARD_STEM_ALIASES` is five entries, and it is the tool's vocabulary, not the
+# project's. Every codebase has its own: a service nickname, a module and its
+# acronym, the two names a team uses for one thing. `.project-memory/aliases.txt`
+# lets a store add those without a code change — one group per line, words that
+# fold to the first word's stem:
+#
+#     auth authn authz login
+#     billing invoicing ledger
+#
+# It is committed (a teammate's clone must stem the same way, or the same query
+# returns different results on two machines) and folded into `_inputs_hash`
+# (it changes what the guard prefilter contains).
+#
+# `_stem` is a pure function called from everywhere, with no store in scope, so
+# the table is module state that the store-scoped entry points *activate*
+# (`_candidate_items`, the prefilter builder and reader). Activation is keyed on
+# the file's path, mtime and size, so it is one `stat` when nothing changed — and
+# a store with no file resets the table, so one store's aliases never leak into
+# another's results in a process that touches both.
+ALIASES_FILENAME = "aliases.txt"
+_STORE_ALIASES: dict[str, str] = {}
+_STORE_ALIASES_KEY: tuple | None = None
+
+
+def parse_store_aliases(text: str) -> tuple[dict[str, str], list[dict]]:
+    """Alias groups -> `{member_stem: canonical_stem}`, plus per-line problems.
+
+    Problems are reported, never raised: a malformed alias file must degrade to
+    "fewer aliases", not to a search that crashes. A word already claimed by an
+    earlier group keeps its first meaning — deterministic, and it means adding a
+    line can never silently change what an older line did.
+    """
+    mapping: dict[str, str] = {}
+    problems: list[dict] = []
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        words = [w for w in _TOKEN_RE.findall(line.lower()) if len(w) > 1]
+        if len(words) < 2:
+            problems.append({"line": lineno, "problem": "a group needs at least two words"})
+            continue
+        canonical = _base_stem(words[0])
+        mapping.setdefault(canonical, canonical)
+        for word in words[1:]:
+            stem = _base_stem(word)
+            if stem in mapping and mapping[stem] != canonical:
+                problems.append(
+                    {"line": lineno, "problem": f"{word!r} is already in an earlier group"}
+                )
+                continue
+            mapping[stem] = canonical
+    # Resolve chains to a fixpoint so `_stem` stays idempotent: the guard
+    # prefilter re-stems tokens it wrote earlier, and `stem(stem(x)) != stem(x)`
+    # would make a fresh index and a stale one disagree.
+    for key in list(mapping):
+        seen = {key}
+        target = mapping[key]
+        while target in mapping and mapping[target] != target and target not in seen:
+            seen.add(target)
+            target = mapping[target]
+        mapping[key] = target
+    return {k: v for k, v in mapping.items() if k != v}, problems
+
+
+def activate_store_aliases(memory_dir: Path) -> None:
+    """Make `_stem` use this store's aliases. Cheap when nothing changed."""
+    global _STORE_ALIASES, _STORE_ALIASES_KEY
+    path = Path(memory_dir) / ALIASES_FILENAME
+    try:
+        st = path.stat()
+        key = (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key == _STORE_ALIASES_KEY:
+        return
+    _STORE_ALIASES_KEY = key
+    if key is None:
+        _STORE_ALIASES = {}
+        return
+    try:
+        _STORE_ALIASES = parse_store_aliases(read_text_lenient(path)[0])[0]
+    except Exception:  # pragma: no cover - aliases must never break a search
+        _STORE_ALIASES = {}
+
+
 def _stem(token: str) -> str:
+    """Fold a token to its stem, then apply the active store's aliases."""
+    stem = _base_stem(token)
+    return _STORE_ALIASES.get(stem, stem) if _STORE_ALIASES else stem
+
+
+def _base_stem(token: str) -> str:
     """Fold a token to its morphological stem (deterministic, idempotent)."""
     word = token
     for _ in range(4):  # fixpoint: families collapse in <=4 strips
@@ -6689,6 +7961,9 @@ def _item_from_record(rec: Record) -> dict:
         "branch": rec.meta.get("branch"),
         "record": rec,
         "do_not_retry": rec.rtype == "attempt" and _attempt_has_do_not_retry(rec),
+        "expired": record_expired(rec.meta),
+        "promoted": bool(rec.meta.get("promoted_to")),
+        "scope": str(rec.meta.get("scope") or "project"),
     }
 
 
@@ -6713,6 +7988,9 @@ def _item_from_trap(trap: dict) -> dict:
         "branch": None,
         "record": None,
         "do_not_retry": False,
+        "promoted": bool(
+            _BLOCK_PROMOTED_LINE_RE.search(trap.get("body") or "") or trap.get("promoted_to")
+        ),
     }
 
 
@@ -6720,7 +7998,7 @@ QUESTION_SLUG_CHARS = 48
 
 
 def question_item_id(question: str) -> str:
-    """Search id for an open question: `q:<slug>`, disambiguated when truncated.
+    """Search id for an open question: `q_<slug>`, disambiguated when truncated.
 
     Truncating the slug at 48 characters made two distinct questions share one id
     ("… to the new columnar store this quarter" / "… to the new row store next
@@ -6731,9 +8009,27 @@ def question_item_id(question: str) -> str:
     """
     slug = slugify(question)
     if len(slug) <= QUESTION_SLUG_CHARS:
-        return "q:" + slug
+        return QUESTION_ID_PREFIX + slug
     digest = hashlib.sha256(question.encode("utf-8")).hexdigest()[:6]
-    return f"q:{slug[:QUESTION_SLUG_CHARS].rstrip('-')}-{digest}"
+    return f"{QUESTION_ID_PREFIX}{slug[:QUESTION_SLUG_CHARS].rstrip('-')}-{digest}"
+
+
+# Question ids were `q:<slug>` through 0.2.x and are `q_<slug>` from Phase 2 on
+# (WM-21/WM-22). The colon was the only id in the store that was not a valid
+# filename or a clean URI path segment, and questions are about to become files
+# and `memory://questions/{id}` resources. The old spelling is still accepted
+# everywhere an id is *read* — it is in commit messages, decision records and
+# people's shell history — and never printed.
+QUESTION_ID_PREFIX = "q_"
+_LEGACY_QUESTION_ID_PREFIX = "q:"
+
+
+def normalize_question_id(rid: str) -> str:
+    """`q:<slug>` -> `q_<slug>`; anything else unchanged."""
+    rid = (rid or "").strip()
+    if rid.lower().startswith(_LEGACY_QUESTION_ID_PREFIX):
+        return QUESTION_ID_PREFIX + rid[len(_LEGACY_QUESTION_ID_PREFIX) :]
+    return rid
 
 
 def _item_from_question(q: dict) -> dict:
@@ -6760,7 +8056,12 @@ def _item_from_question(q: dict) -> dict:
 # The corpus every ranked lookup draws from. Two corpora, not one — see
 # `_candidate_items`.
 JUDGING_ITEM_TYPES = ("decision", "attempt", "verification")
-SPECULATIVE_ITEM_TYPES = ("idea",)
+# Types a lookup should find but a verdict must never rest on. An idea is a
+# proposal; a jot is an unconfirmed observation with a TTL. Neither has been
+# through the evidence rule, and `_decide_verdict`'s score band is kind-agnostic,
+# so either would otherwise gate a real edit on the strength of nobody having
+# done the work yet.
+SPECULATIVE_ITEM_TYPES = ("idea", "jot")
 
 
 def _candidate_items(memory_dir: Path, *, include_ideas: bool = False) -> list[dict]:
@@ -6783,10 +8084,17 @@ def _candidate_items(memory_dir: Path, *, include_ideas: bool = False) -> list[d
       scoping) leaves it False. These turn matches into advice or into a packet, and
       speculation is not evidence.
 
+    Jots ride the same switch as ideas, for the same reason: an unconfirmed
+    one-line note that happens to name the file being edited must not raise a
+    verdict. It is findable, and that is all it is.
+
     Sessions stay out of both: they are narrative, and under
     `session_tracking: distillate` a clone may not have them at all, so including
     them would make results depend on which checkout you ran in.
     """
+    # Store aliases first: `search` stems the query right after this returns,
+    # and both sides of every comparison must fold through the same table.
+    activate_store_aliases(memory_dir)
     types = JUDGING_ITEM_TYPES + (SPECULATIVE_ITEM_TYPES if include_ideas else ())
     items: list[dict] = []
     for rec in load_records(memory_dir, types=types):
@@ -6850,6 +8158,7 @@ def _score_item(
     min_keyword: int,
     distances: CommitDistanceIndex,
     ubiquitous: frozenset[str] = frozenset(),
+    q_words: frozenset[str] = frozenset(),
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
 
@@ -6891,7 +8200,27 @@ def _score_item(
     # claim to be the author's own file declaration: it scores lower, it reads as
     # `mentions:` rather than `same file(s):`, and it is not the specificity that
     # lets a match floor a verdict.
-    if not matched_files and not matched_mentions and not matched_tags and kw_count < min_keyword:
+    # A query with fewer specific words than the floor (`npm test` is one:
+    # "test" is generic) could never reach it, so no record could match it on
+    # text at all: the field review's silent `npm test`. When the record's
+    # *title* carries every specific word the query has, that is the same
+    # evidence two shared words would be. Measured by the relevance evals (WM-61).
+    # Every word of the query counts here, generic ones included, or `npm test`
+    # would reduce to `npm` and match every record titled with npm.
+    q_live = q_specific - ubiquitous
+    short_query_title_hit = (
+        bool(q_live)
+        and len(q_live) < min_keyword
+        and q_live <= title_overlap
+        and q_words <= {_stem(t) for t in _tokenize(item.get("title") or "")}
+    )
+    if (
+        not matched_files
+        and not matched_mentions
+        and not matched_tags
+        and kw_count < min_keyword
+        and not short_query_title_hit
+    ):
         return None
 
     signals: list[str] = []
@@ -6962,6 +8291,9 @@ def _score_item(
         "kind": item["kind"],
         "status": item["status"],
         "lifecycle": item.get("lifecycle", item["status"]),
+        "expired": bool(item.get("expired")),
+        "promoted": bool(item.get("promoted")),
+        "scope": item.get("scope") or "project",
         "title": item["title"],
         "score": score,
         "raw_score": round(undecayed, 2),
@@ -7033,15 +8365,30 @@ def search(
     It defaults to False so a caller that forgets it gets guard's corpus, which is
     the safe side of the mistake.
     """
-    items = _candidate_items(memory_dir, include_ideas=include_ideas)
-    by_id = {it["id"]: it for it in items}
+    # Aliases before the query is stemmed: both sides of every comparison must
+    # fold through the same table (WM-24).
+    activate_store_aliases(memory_dir)
     filters = filters or {}
     q_specific = _specific(query)
+    q_words = frozenset(_stem(t) for t in _tokenize(query) if t not in _FUNCTION_WORDS)
     q_files = _norm_files(_paths_from_text(query) | set(files or []))
+    # The search index narrows the corpus to records that could possibly match
+    # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
+    # the full scan below is then exactly what it always was.
+    from breadcrumbs import searchindex as _searchindex
+
+    narrowed = _searchindex.candidate_items(
+        memory_dir, root, q_specific, q_files, include_ideas=include_ideas
+    )
+    if narrowed is not None:
+        items, ubiquitous = narrowed
+    else:
+        items = _candidate_items(memory_dir, include_ideas=include_ideas)
+        ubiquitous = _ubiquitous_stems(items)
+    by_id = {it["id"]: it for it in items}
     cur_branch = git_branch(root)
     # One commit-distance index for the whole pass — see the class.
     distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
-    ubiquitous = _ubiquitous_stems(items)
 
     matches: list[dict] = []
     for it in items:
@@ -7057,6 +8404,7 @@ def search(
             min_keyword=min_keyword,
             distances=distances,
             ubiquitous=ubiquitous,
+            q_words=q_words,
         )
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.
@@ -7066,6 +8414,8 @@ def search(
                     "kind": it["kind"],
                     "status": it["status"],
                     "lifecycle": it.get("lifecycle", it["status"]),
+                    "expired": bool(it.get("expired")),
+                    "promoted": bool(it.get("promoted")),
                     "title": it["title"],
                     "score": float(noise_floor),
                     "raw_score": float(noise_floor),
@@ -7314,13 +8664,22 @@ def guard(
         # the exact files being touched could not raise the verdict.
         # It is live when the record itself is active and the outcome still needs
         # attention, mirroring `active_verifications`.
+        # A record past its `expires_at` (WM-30) is history too: it aged out,
+        # like a superseded one, and is named rather than allowed to drive.
+        # WM-52: a branch-scoped record written on another branch is about
+        # work that is not checked out here; it is history, not a live constraint.
+        elsewhere = m.get("scope") == "branch" and m.get("branch_mismatch")
         live = (
-            m["status"] == "active"
-            or (m["kind"] == "question" and m["status"] == "open")
-            or (
-                m["kind"] == "verification"
-                and m.get("lifecycle", "active") == "active"
-                and m["status"] in ACTIONABLE_VERIFICATION_OUTCOMES
+            not m.get("expired")
+            and not elsewhere
+            and (
+                m["status"] == "active"
+                or (m["kind"] == "question" and m["status"] == "open")
+                or (
+                    m["kind"] == "verification"
+                    and m.get("lifecycle", "active") == "active"
+                    and m["status"] in ACTIONABLE_VERIFICATION_OUTCOMES
+                )
             )
         )
         (active if live else history).append(m)
@@ -7332,11 +8691,9 @@ def guard(
     # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
     # Lenient read: guard runs on the PreToolUse path and must not die on a bad
     # byte.
-    handoff_text = (
-        read_text_lenient(memory_dir / "handoff.md")[0]
-        if (memory_dir / "handoff.md").is_file()
-        else ""
-    )
+    from breadcrumbs import handoffs as _handoffs
+
+    handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
     # `risks_only`: guard is called once per edit, and the full staleness view
     # repeated the same store-wide facts verbatim on every call (P0-4). Only
     # abnormal states — cold handoff, detached HEAD, branch mismatch — belong
@@ -7350,6 +8707,7 @@ def guard(
         stale_days,
         risks_only=True,
         memory_dir=memory_dir,
+        handoff_path=handoff_path,
     )[:GUARD_MAX_WARNINGS]
 
     return {
@@ -7433,7 +8791,9 @@ def render_search_human(matches: list[dict], query: str) -> str:
     out = [f"search: {len(matches)} record(s) matched {query!r}", ""]
     for m in matches:
         out.append(
-            f"- {m['id']} — {m['kind']} [{m['status']}] (score {m['score']}): {m['reason']}."
+            f"- {m['id']} — {m['kind']} [{m['status']}{', expired' if m.get('expired') else ''}"
+            f"{', promoted' if m.get('promoted') else ''}] "
+            f"(score {m['score']}): {m['reason']}."
         )
     return "\n".join(out) + "\n"
 
@@ -7476,10 +8836,37 @@ def cmd_search(args: argparse.Namespace) -> int:
     )
 
     if args.json:
-        _print_json(args, {"query": query, "filters": filters, "matches": matches})
+        payload = {"query": query, "filters": filters, "matches": matches}
+        if getattr(args, "explain", False):
+            payload["query_stems"] = sorted(_specific(query))
+        _print_json(args, payload)
         return 0
+    if getattr(args, "explain", False):
+        # What the query actually became. A synonym that "should" have matched
+        # usually did not because the two words stem differently, and without
+        # this the only way to find out was reading `_stem`. The fix is a line in
+        # aliases.txt; this is how you find out you need one.
+        stems = sorted(_specific(query))
+        print(f"query stems: {', '.join(stems) if stems else '(none — every word was a stopword)'}")
+        if _STORE_ALIASES:
+            print(f"store aliases active: {len(_STORE_ALIASES)} ({ALIASES_FILENAME})")
+        print()
     print(render_search_human(matches, query or "(filters only)"))
     return 0
+
+
+def _record_guard_surfacings(
+    memory_dir: Path, matches: list[dict], source: str, session_id: str | None = None
+) -> None:
+    """Best-effort usage counts for guard matches that were actually shown."""
+    from breadcrumbs import usage as _usage
+
+    _usage.record_surfaced(
+        memory_dir,
+        [m.get("id") for m in matches if isinstance(m, dict)],
+        source,
+        session_id=session_id,
+    )
 
 
 def cmd_guard(args: argparse.Namespace) -> int:
@@ -7498,6 +8885,10 @@ def cmd_guard(args: argparse.Namespace) -> int:
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
     result = guard(memory_dir, root, action, files=args.files, stale_days=stale_days)
+    # Counted at the call sites rather than inside `guard()`: the hook path runs
+    # the same function but shows a filtered subset, and counting in both places
+    # would double-count every hook advisory.
+    _record_guard_surfacings(memory_dir, result.get("matches", []), "guard")
 
     if args.json:
         _print_json(args, result)
@@ -7531,6 +8922,15 @@ def cmd_guard(args: argparse.Namespace) -> int:
 AUDIT_FAIL = "fail"  # blocks (non-zero) — secrets only
 AUDIT_WARN = "warn"  # flag for human review — never changes the exit code
 AUDIT_INFO = "info"  # health/context note
+
+# A record has to be old enough that never having been reached is a fact about
+# the record rather than about the week. Bounded, because a neglected store
+# would otherwise report every record it has.
+AUDIT_NEVER_SURFACED_DAYS = 90
+AUDIT_NEVER_SURFACED_MAX = 10
+# WM-60: `crumb usage --decay`'s window, and how many candidates audit names.
+DECAY_DAYS_DEFAULT = 180
+AUDIT_DECAY_MAX = 10
 
 # Directories under .project-memory/ the secret scan skips: private/ is gitignored
 # local context, index/ is a disposable accelerator, generated/ holds derived
@@ -7819,6 +9219,30 @@ def _secret_severity(pattern: str) -> str:
     return AUDIT_WARN if pattern in SECRET_WARNING_PATTERNS else AUDIT_FAIL
 
 
+def secret_pattern_hits(text: str, *, blocking_only: bool = True) -> list[str]:
+    """Names of the secret shapes `text` matches — never the matched value.
+
+    Factored out of `scan_secrets` so a caller that holds a string rather than a
+    file can use the same table. The transcript miner is that caller: everything
+    it reads is tool output and user prose, which is exactly where a credential
+    turns up by accident, and a second private copy of these patterns would
+    drift from this one the first time either moved.
+
+    `blocking_only` (the default) consults only the structured shapes. The
+    high-entropy heuristic is deliberately excluded: `scan-secrets` downgraded it
+    to a warning because it has no structure behind it and punished the records
+    that cite a concrete production path, and a caller using this to decide
+    whether to *drop* content needs the stricter, better-evidenced half.
+    """
+    out = []
+    for name, pat in SECRET_PATTERNS:
+        if blocking_only and _secret_severity(name) != AUDIT_FAIL:
+            continue
+        if pat.search(text or ""):
+            out.append(name)
+    return out
+
+
 def scan_secrets(memory_dir: Path) -> list[dict]:
     """Scan committed memory for secret-like strings.
 
@@ -7944,7 +9368,27 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
             findings.append(
                 {"path": str(p.relative_to(memory_dir)), "stamped": stamped, "current": current}
             )
+    # JSON projections that carry a top-level `inputs_hash` (related.json).
+    # One without the key — guard-prefilter.json — is unstamped by design and
+    # skipped, exactly like an unstamped markdown projection above.
+    for p in sorted(gen.glob("*.json")):
+        try:
+            doc = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, ValueError):
+            continue
+        stamped = doc.get("inputs_hash") if isinstance(doc, dict) else None
+        if isinstance(stamped, str) and stamped != current:
+            findings.append(
+                {"path": str(p.relative_to(memory_dir)), "stamped": stamped, "current": current}
+            )
     return findings
+
+
+def load_related(memory_dir: Path) -> dict[str, list[str]]:
+    """`{id: [related ids]}` from `generated/related.json`, or `{}`."""
+    from breadcrumbs import related as _related
+
+    return _related.load_related(memory_dir)
 
 
 # ---- bloat ----------------------------------------------------------------- #
@@ -7981,7 +9425,14 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
         if not ap.is_file():
             continue
         text = read_text_lenient(ap)[0]
-        dup = next((src for src, body in canon if len(body) >= 200 and body[:200] in text), None)
+        # The promoted-rules block (WM-40) mirrors records on purpose; only the
+        # rest of the file is judged for copying memory into it.
+        from breadcrumbs import promote as _promote
+
+        unpromoted = _promote.strip_block(text)
+        dup = next(
+            (src for src, body in canon if len(body) >= 200 and body[:200] in unpromoted), None
+        )
         if dup:
             findings.append(
                 {
@@ -8015,12 +9466,19 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
 
     # known-traps.md growth. Unlike the packet, nothing bounds this file: traps
     # are appended and never age out, and every session loads all of them. The
-    # check names the report that makes retirement possible rather than asking
-    # for a rollup command that does not exist.
+    # check names the report that makes retirement possible — traps are
+    # retired one by one, never rolled up.
+    # From schema 3 the file is a one-line-per-trap index, so measure what the
+    # packet and the hooks actually carry: the active traps' own text.
+    from breadcrumbs import blockfiles as _blockfiles
+
     traps_path = memory_dir / "known-traps.md"
     if traps_path.is_file():
         traps = [t for t in load_traps(memory_dir) if (t.get("status") or "active") == "active"]
-        toks = approx_tokens(read_text_lenient(traps_path)[0])
+        if _blockfiles.uses_files(memory_dir):
+            toks = sum(approx_tokens(f"## {t['heading']}\n{t['body']}") for t in traps)
+        else:
+            toks = approx_tokens(read_text_lenient(traps_path)[0])
         if toks > TRAPS_TOKEN_BUDGET:
             findings.append(
                 {
@@ -8035,9 +9493,9 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 }
             )
 
-    # sessions/ growth note. The advice is what a human can do today (promote the
-    # durable parts, prune the rest); no rollup command exists, so telling users to
-    # wait for one — as this note used to — is telling them to wait for nothing.
+    # sessions/ growth note. The advice is what a human can do today: promote the
+    # durable parts, then fold old machine snapshots into one record with
+    # `crumb rollup sessions` (WM-35) or drop them with `crumb prune sessions`.
     sess = memory_dir / "sessions"
     n = len(list(sess.glob("*.md"))) if sess.is_dir() else 0
     if n > SESSIONS_GROWTH_NOTE:
@@ -8047,8 +9505,9 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
                 "path": "sessions/",
                 "message": (
                     f"{n} session records — promote what still matters with `crumb "
-                    "remember`, then `crumb prune sessions` to drop old machine "
-                    "snapshots so the store stays navigable"
+                    "remember`, then `crumb rollup sessions --before YYYY-MM-DD` to fold "
+                    "old machine snapshots into one record (or `crumb prune sessions` to "
+                    "drop them) so the store stays navigable"
                 ),
             }
         )
@@ -8118,11 +9577,9 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
     # Lenient read: audit is the gate command, so an undecodable
     # handoff must not abort it. scan_secrets above already emits the blocking
     # `unscannable-file` finding that names the file, so this read stays quiet.
-    handoff_text = (
-        read_text_lenient(memory_dir / "handoff.md")[0]
-        if (memory_dir / "handoff.md").is_file()
-        else ""
-    )
+    from breadcrumbs import handoffs as _handoffs
+
+    handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
     for w in compute_staleness(
         root,
         parse_handoff_meta(handoff_text),
@@ -8131,13 +9588,29 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         load_open_questions(memory_dir),
         stale_days,
         memory_dir=memory_dir,
+        handoff_path=handoff_path,
     ):
         # The handoff age/distance line is emitted unconditionally; it is only a
         # *warning* when compute_staleness marked it cold (⚠). "handoff is 0
         # day(s) old, written 0 commit(s) behind" on a seconds-old store is
         # health context, not a problem.
         sev = AUDIT_INFO if (w.startswith("handoff is") and not w.startswith("⚠")) else AUDIT_WARN
-        findings.append(_audit_finding("staleness", sev, "handoff.md", w))
+        findings.append(
+            _audit_finding("staleness", sev, handoff_path.relative_to(memory_dir).as_posix(), w)
+        )
+
+    # WM-31 / WM-32 / WM-34: evidence that points at a vanished file, live
+    # records that say the same thing, and records that may argue with each
+    # other. All advisory — each is a question for the author, never a fix.
+    from breadcrumbs import lifecycle as _lifecycle
+
+    findings.extend(_lifecycle.audit_findings(memory_dir, root))
+    # WM-40/42/43: the promoted-rules block — its size, rules whose record is
+    # gone or retired, rules that drifted from their record, and records that
+    # have earned a place there.
+    from breadcrumbs import promote as _promote
+
+    findings.extend(_promote.audit_findings(memory_dir, root))
 
     # A (cont). Re-surface the validate-failing health conditions for the health view
     # (missing evidence, invalid status, private-path violation, id/frontmatter
@@ -8145,6 +9618,79 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
     for vf in run_validate(memory_dir):
         if vf["status"] == "fail" and vf["check"] in _AUDIT_HEALTH_CHECKS:
             findings.append(_audit_finding(vf["check"], AUDIT_WARN, vf["path"], vf["message"]))
+
+    # B (cont). A hand-written trap/question block that reindex could not adopt
+    # (WM-22): its id belongs to an existing file with different content. The
+    # file drives every reader; the block is someone's edit waiting to be merged.
+    from breadcrumbs import blockfiles as _blockfiles
+
+    for rid in _blockfiles.unadopted_blocks(memory_dir):
+        findings.append(
+            _audit_finding(
+                "unadopted-block",
+                AUDIT_WARN,
+                "known-traps.md" if rid.startswith("trap") else "open-questions.md",
+                f"{rid} is a hand-written block whose id already has a file with different "
+                "content — merge the block into that file by hand, then delete the block",
+            )
+        )
+
+    # B (cont). A malformed alias line. Audit, not validate: an unusable line is
+    # simply skipped by the parser, so the store still works — but the author
+    # meant something by it, and silently doing nothing is how a synonym
+    # "doesn't work" for a month before anybody reads `_stem`.
+    alias_path = memory_dir / ALIASES_FILENAME
+    if alias_path.is_file():
+        for problem in parse_store_aliases(read_text_lenient(alias_path)[0])[1]:
+            findings.append(
+                _audit_finding(
+                    "aliases",
+                    AUDIT_WARN,
+                    ALIASES_FILENAME,
+                    f"line {problem['line']}: {problem['problem']} — the line is ignored",
+                    line=problem["line"],
+                )
+            )
+
+    # B (cont). Records nothing has ever reached. `audit`'s [unreachable] check
+    # asks whether a record *could* be found; this asks whether it ever *was* —
+    # the one question only observation can answer. Gated on there being any
+    # history at all, because on a fresh clone the answer is "all of them" and
+    # that is a fact about the clone, not about the records.
+    from breadcrumbs import usage as _usage
+
+    if _usage.has_usage_data(memory_dir):
+        # WM-60: old records nothing has surfaced for the whole decay window.
+        # Only once this machine has counted that long (`decay_candidates`
+        # returns none before). The finding carries the command; nothing runs.
+        decaying = _usage.decay_candidates(memory_dir)["candidates"]
+        for row in decaying[:AUDIT_DECAY_MAX]:
+            findings.append(
+                _audit_finding(
+                    "decay-candidate",
+                    AUDIT_INFO,
+                    None,
+                    f"{row['id']} is {row['age_days']} days old and nothing has surfaced it "
+                    f"in {DECAY_DAYS_DEFAULT} days — if it no longer applies: "
+                    f"`{row['command']}`",
+                    id=row["id"],
+                )
+            )
+        decaying_ids = {row["id"] for row in decaying}
+        never = [r for r in _usage.never_surfaced(memory_dir) if r["id"] not in decaying_ids]
+        for row in never[:AUDIT_NEVER_SURFACED_MAX]:
+            if (row["age_days"] or 0) < AUDIT_NEVER_SURFACED_DAYS:
+                continue
+            findings.append(
+                _audit_finding(
+                    "never-surfaced",
+                    AUDIT_INFO,
+                    None,
+                    f"{row['id']} is {row['age_days']} days old and has never been "
+                    "surfaced by a packet or a guard verdict — consider retiring it "
+                    "(`crumb mark-status`) or making it reachable (--tags / --evidence file)",
+                )
+            )
 
     # C. Instruction-like text (flag only; never a gate — §16 note, Fixture 7).
     for il in scan_instruction_like(memory_dir):
@@ -8620,6 +10166,10 @@ def adapter_block() -> str:
                 "  `PAUSE` / `ASK_HUMAN` verdict.",
                 "- **After a durable decision or a failed approach:**",
                 "  `crumb remember decision|attempt …`.",
+                '- **A quick observation mid-task, no ceremony:** `crumb jot "<text>"`',
+                "  (add `--file <path>` so it can be found again). Triage later with",
+                "  `crumb inbox`, then `crumb inbox promote <id> <type>` or",
+                "  `crumb inbox drop <id>` — an unpromoted jot expires on its own.",
                 "- **After checking whether something is still true / fixed:**",
                 '  `crumb verify "<subject>" --status fixed|open|regressed|… --evidence …`.',
                 "- **Leaving a note for the next agent:** `crumb note question|trap|idea …`",
@@ -8628,7 +10178,7 @@ def adapter_block() -> str:
                 "- **When a trap or decision no longer applies:**",
                 '  `crumb mark-status <id> stale --reason "…"`, so it stops raising `guard`.',
                 "- **When an open question gets answered:**",
-                '  `crumb mark-status q:<slug> answered --reason "…"` (name the decision',
+                '  `crumb mark-status q_<slug> answered --reason "…"` (name the decision',
                 "  that answered it), so it stops counting as a live blocker.",
                 '- **Session end:** `crumb capture session --next "<what to do next>"`',
                 '  (add `--set "Decisions Made" "…"` for narrative). Pass `--next`: the bare',
@@ -8670,14 +10220,303 @@ def remove_adapter_block(root: Path, name: str) -> bool:
     return had
 
 
+# --------------------------------------------------------------------------- #
+# migrate — bring a store up to this build's SCHEMA_VERSION
+# --------------------------------------------------------------------------- #
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import migrate as _migrate
+
+    result = _migrate.migrate(memory_dir, root, dry_run=args.dry_run)
+    if args.json:
+        _print_json(args, {**result, "items": result.get("steps", [])}, ok=result["ok"])
+        return 0 if result["ok"] else 1
+    if not result["ok"]:
+        _emit_error(args, result["error"] or "migration failed")
+        if result.get("backup"):
+            print(f"  the store was backed up first: {result['backup']}", file=sys.stderr)
+        return 1
+    if not result["steps"]:
+        print(f"migrate: nothing to do — store is schema_version {result['to']}.")
+        return 0
+    verb = "would apply" if args.dry_run else "applied"
+    print(f"migrate: {verb} {len(result['steps'])} step(s), {result['from']} -> {result['target']}")
+    for step in result["steps"]:
+        print(f"  schema_version {step['version']}: {step['summary']}")
+        for line in step["changed"]:
+            print(f"      {line}")
+    if args.dry_run:
+        print("\nRe-run without --dry-run to apply.")
+    else:
+        print(f"\nBackup of the pre-migration store: {result['backup']}")
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# usage — which records actually get surfaced
+# --------------------------------------------------------------------------- #
+
+
+def cmd_usage(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import usage as _usage
+
+    if args.decay is not None:
+        return _print_decay(args, _usage.decay_candidates(memory_dir, days=args.decay))
+    if args.never:
+        rows = _usage.never_surfaced(memory_dir)
+        if args.json:
+            _print_json(args, {"never_surfaced": rows, "items": rows})
+            return 0
+        if not rows:
+            print("usage: every active record has been surfaced at least once.")
+            return 0
+        print(f"usage: {len(rows)} active record(s) never surfaced, oldest first\n")
+        for r in rows[: args.top]:
+            age = f"{r['age_days']}d" if r["age_days"] is not None else "age unknown"
+            print(f"  [{r['type']}] {r['id']} — {age}")
+            if r["title"]:
+                print(f"      {r['title']}")
+        print(
+            "\nCounts are local to this machine "
+            f"({MEMORY_DIRNAME}/private/usage.json, never committed)."
+        )
+        return 0
+
+    rows = _usage.usage_rows(memory_dir, by_sessions=args.sessions)
+    if args.json:
+        _print_json(args, {"usage": rows, "items": rows}, summary={"records": len(rows)})
+        return 0
+    if not rows:
+        print(
+            "usage: no history yet. Counts accrue when a record is shown — "
+            "a resume packet, a guard verdict, a hook advisory."
+        )
+        return 0
+    order = "most sessions first" if args.sessions else "most-surfaced first"
+    print(f"usage: {len(rows)} record(s) with surfacing history, {order}\n")
+    for r in rows[: args.top]:
+        by = ", ".join(f"{k} {v}" for k, v in sorted(r["by"].items()))
+        n = f"{r['sessions']}+" if r.get("sessions_capped") else str(r["sessions"])
+        if args.sessions:
+            print(f"  {n:>4} session(s)  {r['id']}  ({r['surfaced']}x: {by})")
+        else:
+            print(f"  {r['surfaced']:>4}x  {r['id']}  ({by}; {n} session(s))")
+    print(
+        "\nCounts are local to this machine "
+        f"({MEMORY_DIRNAME}/private/usage.json, never committed)."
+    )
+    return 0
+
+
+def _print_decay(args: argparse.Namespace, result: dict) -> int:
+    """`crumb usage --decay` (WM-60). Prints commands; never runs them."""
+    rows = result["candidates"]
+    if args.json:
+        _print_json(
+            args,
+            {**result, "items": rows},
+            summary={"candidates": len(rows), "enough_history": result["enough_history"]},
+        )
+        return 0
+    days = result["days"]
+    if not result["enough_history"]:
+        have = result["coverage_days"]
+        have = "no usage history" if have is None else f"{have} day(s) of usage history"
+        print(
+            f"usage --decay: {have}; decay needs {days}. Nothing is a candidate until "
+            "this machine has counted that long."
+        )
+        return 0
+    if not rows:
+        print(f"usage --decay: nothing old has gone unsurfaced for {days} days.")
+        return 0
+    print(
+        f"usage --decay: {len(rows)} active record(s) at least {days} days old "
+        f"and not surfaced in the last {days} days, oldest first\n"
+    )
+    for r in rows[: args.top]:
+        last = r["last_surfaced_at"][:10] if r["last_surfaced_at"] else "never"
+        print(f"  [{r['type']}] {r['id']} — {r['age_days']}d old, last surfaced {last}")
+        if r["title"]:
+            print(f"      {r['title']}")
+        print(f"      {r['command']}")
+    print(
+        "\nNothing was changed. Review each one, then run the commands you agree "
+        "with. Counts are local to this machine."
+    )
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# jot / inbox — the short-term tier
+# --------------------------------------------------------------------------- #
+
+
+def cmd_jot(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import inbox as _inbox
+
+    if not getattr(args, "allow_duplicate", False):
+        from breadcrumbs import lifecycle as _lifecycle
+
+        dups = _lifecycle.find_near_duplicates(
+            memory_dir,
+            "jot",
+            args.text or "",
+            files=args.file or [],
+            tags=_split_tags(args.tags) or (),
+        )
+        if dups:
+            return _emit_duplicate(
+                args,
+                {
+                    "duplicates": dups,
+                    "message": _lifecycle.duplicate_message(dups, allow_supersede=False),
+                },
+            )
+    result = _inbox.write_jot(
+        memory_dir,
+        root,
+        args.text or "",
+        tags=_split_tags(args.tags),
+        files=args.file or [],
+        local=args.local,
+        source="human" if args.agent == "human" else "agent",
+        agent=args.agent,
+        scope=getattr(args, "scope", None),
+    )
+    if not result.get("ok"):
+        _emit_error(args, result.get("error", "jot failed"))
+        return 1
+    if args.json:
+        _print_json(args, result)
+    else:
+        where = "private/inbox" if result["local"] else "inbox"
+        print(f"Jotted: {result['id']} ({where}, expires {result['expires_at'][:10]})")
+        print(f"  file: {result['path']}")
+        if result.get("hint"):
+            print(f"  note: {result['hint']}")
+    return 0
+
+
+def cmd_inbox(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import inbox as _inbox
+
+    what = getattr(args, "inbox_what", None)
+
+    if what == "promote":
+        result = _inbox.promote_jot(
+            memory_dir,
+            root,
+            args.jot_id,
+            args.target,
+            title=args.title,
+            sections=_collect_set_sections(args.target, args.set)[0]
+            if args.target in BODY_SECTIONS
+            else None,
+            evidence=_parse_evidence_pairs(args.evidence),
+            tags=_split_tags(args.tags),
+            confidence=args.confidence,
+            status=args.status,
+            method=args.method,
+            fields={"why": args.why, "area": args.area, "safe": args.safe},
+            agent=args.agent,
+        )
+        if not result.get("ok"):
+            _emit_error(args, result.get("error", "promote failed"))
+            return 1
+        if args.json:
+            _print_json(args, result)
+        else:
+            print(f"Promoted {result['jot']} -> {result['promoted_to']} ({result['type']})")
+            if result.get("path"):
+                print(f"  file: {result['path']}")
+            if result.get("warning"):
+                print(f"  warning: {result['warning']}")
+        return 0
+
+    if what == "drop":
+        result = _inbox.drop_jot(
+            memory_dir, root, args.jot_id, reason=args.reason, agent=args.agent
+        )
+        if not result.get("ok"):
+            _emit_error(args, result.get("error", "drop failed"))
+            return 1
+        if args.json:
+            _print_json(args, result)
+        else:
+            print(f"Dropped {args.jot_id} (kept as history; `crumb prune jots` deletes).")
+        return 0
+
+    rows = _inbox.jot_rows(
+        memory_dir,
+        include_expired=bool(args.expired or args.all),
+        include_retired=bool(args.all),
+    )
+    if args.expired and not args.all:
+        rows = [r for r in rows if r["expired"]]
+    if args.json:
+        _print_json(args, {"jots": rows, "items": rows}, summary={"count": len(rows)})
+        return 0
+    if not rows:
+        print('inbox: empty. Leave a note with `crumb jot "<text>"`.')
+        return 0
+    print(f"inbox: {len(rows)} jot(s)\n")
+    for r in rows:
+        age = f"{r['age_days']}d" if r["age_days"] is not None else "new"
+        marks = []
+        if r["local"]:
+            marks.append("local")
+        if r["expired"]:
+            marks.append("expired")
+        if r["status"] != "active":
+            marks.append(r["status"])
+        flag = f" [{', '.join(marks)}]" if marks else ""
+        print(f"  {r['id']} ({age}, {r['source']}){flag}")
+        print(f"      {r['title']}")
+    print(
+        "\nPromote: `crumb inbox promote <id> decision|attempt|verification|trap|question|idea`. "
+        "Drop: `crumb inbox drop <id>`."
+    )
+    return 0
+
+
 # ---- Claude Code hooks ----------------------------------------------------- #
 
-HOOK_EVENTS = ("session", "guard", "capture")
-# breadcrumbs event -> (Claude Code event name, PreToolUse matcher or None)
+HOOK_EVENTS = ("session", "guard", "capture", "prompt", "compact", "subagent")
+# breadcrumbs event -> (Claude Code event name, matcher or None)
+#
+# `Task|Agent` is on the guard matcher because a subagent launch is the best
+# description of an action a session produces and the guard never saw it. Both
+# names are listed because the subagent tool has carried both across harness
+# versions; matching a name that does not exist costs nothing.
 _HOOK_SPECS: dict[str, tuple[str, str | None]] = {
     "session": ("SessionStart", None),
-    "guard": ("PreToolUse", "Bash|Edit|Write|MultiEdit"),
+    "guard": ("PreToolUse", "Bash|Edit|Write|MultiEdit|Task|Agent"),
     "capture": ("Stop", None),
+    "prompt": ("UserPromptSubmit", None),
+    "compact": ("PreCompact", None),
+    "subagent": ("SubagentStop", None),
 }
 
 # The key `init` stamps into each hook entry it owns, valued with the breadcrumbs
@@ -8721,7 +10560,7 @@ HOOK_INACTIVE_CONTEXT = (
 def _hook_fallback_json(event: str) -> str:
     """The hook payload to print when the CLI cannot be found."""
     if event != "session":
-        return "{}"  # PreToolUse/Stop: no opinion is the correct silent answer
+        return "{}"  # every other event: no opinion is the correct silent answer
     return json.dumps(
         {
             "hookSpecificOutput": {
@@ -8834,11 +10673,24 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
         for ev in events:
             cc_event, matcher = _HOOK_SPECS[ev]
             arr = hooks.setdefault(cc_event, [])
-            existing = [h for g in arr for h in _group_entries(g) if _hook_entry_event(h) == ev]
+            existing = [
+                (g, h) for g in arr for h in _group_entries(g) if _hook_entry_event(h) == ev
+            ]
             if existing:
-                for h in existing:
+                for group, h in existing:
                     if h.get("command") in _generated_hook_commands(ev):
                         h["command"] = hook_command(ev)
+                    # An entry we own gets its matcher brought up to date too.
+                    # The guard's matcher grew `Task|Agent` in 0.3.0, and
+                    # without this an existing install would keep the old one
+                    # forever: the hook would stay silent on subagent launches
+                    # while `doctor` reported it healthy. Only for entries
+                    # carrying our marker *and* our command — somebody else's
+                    # launcher may be scoped deliberately.
+                    owned = h.get(HOOK_MARKER) == ev or h.get("command") == hook_command(ev)
+                    if owned and matcher and isinstance(group, dict):
+                        if group.get("matcher") != matcher and len(_group_entries(group)) == 1:
+                            group["matcher"] = matcher
                     h[HOOK_MARKER] = ev
                 continue
             entry: dict = {
@@ -9261,6 +11113,62 @@ def doctor_report(root: Path) -> dict:
         else:
             add("resume_packet", False, "not generated — run `crumb resume`")
 
+        # The search index (WM-23). Absent is healthy below the threshold — the
+        # full scan is already fast there — so only a *stale* index is a
+        # problem, and even that only costs speed: search never trusts it.
+        from breadcrumbs import searchindex as _searchindex
+
+        st = _searchindex.index_status(memory_dir, root)
+        if st["state"] == "fresh":
+            add("search_index", True, f"fresh ({st['records']} records indexed)")
+        elif st["state"] == "stale":
+            add(
+                "search_index",
+                False,
+                "stale (search falls back to a full scan) — run `crumb reindex`",
+            )
+        elif st["state"] == "unavailable":
+            add("search_index", True, "sqlite3 unavailable in this Python; search uses a full scan")
+        elif st["state"] == "unreadable":
+            add("search_index", False, "unreadable — run `crumb reindex --search-index`")
+        else:
+            n_indexable = sum(
+                1
+                for d in _searchindex._indexable_dirs(memory_dir, root)
+                for _ in (memory_dir / d).glob("*.md")
+            )
+            if n_indexable >= _searchindex.INDEX_MIN_CORPUS:
+                add(
+                    "search_index",
+                    False,
+                    f"not built ({n_indexable} records; search is scanning them all) "
+                    "— run `crumb reindex`",
+                )
+            else:
+                add(
+                    "search_index",
+                    True,
+                    f"not built (the store is under {_searchindex.INDEX_MIN_CORPUS} records; "
+                    "a full scan is fast at this size)",
+                )
+
+        # Rules promoted to long-term memory (WM-42): how many, and what they
+        # cost every session that loads the instruction file.
+        from breadcrumbs import promote as _promote
+
+        promo = _promote.doctor_summary(root)
+        if promo["rules"]:
+            where = ", ".join(
+                f"{name}: {v['rules']} rule(s), {v['chars']} chars"
+                for name, v in promo["files"].items()
+            )
+            add(
+                "promoted_rules",
+                # Per file, exactly as audit's promoted-bloat judges it.
+                all(v["chars"] <= ADAPTER_BLOAT_CHARS for v in promo["files"].values()),
+                where,
+            )
+
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))
     return {"checks": checks, "integrated": integrated, "store": store}
 
@@ -9322,6 +11230,8 @@ def _strip_packet_volatile(md: str) -> str:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
+    if getattr(args, "hook_log", False):
+        return _doctor_hook_log(args, root / MEMORY_DIRNAME)
     report = doctor_report(root)
     if args.json:
         _print_json(args, report)
@@ -9334,6 +11244,48 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print("\n" + FIRST_RUN_NUDGE)
     # Non-zero when a store exists but nothing is wired up (the §5 finding, machine-checkable).
     return 0 if (report["integrated"] or not report["store"]) else 1
+
+
+def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
+    """`crumb doctor --hook-log` (WM-62): what the hooks did, from the local log."""
+    from breadcrumbs import hooklog as _hooklog
+
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found. Run `crumb init` first.")
+        return 2
+    summary = _hooklog.summarize(_hooklog.read_log(memory_dir))
+    if args.json:
+        _print_json(args, summary)
+        return 0
+    rel = f"{MEMORY_DIRNAME}/private/{_hooklog.HOOK_LOG_FILENAME}"
+    if not summary["entries"]:
+        print(f"crumb doctor --hook-log: no hook firings logged yet ({rel}).")
+        return 0
+    print(
+        f"crumb doctor --hook-log — {summary['entries']} firing(s) across "
+        f"{summary['sessions']} session(s), {summary['first_at']} to {summary['last_at']}\n"
+    )
+    for name, ev in summary["events"].items():
+        outcomes = ", ".join(f"{k} {v}" for k, v in sorted(ev["outcomes"].items()))
+        rate = f"{ev['spoke_rate'] * 100:.0f}%" if ev["spoke_rate"] is not None else "-"
+        print(f"  {name:<9} {ev['count']:>5}  spoke {rate:>4}  ({outcomes})")
+        print(f"            ms p50 {ev['ms_p50']}  p95 {ev['ms_p95']}  max {ev['ms_max']}")
+        if ev.get("verdicts"):
+            verdicts = ", ".join(f"{k} {v}" for k, v in sorted(ev["verdicts"].items()))
+            print(f"            verdicts: {verdicts}")
+        if ev.get("counts"):
+            counts = ", ".join(f"{k} {v}" for k, v in sorted(ev["counts"].items()))
+            print(f"            {counts}")
+    if summary["locked"]:
+        print(
+            f"\n{summary['locked']} writing hook firing(s) skipped because another "
+            "writer held the store lock."
+        )
+    print(
+        f"\nLocal to this machine ({rel}, never committed; counts and verdicts "
+        "only). See docs/field-test.md."
+    )
+    return 0
 
 
 # ---- crumb hook session|guard|capture -------------------------------------- #
@@ -9373,6 +11325,7 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     keyword classifier and the destructive-op regex are both blind to. Absent or
     unreadable index ⇒ not risky (the index is rebuilt on every reindex).
     """
+    activate_store_aliases(memory_dir)
     p = memory_dir / "generated" / GUARD_PREFILTER_FILENAME
     try:
         idx = json.loads(p.read_text(encoding="utf-8"))
@@ -9397,6 +11350,15 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
 # trap match ("flexTimeInterval", a banned API) while keeping the scoring pass
 # cheap and the risk-regex scan bounded.
 _HOOK_CONTENT_SNIPPET_CHARS = 400
+
+# The tools that launch a subagent. Both names, because the tool has carried
+# both across harness versions and a name that never fires costs nothing.
+SUBAGENT_TOOLS = ("Task", "Agent")
+
+# How much of a subagent's launch prompt feeds the guard. Longer than an edit
+# snippet because the prompt *is* the description of the work, not a sample of
+# it; bounded because a prompt can be an essay.
+_HOOK_SUBAGENT_PROMPT_CHARS = 1200
 
 
 def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] | None]:
@@ -9426,6 +11388,17 @@ def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] 
         snippet = " ".join(str(new).split())[:_HOOK_CONTENT_SNIPPET_CHARS]
         action = f"edit {fp}: {snippet}" if snippet else f"edit {fp}"
         return action.strip(), [fp] if fp else None
+    if tool in SUBAGENT_TOOLS:
+        # A subagent starts cold: it does not read the resume packet and has
+        # none of this session's context. Its launch prompt is the best
+        # description of a proposed action the session produces, and until now
+        # the guard never saw it. Paths named in the prompt are mined the same
+        # way a record's prose is, so "rewrite src/auth/session.py" reaches a
+        # trap about that file.
+        prompt = tool_input.get("prompt") or tool_input.get("description") or ""
+        action = " ".join(str(prompt).split())[:_HOOK_SUBAGENT_PROMPT_CHARS]
+        files = sorted(_paths_from_text(action))
+        return action.strip(), files or None
     return "", None
 
 
@@ -9433,6 +11406,11 @@ def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] 
 # in private/ (machine-local, gitignored) because it is per-checkout runtime
 # state, not memory. Best-effort: a read or write failure must never block the
 # hook, and losing the file only means one repeated advisory.
+#
+# The implementation moved to `breadcrumbs/hooks_common.py` when the
+# `UserPromptSubmit` hook needed the same "have I already said this" question
+# (WM-10). These names stay as the compatibility surface — they are what the
+# existing tests and any external reader know this state by.
 _HOOK_SEEN_FILENAME = "hook-guard-seen.json"
 _HOOK_SEEN_MAX_SESSIONS = 8
 _HOOK_SEEN_MAX_KEYS = 200
@@ -9445,33 +11423,9 @@ def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bo
     READ_FIRST that repeats verbatim on every edit trains the agent to ignore
     the one that matters. Only advisories dedupe — PAUSE/ASK_HUMAN always fire.
     """
-    path = memory_dir / "private" / _HOOK_SEEN_FILENAME
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
-        if not isinstance(data, dict):
-            data = {}
-    except Exception:
-        data = {}
-    sessions = data.get("sessions")
-    if not isinstance(sessions, dict):
-        sessions = {}
-    entry = sessions.get(session_id)
-    if not isinstance(entry, dict) or not isinstance(entry.get("seen"), list):
-        entry = {"seen": []}
-    if key in entry["seen"]:
-        return True
-    entry["seen"] = (entry["seen"] + [key])[-_HOOK_SEEN_MAX_KEYS:]
-    entry["updated_at"] = now_iso()
-    sessions[session_id] = entry
-    # Keep only the most recent sessions so the state file cannot grow unbounded.
-    keep = sorted(sessions, key=lambda s: sessions[s].get("updated_at") or "", reverse=True)
-    data = {"sessions": {s: sessions[s] for s in keep[:_HOOK_SEEN_MAX_SESSIONS]}}
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(path, json.dumps(data, indent=0, sort_keys=True) + "\n")
-    except Exception:  # pragma: no cover - dedupe state is best-effort
-        pass
-    return False
+    from breadcrumbs import hooks_common
+
+    return hooks_common.advisory_seen(memory_dir, session_id, key, filename=_HOOK_SEEN_FILENAME)
 
 
 # Permission modes in which the user has already told the harness not to
@@ -9538,17 +11492,99 @@ def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
     return "\n".join(lines)
 
 
-def _hook_session(memory_dir: Path, root: Path) -> int:
+# Lines of mined candidates the post-compaction preamble may list. The rest are
+# still in the inbox; `crumb inbox` is one command away.
+_COMPACT_PREAMBLE_MAX_JOTS = 10
+
+# Headroom the preamble may add on top of the packet's own budget. A compaction
+# has just freed the entire context window, so this is the cheapest context in
+# the session and the most valuable — but it is still bounded.
+_COMPACT_PREAMBLE_TOKENS = 1000
+
+
+def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
+    """What was in flight when the context was destroyed, for the model that lost it.
+
+    After a compaction the model holds a summary and has no memory of the
+    records it was shown or the task it was on. `PreCompact` cannot tell it
+    anything — that hook's output never reaches the model — so it left the facts
+    in `private/` and this is where they are read back.
+
+    Empty when there is no marker for this session, which is the normal case:
+    every other `source` value means no compaction happened.
+    """
+    from breadcrumbs import hooks_common
+
+    marker = hooks_common.compaction_marker(memory_dir, session_id)
+    if not marker:
+        return ""
+    lines = [
+        "breadcrumbs: context was compacted. What follows is what was in flight "
+        "before it; the full resume packet comes after.",
+        "",
+    ]
+    state = hooks_common.prompt_state(memory_dir, session_id)
+    if state.get("last_prompt"):
+        lines.append(f"Last prompt before compaction: {state['last_prompt']}")
+    if state.get("matched"):
+        lines.append("Records surfaced for it: " + ", ".join(f"`{i}`" for i in state["matched"]))
+    # Everything this session has waiting, not only what the last firing mined.
+    # A compaction that found nothing new — because the Stop hook already mined
+    # the same range — would otherwise report "nothing salvaged" while the
+    # inbox holds a dozen candidates this very session produced. What the model
+    # needs here is what it can act on, not which firing wrote it.
+    rows = _session_jot_rows(memory_dir, session_id)
+    if rows:
+        shown = rows[:_COMPACT_PREAMBLE_MAX_JOTS]
+        lines += [
+            "",
+            "Mined from this session so far (unconfirmed — promote with "
+            "`crumb inbox promote <id> <type>`, or drop with `crumb inbox drop <id>`):",
+        ]
+        lines += [f"- `{r['id']}` [{r.get('kind', 'note')}] {r['text']}" for r in shown]
+        if len(rows) > len(shown):
+            lines.append(f"- … and {len(rows) - len(shown)} more in `crumb inbox`")
+    else:
+        lines.append("Nothing durable was mined from the transcript before compaction.")
+    text = "\n".join(lines)
+    # Trim the mined list first: the last prompt is the cheapest, most useful
+    # line here, and dropping it to keep candidates would be backwards.
+    while approx_tokens(text) > _COMPACT_PREAMBLE_TOKENS and lines and lines[-1].startswith("- "):
+        lines.pop()
+        text = "\n".join(lines)
+    return text + "\n\n"
+
+
+def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> int:
     out: dict = {}
+    payload = payload or {}
     if memory_dir.is_dir():
         try:
-            packet = build_resume_packet(memory_dir, root)
+            # `source` says why this SessionStart fired. Absent on older harness
+            # versions, which is `startup` for every practical purpose.
+            compacted = str(payload.get("source") or "startup") == "compact"
+            task = None
+            if compacted:
+                from breadcrumbs import hooks_common
+
+                session_id = hooks_common.session_id_of(payload)
+                # The last prompt before the compaction is the best statement of
+                # what this session is doing, so the rebuilt packet is ordered by
+                # relevance to it (WM-20) rather than by recency.
+                task = hooks_common.prompt_state(memory_dir, session_id).get("last_prompt")
+            packet = build_resume_packet(memory_dir, root, task=task or None)
+            context = render_packet_markdown(packet)
+            if compacted:
+                context = _compaction_preamble(memory_dir, session_id) + context
             out = {
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",
-                    "additionalContext": render_packet_markdown(packet),
+                    "additionalContext": context,
                 }
             }
+            # The packet is about to be injected into a session: this is the
+            # single most load-bearing surfacing the tool performs.
+            _record_packet_surfacings(memory_dir, packet)
         except Exception:  # pragma: no cover - never fail a session start on memory
             out = {}
     print(json.dumps(out))
@@ -9564,6 +11600,9 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         # A truthy non-dict tool_input crashed with a raw traceback where every
         # other malformed-payload path degrades to {}.
         tool_input = {}
+    from breadcrumbs import hooklog as _hooklog
+
+    _hooklog.note(tool=str(payload.get("tool_name") or "") or None)
     action, files = _hook_action_from_tool(payload.get("tool_name") or "", tool_input)
     if not action:
         print(json.dumps({}))
@@ -9579,10 +11618,22 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         or _prefilter_trap_hit(memory_dir, action, files)
     )
     if not risky:
+        _hooklog.note(skipped="prefilter")
         print(json.dumps({}))
         return 0
     result = guard(memory_dir, root, action, files=files)
     verdict = result["verdict"]
+    # Launching a subagent is not itself irreversible — the subagent's own tool
+    # calls hit this same guard, where the blast radius actually is. So a launch
+    # caps at READ_FIRST: the memory reaches the agent as context and no prompt
+    # is raised. Asking twice for one piece of work is how a gate becomes noise.
+    if (payload.get("tool_name") or "") in SUBAGENT_TOOLS and verdict not in (
+        "PROCEED",
+        "READ_FIRST",
+    ):
+        verdict = GUARD_READ_ONLY_CEILING
+        result = {**result, "verdict": verdict}
+    _hooklog.note(verdict=verdict)
     if verdict == "PROCEED":
         print(json.dumps({}))
         return 0
@@ -9594,6 +11645,12 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     # deliberate behaviour of this tool, not something to silence from here.
     shown = _hook_surfacing_matches(result) or result.get("matches", [])
     reason = _hook_guard_reason(result, shown)
+    # Only what the agent is shown, and keyed by host session so WM-42 can ask
+    # "how many *sessions* did this record reach" rather than "how many times
+    # did one session fire the hook".
+    _record_guard_surfacings(
+        memory_dir, shown, "hook-guard", session_id=str(payload.get("session_id") or "") or None
+    )
     if verdict == "READ_FIRST":
         # Dedupe within the host session: the same records surfacing for the
         # same file is information exactly once (P0-2b/P0-3). Keyed on the
@@ -9605,6 +11662,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         session_id = str(payload.get("session_id") or "unknown")
         try:
             if _hook_guard_advisory_seen(memory_dir, session_id, key):
+                _hooklog.note(deduped=True)
                 print(json.dumps({}))
                 return 0
         except Exception:  # pragma: no cover - dedupe must never block the hook
@@ -9731,7 +11789,19 @@ def _extraction_commits(memory_dir: Path, root: Path) -> list[str]:
     return lines or [f"(HEAD moved to {_short_ref(cur)})"]
 
 
-def _extraction_reason(commits: list[str]) -> str:
+# Mined candidates the extraction prompt lists. Six is enough to cover a busy
+# session's real findings; beyond that the prompt stops being a request and
+# becomes a backlog.
+EXTRACTION_MAX_JOTS_SHOWN = 6
+
+# Mined candidates that, on their own, earn an extraction turn even with no
+# commits. One failed-then-fixed command is a real finding; three notes of any
+# kind means the session produced enough to be worth a minute.
+EXTRACTION_MIN_ATTEMPT_JOTS = 1
+EXTRACTION_MIN_SESSION_JOTS = 3
+
+
+def _extraction_reason(commits: list[str], session_jots: list[dict] | None = None) -> str:
     """The block message: a concrete, one-shot instruction to persist memory.
 
     This is the agent-as-author moment — the request lands while the model
@@ -9739,20 +11809,46 @@ def _extraction_reason(commits: list[str]) -> str:
     it read hundreds of turns ago. `capture session` is the last step, so
     completing the instruction is exactly what clears it (a re-firing Stop sees
     the fresh session record as redundant and stays silent).
+
+    When the miner found candidates, they are listed with their ids. That turns
+    the request from "compose a record about what just happened" — expensive,
+    at the moment the model has least context left — into "promote this one, drop
+    that one", which is a judgement it can still make cheaply and well.
     """
-    shown = commits[:EXTRACTION_MAX_COMMITS_SHOWN]
-    extra = len(commits) - len(shown)
-    listing = "\n".join(f"  {c}" for c in shown)
-    if extra > 0:
-        listing += f"\n  … and {extra} more"
-    # "landed", not "this turn produced": the range is HEAD-based, and the
-    # workspace may be shared with other terminals/agents (P1-7) — attributing
-    # someone else's commit to the agent would ask it to describe work it never
-    # did. The instruction below scopes recording to the session's own work.
-    return (
-        f"breadcrumbs: {len(commits)} new commit(s) landed since the last recorded "
-        f"session (this turn's work, or another actor's if the workspace is "
-        f"shared):\n{listing}\n"
+    parts: list[str] = []
+    if commits:
+        shown = commits[:EXTRACTION_MAX_COMMITS_SHOWN]
+        extra = len(commits) - len(shown)
+        listing = "\n".join(f"  {c}" for c in shown)
+        if extra > 0:
+            listing += f"\n  … and {extra} more"
+        # "landed", not "this turn produced": the range is HEAD-based, and the
+        # workspace may be shared with other terminals/agents (P1-7) —
+        # attributing someone else's commit to the agent would ask it to
+        # describe work it never did. The instruction below scopes recording to
+        # the session's own work.
+        parts.append(
+            f"breadcrumbs: {len(commits)} new commit(s) landed since the last recorded "
+            f"session (this turn's work, or another actor's if the workspace is "
+            f"shared):\n{listing}"
+        )
+    else:
+        parts.append(
+            "breadcrumbs: this session produced findings worth keeping, though no commits landed."
+        )
+
+    jots = list(session_jots or [])[:EXTRACTION_MAX_JOTS_SHOWN]
+    if jots:
+        rows = "\n".join(f"  {j['id']} [{j.get('kind', 'note')}] {j['text']}" for j in jots)
+        parts.append(
+            "Candidates mined from this session (unconfirmed; each is a private jot):\n"
+            f"{rows}\n"
+            "Promote what is durable:  `crumb inbox promote <jot id> "
+            "attempt|verification|trap --evidence commit <sha>`\n"
+            "Drop what is noise:       `crumb inbox drop <jot id>`"
+        )
+
+    parts.append(
         "Before stopping, persist what the next session cannot rediscover — from "
         "this session's own work only; skip commits you did not make:\n"
         '1. A durable choice made here -> `crumb remember decision --title "…" '
@@ -9763,11 +11859,44 @@ def _extraction_reason(commits: list[str]) -> str:
         '--status fixed|open|regressed --evidence command "<cmd>"`\n'
         "4. A record this session contradicted -> `crumb mark-status <id> "
         'stale --reason "…"`\n'
+        "A write refused with exit 3 is a near-duplicate: pass `--supersedes <id>` "
+        "to replace that record, or `--allow-duplicate` to keep both.\n"
         'Finish with `crumb capture session --next "<the next concrete action — cite '
         'a commit sha or file so the claim stays checkable>"`. '
         "Record durable facts only — routine work needs no records; if nothing "
         "durable happened, run just the final capture command."
     )
+    return "\n".join(parts)
+
+
+def _session_jot_rows(memory_dir: Path, session_id: str) -> list[dict]:
+    """Live machine-local jots this session produced, newest first.
+
+    What the extraction prompt offers for promotion. Scoped by `host_session`
+    so one terminal never asks an agent to triage another's findings.
+    """
+    try:
+        from breadcrumbs import inbox as _inbox
+
+        rows = []
+        for rec in _inbox.load_jots(memory_dir):
+            if rec.meta.get("host_session") != session_id:
+                continue
+            tags = rec.meta.get("tags") or []
+            kind = next(
+                (t for t in tags if t in ("attempt", "verification", "trap", "correction")), "note"
+            )
+            rows.append(
+                {
+                    "id": rec.meta.get("id") or rec.stem,
+                    "text": _inbox.jot_title(rec)[:140],
+                    "kind": kind,
+                    "tags": tags,
+                }
+            )
+        return rows
+    except Exception:  # pragma: no cover - the prompt degrades to commits-only
+        return []
 
 
 def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> None:
@@ -9805,6 +11934,24 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     if not memory_dir.is_dir():
         print(json.dumps({}))
         return 0
+    from breadcrumbs import hooks_common
+    from breadcrumbs import transcript as _transcript
+
+    session_key = hooks_common.session_id_of(payload)
+    # Mine first, unconditionally: it is a side effect, not a decision. Even a
+    # firing that will stay silent — a continuation, a redundant snapshot, a
+    # store with the prompt switched off — should still salvage what the
+    # transcript shows, because nothing else will read it again.
+    from breadcrumbs import hooklog as _hooklog
+
+    mined = _transcript.mine_transcript_into_jots(
+        memory_dir,
+        root,
+        payload.get("transcript_path"),
+        session_id=session_key,
+        use_cursor=True,
+    )
+    _hooklog.note(mined=len(mined.get("written") or []))
     try:
         redundant = _hook_capture_is_redundant(memory_dir, root)
     except Exception:  # pragma: no cover - a dedupe failure must not block Stop
@@ -9818,17 +11965,35 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     if payload.get("stop_hook_active"):
         if not redundant:
             _hook_capture_snapshot(root, host_session)
+            _hooklog.note(snapshot=True)
         print(json.dumps({}))
         return 0
     if redundant:
+        _hooklog.note(redundant=True)
         print(json.dumps({}))
         return 0
     if _extraction_enabled(memory_dir):
         commits = _extraction_commits(memory_dir, root)
-        if commits:
-            print(json.dumps({"decision": "block", "reason": _extraction_reason(commits)}))
+        # Candidates this session produced that have not already been offered.
+        # Re-offering a jot the agent declined, every turn until it expires, is
+        # exactly the fatigue that makes an agent start ignoring the prompt.
+        asked = hooks_common.extraction_asked(memory_dir, session_key)
+        jots = [j for j in _session_jot_rows(memory_dir, session_key) if j["id"] not in asked]
+        attempts = [j for j in jots if "attempt" in (j.get("tags") or [])]
+        earned = (
+            bool(commits)
+            or len(attempts) >= EXTRACTION_MIN_ATTEMPT_JOTS
+            or len(jots) >= EXTRACTION_MIN_SESSION_JOTS
+        )
+        if earned:
+            hooks_common.record_extraction_asked(
+                memory_dir, session_key, [j["id"] for j in jots[:EXTRACTION_MAX_JOTS_SHOWN]]
+            )
+            _hooklog.note(offered=len(jots[:EXTRACTION_MAX_JOTS_SHOWN]))
+            print(json.dumps({"decision": "block", "reason": _extraction_reason(commits, jots)}))
             return 0
     _hook_capture_snapshot(root, host_session)
+    _hooklog.note(snapshot=True)
     print(json.dumps({}))
     return 0
 
@@ -9839,15 +12004,57 @@ def cmd_hook(args: argparse.Namespace) -> int:
     # no subcommand used to block on a terminal until EOF and only then report the
     # usage error, which reads as a hang.
     if event not in HOOK_EVENTS:
-        _emit_error(args, "specify: `crumb hook session|guard|capture`")
+        _emit_error(args, "specify: `crumb hook " + "|".join(HOOK_EVENTS) + "`")
         return 2
     payload = _read_hook_stdin()
     root = _hook_root(payload)
     memory_dir = root / MEMORY_DIRNAME
+    # WM-62: one line per firing in private/hook-log.jsonl — what the hook did,
+    # never what it read. The handler's output reaches the host unchanged.
+    from breadcrumbs import hooklog as _hooklog
+
+    return _hooklog.run_logged(
+        event, memory_dir, payload, lambda: _run_hook(event, memory_dir, root, payload), now_iso
+    )
+
+
+def _run_hook(event: str, memory_dir: Path, root: Path, payload: dict) -> int:
     if event == "session":
-        return _hook_session(memory_dir, root)
+        return _hook_session(memory_dir, root, payload)
     if event == "guard":
         return _hook_guard(memory_dir, root, payload)
+    if event == "prompt" or not memory_dir.is_dir():
+        # The prompt hook is mostly a read; it locks around its one write
+        # (a correction jot) itself, so contention never costs the injection.
+        return _dispatch_writing_hook(event, memory_dir, root, payload)
+    # The writing hooks (WM-51): wait briefly for a parallel session's writer,
+    # then skip rather than block the host. Skipping loses one firing's
+    # snapshot or mined candidates; blocking would stall the agent.
+    from breadcrumbs import lock as _lock
+
+    try:
+        with _lock.store_lock(memory_dir, timeout=_lock.HOOK_TIMEOUT):
+            return _dispatch_writing_hook(event, memory_dir, root, payload)
+    except _lock.StoreLocked:
+        from breadcrumbs import hooklog as _hooklog
+
+        _hooklog.note(outcome="locked")
+        print("{}")
+        return 0
+
+
+def _dispatch_writing_hook(event: str, memory_dir: Path, root: Path, payload: dict) -> int:
+    if event == "prompt":
+        from breadcrumbs import hooks_prompt
+
+        print(json.dumps(hooks_prompt.hook_prompt(memory_dir, root, payload)))
+        return 0
+    if event in ("compact", "subagent"):
+        from breadcrumbs import hooks_compact
+
+        handler = hooks_compact.hook_compact if event == "compact" else hooks_compact.hook_subagent
+        print(json.dumps(handler(memory_dir, root, payload)))
+        return 0
     return _hook_capture(memory_dir, root, payload)
 
 
@@ -10029,7 +12236,9 @@ def _add_init(sub, global_parser: argparse.ArgumentParser) -> None:
         nargs="?",
         const="*",
         metavar="EVENTS",
-        help="install Claude Code hooks (optional: comma list of session,guard,capture)",
+        help="install Claude Code hooks (bare: all of them; or a comma list of "
+        + ",".join(HOOK_EVENTS)
+        + ")",
     )
     p_init.add_argument(
         "--no-hooks", dest="hooks", action="store_const", const=False, help="do not install hooks"
@@ -10109,6 +12318,7 @@ def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
         pr.add_argument("--scope")
         pr.add_argument("--status", choices=VALID_STATUS)
         pr.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author"))
+        _add_duplicate_flags(pr)
         if rtype == "attempt":
             # The fixed attempt vocabulary as named flags; each
             # overrides the matching --set heading.
@@ -10134,12 +12344,14 @@ def _add_schema(sub, global_parser: argparse.ArgumentParser) -> None:
         "schema_type",
         nargs="?",
         metavar="<type>",
-        help="limit to one record type (decision|attempt|verification|session|idea)",
+        help="limit to one record type (decision|attempt|verification|session|idea|"
+        "jot|trap|question)",
     )
     p_schema.add_argument(
         "--template",
         action="store_true",
-        help="emit a copy-pasteable `crumb remember <type>` command skeleton",
+        help="emit a copy-pasteable command skeleton for <type> "
+        "(`crumb remember`, `crumb note`, `crumb verify` or `crumb jot`)",
     )
     p_schema.set_defaults(func=cmd_schema)
 
@@ -10165,6 +12377,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
         choices=VALID_QUESTION_STATUS,
         help="status (default: open); retire one later with `crumb mark-status <id> answered`",
     )
+    _add_duplicate_flags(pq)
     pq.set_defaults(func=cmd_note)
 
     pt = note_sub.add_parser("trap", parents=[global_parser], help="record a reusable known trap")
@@ -10176,6 +12389,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pt.add_argument("--why", help="the mechanism, not vibes")
     pt.add_argument("--safe", help="the safe approach to use instead")
     pt.add_argument("--verify", help="a command that proves it is OK")
+    _add_duplicate_flags(pt)
     pt.set_defaults(func=cmd_note)
 
     pi = note_sub.add_parser("idea", parents=[global_parser], help="record a speculative idea")
@@ -10190,6 +12404,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     pi.add_argument("--tags", help="comma-separated tags")
     pi.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
+    _add_duplicate_flags(pi)
     pi.set_defaults(func=cmd_note)
 
 
@@ -10209,9 +12424,8 @@ def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     p_verify.add_argument(
         "--status",
-        required=True,
         choices=VALID_VERIFICATION_OUTCOME,
-        help="the verification outcome",
+        help="the verification outcome (required unless --recheck / --all)",
     )
     p_verify.add_argument(
         "--method",
@@ -10230,6 +12444,33 @@ def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
     p_verify.add_argument("--confidence", choices=("low", "medium", "high"))
     p_verify.add_argument(
         "--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author")
+    )
+    _add_duplicate_flags(p_verify)
+    p_verify.add_argument(
+        "--scope",
+        choices=RECORD_SCOPES,
+        default=None,
+        help="branch: this result applies only while the current branch is checked out "
+        "(default: project)",
+    )
+    p_verify.add_argument(
+        "--recheck",
+        metavar="ID",
+        action="append",
+        default=None,
+        help="rerun the command evidence of this verification and record the result as a "
+        "new verification that supersedes it (repeatable; asks before running anything)",
+    )
+    p_verify.add_argument(
+        "--all",
+        dest="recheck_all",
+        action="store_true",
+        help="with --recheck semantics: every active verification that names a command",
+    )
+    p_verify.add_argument(
+        "--yes",
+        action="store_true",
+        help="run the commands without asking (required when there is no terminal)",
     )
     p_verify.set_defaults(func=cmd_verify)
 
@@ -10293,11 +12534,11 @@ def _add_traps(sub, global_parser: argparse.ArgumentParser) -> None:
         "--stale",
         nargs="?",
         type=int,
-        const=TRAPS_STALE_DAYS_DEFAULT,
+        const=-1,  # "no DAYS given": the store's ttl_trap_days (WM-30)
         default=None,
         metavar="DAYS",
-        help=f"only traps not confirmed in DAYS (default {TRAPS_STALE_DAYS_DEFAULT}); "
-        "never-confirmed traps always qualify",
+        help=f"only traps not confirmed in DAYS (default: the store's ttl_trap_days, "
+        f"{TRAPS_STALE_DAYS_DEFAULT} unless set); never-confirmed traps always qualify",
     )
     p_traps.add_argument(
         "--status", choices=VALID_STATUS, default=None, help="only traps with this status"
@@ -10309,6 +12550,59 @@ def _add_traps(sub, global_parser: argparse.ArgumentParser) -> None:
         help=f"stamp a trap's `- {TRAP_CONFIRMED_KEY}:` bullet with today's date",
     )
     p_traps.set_defaults(func=cmd_traps)
+
+
+# show — the body behind a one-line mention
+def _add_show(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "show",
+        parents=[global_parser],
+        help="print one record, trap, question or jot by id (the body behind a one-line mention)",
+    )
+    p.add_argument(
+        "record_id",
+        metavar="ID",
+        help="any id the tool prints: dec_…, att_…, ver_…, idea_…, ses_…, jot_…, trap_…, q_…",
+    )
+    p.set_defaults(func=cmd_show)
+
+
+# Phase 3 lifecycle commands — implemented in `breadcrumbs.lifecycle_cmds`,
+# imported only when one of them runs.
+def _add_expired(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import lifecycle_cmds
+
+    lifecycle_cmds.add_expired(sub, global_parser)
+
+
+def _add_questions(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import lifecycle_cmds
+
+    lifecycle_cmds.add_questions(sub, global_parser)
+
+
+def _add_promote(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import promote
+
+    promote.add_promote(sub, global_parser)
+
+
+def _add_demote(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import promote
+
+    promote.add_demote(sub, global_parser)
+
+
+def _add_consolidate(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import lifecycle_cmds
+
+    lifecycle_cmds.add_consolidate(sub, global_parser)
+
+
+def _add_rollup(sub, global_parser: argparse.ArgumentParser) -> None:
+    from breadcrumbs import lifecycle_cmds
+
+    lifecycle_cmds.add_rollup(sub, global_parser)
 
 
 # retitle — repair a record whose title carries no information
@@ -10333,12 +12627,14 @@ def _add_prune(sub, global_parser: argparse.ArgumentParser) -> None:
     p_prune = sub.add_parser(
         "prune",
         parents=[global_parser],
-        help="delete old machine session snapshots (keeps human handoffs + the newest N)",
+        help="delete old machine session snapshots, expired jots, or branch handoffs "
+        "whose branch is gone",
     )
     p_prune.add_argument(
         "what",
-        choices=("sessions",),
-        help="what to prune (only `sessions` exists today)",
+        choices=("sessions", "jots", "handoffs"),
+        help="what to prune: machine session snapshots, expired/retired jots, or branch "
+        "handoffs whose branch is gone",
     )
     p_prune.add_argument(
         "--keep",
@@ -10359,6 +12655,11 @@ def _add_reindex(sub, global_parser: argparse.ArgumentParser) -> None:
         "reindex",
         parents=[global_parser],
         help="rebuild generated/ projections from the canonical records",
+    )
+    p_reindex.add_argument(
+        "--search-index",
+        action="store_true",
+        help="also build index/search.sqlite even if the store is under the size threshold",
     )
     p_reindex.set_defaults(func=cmd_reindex)
 
@@ -10430,7 +12731,8 @@ def _add_resume(sub, global_parser: argparse.ArgumentParser) -> None:
         "--task",
         default=None,
         metavar="TEXT",
-        help="resume FOR this task: scope likely-files to matching records; "
+        help="resume FOR this task: order every section by relevance to it (the "
+        "3 newest per section stay first) and scope likely-files to matching records; "
         "a task-scoped packet prints only and does not overwrite the committed snapshot",
     )
     p_resume.set_defaults(func=cmd_resume)
@@ -10448,9 +12750,14 @@ def _add_search(sub, global_parser: argparse.ArgumentParser) -> None:
     )
     p_search.add_argument(
         "--type",
-        choices=("decision", "attempt", "verification", "idea", "trap", "question"),
-        help="narrow the corpus to one record type ('idea' is searchable but never "
-        "reaches a guard verdict)",
+        choices=("decision", "attempt", "verification", "idea", "trap", "question", "jot"),
+        help="narrow the corpus to one record type ('idea' and 'jot' are searchable "
+        "but never reach a guard verdict)",
+    )
+    p_search.add_argument(
+        "--explain",
+        action="store_true",
+        help=f"print the stems the query became (and whether {ALIASES_FILENAME} is active)",
     )
     p_search.add_argument(
         "--status",
@@ -10558,11 +12865,161 @@ def _add_mcp(sub, global_parser: argparse.ArgumentParser) -> None:
 
 
 # doctor — integration health
+# migrate — bring a store's on-disk format up to this build
+def _add_migrate(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "migrate",
+        parents=[global_parser],
+        help=f"upgrade the store's on-disk format to schema_version {SCHEMA_VERSION}",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="list the steps that would run; change nothing",
+    )
+    p.set_defaults(func=cmd_migrate)
+
+
+# usage — local surfacing counts
+def _add_usage(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "usage",
+        parents=[global_parser],
+        help="which records actually get surfaced (local counts, never committed)",
+    )
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--never",
+        action="store_true",
+        help="instead list active records that have never been surfaced, oldest first",
+    )
+    mode.add_argument(
+        "--sessions",
+        action="store_true",
+        help="order by distinct sessions that surfaced a record, not raw count",
+    )
+    mode.add_argument(
+        "--decay",
+        nargs="?",
+        type=int,
+        const=DECAY_DAYS_DEFAULT,
+        default=None,
+        metavar="DAYS",
+        help="list active decisions, attempts and traps at least DAYS old (default 180) "
+        "that nothing surfaced in the last DAYS, with the mark-status command for "
+        "each; prints commands, never runs them",
+    )
+    p.add_argument("--top", type=int, default=25, metavar="N", help="rows to print (default: 25)")
+    p.set_defaults(func=cmd_usage)
+
+
+# jot — one observation, no ceremony
+def _add_jot(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "jot",
+        parents=[global_parser],
+        help="leave a short-term note with a TTL (promote it later, or let it expire)",
+    )
+    p.add_argument("text", help="the observation, in a line or two")
+    p.add_argument("--tags", help="comma-separated tags")
+    p.add_argument(
+        "--file",
+        action="append",
+        metavar="PATH",
+        help="a file this is about (repeatable); recorded as file evidence so "
+        "`search --file` and the guard's file signal can reach it",
+    )
+    p.add_argument(
+        "--local",
+        action="store_true",
+        help=f"write to {MEMORY_DIRNAME}/private/inbox/ instead — never committed",
+    )
+    p.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
+    _add_duplicate_flags(p, supersede=False)
+    p.add_argument(
+        "--scope",
+        choices=RECORD_SCOPES,
+        default=None,
+        help="branch: the note applies only while the current branch is checked out "
+        "(default: project for a jot you write; hooks write branch-scoped jots)",
+    )
+    p.set_defaults(func=cmd_jot)
+
+
+# inbox — list / promote / drop
+def _add_inbox(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "inbox",
+        parents=[global_parser],
+        help="list short-term jots; promote the durable ones, drop the noise",
+    )
+    p.add_argument("--all", action="store_true", help="include expired and retired jots")
+    p.add_argument("--expired", action="store_true", help="only jots past their TTL")
+    p.set_defaults(func=cmd_inbox, inbox_what=None)
+    inbox_sub = p.add_subparsers(dest="inbox_what", metavar="<what>")
+
+    pp = inbox_sub.add_parser(
+        "promote",
+        parents=[global_parser],
+        help="turn a jot into a durable record (same validate gate as writing one by hand)",
+    )
+    pp.add_argument("jot_id", metavar="ID", help="the jot id, e.g. jot_20260922_flaky-test-a3f2")
+    pp.add_argument("target", choices=INBOX_PROMOTE_TARGETS, help="the record type to create")
+    pp.add_argument("--title", help="override the record title (default: the jot's text)")
+    pp.add_argument(
+        "--set",
+        nargs=2,
+        action="append",
+        metavar=("HEADING", "TEXT"),
+        help="body section on the new record (repeatable)",
+    )
+    pp.add_argument(
+        "--evidence",
+        nargs=2,
+        action="append",
+        metavar=("TYPE", "REF"),
+        help="evidence on the new record (repeatable); the jot's own file evidence carries over",
+    )
+    pp.add_argument("--tags", help="comma-separated tags to add")
+    pp.add_argument("--confidence", choices=("low", "medium", "high"), default=None)
+    pp.add_argument(
+        "--status",
+        default=None,
+        choices=VALID_VERIFICATION_OUTCOME,
+        help="verification outcome (only with `promote <id> verification`)",
+    )
+    pp.add_argument(
+        "--method",
+        default=None,
+        choices=VALID_VERIFICATION_METHOD,
+        help="verification method (only with `promote <id> verification`)",
+    )
+    pp.add_argument("--why", default=None, help="trap/question: the mechanism, or why it matters")
+    pp.add_argument("--area", default=None, help="trap: where this bites (files / area)")
+    pp.add_argument("--safe", default=None, help="trap: the safe approach to use instead")
+    pp.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
+    pp.set_defaults(func=cmd_inbox, all=False, expired=False)
+
+    pd = inbox_sub.add_parser(
+        "drop", parents=[global_parser], help="retire a jot as noise (kept as history)"
+    )
+    pd.add_argument("jot_id", metavar="ID", help="the jot id")
+    pd.add_argument("--reason", default=None, help="why it is noise")
+    pd.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
+    pd.set_defaults(func=cmd_inbox, all=False, expired=False)
+
+
 def _add_doctor(sub, global_parser: argparse.ArgumentParser) -> None:
     p_doctor = sub.add_parser(
         "doctor",
         parents=[global_parser],
         help="report whether memory is actually wired up (adapter/mcp/hooks/packet)",
+    )
+    p_doctor.add_argument(
+        "--hook-log",
+        action="store_true",
+        help="instead summarise private/hook-log.jsonl: firings, outcomes and timings "
+        "per hook (the field-test report, docs/field-test.md)",
     )
     p_doctor.set_defaults(func=cmd_doctor)
 
@@ -10579,7 +13036,10 @@ def _add_hook(sub, global_parser: argparse.ArgumentParser) -> None:
     for ev, _help in (
         ("session", "SessionStart: emit the resume packet as additional context"),
         ("guard", "PreToolUse: cost-aware guard verdict for the proposed tool call"),
-        ("capture", "Stop: snapshot a session record"),
+        ("capture", "Stop: snapshot a session record, mine the transcript, maybe extract"),
+        ("prompt", "UserPromptSubmit: inject memory relevant to this prompt; capture corrections"),
+        ("compact", "PreCompact: mine the transcript before the context is destroyed"),
+        ("subagent", "SubagentStop: mine the finished subagent's transcript"),
     ):
         ph = hook_sub.add_parser(ev, parents=[global_parser], help=_help)
         ph.set_defaults(func=cmd_hook, hook_event=ev)
@@ -10599,11 +13059,22 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "remember": _add_remember,
     "schema": _add_schema,
     "note": _add_note,
+    "jot": _add_jot,
+    "inbox": _add_inbox,
     "verify": _add_verify,
     "mark-status": _add_mark_status,
+    "show": _add_show,
     "retitle": _add_retitle,
     "traps": _add_traps,
+    "questions": _add_questions,
+    "expired": _add_expired,
+    "consolidate": _add_consolidate,
+    "promote": _add_promote,
+    "demote": _add_demote,
     "prune": _add_prune,
+    "rollup": _add_rollup,
+    "migrate": _add_migrate,
+    "usage": _add_usage,
     "reindex": _add_reindex,
     "capture": _add_capture,
     "resume": _add_resume,
@@ -10710,6 +13181,70 @@ def requested_command(argv: list[str]) -> str | None:
     return None
 
 
+# Commands that write the store, and so run under its write lock (WM-51).
+# Everything else only reads — guard included: its telemetry is private,
+# best-effort, and must never wait on a writer on the PreToolUse path. `hook`
+# takes the lock per event, inside `cmd_hook`, with the hook timeout.
+LOCKED_COMMANDS = frozenset(
+    {
+        "init",
+        "remember",
+        "note",
+        "jot",
+        "inbox",
+        "verify",
+        "mark-status",
+        "retitle",
+        "traps",
+        "prune",
+        "migrate",
+        "reindex",
+        "capture",
+        "promote",
+        "demote",
+        "consolidate",
+        "rollup",
+    }
+)
+
+
+def _needs_lock(args: argparse.Namespace) -> bool:
+    """Does this invocation write? Decided per invocation, not per command name.
+
+    `inbox`, `traps` and `consolidate` are listings unless given the flag or
+    subcommand that writes; a listing must never wait on a parallel writer.
+    `resume` is not locked at all: it only regenerates projections, every file
+    it writes is replaced atomically, and a session must not fail to start
+    because another session is capturing.
+    """
+    if args.command not in LOCKED_COMMANDS:
+        return False
+    if args.command == "inbox":
+        return getattr(args, "inbox_what", None) in ("promote", "drop")
+    if args.command == "traps":
+        return bool(getattr(args, "confirm", None))
+    if args.command == "consolidate":
+        return bool(getattr(args, "merge", None))
+    return True
+
+
+def _run_command(args: argparse.Namespace) -> int:
+    """Run the parsed command, under the store's write lock when it writes."""
+    if not _needs_lock(args):
+        return args.func(args)
+    memory_dir = resolve_root(getattr(args, "project", None)) / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        return args.func(args)  # the command reports the missing store itself
+    from breadcrumbs import lock as _lock
+
+    try:
+        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+            return args.func(args)
+    except _lock.StoreLocked as exc:
+        _emit_error(args, str(exc))
+        return 1
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_output()
     parser = build_parser(requested_command(sys.argv[1:] if argv is None else list(argv)))
@@ -10718,7 +13253,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     try:
-        return args.func(args)
+        return _run_command(args)
     except KeyboardInterrupt:
         # Ctrl+C at a prompt aborts the command. 130 is the shell
         # convention for SIGINT; the message goes to stderr so `--json` output is

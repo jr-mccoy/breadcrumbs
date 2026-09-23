@@ -1,0 +1,74 @@
+{
+  "comment": "Written by `python evals/run.py --write-baseline`. See evals/README.md.",
+  "scopes": {
+    "library": {
+      "guard": {
+        "guard_accuracy": 1.0
+      },
+      "packet": {
+        "precision_at_5": 0.635,
+        "recall_at_5": 0.9667,
+        "reject_hits": 0
+      },
+      "prompt": {
+        "precision_at_5": 0.6767,
+        "quiet": 1.0,
+        "recall_at_5": 0.8167,
+        "reject_hits": 0
+      },
+      "tasks": 12
+    },
+    "overall": {
+      "guard": {
+        "guard_accuracy": 0.875
+      },
+      "packet": {
+        "precision_at_5": 0.5854,
+        "recall_at_5": 0.9747,
+        "reject_hits": 2
+      },
+      "prompt": {
+        "precision_at_5": 0.6606,
+        "quiet": 1.0,
+        "recall_at_5": 0.8687,
+        "reject_hits": 1
+      },
+      "tasks": 39
+    },
+    "service": {
+      "guard": {
+        "guard_accuracy": 1.0
+      },
+      "packet": {
+        "precision_at_5": 0.5792,
+        "recall_at_5": 0.9583,
+        "reject_hits": 0
+      },
+      "prompt": {
+        "precision_at_5": 0.7361,
+        "quiet": 1.0,
+        "recall_at_5": 0.9583,
+        "reject_hits": 0
+      },
+      "tasks": 14
+    },
+    "webapp": {
+      "guard": {
+        "guard_accuracy": 0.5
+      },
+      "packet": {
+        "precision_at_5": 0.547,
+        "recall_at_5": 1.0,
+        "reject_hits": 2
+      },
+      "prompt": {
+        "precision_at_5": 0.5636,
+        "quiet": 1.0,
+        "recall_at_5": 0.8182,
+        "reject_hits": 1
+      },
+      "tasks": 13
+    }
+  },
+  "tolerance": 0.05
+}

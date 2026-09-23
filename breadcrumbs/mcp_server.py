@@ -80,6 +80,8 @@ class _RecordPayloadOptional(TypedDict, total=False):
     scope: str
     status: str
     agent: str
+    allow_duplicate: bool  # write even if a live record says nearly the same thing
+    supersedes: str  # id of the live record of this type the new one replaces
 
 
 class RecordPayload(_RecordPayloadOptional):
@@ -225,6 +227,26 @@ def build_server():  # -> FastMCP
     def attempt(id: str) -> str:
         return mcp_core.resource_attempt(id, _root())
 
+    @mcp.resource("memory://records/{id}")
+    def record(id: str) -> str:
+        return mcp_core.resource_record(id, _root())
+
+    @mcp.resource("memory://traps/{id}")
+    def trap(id: str) -> str:
+        return mcp_core.resource_trap(id, _root())
+
+    @mcp.resource("memory://questions/{id}")
+    def question(id: str) -> str:
+        return mcp_core.resource_question(id, _root())
+
+    @mcp.resource("memory://verifications/{id}")
+    def verification(id: str) -> str:
+        return mcp_core.resource_verification(id, _root())
+
+    @mcp.resource("memory://inbox/{id}")
+    def inbox_item(id: str) -> str:
+        return mcp_core.resource_inbox_item(id, _root())
+
     @mcp.resource("memory://open-questions")
     def open_questions() -> str:
         return mcp_core.resource_open_questions(_root())
@@ -232,6 +254,10 @@ def build_server():  # -> FastMCP
     @mcp.resource("memory://known-traps")
     def known_traps() -> str:
         return mcp_core.resource_known_traps(_root())
+
+    @mcp.resource("memory://inbox")
+    def inbox() -> str:
+        return mcp_core.resource_inbox(_root())
 
     # ---------------- Prompts (6) — flows mapping to CLI ------------------- #
 
@@ -274,7 +300,12 @@ def build_server():  # -> FastMCP
 
     @mcp.tool()
     def memory_record(type: str, payload: RecordPayload) -> dict:
-        """Write a durable decision/attempt; passes the same validate gate as the CLI."""
+        """Write a durable decision/attempt; passes the same validate gate as the CLI.
+
+        A near-duplicate of a live record of the same type is refused with
+        `{ok: false, error: "near-duplicate", duplicates}`; set `payload.supersedes`
+        to the id it replaces, or `payload.allow_duplicate` to write both.
+        """
         return mcp_core.tool_record(type, payload, root=_root())
 
     @mcp.tool()
@@ -293,15 +324,82 @@ def build_server():  # -> FastMCP
         return mcp_core.tool_validate(root=_root())
 
     @mcp.tool()
+    def memory_show(id: str) -> dict:
+        """Fetch one record, trap, question or jot by id, with its "see also" list."""
+        return mcp_core.tool_show(id, root=_root())
+
+    @mcp.tool()
+    def memory_jot(
+        text: str,
+        tags: list[str] | None = None,
+        files: list[str] | None = None,
+        local: bool = False,
+        allow_duplicate: bool = False,
+        scope: str | None = None,
+    ) -> dict:
+        """Leave a short-term note with a TTL (wraps `crumb jot`); no evidence needed.
+
+        A near-verbatim repeat of a live jot is refused with
+        `{ok: false, error: "near-duplicate", duplicates}` unless `allow_duplicate`.
+        `scope: "branch"` makes it apply only while the current branch is checked out.
+        """
+        return mcp_core.tool_jot(
+            text,
+            tags=tags,
+            files=files,
+            local=local,
+            allow_duplicate=allow_duplicate,
+            scope=scope,
+            root=_root(),
+        )
+
+    @mcp.tool()
+    def memory_inbox_promote(
+        id: str,
+        target: str,
+        title: str | None = None,
+        sections: dict | None = None,
+        evidence: list[dict] | None = None,
+        tags: list[str] | None = None,
+        confidence: str | None = None,
+    ) -> dict:
+        """Turn a jot into a durable record (wraps `crumb inbox promote`)."""
+        return mcp_core.tool_inbox_promote(
+            id,
+            target,
+            title=title,
+            sections=sections,
+            evidence=evidence,
+            tags=tags,
+            confidence=confidence,
+            root=_root(),
+        )
+
+    @mcp.tool()
     def memory_note(
-        kind: str, text: str, fields: dict | None = None, tags: list[str] | None = None
+        kind: str,
+        text: str,
+        fields: dict | None = None,
+        tags: list[str] | None = None,
+        allow_duplicate: bool = False,
+        supersedes: str | None = None,
     ) -> dict:
         """Leave an open-question / known-trap / idea (wraps `crumb note`).
 
         `kind` is question|trap|idea. Closes the read/write asymmetry where these
-        were readable as resources but had no writer.
+        were readable as resources but had no writer. A near-duplicate of a live
+        item is refused with `{ok: false, error: "near-duplicate", duplicates}`;
+        pass `supersedes` (the id it replaces) or `allow_duplicate: true`.
         """
-        return mcp_core.tool_note(kind, text, fields=fields, tags=tags, root=_root())
+        return mcp_core.tool_note(
+            kind,
+            text,
+            fields=fields,
+            tags=tags,
+            allow_duplicate=allow_duplicate,
+            supersedes=supersedes,
+            root=_root(),
+        )
 
     @mcp.tool()
     def memory_mark_status(
@@ -312,7 +410,8 @@ def build_server():  # -> FastMCP
         Pass `superseded_by` (the replacing record's id) when marking
         `superseded` — validate rejects a superseded record without it.
 
-        A `trap_<slug>` id retires a known trap and a `q:<slug>` id resolves an
+        A `trap_<slug>` id retires a known trap and a `q_<slug>` id (the older
+        `q:<slug>` spelling is still accepted) resolves an
         open question: either leaves the resume packet and stops raising
         `memory_guard_before_action`, while staying findable in `memory_search`
         under its new status. Questions take `open`/`answered`/`closed`; records
@@ -331,8 +430,16 @@ def build_server():  # -> FastMCP
         evidence: list[EvidenceItem] | None = None,
         tags: list[str] | None = None,
         confidence: str | None = None,
+        allow_duplicate: bool = False,
+        supersedes: str | None = None,
+        scope: str | None = None,
     ) -> dict:
         """Record a verification result — a finding about reality (wraps `crumb verify`).
+
+        Re-verifying something already verified is refused as a near-duplicate
+        (`{ok: false, error: "near-duplicate", duplicates}`): pass `supersedes`
+        with the old verification's id so the new result replaces it.
+        `scope: "branch"` marks a result that holds only on the current branch.
 
         For the most common agentic output ("I checked X; here is its state"), which
         otherwise gets mis-filed as a decision/attempt. `status` is the outcome
@@ -348,6 +455,9 @@ def build_server():  # -> FastMCP
             evidence=evidence,
             tags=tags,
             confidence=confidence,
+            allow_duplicate=allow_duplicate,
+            supersedes=supersedes,
+            scope=scope,
             root=_root(),
         )
 

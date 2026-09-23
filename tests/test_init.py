@@ -119,10 +119,13 @@ class InitTreeTests(unittest.TestCase):
             root = Path(tmp)
             run_init(root, "--session-tracking", "full")
             m = parse_manifest(root / ".project-memory")
-            self.assertEqual(m["schema_version"], "1")
+            # A fresh store is always written at the current schema version, so
+            # `init` never produces a store that immediately needs `migrate`.
+            self.assertEqual(m["schema_version"], str(crumb.SCHEMA_VERSION))
             self.assertEqual(m["project"], root.resolve().name)
             self.assertEqual(m["session_tracking"], "full")
             self.assertEqual(m["commit_generated_projections"], "true")
+            self.assertEqual(m["jot_ttl_days"], str(crumb.JOT_TTL_DAYS_DEFAULT))
             self.assertIn("created_at", m)
 
     def test_clobber_guard_then_force(self):

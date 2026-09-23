@@ -1,11 +1,11 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: (no-git) | inputs_hash: c4a77fff7aac | generated_at: 2026-07-25T01:30:19+00:00 -->
+<!-- source_commit: a1e479a | inputs_hash: fbab1e14209f | generated_at: 2026-09-22T21:47:00+00:00 -->
 
 # Resume Packet
 
 ## Project
 **shared-service** — `.`  
-branch `(no-git)` · commit `(no-git)` · clean
+branch `claude/agentic-memory-system-mybkpi` · commit `a1e479a` · 29 uncommitted file(s) · handoff: handoff.md (no branch handoff)
 
 ## Current Focus
 Splitting the ingest worker out of the API process.
@@ -36,5 +36,8 @@ _(none recorded)_
 - python -m unittest discover -s tests
 
 ## Stale / Risk Warnings
-- handoff is 4 day(s) old.
-- active decision dec_20260702_distillate-sessions is 22 days old with no update — is this still true?
+_(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
+- ⚠ handoff is 64 day(s) old.
+- active decision dec_20260702_distillate-sessions is 82 days old with no update — is this still true?
+- open question "Should the worker own its own schema migrations" has been open 66 days — did this ever get resolved?
+- current.md has not changed in 59 days; is Current Focus still true?

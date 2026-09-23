@@ -9,6 +9,8 @@ win and the projection should be regenerated.
 |---|---|---|
 | `resume-packet.md` | `crumb resume` / `crumb reindex` | Bounded boot summary (≤ 5k tokens) for pasting into any agent. |
 | `guard-prefilter.json` | `crumb resume` / `crumb reindex` | Token + path index over known traps and do-not-retry attempts, so the `PreToolUse` hook can spot a trap-shaped command with one small read instead of walking every record. |
+| `related.json` | `crumb reindex` | "See also": up to three live records per record that share files, tags or specific vocabulary. `crumb show` prints it. |
+| `conflicts.json` | `crumb reindex` | Records that may contradict each other (a decision redoing a do-not-retry attempt; two overlapping decisions written apart). The packet and `crumb audit` ask about them. |
 
 Every projection here is rebuilt on every canonical write (and by `crumb reindex`),
 so none of them is ever hand-maintained.

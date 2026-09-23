@@ -165,9 +165,16 @@ class QuestionIdCollisionTests(unittest.TestCase):
             self.assertIn(Q_ROW, titles)
 
     def test_short_question_ids_are_unchanged(self):
-        """Only truncated slugs get a digest; existing short ids must not churn."""
+        """Only truncated slugs get a digest; short ids are the bare slug.
+
+        The prefix moved from `q:` to `q_` in Phase 2 (a colon is not a valid
+        filename or clean URI segment, and questions became both); what this
+        pins is that a short question's id is prefix + slug with no digest.
+        """
         short = "Should the worker own its own schema migrations"
-        self.assertEqual(crumb.question_item_id(short), "q:" + crumb.slugify(short))
+        self.assertEqual(
+            crumb.question_item_id(short), crumb.QUESTION_ID_PREFIX + crumb.slugify(short)
+        )
         self.assertLessEqual(len(crumb.slugify(short)), crumb.QUESTION_SLUG_CHARS)
 
     def test_ids_are_deterministic(self):

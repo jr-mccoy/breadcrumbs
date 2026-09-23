@@ -1,17 +1,13 @@
+<!-- GENERATED INDEX from questions/*.md, rebuilt by `crumb reindex`. A `## Q: …` block added here by hand is moved into its own file at the next reindex. -->
+
 # Open Questions
 
-_Unresolved ambiguities and blockers. Remove or resolve each as it is answered._
-_Aged-unresolved questions are surfaced by `resume`/`audit` as "is this still open?"_
+_One line per question; each is its own file under `questions/`. Only `open`
+ones are live blockers._
 
-<!-- Format suggestion (one block per question):
+_Ask one: `crumb note question "<question>" --why … --needs …`.
+Resolve one: `crumb mark-status q_<slug> answered --reason "…"`._
 
-## Q: <the question in one line>
-- Opened: <YYYY-MM-DD>
-- Why it matters: <impact / what is blocked>
-- Needs: <human input | investigation | a decision>
-- Status: open
--->
-
-## Q: Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
-- Opened: 2026-08-15
-- Status: open
+- `q_should-the-extraction-turn-also-fire-on-precompa-ebd583` [open] Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first. — `questions/should-the-extraction-turn-also-fire-on-precompa-ebd583.md`
+- `q_migrate-this-repo-s-own-project-memory-store-to-4bd707` [answered] Migrate this repo's own .project-memory store to schema 3? — `questions/migrate-this-repo-s-own-project-memory-store-to-4bd707.md`
+- `q_migrate-this-repo-s-own-project-memory-store-to-5562a0` [answered] Migrate this repo's own .project-memory store to schema 4 (adds handoffs/)? — `questions/migrate-this-repo-s-own-project-memory-store-to-5562a0.md`

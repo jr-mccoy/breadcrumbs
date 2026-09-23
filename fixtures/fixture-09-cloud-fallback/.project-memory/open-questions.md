@@ -1,4 +1,11 @@
+<!-- GENERATED INDEX from questions/*.md, rebuilt by `crumb reindex`. A `## Q: …` block added here by hand is moved into its own file at the next reindex. -->
+
 # Open Questions
 
-_Unresolved ambiguities and blockers. Remove or resolve each as it is answered._
-_Aged-unresolved questions are surfaced by `resume`/`audit` as "is this still open?"_
+_One line per question; each is its own file under `questions/`. Only `open`
+ones are live blockers._
+
+_Ask one: `crumb note question "<question>" --why … --needs …`.
+Resolve one: `crumb mark-status q_<slug> answered --reason "…"`._
+
+_(none recorded)_

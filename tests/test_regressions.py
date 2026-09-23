@@ -228,7 +228,7 @@ class GuardSearchTests(unittest.TestCase):
             )
             ids = [m["id"] for m in result["matches"]]
             self.assertTrue(
-                any(i.startswith("q:") for i in ids),
+                any(i.startswith(crumb.QUESTION_ID_PREFIX) for i in ids),
                 f"open question should reach verdict matches; got {ids}",
             )
             self.assertNotEqual(result["verdict"], "PROCEED")
@@ -1031,9 +1031,12 @@ class MediumLowRegressionTests(unittest.TestCase):
             )
             res = crumb.note(mem, Path(tmp), "question", "second question")
             self.assertTrue(res["ok"], res)
+            # Schema 3 adopts the hand-written block into its own file; the
+            # user's line survives there, in the block's Notes.
+            flaky = crumb.find_questions_by_id(mem, "q_flaky-suite")[0]
             self.assertIn(
                 "_No fix for the flaky suite yet._",
-                qpath.read_text(encoding="utf-8"),
+                Path(flaky["record_path"]).read_text(encoding="utf-8"),
             )
 
     # ---- R23: recency is chronological, not lexicographic ------------------ #

@@ -1,14 +1,14 @@
 # Project Handoff
 
-_Last updated: 2026-09-05T01:35:59+00:00_
-_Branch: claude/artifact-388cc819-sm0ipj_
-_Commit: 9037d68_
+_Last updated: 2026-09-22T20:27:05+00:00_
+_Branch: claude/agentic-memory-system-mybkpi_
+_Commit: 4c8f9d0_
 
 ## Current Focus
-0.2.0 is cut and waiting on the PR #49 merge; the field-review work is done
+Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Next Action
-Merge PR #49 to main, then run release.yml from main: mode=dry-run first to confirm the artifact, then mode=publish. Do not hand-tag — the workflow cuts the tag and the Release on the commit it builds.
+Phase 4 shipped (WM-40..43). Next: cut a release per CLAUDE.md (bump __version__ and CHANGELOG, merge to main, run release.yml), or start Phase 5 (WM-50 scope) from docs/roadmap-working-memory.md; read section 0.9 first.
 
 ## Blockers / Open Questions
 

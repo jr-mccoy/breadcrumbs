@@ -1,0 +1,53 @@
+# Tasks for the webapp store. `expect`: must be in the top 5. `reject`: must not
+# be. `verdict`: guard's verdict for the task read as an action must be one of
+# these. A task with `expect: []` is a control: the prompt hook should say
+# nothing. Ids are checked against the built store; a typo fails the run.
+as_of: 2026-09-01
+tasks:
+  - task: "fix the flaky screenshot test on CI"
+    expect: [trap_screenshot-fonts, att_20260318_raised-the-screenshot-diff-threshold-to-stop-flakes, dec_20260305_pin-the-ci-browser-image-to-the-playwright-docker-image]
+    reject: [trap_report-json-memory]
+
+  - task: "write a script that reads data/report.json with json.load and totals the orders"
+    note: "field review: a JSON-reading script drew a PAUSE from the screenshot trap"
+    expect: [trap_report-json-memory, att_20260502_streamed-the-report-export-through-pandas]
+    reject: [trap_screenshot-fonts]
+
+  - task: "git status"
+    note: "field review: read-only, and the loudest command in the field store"
+    expect: []
+    verdict: [PROCEED, READ_FIRST]
+
+  - task: "npm test"
+    note: "field review: runs arbitrary code, and was silent"
+    expect: [trap_npm-test-truncates-db]
+    verdict: [READ_FIRST, PAUSE, ASK_HUMAN]
+
+  - task: "add a feature flag for the beta dashboard"
+    expect: [dec_20260312_feature-flags-live-in-config-flags-json-and-are-read-once, att_20260424_read-config-flags-json-with-require]
+
+  - task: "store the user's session after login"
+    expect: [dec_20260415_keep-the-login-session-in-an-httponly-cookie]
+    reject: [dec_20260320_keep-the-login-session-in-localstorage]
+
+  - task: "make the Playwright run on CI faster"
+    expect: [att_20260408_ran-playwright-with-eight-workers-on-ci]
+
+  - task: "deleting an order throws Unexpected end of JSON input"
+    expect: [trap_empty-204-body]
+
+  - task: "add a refunded order status"
+    expect: [trap_order-status-enum, dec_20260402_cache-the-orders-api-responses-in-redis-for-60-seconds]
+    reject: [dec_20260420_status-page-is-served-from-a-separate-static-site]
+
+  - task: "my VITE_API_URL change in .env is ignored"
+    expect: [trap_vite-env-restart]
+
+  - task: "stub fetch in the Vitest unit tests"
+    expect: [att_20260411_mocked-fetch-globally-in-the-unit-tests]
+
+  - task: "change the brand colors"
+    expect: [dec_20260325_style-with-tailwind-and-a-single-theme-file]
+
+  - task: "rename a local variable in the date formatting helper"
+    expect: []

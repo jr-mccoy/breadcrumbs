@@ -3,7 +3,405 @@
 All notable changes to **crumb-kit** (the `breadcrumbs` package) are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the project
 uses semantic versioning. The package version is independent of the on-disk record
-`schema_version` (still `1`); `crumb --version` prints both.
+`schema_version` (now `2` — see `docs/record-schema.md` §1); `crumb --version`
+prints both.
+
+## [Unreleased]
+
+### Added — Phase 6: measurement and evals
+
+Phase 6 of `docs/roadmap-working-memory.md`. Earlier phases changed retrieval,
+capture and lifecycle without a way to tell whether any of it helped. This
+phase adds the measurements. No schema change.
+
+- **Relevance evals (WM-61).** `python evals/run.py` builds three synthetic
+  stores (a web app, a backend service, a Python library) from
+  `evals/suites/*/store.crumb`, using the real CLI with a pinned clock. It then
+  runs 39 tasks through the prompt hook's retrieval, the task-ordered resume
+  packet and guard. It reports precision@5, recall@5, rejected records that
+  reached a top 5, how often the prompt hook stays quiet on control tasks, and
+  guard verdict accuracy. It fails when a rate drops more than 0.05 below
+  `evals/baseline.json` or a count rises. A new `evals` CI job runs it. The
+  suites include the 0.2.0 field-review cases. `evals/` is repo-only and not
+  shipped.
+- **`crumb usage --sessions`** orders the report by how many distinct
+  sessions surfaced each record, rather than the raw count (WM-60).
+- **`crumb usage --decay [DAYS]`** (default 180) lists active decisions,
+  attempts and traps at least DAYS old that nothing has surfaced in the last
+  DAYS, each with the `crumb mark-status … stale` command to retire it. It runs
+  nothing. A candidate needs DAYS of usage history on this machine, so
+  `private/usage.json` now records when counting started. Promoted records,
+  expired records and recently confirmed traps are never candidates. `audit`
+  reports up to 10 as `decay-candidate` (info) (WM-60).
+- **Hook log (WM-62).** Every hook firing appends one line to
+  `private/hook-log.jsonl`: the event, how long it took, what the host received
+  (`silent`, `context`, `ask`, `block`, or `locked` when a writing hook skipped
+  on the store lock), and counts such as guard's verdict or how many jots a
+  transcript mine wrote. It never logs a prompt, command, path or transcript
+  text. It is capped at 5000 lines. `crumb doctor --hook-log` summarises it per
+  hook.
+- **`docs/field-test.md`**: how to run one real session with every hook on,
+  what to count, and how the counts answer the open questions about the
+  extraction turn (fatigue, SubagentStop, PreCompact).
+
+### Fixed — Phase 6
+
+Both bugs were found by the first eval run.
+
+- **The prompt hook injected records that no longer apply.** Its injected line
+  shows a record's kind and title, not its status, so a superseded decision read
+  as current guidance. That included the very decision its replacement had
+  retired. It now leaves out superseded, rejected, stale and quarantined
+  records, answered questions and expired records, as the packet already did.
+- **A short command could never match a record.** Guard needs two shared
+  specific words for a text match, and in `npm test` only `npm` counts ("test"
+  is too generic). So a trap titled "npm test also truncates the local
+  database" could never be found by `npm test`. When a query is too short to
+  reach the floor, a record whose title holds every word of it now passes. The
+  prompt hook now surfaces that trap. Guard's verdict stays PROCEED, because a
+  trap that matches only on text still cannot raise a verdict (the 0.1.10
+  field-test rule). Whether that should change is left to the field test.
+
+Prompt-hook precision@5 across the suites went from 0.57 to 0.66, and recall@5
+from 0.84 to 0.87. Records shown that should not have been fell from 4 to 1.
+
+### Added — Phase 5: scope and multi-agent
+
+Phase 5 of `docs/roadmap-working-memory.md`. Several agents, several branches,
+one store. **Record `schema_version` moves to 4**: one `crumb migrate` adds
+`handoffs/`.
+
+- **One handoff per branch (WM-50).** A capture on a branch that is not the
+  repository's default branch (`origin/HEAD`, else `main` or `master`) writes
+  `handoffs/<branch>.md`. Two agents on two branches no longer overwrite each
+  other's next action, and a feature branch's handoff is no longer the first
+  thing a session on `main` reads. Resume, guard and audit read the current
+  branch's handoff and fall back to `handoff.md`; the packet says which one it
+  used. The first branch handoff starts from `handoff.md`, so the focus
+  carries over. `current.md` stays shared. `crumb prune handoffs` removes
+  handoffs whose branch is gone locally and on `origin` and which are at least
+  30 days old.
+- **One writer at a time (WM-51).** Parallel sessions in one checkout could
+  interleave two read-modify-write sequences and silently undo each other.
+  Writing commands, the writing hooks and the MCP writers now take a lock on
+  the store (`private/.write-lock`). The CLI waits 2 s, then exits 1 with
+  `store is locked by pid N`. A hook waits 0.5 s, then skips its write rather
+  than block the agent. A lock left by a crashed writer is broken after 60 s,
+  or immediately on POSIX if its process is gone. Reads never wait.
+- **Branch-scoped records (WM-52).** `crumb jot|verify --scope branch` (and the
+  `scope` parameter on `memory_jot` / `memory_verify`) marks a record about this
+  branch's work in progress. On any other branch it leaves the packet and
+  guard's live set; search always finds it. Jots written by hooks are
+  branch-scoped by default.
+
+### Added — Phase 4: the bridge to long-term memory
+
+Phase 4 of `docs/roadmap-working-memory.md`. Breadcrumbs is short-to-medium-term
+memory. The long-term tier is the agent's own instruction file, `CLAUDE.md` or
+`AGENTS.md`, which every session loads whole. Until now nothing moved a proven
+decision from one tier to the other. No schema change: three new optional
+frontmatter keys.
+
+- **`crumb promote <id>` (WM-40).** It makes a decision, attempt or trap a
+  standing rule. The rule is one line in its own managed block in the
+  instruction file, separate from the `crumb init` signpost, and names its
+  source: `- <rule>. _(why: …; source: \`<id>\`)_`. The record stays active
+  and gains `promoted_to`/`promoted_at`. The resume packet then leaves it out
+  of its lists, since the model already has it through the instruction file,
+  and says how many it left out. Guard still scores it at full weight, and
+  search marks it `promoted`. Promote refuses a retired or
+  `confidence: low` record and never creates the instruction file.
+- **`crumb demote <id>` (WM-41).** It takes the rule back out and removes the
+  block once it is empty. **Retiring a promoted record demotes it**, whether
+  through `mark-status`, a writer's `--supersedes` or `consolidate`: a rule
+  nobody believes any more must not stay in the file every session loads.
+- **Suggestions (WM-42).** `crumb audit` suggests `promote-candidate` for a
+  decision or attempt that has held for 60 days and surfaced in five
+  sessions. It flags `demote-candidate` for a rule whose record is gone or
+  retired. `crumb doctor` counts the rules and what they cost.
+- **Drift (WM-43).** `crumb audit` reports `promoted-drift` when a rule no
+  longer matches its record, because of a hand edit or a retitle.
+  Re-promoting re-renders it.
+- **No MCP tool for promote or demote, on purpose.** An agent writing its own
+  permanent instructions through a tool call is how a prompt injection
+  persists. `memory_mark_status` still demotes what it retires.
+
+### Added — Phase 3: lifecycle
+
+Phase 3 of `docs/roadmap-working-memory.md`. Memory that stops being true should
+say so. Nothing here deletes a claim: expiry hides, duplicates are refused with
+the id they duplicate, and contradictions are questions in the packet, because
+deciding a claim is wrong is the author's job. No schema change.
+
+- **Typed time-to-live (WM-30).** Each type has a lifespan, overridable per
+  store with `ttl_<type>_days` in `manifest.yml`. A settled verification
+  (`fixed`, `not_applicable`) now expires after 90 days. It is the type that
+  silently goes stale, and an open problem never expires. An expired record
+  stays on disk and in `crumb search`, marked `expired`, but leaves the
+  packet's lists and guard's live set. The packet also asks about an actionable
+  verification past 90 days, a trap nobody has confirmed in 180, and a
+  `current.md` untouched for 14. `crumb expired` lists what aged out, and
+  `crumb questions --aging` lists questions open past 45 days.
+- **Evidence-driven staleness (WM-31).** A record citing a file that is neither
+  on disk nor in HEAD is flagged in the packet and by `crumb audit`
+  (`evidence-missing-file`). The record may describe code that no longer
+  exists. Guard scoring is unchanged. `crumb verify --recheck <id>` (or
+  `--all`) reruns a verification's recorded commands and writes the result as a
+  new verification that supersedes the old one. It always asks first: without
+  `--yes` and without a terminal it exits 2 having run nothing, and there is no
+  MCP equivalent.
+- **A near-duplicate gate on every writer (WM-32).** `remember`, `note`,
+  `verify` and `jot`, and their MCP tools, refuse a record that says what a
+  live record of the same type already says. The CLI exits **3**, the MCP
+  tools return `error: "near-duplicate"`, and both name the id.
+  `--supersedes <id>` replaces that record; `--allow-duplicate` keeps both.
+  `crumb audit` sweeps a store that predates the gate (`near-duplicates`).
+- **`crumb consolidate` (WM-33).** It lists clusters of near-duplicates.
+  `--merge <id>… --title "…"` writes one record from their sections in date
+  order, each tagged with its source, and supersedes them all. The merged body
+  is a starting point to edit; nothing merges automatically.
+- **Contradiction detection (WM-34).** It flags two patterns: a decision
+  written after an attempt that said "do not retry", doing much the same
+  thing; and two live decisions that overlap heavily, written more than a week
+  apart. They are listed in `generated/conflicts.json`, in the packet (up to 3)
+  and in `crumb audit` (`possible-contradiction`), each phrased as a question.
+- **`crumb rollup sessions --before YYYY-MM-DD` (WM-35).** It folds old
+  machine snapshots into one session record. Sessions somebody wrote are never
+  touched. `crumb audit`'s sessions-growth note names it.
+
+### Changed — Phase 3
+
+- **New exit code 3**: a write refused as a near-duplicate. It is distinct from
+  1 (the write failed) and 2 (bad usage).
+- **`crumb verify --status` is required only when not rechecking.**
+- **`ttl_jot_days`** is the new spelling of `jot_ttl_days`. The old key still
+  works.
+
+### Added — Phase 2: retrieval by relevance
+
+Phase 2 of `docs/roadmap-working-memory.md`. What reaches the agent should be
+what the task at hand needs, not whatever was written last. **Record
+`schema_version` moves to 3**: traps and questions become one file each, so an
+existing store needs one `crumb migrate`. Until it runs, the store keeps working
+in the old shape.
+
+- **A task-ordered packet (WM-20).** `crumb resume --task "<task>"` used to
+  scope only the likely-files list; every other section stayed newest-first, so
+  the one old decision about the task sat below whatever was touched last, and
+  was the first thing a cap trimmed. Now every list section is reordered by
+  relevance to the task. The three newest entries in each section stay first,
+  so a brand-new record is never buried. Nothing is hidden. The packet says
+  which ordering it used (`ordering` in `--json`, a line under `## Project`). A
+  post-compaction `SessionStart` uses the last prompt as its task.
+- **`crumb show <id>` (WM-21).** Packets and hook injections are one line per
+  record on purpose; this fetches the rest. It resolves every id the tool
+  prints: decision, attempt, verification, idea, session, jot, trap, question.
+  Unknown id: exit 1. Over MCP it is `memory://records/{id}` plus typed
+  `memory://traps/{id}`, `memory://questions/{id}`,
+  `memory://verifications/{id}`, `memory://inbox/{id}`, and the `memory_show`
+  tool for clients without resource support. The prompt hook's footer now
+  points at it.
+- **Traps and questions are one file each (WM-22, schema 3).** One field store's
+  `known-traps.md` reached 167 KB and 77 traps. Every hook parsed all of it,
+  and every writer spliced into it, which gave two branches a merge conflict.
+  They now live in `traps/<slug>.md` and `questions/<slug>.md` with standard
+  frontmatter. **Ids do not change**: they are cited in records and commit
+  messages. The two singletons stay as *generated indexes*, one line per
+  record, so an agent with no CLI still finds everything. A block
+  hand-written into one (or merged in from an unmigrated branch) is read
+  immediately and moved into its own file at the next reindex. If its id
+  already has a file with different content, the block is kept and reported
+  by `crumb audit` (`unadopted-block`), never merged by guesswork.
+- **A disposable search index (WM-23).** `index/search.sqlite` is a plain
+  inverted index, built at reindex once a store has 200 records
+  (`crumb reindex --search-index` forces one). It only narrows the candidate
+  set. Scoring still runs on the loaded records, so indexed search returns
+  exactly the full scan's matches and scores. Tests pin that on a 500-record
+  store and on fixture 10. A stale, absent or unreadable index is never
+  used. `crumb doctor` reports its state.
+- **Store aliases (WM-24).** `.project-memory/aliases.txt`, one synonym group
+  per line (`billing payments invoicing`), folds a project's own vocabulary
+  into the stemmer for search, guard and the prefilter. `crumb search
+  --explain` prints the stems a query became, so a synonym that "should" have
+  matched shows why it did not. `crumb audit` reports a malformed line.
+- **Related records (WM-25).** `generated/related.json` lists up to three
+  records per live record that share files, tags or specific vocabulary.
+  `crumb show` prints it as `See also:`. It uses a pure overlap score, with no
+  age or branch decay, so the committed file is identical on every machine.
+  Drift detection covers it.
+- **`crumb schema trap|question --template`** prints the `crumb note` skeleton.
+
+### Changed — Phase 2
+
+- **Question ids are `q_<slug>`**, not `q:<slug>`. The colon form is accepted
+  everywhere an id is taken (`mark-status`, `show`, MCP), so nothing written
+  before breaks.
+- **Trap confirmation is frontmatter.** At schema 3 `crumb traps --confirm`
+  sets `last_confirmed:` in the trap's file rather than a bullet.
+- **`crumb note trap|question` writes a file at schema 3.** The result shape,
+  duplicate check and hints are unchanged. `path` is now the trap's or
+  question's own file.
+
+### Added — Phase 1: capture everywhere
+
+Phase 1 of `docs/roadmap-working-memory.md`. The agent should not have to
+*decide* to remember. Three new hook events, a deterministic transcript miner,
+and the guard's first look at subagent launches. No schema change.
+
+- **`breadcrumbs/transcript.py` — the transcript miner (WM-14).** Four rules over
+  the JSONL transcript, no LLM and no network: a command that failed and passed
+  after an edit (`attempt`), a test command that passed (`verification`), a file
+  edited four or more times (`trap`), and a user message that opens like a
+  correction. Deterministic because everything else in this tool is: a miner
+  that asked a model what was interesting would be unreproducible, would cost a
+  round trip exactly when a session is ending, and could not run in `PreCompact`
+  at all, where nothing can talk to the model.
+- **Candidates are never records.** Everything mined lands in `private/inbox/`
+  as a jot — gitignored, `confidence: low`, never the basis of a guard verdict —
+  after a secret scan that **drops** rather than masks, because a masked
+  credential still proves one was there. Bounded at 10 per firing, deduped by a
+  content fingerprint within a session, and a cursor in
+  `private/miner-cursor.json` stops a later firing re-reading what an earlier
+  one already mined.
+- **`UserPromptSubmit → crumb hook prompt` (WM-10).** Injects up to five records
+  relevant to *this prompt*, at the moment the task is finally known, scored
+  with the same retrieval `guard` uses and capped at 800 approximate tokens.
+  Deduped per session, because an advisory that repeats is one the agent learns
+  to skim. It **never blocks**: that decision is available on this event and it
+  erases the prompt.
+- **Corrections are captured.** A prompt beginning "no, don't…" is a durable
+  constraint arriving as an ordinary message, and nothing wrote it down, so the
+  next session re-violated it. Written to `private/inbox/` only —
+  `capture_corrections: false` in `manifest.yml` turns it off.
+- **`PreCompact → crumb hook compact` (WM-11).** Compaction is the biggest
+  memory-loss event in a long session. The hook cannot speak to the model, so it
+  mines the transcript and leaves a marker.
+- **`SessionStart` is source-aware (WM-12).** With `source: compact` it prepends
+  what was in flight: the last prompt, the records surfaced for it, and the
+  candidates waiting in the inbox. The model that just lost its context is the
+  one reader that cannot reconstruct any of it.
+- **`SubagentStop → crumb hook subagent` (WM-13).** A subagent's findings used to
+  vanish with it; the parent only ever sees the final message. Mined and tagged
+  `subagent` / `agent:<type>`, keyed to the *parent* session so the Stop hook can
+  find them. It does not hold the subagent — that is the prompt-fatigue question
+  `open-questions.md` already asks, and `subagent_extraction` is reserved for it.
+- **The extraction turn fires on findings, not only commits (WM-15).** A
+  failed-then-fixed command, or three candidates of any kind, now earns the turn.
+  The prompt lists the candidates by id, which turns "compose a record about what
+  just happened" — at the moment the model has least context left — into "promote
+  this one, drop that one". A candidate the agent declined is never offered again
+  in the same session.
+- **The guard sees subagent launches (WM-16).** `Task`/`Agent` joined the
+  `PreToolUse` matcher; a launch is scored on its prompt and **capped at
+  `READ_FIRST`**, because the launch is not itself irreversible and the
+  subagent's own calls hit the same guard. Re-running `init --with-hooks` brings
+  an entry breadcrumbs owns up to the current matcher, which is how an existing
+  install picks this up.
+- **`breadcrumbs/hooks_common.py`** — the per-session hook state, all under
+  `private/`, all bounded to the eight most recent sessions.
+- **`cli.secret_pattern_hits(text)`** — the `scan_secrets` table, reachable by a
+  caller holding a string rather than a file, so the miner cannot drift from it.
+
+### Changed — Phase 1
+
+- **`crumb init --with-hooks` installs six hooks, not three.** A subset still
+  works: `--with-hooks=session,guard,capture`.
+- **The Stop hook mines on every firing**, including ones that stay silent — a
+  continuation, a redundant snapshot, a store with the prompt switched off.
+  Mining is a side effect, not a decision, and nothing reads the transcript
+  again.
+- **A jot has a title and a body.** They are the same string for a jot somebody
+  typed and different for a mined one, whose body holds a snippet of tool output
+  that would make a useless heading, so every listing now shows the title.
+
+Phase 0 of `docs/roadmap-working-memory.md`: the foundations the rest of the
+roadmap is built on. **Record `schema_version` moves to 2** — the first time it
+has ever moved — so an existing store needs one `crumb migrate`.
+
+### Added
+
+- **`crumb migrate`** — the machinery that makes a store-format change safe to
+  ship (WM-01). Steps are ordered and idempotent; `manifest.yml` is written
+  after each one, so a failure halts at the last version that actually
+  completed rather than at one whose step did not finish; and the whole
+  committed store is copied to `private/migrations/<timestamp>/` first — the
+  *whole* store, not the paths a step declares, because a step that
+  under-declares is a silent data-loss bug on somebody else's store and the
+  thing being copied is a few hundred kilobytes of markdown. `--dry-run` lists
+  the steps and changes nothing. A migration never creates `generated/` in a
+  store that does not have one: a format upgrade has no business inventing a
+  committed artifact.
+- **`crumb jot` / `crumb inbox` — the short-term tier** (WM-03). Every durable
+  write asks for a title, body sections, and evidence or an explicit
+  `--confidence low`. That is the right price for a decision and the wrong price
+  for "the flaky test only fails under `-n auto`", so observations at that size
+  were not written down at all. A jot is one line, a TTL (`jot_ttl_days`,
+  default 14) and no evidence rule. `--file` becomes file evidence, which is
+  what makes one findable later. `crumb inbox promote <id> <type>` turns it into
+  a durable record **through that type's normal writer**, evidence rule
+  included — a jot is a shortcut into memory, not around its contract — and
+  marks the jot `superseded` rather than deleting it, so the trail survives.
+  `crumb inbox drop` retires one as noise; `crumb prune jots` deletes expired and
+  retired jots older than 30 days, and never an active unexpired one.
+- **Two inboxes, as a privacy boundary.** `inbox/` is committed; everything
+  written *automatically* goes to the gitignored `private/inbox/`, because a
+  hook cannot know whether what it just saw is publishable. Machine-written
+  content earns a commit by being promoted. For the same reason the committed
+  resume packet lists committed jots only: a machine-local jot in a committed
+  projection would make that file differ between two checkouts of one store
+  while `inputs_hash` called both fresh — the cross-machine ping-pong
+  `_hashed_input_dirs` exists to prevent.
+- **A jot is searchable and never judged.** `crumb search --type jot` finds one;
+  `guard` never rests a verdict on one, for the same reason it never rests one
+  on an idea. An unconfirmed note that happens to name the file being edited
+  must not gate the edit.
+- **`crumb usage`** — which records actually get *shown* (WM-02). A record counts
+  when a packet was printed or injected, a guard verdict cited it, or a hook
+  spent context on it; deliberately **not** when a write triggers a reindex,
+  which would make the counts measure writes rather than surfacings. `--never`
+  lists active records nothing has ever reached — the question `audit`'s
+  `[unreachable]` check cannot answer, since it asks whether a record *could* be
+  found, not whether it ever *was*. Counts live in `private/usage.json` and are
+  never committed: in frontmatter they would churn every record on every guard
+  call, and in a committed file they would conflict on every merge.
+- **`audit` finding `never-surfaced`** (info): an active record older than 90
+  days that nothing has ever surfaced. Suppressed entirely when the store has no
+  usage history, because on a fresh clone the finding is true of every record and
+  useful about none.
+- **MCP**: resource `memory://inbox` (9 now) and tools `memory_jot`,
+  `memory_inbox_promote` (12 now).
+
+### Changed
+
+- **`validate` splits the schema-version check out of `manifest`** and names the
+  remedy directionally: an older store says ``run `crumb migrate` ``, a newer one
+  says `upgrade crumb-kit`. One message for both sent half of each case to the
+  wrong remedy — and a build must never write its own format into a store that is
+  ahead of it.
+- **A `local-private` record is no longer rejected for being a directory
+  record.** The rule is, and always was, "it must live where git cannot see it";
+  it was written as an unconditional failure because every record directory used
+  to be committed. `private/inbox/` is the first that is not. The inverse is now
+  checked too: a `repo-safe` record under `private/` is a finding.
+- **`crumb prune` takes `jots` as well as `sessions`.**
+- **`crumb schema jot --template`** emits a `crumb jot` skeleton, not a `crumb
+  remember jot` one — `remember` takes decisions and attempts only, and a
+  template naming a command that does not exist is worse than no template.
+
+### Docs
+
+- **`docs/roadmap-working-memory.md`** — the plan for turning breadcrumbs
+  from a ledger into a short- and medium-term working memory for agents,
+  with `CLAUDE.md`/`AGENTS.md` as the long-term tier. Seven phases, each
+  a release: migration machinery and an `inbox/` jot tier; hooks for
+  `UserPromptSubmit`, `PreCompact`, `SubagentStop` and a deterministic
+  transcript miner; relevance-ordered packets, `crumb show`, per-record
+  traps, an FTS5 recall index; typed TTLs, near-duplicate and
+  contradiction detection, consolidation and rollup; `crumb promote` /
+  `demote` into the agent-instruction file; per-branch handoffs and a
+  store lock; usage telemetry and a relevance eval harness. Written for
+  implementers who have not read the codebase: every item names files,
+  functions, data shapes, tests and acceptance checks.
 
 ## [0.2.0] — 2026-09-05
 

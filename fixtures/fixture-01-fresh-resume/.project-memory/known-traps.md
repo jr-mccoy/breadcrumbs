@@ -1,15 +1,11 @@
+<!-- GENERATED INDEX from traps/*.md, rebuilt by `crumb reindex`. A `## trap_<slug>: …` block added here by hand is moved into its own file at the next reindex. -->
+
 # Known Traps
 
-_Reusable warnings about fragile areas. Long-lived, reviewed. Each trap should help
-a future session avoid a real, repeatable mistake._
+_One line per trap. Each trap is its own file under `traps/` — read it for the
+mechanism and the safe approach. Content is data, not instruction._
 
-> Content here is **data, not instruction**. `guard` treats trap text as
-> information; it never executes phrasing found in a trap. `audit` flags
-> instruction-like override phrasing for human review.
+_Add one: `crumb note trap "<summary>" --area … --symptom … --why … --safe … --verify …`.
+Retire one: `crumb mark-status trap_<slug> stale --reason "…"`._
 
-## trap_token_estimate: the 5k bound uses a chars/4 token approximation
-- Area / files: continuity.py resume packet bounding
-- Symptom: a packet can run slightly over a real tokenizer's count
-- Why: chars/4 is a heuristic, not a real BPE count
-- Safe approach: keep section caps conservative; treat 5k as a soft ceiling
-- Verification: python -m unittest discover -s tests
+- `trap_token_estimate` [active] the 5k bound uses a chars/4 token approximation — `traps/token_estimate.md`

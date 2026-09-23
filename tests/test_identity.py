@@ -29,13 +29,31 @@ class IdentityTests(unittest.TestCase):
             "attempt": "att",
             "idea": "idea",
             "session": "ses",
-            "trap": "trap",
-            "question": "q",
+            "verification": "ver",
+            "jot": "jot",
         }
         for rtype, prefix in cases.items():
             rid, slug = crumb.derive_identity("2026-01-02-thing", rtype)
             self.assertEqual(rid, f"{prefix}_20260102_thing")
             self.assertEqual(slug, "thing")
+
+    def test_traps_and_questions_are_undated(self):
+        """A trap or question file is named by slug alone, and its id is prefix + slug.
+
+        Those ids predate traps and questions being files and are cited in
+        records, commit messages and notes, so becoming files (WM-22) must not
+        change them — which a date in the filename would.
+        """
+        self.assertEqual(
+            crumb.derive_identity("hand-tagged-releases", "trap"),
+            ("trap_hand-tagged-releases", "hand-tagged-releases"),
+        )
+        self.assertEqual(
+            crumb.derive_identity("should-we-ship", "question"),
+            ("q_should-we-ship", "should-we-ship"),
+        )
+        # Uppercase or spaces are never a usable id.
+        self.assertIsNone(crumb.derive_identity("Bad Name", "trap"))
 
     def test_slug_keeps_internal_hyphens(self):
         rid, slug = crumb.derive_identity("2026-12-31-a-b-c", "attempt")
@@ -192,6 +210,7 @@ class SlugLengthTests(unittest.TestCase):
                         self.LONG_TITLE,
                         "--confidence",
                         "low",
+                        "--allow-duplicate",
                     ]
                 )
             names = sorted(p.stem for p in (mem / "decisions").glob("*.md"))
