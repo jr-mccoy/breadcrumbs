@@ -60,7 +60,12 @@ def usage_path(memory_dir: Path) -> Path:
 
 
 def load_usage(memory_dir: Path) -> dict:
-    """The usage document, or an empty one. Never raises."""
+    """The usage document, or an empty one. Never raises.
+
+    `started_at` is when counting began on this machine (WM-60): decay must know
+    how much history "never surfaced" is measured over. Files written before it
+    existed have none, and `coverage_start` falls back to their evidence.
+    """
     try:
         data = json.loads(usage_path(memory_dir).read_text(encoding="utf-8"))
     except Exception:
@@ -70,7 +75,10 @@ def load_usage(memory_dir: Path) -> dict:
     records = data.get("records")
     if not isinstance(records, dict):
         return {"records": {}}
-    return {"records": records}
+    out: dict = {"records": records}
+    if isinstance(data.get("started_at"), str):
+        out["started_at"] = data["started_at"]
+    return out
 
 
 def record_surfaced(
@@ -93,6 +101,9 @@ def record_surfaced(
         data = load_usage(memory_dir)
         records = data["records"]
         now = cli.now_iso()
+        # Read before this write touches any timestamp: a file from before
+        # `started_at` existed keeps the history it can prove.
+        started = data.get("started_at") or _oldest_surfacing(records) or now
         for rid in ids:
             entry = records.get(rid)
             if not isinstance(entry, dict):
@@ -123,15 +134,20 @@ def record_surfaced(
             records = {r: records[r] for r in keep}
         path = usage_path(memory_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
-        cli.write_text_atomic(
-            path, json.dumps({"records": records}, indent=0, sort_keys=True) + "\n"
-        )
+        doc = {"records": records, "started_at": started}
+        cli.write_text_atomic(path, json.dumps(doc, indent=0, sort_keys=True) + "\n")
     except Exception:  # pragma: no cover - telemetry never breaks its caller
         pass
 
 
-def usage_rows(memory_dir: Path) -> list[dict]:
-    """One row per record with usage data, most-surfaced first."""
+def usage_rows(memory_dir: Path, *, by_sessions: bool = False) -> list[dict]:
+    """One row per record with usage data, most-surfaced first.
+
+    `by_sessions` sorts by distinct sessions instead (WM-60): forty guard calls
+    in one session are one piece of evidence, five sessions are five. Only the
+    last `USAGE_MAX_SESSIONS_PER_RECORD` are kept, so a row at the cap reads as
+    "at least" that many (`sessions_capped`).
+    """
     records = load_usage(memory_dir)["records"]
     rows = []
     for rid, entry in records.items():
@@ -146,9 +162,13 @@ def usage_rows(memory_dir: Path) -> list[dict]:
                 "last_surfaced_at": entry.get("last_surfaced_at"),
                 "by": by,
                 "sessions": len(sessions),
+                "sessions_capped": len(sessions) >= USAGE_MAX_SESSIONS_PER_RECORD,
             }
         )
-    rows.sort(key=lambda r: (-r["surfaced"], r["id"]))
+    if by_sessions:
+        rows.sort(key=lambda r: (-r["sessions"], -r["surfaced"], r["id"]))
+    else:
+        rows.sort(key=lambda r: (-r["surfaced"], r["id"]))
     return rows
 
 
@@ -202,3 +222,127 @@ def has_usage_data(memory_dir: Path) -> bool:
     useful about none.
     """
     return bool(load_usage(memory_dir)["records"])
+
+
+# --------------------------------------------------------------------------- #
+# WM-60: decay
+# --------------------------------------------------------------------------- #
+
+# A record with no surfacing in this many days of usage history, and at least
+# this old itself, is a decay candidate.
+DECAY_DAYS = cli.DECAY_DAYS_DEFAULT
+# What decays. Verifications and questions already have TTLs (WM-30); an idea or
+# a jot is not meant to be reached.
+DECAY_TYPES = ("decision", "attempt", "trap")
+DECAY_REASON = "not surfaced in {days} days"
+
+
+def coverage_start(memory_dir: Path) -> str | None:
+    """When usage counting began here, as an ISO timestamp, or None if never.
+
+    Files from before `started_at` existed fall back to the oldest
+    `last_surfaced_at`. Counting began no later than that, so this can only
+    *under*-state the history, and decay errs toward suggesting nothing.
+    """
+    data = load_usage(memory_dir)
+    return data.get("started_at") or _oldest_surfacing(data["records"])
+
+
+def _oldest_surfacing(records: dict) -> str | None:
+    stamps = [
+        str(e.get("last_surfaced_at"))
+        for e in records.values()
+        if isinstance(e, dict) and e.get("last_surfaced_at")
+    ]
+    return min(stamps) if stamps else None
+
+
+def _trap_age_days(trap: dict) -> int | None:
+    """A trap's age: its file's `updated_at`/`created_at`, else unknown."""
+    path = trap.get("record_path")
+    if not path:
+        return None
+    try:
+        meta, _ = cli.parse_frontmatter(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return cli._age_days(meta.get("updated_at") or meta.get("created_at"))
+
+
+def decay_candidates(memory_dir: Path, *, days: int = DECAY_DAYS) -> dict:
+    """Active decisions, attempts and traps nothing has surfaced for `days` (WM-60).
+
+    A candidate is at least `days` old (by `updated_at`, so an edit resets
+    it) and has no surfacing in the last `days`, and the usage history covers
+    at least `days`. With less history nothing is a candidate: a store that has
+    counted for a week cannot say what went unused for six months.
+
+    Never retires anything. Each candidate carries the `mark-status` command a
+    person can run. Left out: promoted records (the packet stops showing them
+    on purpose, so they are never surfaced), records past their TTL (already
+    out of the packet), and traps confirmed within `days` (`crumb traps
+    --confirm` is someone saying it still holds).
+    """
+    from breadcrumbs import promote as _promote
+
+    memory_dir = Path(memory_dir)
+    start = coverage_start(memory_dir)
+    coverage = cli._age_days(start) if start else None
+    result = {
+        "days": days,
+        "coverage_start": start,
+        "coverage_days": coverage,
+        "enough_history": coverage is not None and coverage >= days,
+        "candidates": [],
+    }
+    if not result["enough_history"]:
+        return result
+    records = load_usage(memory_dir)["records"]
+
+    def unused(rid: str) -> tuple[bool, dict]:
+        entry = records.get(rid) if isinstance(records.get(rid), dict) else {}
+        last = entry.get("last_surfaced_at")
+        since = cli._age_days(last) if last else None
+        return (not last or (since is not None and since >= days)), entry
+
+    reason = DECAY_REASON.format(days=days)
+    out: list[dict] = []
+    for rec in cli.load_records(memory_dir, types=("decision", "attempt")):
+        if rec.error or (rec.meta.get("status") or "active") != "active":
+            continue
+        if _promote.is_promoted_record(rec) or cli.record_expired(rec.meta):
+            continue
+        age = cli._age_days(rec.meta.get("updated_at") or rec.meta.get("created_at"))
+        rid = rec.meta.get("id") or rec.stem
+        ok, entry = unused(rid)
+        if age is None or age < days or not ok:
+            continue
+        out.append(_candidate(rid, rec.rtype, rec.meta.get("title", ""), age, entry, reason))
+    for trap in cli.active_traps(memory_dir):
+        if _promote.is_promoted_trap(trap):
+            continue
+        confirmed = cli.trap_last_confirmed(trap)
+        confirmed_age = cli._age_days(confirmed) if confirmed else None
+        if confirmed_age is not None and confirmed_age < days:
+            continue
+        age = _trap_age_days(trap)
+        ok, entry = unused(trap["id"])
+        if age is None or age < days or not ok:
+            continue
+        title = trap.get("summary") or trap.get("heading", "")
+        out.append(_candidate(trap["id"], "trap", title, age, entry, reason))
+    out.sort(key=lambda r: (-r["age_days"], r["id"]))
+    result["candidates"] = out
+    return result
+
+
+def _candidate(rid: str, rtype: str, title: str, age: int, entry: dict, reason: str) -> dict:
+    return {
+        "id": rid,
+        "type": rtype,
+        "title": title,
+        "age_days": age,
+        "surfaced": int(entry.get("surfaced", 0) or 0),
+        "last_surfaced_at": entry.get("last_surfaced_at"),
+        "command": f'crumb mark-status {rid} stale --reason "{reason}"',
+    }

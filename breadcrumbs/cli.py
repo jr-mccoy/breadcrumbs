@@ -8928,6 +8928,9 @@ AUDIT_INFO = "info"  # health/context note
 # would otherwise report every record it has.
 AUDIT_NEVER_SURFACED_DAYS = 90
 AUDIT_NEVER_SURFACED_MAX = 10
+# WM-60: `crumb usage --decay`'s window, and how many candidates audit names.
+DECAY_DAYS_DEFAULT = 180
+AUDIT_DECAY_MAX = 10
 
 # Directories under .project-memory/ the secret scan skips: private/ is gitignored
 # local context, index/ is a disposable accelerator, generated/ holds derived
@@ -9657,7 +9660,24 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
     from breadcrumbs import usage as _usage
 
     if _usage.has_usage_data(memory_dir):
-        never = _usage.never_surfaced(memory_dir)
+        # WM-60: old records nothing has surfaced for the whole decay window.
+        # Only once this machine has counted that long (`decay_candidates`
+        # returns none before). The finding carries the command; nothing runs.
+        decaying = _usage.decay_candidates(memory_dir)["candidates"]
+        for row in decaying[:AUDIT_DECAY_MAX]:
+            findings.append(
+                _audit_finding(
+                    "decay-candidate",
+                    AUDIT_INFO,
+                    None,
+                    f"{row['id']} is {row['age_days']} days old and nothing has surfaced it "
+                    f"in {DECAY_DAYS_DEFAULT} days — if it no longer applies: "
+                    f"`{row['command']}`",
+                    id=row["id"],
+                )
+            )
+        decaying_ids = {row["id"] for row in decaying}
+        never = [r for r in _usage.never_surfaced(memory_dir) if r["id"] not in decaying_ids]
         for row in never[:AUDIT_NEVER_SURFACED_MAX]:
             if (row["age_days"] or 0) < AUDIT_NEVER_SURFACED_DAYS:
                 continue
@@ -10251,6 +10271,8 @@ def cmd_usage(args: argparse.Namespace) -> int:
         return 2
     from breadcrumbs import usage as _usage
 
+    if args.decay is not None:
+        return _print_decay(args, _usage.decay_candidates(memory_dir, days=args.decay))
     if args.never:
         rows = _usage.never_surfaced(memory_dir)
         if args.json:
@@ -10271,7 +10293,7 @@ def cmd_usage(args: argparse.Namespace) -> int:
         )
         return 0
 
-    rows = _usage.usage_rows(memory_dir)
+    rows = _usage.usage_rows(memory_dir, by_sessions=args.sessions)
     if args.json:
         _print_json(args, {"usage": rows, "items": rows}, summary={"records": len(rows)})
         return 0
@@ -10281,13 +10303,57 @@ def cmd_usage(args: argparse.Namespace) -> int:
             "a resume packet, a guard verdict, a hook advisory."
         )
         return 0
-    print(f"usage: {len(rows)} record(s) with surfacing history, most-surfaced first\n")
+    order = "most sessions first" if args.sessions else "most-surfaced first"
+    print(f"usage: {len(rows)} record(s) with surfacing history, {order}\n")
     for r in rows[: args.top]:
         by = ", ".join(f"{k} {v}" for k, v in sorted(r["by"].items()))
-        print(f"  {r['surfaced']:>4}x  {r['id']}  ({by}; {r['sessions']} session(s))")
+        n = f"{r['sessions']}+" if r.get("sessions_capped") else str(r["sessions"])
+        if args.sessions:
+            print(f"  {n:>4} session(s)  {r['id']}  ({r['surfaced']}x: {by})")
+        else:
+            print(f"  {r['surfaced']:>4}x  {r['id']}  ({by}; {n} session(s))")
     print(
         "\nCounts are local to this machine "
         f"({MEMORY_DIRNAME}/private/usage.json, never committed)."
+    )
+    return 0
+
+
+def _print_decay(args: argparse.Namespace, result: dict) -> int:
+    """`crumb usage --decay` (WM-60). Prints commands; never runs them."""
+    rows = result["candidates"]
+    if args.json:
+        _print_json(
+            args,
+            {**result, "items": rows},
+            summary={"candidates": len(rows), "enough_history": result["enough_history"]},
+        )
+        return 0
+    days = result["days"]
+    if not result["enough_history"]:
+        have = result["coverage_days"]
+        have = "no usage history" if have is None else f"{have} day(s) of usage history"
+        print(
+            f"usage --decay: {have}; decay needs {days}. Nothing is a candidate until "
+            "this machine has counted that long."
+        )
+        return 0
+    if not rows:
+        print(f"usage --decay: nothing old has gone unsurfaced for {days} days.")
+        return 0
+    print(
+        f"usage --decay: {len(rows)} active record(s) at least {days} days old "
+        f"and not surfaced in the last {days} days, oldest first\n"
+    )
+    for r in rows[: args.top]:
+        last = r["last_surfaced_at"][:10] if r["last_surfaced_at"] else "never"
+        print(f"  [{r['type']}] {r['id']} — {r['age_days']}d old, last surfaced {last}")
+        if r["title"]:
+            print(f"      {r['title']}")
+        print(f"      {r['command']}")
+    print(
+        "\nNothing was changed. Review each one, then run the commands you agree "
+        "with. Counts are local to this machine."
     )
     return 0
 
@@ -12749,10 +12815,27 @@ def _add_usage(sub, global_parser: argparse.ArgumentParser) -> None:
         parents=[global_parser],
         help="which records actually get surfaced (local counts, never committed)",
     )
-    p.add_argument(
+    mode = p.add_mutually_exclusive_group()
+    mode.add_argument(
         "--never",
         action="store_true",
         help="instead list active records that have never been surfaced, oldest first",
+    )
+    mode.add_argument(
+        "--sessions",
+        action="store_true",
+        help="order by distinct sessions that surfaced a record, not raw count",
+    )
+    mode.add_argument(
+        "--decay",
+        nargs="?",
+        type=int,
+        const=DECAY_DAYS_DEFAULT,
+        default=None,
+        metavar="DAYS",
+        help="list active decisions, attempts and traps at least DAYS old (default 180) "
+        "that nothing surfaced in the last DAYS, with the mark-status command for "
+        "each; prints commands, never runs them",
     )
     p.add_argument("--top", type=int, default=25, metavar="N", help="rows to print (default: 25)")
     p.set_defaults(func=cmd_usage)
