@@ -8,6 +8,63 @@ prints both.
 
 ## [Unreleased]
 
+### Added — Phase 6: measurement and evals
+
+Phase 6 of `docs/roadmap-working-memory.md`. Earlier phases changed retrieval,
+capture and lifecycle without a way to tell whether any of it helped. This
+phase adds the measurements. No schema change.
+
+- **Relevance evals (WM-61).** `python evals/run.py` builds three synthetic
+  stores (a web app, a backend service, a Python library) from
+  `evals/suites/*/store.crumb`, using the real CLI with a pinned clock. It then
+  runs 39 tasks through the prompt hook's retrieval, the task-ordered resume
+  packet and guard. It reports precision@5, recall@5, rejected records that
+  reached a top 5, how often the prompt hook stays quiet on control tasks, and
+  guard verdict accuracy. It fails when a rate drops more than 0.05 below
+  `evals/baseline.json` or a count rises. A new `evals` CI job runs it. The
+  suites include the 0.2.0 field-review cases. `evals/` is repo-only and not
+  shipped.
+- **`crumb usage --sessions`** orders the report by how many distinct
+  sessions surfaced each record, rather than the raw count (WM-60).
+- **`crumb usage --decay [DAYS]`** (default 180) lists active decisions,
+  attempts and traps at least DAYS old that nothing has surfaced in the last
+  DAYS, each with the `crumb mark-status … stale` command to retire it. It runs
+  nothing. A candidate needs DAYS of usage history on this machine, so
+  `private/usage.json` now records when counting started. Promoted records,
+  expired records and recently confirmed traps are never candidates. `audit`
+  reports up to 10 as `decay-candidate` (info) (WM-60).
+- **Hook log (WM-62).** Every hook firing appends one line to
+  `private/hook-log.jsonl`: the event, how long it took, what the host received
+  (`silent`, `context`, `ask`, `block`, or `locked` when a writing hook skipped
+  on the store lock), and counts such as guard's verdict or how many jots a
+  transcript mine wrote. It never logs a prompt, command, path or transcript
+  text. It is capped at 5000 lines. `crumb doctor --hook-log` summarises it per
+  hook.
+- **`docs/field-test.md`**: how to run one real session with every hook on,
+  what to count, and how the counts answer the open questions about the
+  extraction turn (fatigue, SubagentStop, PreCompact).
+
+### Fixed — Phase 6
+
+Both bugs were found by the first eval run.
+
+- **The prompt hook injected records that no longer apply.** Its injected line
+  shows a record's kind and title, not its status, so a superseded decision read
+  as current guidance. That included the very decision its replacement had
+  retired. It now leaves out superseded, rejected, stale and quarantined
+  records, answered questions and expired records, as the packet already did.
+- **A short command could never match a record.** Guard needs two shared
+  specific words for a text match, and in `npm test` only `npm` counts ("test"
+  is too generic). So a trap titled "npm test also truncates the local
+  database" could never be found by `npm test`. When a query is too short to
+  reach the floor, a record whose title holds every word of it now passes. The
+  prompt hook now surfaces that trap. Guard's verdict stays PROCEED, because a
+  trap that matches only on text still cannot raise a verdict (the 0.1.10
+  field-test rule). Whether that should change is left to the field test.
+
+Prompt-hook precision@5 across the suites went from 0.57 to 0.66, and recall@5
+from 0.84 to 0.87. Records shown that should not have been fell from 4 to 1.
+
 ### Added — Phase 5: scope and multi-agent
 
 Phase 5 of `docs/roadmap-working-memory.md`. Several agents, several branches,

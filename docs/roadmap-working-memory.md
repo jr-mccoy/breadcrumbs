@@ -108,7 +108,7 @@ three days, **L** a week.
 | 3 | Lifecycle: decay, dedup, consolidation, contradiction — **shipped**, see §0.8 | WM-30 to WM-35 | 0.6.0 |
 | 4 | The bridge to long-term memory — **shipped**, see §0.9 | WM-40 to WM-43 | 0.7.0 |
 | 5 | Scope and multi-agent — **shipped**, see §0.10 | WM-50 to WM-52 | 0.8.0 |
-| 6 | Measurement and evals | WM-60 to WM-62 | 0.9.0 |
+| 6 | Measurement and evals — **shipped**, see §0.11 | WM-60 to WM-62 | 0.9.0 |
 | 7 | Other harnesses | WM-70 | 1.0.0 |
 
 Each phase ends with a release. A release is only the two steps in
@@ -1662,11 +1662,81 @@ Notes for Phase 6: the lock means an eval harness that runs parallel sessions
 against one store will see skipped hook writes when they collide. Count them
 (`{}` from a writing hook) rather than treating them as lost memory.
 
+### 0.11 Phase 6: what shipped, and where it differs from this plan
+
+Phase 6 is implemented in `evals/` (WM-61), `breadcrumbs/usage.py` (WM-60) and
+`breadcrumbs/hooklog.py` with `docs/field-test.md` (WM-62). New tests:
+`tests/test_evals.py`, `tests/test_hooklog.py`, and a WM-60 block in
+`tests/test_usage.py`. No schema change.
+
+Departures from what this document specified. Read these before Phase 7.
+
+1. **Stores are built, not copied.** Each suite is a `store.crumb` file of
+   CLI commands, one per `@DATE` line, run through `crumb.main` with the clock
+   pinned to that date. A copied store would drift away from the writers it is
+   meant to measure, and 100-odd committed record files are harder to review
+   than one script. Ids and ages are reproducible. The fixtures stay what they
+   were: small, single-purpose regression stores.
+2. **The packet is ranked by its own task score.** The packet has no single
+   ranked list. Its sections are each ordered, with the newest three pinned
+   first whatever the task is. The eval ranks the records the bounded packet
+   kept by `cli.task_relevance_scores`, the score `_order_by_relevance` sorts
+   by, so the two cannot drift apart. The recency floor is a reading-order
+   rule, not relevance, so it is not what is measured.
+3. **Guard is a third system**, for tasks that name a `verdict`. The two
+   field-review cases (`git status` versus `npm test`) are verdict cases, not
+   retrieval cases. A `quiet` metric covers control tasks (`expect: []`),
+   where the right answer for the prompt hook is to say nothing.
+4. **Precision counts what was shown.** precision@5 is hits over what the
+   system returned (at most 5), not over 5. A hook that shows one right record
+   and stops scores 1.0, not 0.2, because quiet is the behavior the prompt
+   hook is built for. Showing nothing when something was expected scores 0.
+5. **The first run found two bugs, fixed in this phase.** The prompt hook
+   injected superseded, stale, expired and answered records. And a query too
+   short to reach guard's two-keyword floor (`npm test`, where "test" is
+   generic) could match nothing on text. A record whose title holds every word
+   of such a query now passes the gate. Prompt precision@5 went from 0.57 to
+   0.66, recall@5 from 0.84 to 0.87, and reject hits fell from 4 to 1.
+6. **Decay needs history.** "Zero surfacings in the last 180 days" can only
+   be said after 180 days of counting, so `usage.json` gained `started_at`.
+   Files from before it fall back to their oldest `last_surfaced_at`, which
+   can only understate coverage. Promoted records never decay, because the
+   packet hides them on purpose. A trap confirmed inside the window is left
+   out too. A record reported as `decay-candidate` is not also reported as
+   `never-surfaced`.
+7. **The hook log is written by a wrapper, not by each handler.** `cmd_hook`
+   runs every handler through `hooklog.run_logged`, which times it, reads the
+   outcome off the JSON it printed, and passes that output through unchanged.
+   Handlers only add detail (`hooklog.note`). A new hook is logged without
+   code of its own. The log is trimmed back to 4000 lines once it passes 5000,
+   so a long session does not rewrite it on every tool call.
+8. **The field test is written but has not run.** It needs a real session on a
+   real store. `q_should-the-extraction-turn-also-fire-on-precompa-ebd583`
+   stays open until it has.
+
+Still open, measured and left alone:
+
+- Guard gives PROCEED for `npm test` against a trap titled for it. Since the
+  0.1.10 field test, a trap that matches only on text cannot floor a verdict.
+  Re-tuning that without field data would re-open the fatigue that rule closed.
+  `docs/field-test.md` asks the question.
+- Synonyms (`brand colors` versus a Tailwind theme decision), identifiers
+  (`VITE_API_URL` is one token, so it never meets `vite`), and generic verbs
+  (`upgrade ruff`) are the remaining prompt-hook misses. §3 open decision 3
+  (embeddings) now has a baseline to be judged against.
+- The packet's loose task score (one shared word) ranks a status-page decision
+  into the top 5 for "add a refunded order status". It only orders and never
+  hides, so this costs reading order, not recall.
+
+Notes for Phase 7: WM-70 is conditioned on the hooks paying for themselves.
+That is the field test's answer, not the evals'. Run `docs/field-test.md`
+first.
+
 ---
 
 ## Phase 6: Measurement and evals
 
-### WM-60 `crumb usage` report and decay — **S** (after WM-02, WM-30)
+### WM-60 `crumb usage` report and decay — **S** — SHIPPED (after WM-02, WM-30)
 
 Extend `crumb usage` with `--sessions` (distinct sessions per record) and
 `--decay`: active decisions, attempts and traps with **zero** surfacings
@@ -1676,7 +1746,7 @@ surfaced in 180 days"` command for each. Never auto-retire: print the
 commands, do not run them. Add `decay-candidate` (`AUDIT_INFO`) to audit,
 capped 10.
 
-### WM-61 Relevance eval harness — **M**
+### WM-61 Relevance eval harness — **M** — SHIPPED
 
 **Goal.** Nothing measures whether retrieval improves. Phases 1 and 2
 change ranking; a regression would be invisible.
@@ -1708,7 +1778,7 @@ change ranking; a regression would be invisible.
 the metric shape; the baseline comparison logic is unit-tested with a
 fake baseline.
 
-### WM-62 Field-test protocol — **S**
+### WM-62 Field-test protocol — **S** — SHIPPED (the test itself has not run yet)
 
 Write `docs/field-test.md`: how to run one session with all hooks on,
 what to count (hook prompts shown, records written, jots promoted versus
