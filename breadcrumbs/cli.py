@@ -6769,6 +6769,21 @@ _RELEVANCE_SECTIONS: dict[str, "object"] = {
 }
 
 
+def task_relevance_scores(
+    memory_dir: Path, root: Path, task: str, *, stale_days: int = STALE_AGE_DAYS
+) -> dict[str, float]:
+    """`{record_id: score}` for `task`: what a task-ordered packet sorts by.
+
+    Deliberately loose (one shared word is enough): it only orders, it never
+    hides. The relevance evals (`evals/run.py`) rank the packet by this too, so
+    the packet and its measurement cannot drift apart.
+    """
+    matches, _ = search(
+        memory_dir, root, task, include_ideas=False, min_keyword=1, stale_days=stale_days
+    )
+    return {m["id"]: float(m.get("score") or 0) for m in matches}
+
+
 def _order_by_relevance(
     packet: dict, memory_dir: Path, root: Path, task: str, *, stale_days: int
 ) -> None:
@@ -6783,10 +6798,7 @@ def _order_by_relevance(
     One `search` over the whole corpus, reused for every section, so the cost is
     the same as `--task`'s likely-file scoping already paid.
     """
-    matches, _ = search(
-        memory_dir, root, task, include_ideas=False, min_keyword=1, stale_days=stale_days
-    )
-    scores = {m["id"]: float(m.get("score") or 0) for m in matches}
+    scores = task_relevance_scores(memory_dir, root, task, stale_days=stale_days)
     if not scores:
         return
     for key, id_of in _RELEVANCE_SECTIONS.items():
@@ -7419,13 +7431,22 @@ GUARD_VERDICT_EXIT_CODES = {"PROCEED": 0, "READ_FIRST": 10, "PAUSE": 15, "ASK_HU
 # toward keyword overlap (the core of the false-positive control, Fixture 3).
 # Action-class verbs that DO carry signal (delete/remove/migrate/deploy/refactor/
 # rewrite/upgrade…) are intentionally absent.
-GUARD_STOPWORDS = frozenset(
+# English function words: never evidence of anything. Split out of
+# GUARD_STOPWORDS because the short-query title rule (`_score_item`) must keep
+# the generic *development* words ("test" in `npm test`) that the keyword
+# overlap ignores.
+_FUNCTION_WORDS = frozenset(
     """
     the a an and or but to of in on for with at by from as is are be this that it
     its if then else so not no do does did we you i my our your their them they he
     she was were will would should can could may might must have has had about into
     over under out up down off than too very just also via per after before when
     while where which who what how here there all any some more most less few each
+    """.split()
+)
+
+GUARD_STOPWORDS = _FUNCTION_WORDS | frozenset(
+    """
     add added adding update updated updating change changed changing fix fixed
     fixing new old make made making run running set get got use used using create
     created creating build built work working file files code project thing things
@@ -8137,6 +8158,7 @@ def _score_item(
     min_keyword: int,
     distances: CommitDistanceIndex,
     ubiquitous: frozenset[str] = frozenset(),
+    q_words: frozenset[str] = frozenset(),
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
 
@@ -8178,7 +8200,27 @@ def _score_item(
     # claim to be the author's own file declaration: it scores lower, it reads as
     # `mentions:` rather than `same file(s):`, and it is not the specificity that
     # lets a match floor a verdict.
-    if not matched_files and not matched_mentions and not matched_tags and kw_count < min_keyword:
+    # A query with fewer specific words than the floor (`npm test` is one:
+    # "test" is generic) could never reach it, so no record could match it on
+    # text at all: the field review's silent `npm test`. When the record's
+    # *title* carries every specific word the query has, that is the same
+    # evidence two shared words would be. Measured by the relevance evals (WM-61).
+    # Every word of the query counts here, generic ones included, or `npm test`
+    # would reduce to `npm` and match every record titled with npm.
+    q_live = q_specific - ubiquitous
+    short_query_title_hit = (
+        bool(q_live)
+        and len(q_live) < min_keyword
+        and q_live <= title_overlap
+        and q_words <= {_stem(t) for t in _tokenize(item.get("title") or "")}
+    )
+    if (
+        not matched_files
+        and not matched_mentions
+        and not matched_tags
+        and kw_count < min_keyword
+        and not short_query_title_hit
+    ):
         return None
 
     signals: list[str] = []
@@ -8328,6 +8370,7 @@ def search(
     activate_store_aliases(memory_dir)
     filters = filters or {}
     q_specific = _specific(query)
+    q_words = frozenset(_stem(t) for t in _tokenize(query) if t not in _FUNCTION_WORDS)
     q_files = _norm_files(_paths_from_text(query) | set(files or []))
     # The search index narrows the corpus to records that could possibly match
     # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
@@ -8361,6 +8404,7 @@ def search(
             min_keyword=min_keyword,
             distances=distances,
             ubiquitous=ubiquitous,
+            q_words=q_words,
         )
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.

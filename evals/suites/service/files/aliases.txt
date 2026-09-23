@@ -1,0 +1,6 @@
+# One group per line; the first word is the canonical form. Hyphenated words
+# split into two tokens, so they are left out (`sign-in` would alias "in").
+database db postgres postgresql pg
+login signin logon
+email mail smtp
+throttle ratelimit

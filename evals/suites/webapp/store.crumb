@@ -1,0 +1,138 @@
+# A TypeScript web app with Playwright screenshot tests, an npm toolchain and a
+# few Python data scripts. Rebuilds the two field-review cases the 0.2.0
+# CHANGELOG describes: a screenshot-testing trap whose prose mentions
+# `json.load` must not answer a script that reads JSON, and `git status` must not
+# draw every record that says "status" while `npm test` stays silent.
+#
+# Each command runs through `crumb.main` with the clock at its @DATE.
+
+@2026-03-02 remember decision --title "Use Playwright for end-to-end and screenshot tests"
+  --set Context "Cypress could not run WebKit, and the checkout flow breaks on Safari first."
+  --set Decision "Playwright drives every end-to-end and visual test under tests/visual and tests/e2e."
+  --set Rationale "One runner for three engines; built-in screenshot assertions with per-platform baselines."
+  --evidence file playwright.config.ts --tags testing,playwright
+
+@2026-03-05 remember decision --title "Pin the CI browser image to the Playwright Docker image"
+  --set Context "Screenshot baselines are renderer-specific; fonts and antialiasing differ between Ubuntu images."
+  --set Decision "CI runs visual tests inside mcr.microsoft.com/playwright:v1.47.0-jammy and nowhere else."
+  --set What\ Not\ To\ Retry "Do not run visual tests on the bare ubuntu-latest runner."
+  --evidence file .github/workflows/visual.yml --tags ci,screenshot,playwright
+
+@2026-03-09 remember decision --title "Run unit tests with Vitest"
+  --set Decision "Unit tests run under Vitest; npm run test:unit is the fast loop."
+  --set Rationale "Shares the Vite config, so path aliases and env handling match the app."
+  --evidence file vitest.config.ts --tags testing,vitest
+
+@2026-03-12 remember decision --title "Feature flags live in config/flags.json and are read once at boot"
+  --set Decision "The server reads config/flags.json at startup through src/flags/load.ts; the client gets flags from /api/flags."
+  --set Consequences "Changing a flag needs a restart in development."
+  --evidence file config/flags.json --evidence file src/flags/load.ts --tags flags,config
+
+@2026-03-20 remember decision --title "Keep the login session in localStorage"
+  --set Decision "Store the session token in localStorage after login."
+  --evidence file src/client/auth.ts --tags auth,session
+
+@2026-04-15 remember decision --title "Keep the login session in an httpOnly cookie"
+  --set Context "A token in localStorage is readable by any injected script."
+  --set Decision "The login endpoint sets an httpOnly, SameSite=Lax session cookie; the client never sees the token."
+  --evidence file src/server/auth/session.ts --tags auth,session,security
+  --supersedes dec_20260320_keep-the-login-session-in-localstorage
+
+@2026-03-25 remember decision --title "Style with Tailwind and a single theme file"
+  --set Decision "Tailwind utility classes; colors and spacing come from tailwind.config.ts only."
+  --evidence file tailwind.config.ts --tags styling,tailwind
+
+@2026-04-02 remember decision --title "Cache the orders API responses in Redis for 60 seconds"
+  --set Decision "GET /api/orders responses are cached in Redis keyed by tenant and query, TTL 60s."
+  --set Consequences "Order status changes can take up to a minute to show."
+  --evidence file src/server/cache.ts --tags orders,cache,redis
+
+@2026-04-20 remember decision --title "Status page is served from a separate static site"
+  --set Decision "status.example.com is a static page updated by the uptime checker, not by the app."
+  --confidence low --tags status-page,ops
+
+@2026-05-06 remember decision --title "Deploy a preview for every pull request"
+  --set Decision "Every PR gets a preview deployment; the visual tests run against it."
+  --evidence file .github/workflows/preview.yml --tags ci,deploy
+
+@2026-03-18 remember attempt --title "Raised the screenshot diff threshold to stop flakes"
+  --set Problem "Visual tests failed on CI with 1-3 pixel diffs."
+  --set Tried "maxDiffPixelRatio 0.2 in playwright.config.ts."
+  --set Result "Flakes stopped, and a real layout regression on the cart page shipped unnoticed."
+  --set Do\ Not\ Retry\ Unless "The diffs are proven to be antialiasing only."
+  --evidence file playwright.config.ts --tags screenshot,flaky
+
+@2026-04-08 remember attempt --title "Ran Playwright with eight workers on CI"
+  --set Problem "The Playwright run takes 14 minutes."
+  --set Tried "--workers=8 on the standard runner."
+  --set Result "The runner ran out of memory; Chromium processes were killed mid-test."
+  --set Do\ Not\ Retry\ Unless "The runner has at least 16 GB; shard across jobs instead."
+  --evidence command "npx playwright test --workers=8" --tags ci,playwright,performance
+
+@2026-04-11 remember attempt --title "Mocked fetch globally in the unit tests"
+  --set Problem "Unit tests hit the network."
+  --set Tried "vi.stubGlobal('fetch') in the Vitest setup file."
+  --set Result "It bypassed the msw handlers and every API test passed against the stub."
+  --set Do\ Not\ Retry\ Unless "msw is removed."
+  --evidence file vitest.setup.ts --tags testing,vitest,msw
+
+@2026-04-24 remember attempt --title "Read config/flags.json with require"
+  --set Problem "Flags did not update in development."
+  --set Tried "require('../../config/flags.json') in src/flags/load.ts."
+  --set Result "Node caches the module, so edits needed a full restart anyway; fs.readFileSync plus JSON.parse is what works."
+  --evidence file src/flags/load.ts --tags flags,config
+
+@2026-05-02 remember attempt --title "Streamed the report export through pandas"
+  --set Problem "scripts/export_report.py runs out of memory on the monthly report."
+  --set Tried "pandas.read_json on data/report.json."
+  --set Result "Same peak memory: pandas loads the whole document first."
+  --set Do\ Not\ Retry\ Unless "The report is split into JSON lines."
+  --evidence file scripts/export_report.py --tags reports,memory
+
+@2026-06-03 note trap "Screenshot tests flake on CI when web fonts load late" --slug screenshot-fonts
+  --area "tests/visual/, playwright.config.ts"
+  --symptom "1-3 pixel diffs on text-heavy pages, only on CI, only on the first test of a worker."
+  --why "The page is captured before document.fonts.ready resolves; the fallback font renders first. The comparison report under test-results is parsed with json.load by scripts/compare_shots.py, which is where the diff sizes come from."
+  --safe "await page.evaluate(() => document.fonts.ready) before toHaveScreenshot."
+  --verify "npx playwright test tests/visual"
+
+@2026-06-10 note trap "npm test also runs the integration suite, which truncates the local database" --slug npm-test-truncates-db
+  --area "package.json scripts, tests/integration/"
+  --symptom "Local development data disappears after running the tests."
+  --why "The test script runs vitest and then tests/integration, whose setup truncates every table in DATABASE_URL."
+  --safe "Run npm run test:unit locally; npm test only against a throwaway database."
+  --verify "grep test package.json"
+
+@2026-06-14 note trap "scripts/export_report.py loads the whole report with json.load" --slug report-json-memory
+  --area "scripts/export_report.py, data/report.json"
+  --symptom "The export is killed by the OOM killer on the monthly report."
+  --why "json.load materializes the whole document; the monthly report is 3 GB."
+  --safe "Write the report as JSON lines and read it one line at a time."
+
+@2026-06-20 note trap "A 204 response has no body, so response.json() throws" --slug empty-204-body
+  --area "src/api/client.ts"
+  --symptom "SyntaxError: Unexpected end of JSON input after deleting an order."
+  --why "DELETE /api/orders/:id returns status 204 with no body; the client parses every response."
+  --safe "Check response.status === 204 before calling json()."
+
+@2026-07-01 note trap "The order status enum exists in the database and in TypeScript" --slug order-status-enum
+  --area "db/migrations/, src/types/order.ts"
+  --symptom "A new order status saves but the UI shows it as unknown."
+  --why "The Postgres enum and the TypeScript union are written by hand in two places."
+  --safe "Add the status in a migration and in src/types/order.ts in the same change."
+
+@2026-07-08 note trap "Vite caches env vars until the dev server restarts" --slug vite-env-restart
+  --area ".env, vite.config.ts"
+  --symptom "A changed VITE_ variable has no effect."
+  --why "import.meta.env is replaced at build time; the dev server builds once."
+  --safe "Restart npm run dev after editing .env."
+
+@2026-08-10 verify "Checkout screenshot flake after awaiting document.fonts.ready" --status fixed
+  --evidence file tests/visual/checkout.spec.ts --evidence command "npx playwright test tests/visual/checkout.spec.ts"
+
+@2026-04-01 verify "Orders page shows a changed order status within a minute" --status fixed
+  --evidence file src/server/cache.ts
+
+@2026-08-20 note question "Should the visual baselines be regenerated on every Playwright upgrade?"
+
+@2026-08-22 note question "Does the status page need its own uptime check?"

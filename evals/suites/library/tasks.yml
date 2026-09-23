@@ -1,0 +1,45 @@
+# Tasks for the library store. See webapp/tasks.yml for the keys.
+as_of: 2026-09-01
+tasks:
+  - task: "release version 0.3.0 to PyPI"
+    expect: [dec_20260205_releases-are-cut-by-the-release-workflow-never-by-hand, trap_pypi-version-permanent, dec_20260202_the-version-lives-only-in-src-tool-init-py]
+
+  - task: "tag the release commit by hand and push the tag"
+    expect: [att_20260120_tagged-a-release-by-hand-before-bumping-the-version, dec_20260205_releases-are-cut-by-the-release-workflow-never-by-hand]
+    verdict: [READ_FIRST, PAUSE, ASK_HUMAN]
+
+  - task: "add PyYAML to parse the config file"
+    expect: [att_20260218_used-pyyaml-for-the-config-parser, dec_20260220_parse-the-config-file-with-a-small-yaml-subset, dec_20260208_no-runtime-dependencies]
+    verdict: [READ_FIRST, PAUSE, ASK_HUMAN]
+
+  - task: "print a check mark after each passing check"
+    expect: [att_20260310_printed-check-marks-to-the-console, trap_windows-console-encoding]
+
+  - task: "the atomic write fails on Windows with PermissionError"
+    expect: [trap_windows-replace-open-file, dec_20260301_write-files-atomically-with-a-temp-file-and-os-replace]
+
+  - task: "drop support for Python 3.9"
+    expect: [dec_20260215_python-3-9-is-the-supported-floor, q_do-we-drop-python-3-9-once-it-reaches-end-of-lif-568f0c]
+
+  - task: "upgrade ruff"
+    note: "a one-word action: only the title rule can match it"
+    expect: [dec_20260212_pin-ruff-to-one-version-in-ci-and-in-the-dev-extra]
+
+  - task: "speed up the config parser"
+    note: "the idea is in search's corpus and must never be surfaced here"
+    expect: [dec_20260220_parse-the-config-file-with-a-small-yaml-subset]
+    reject: [idea_20260701_rewrite-the-config-parser-in-rust]
+
+  - task: "remove the upper bound on the mcp extra"
+    expect: [att_20260405_left-the-mcp-extra-without-an-upper-bound]
+
+  - task: "split a Windows path out of a command line string"
+    expect: [trap_shlex-windows-paths]
+
+  - task: "git log --oneline"
+    expect: []
+    verdict: [PROCEED, READ_FIRST]
+
+  - task: "fix a typo in the contributing guide"
+    expect: []
+    verdict: [PROCEED]

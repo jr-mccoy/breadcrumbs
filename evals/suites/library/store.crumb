@@ -1,0 +1,102 @@
+# A pure-Python CLI package published to PyPI: releases, packaging, a
+# no-dependencies rule and Windows portability. Exercises short commands
+# (`upgrade ruff`, `git log`), several records that argue about one area
+# (release), and an idea: ideas are in `search`'s corpus but never in what the
+# prompt hook or the packet surface.
+
+@2026-02-02 remember decision --title "The version lives only in src/tool/__init__.py"
+  --set Decision "pyproject.toml reads __version__ dynamically; no other file carries a version literal."
+  --set Rationale "Three hand-synced version strings drifted in two releases."
+  --evidence file src/tool/__init__.py --evidence file pyproject.toml --tags release,version
+
+@2026-02-05 remember decision --title "Releases are cut by the release workflow, never by hand"
+  --set Decision "The release workflow builds, uploads to PyPI, then creates the git tag and GitHub Release on the commit it built."
+  --set What\ Not\ To\ Retry "Never push a release tag by hand."
+  --evidence file .github/workflows/release.yml --tags release,ci
+
+@2026-02-08 remember decision --title "No runtime dependencies"
+  --set Decision "The package imports the standard library only; optional features live behind extras."
+  --set Rationale "It installs into any environment, including zipapps and locked-down CI images."
+  --evidence file pyproject.toml --tags dependencies,packaging
+
+@2026-02-12 remember decision --title "Pin ruff to one version in CI and in the dev extra"
+  --set Decision "ruff==0.16.1 in both .github/workflows/ci.yml and the dev extra; bump both together."
+  --set Context "An unpinned ruff release started formatting Markdown and turned lint red on an untouched main."
+  --evidence file .github/workflows/ci.yml --tags lint,ci
+
+@2026-02-15 remember decision --title "Python 3.9 is the supported floor"
+  --set Decision "requires-python >=3.9; CI runs 3.9 through 3.14."
+  --evidence file pyproject.toml --tags python,compatibility
+
+@2026-02-20 remember decision --title "Parse the config file with a small YAML subset"
+  --set Decision "src/tool/config.py parses the key: value and list subset the config uses; PyYAML is not used."
+  --set Rationale "Follows from the no-runtime-dependencies rule."
+  --evidence file src/tool/config.py --tags config,yaml
+
+@2026-03-01 remember decision --title "Write files atomically with a temp file and os.replace"
+  --set Decision "src/tool/io.py writes a sibling temp file and renames it into place."
+  --evidence file src/tool/io.py --tags io,files
+
+@2026-01-20 remember attempt --title "Tagged a release by hand before bumping the version"
+  --set Problem "Needed a release the same day."
+  --set Tried "git tag v0.1.5 on main, then pushed the tag."
+  --set Result "The tag pointed at the commit before the version bump; PyPI rejected the upload and the tag was dead."
+  --set Do\ Not\ Retry\ Unless "Never: the release workflow owns tags."
+  --evidence commit 1a2b3c4 --tags release
+
+@2026-02-18 remember attempt --title "Used PyYAML for the config parser"
+  --set Problem "Hand-parsing the config was fiddly."
+  --set Tried "import yaml in src/tool/config.py and a pyyaml dependency."
+  --set Result "It broke the zipapp build and the no-dependencies promise; reverted."
+  --set Do\ Not\ Retry\ Unless "The dependency goes behind an extra."
+  --evidence file src/tool/config.py --tags config,yaml,dependencies
+
+@2026-03-10 remember attempt --title "Printed check marks to the console"
+  --set Problem "Wanted a friendlier validate output."
+  --set Tried "print('✓ ok') in src/tool/output.py."
+  --set Result "UnicodeEncodeError on Windows consoles mid-line; the per-item output was lost."
+  --set Do\ Not\ Retry\ Unless "stdout is reconfigured with errors='replace' first."
+  --evidence file src/tool/output.py --tags output,windows
+
+@2026-04-05 remember attempt --title "Left the mcp extra without an upper bound"
+  --set Problem "Wanted the newest MCP SDK automatically."
+  --set Tried "mcp>=1.2 in the extra."
+  --set Result "It resolved to SDK 2.0, which renamed the server class; the server reported itself as not installed."
+  --set Do\ Not\ Retry\ Unless "CI tests both SDK majors."
+  --evidence file pyproject.toml --tags mcp,dependencies
+
+@2026-05-02 note trap "A PyPI version can never be uploaded twice" --slug pypi-version-permanent
+  --area "pyproject.toml, .github/workflows/release.yml"
+  --symptom "The upload fails with 'File already exists' after a broken release."
+  --why "PyPI keeps a deleted version's filename reserved forever."
+  --safe "Bump __version__ for every release attempt."
+
+@2026-05-10 note trap "Windows consoles are cp1252 and cannot encode check marks" --slug windows-console-encoding
+  --area "src/tool/output.py"
+  --symptom "UnicodeEncodeError while printing validate results on Windows."
+  --why "sys.stdout uses the console code page, not UTF-8."
+  --safe "sys.stdout.reconfigure(errors='replace') and ASCII fallbacks for markers."
+
+@2026-06-02 note trap "os.replace fails on Windows while the target is open" --slug windows-replace-open-file
+  --area "src/tool/io.py"
+  --symptom "PermissionError: [WinError 5] during an atomic write."
+  --why "Windows refuses to replace a file another handle has open, antivirus scanners included."
+  --safe "Retry the replace a few times with a short sleep on PermissionError."
+
+@2026-06-20 note trap "shlex.split treats Windows backslashes as escapes" --slug shlex-windows-paths
+  --area "src/tool/argv.py"
+  --symptom "C:\\Users\\me becomes C:Usersme."
+  --why "shlex is POSIX-only by default."
+  --safe "shlex.split(text, posix=False) on Windows, or take argv as a list."
+
+@2026-08-12 verify "Release dry-run builds a clean wheel and sdist" --status fixed
+  --evidence command "python -m build && twine check dist/*"
+
+@2026-08-18 verify "validate output on a cp1252 console" --status fixed
+  --evidence file src/tool/output.py
+
+@2026-08-20 note question "Do we drop Python 3.9 once it reaches end of life?"
+
+@2026-07-01 note idea --title "Rewrite the config parser in Rust"
+  --set Idea "A compiled extension for the config parser."
+  --set Motivation "Parsing large config files is slow."

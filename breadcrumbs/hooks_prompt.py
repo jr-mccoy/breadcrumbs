@@ -102,10 +102,32 @@ def retrieve(memory_dir: Path, root: Path, prompt: str) -> list[dict]:
         if (cli.GUARD_SURFACING_SIGNALS & set(m.get("signals", ())))
         or m.get("score", 0) >= cli.GUARD_READ_FIRST_SCORE
     ]
+    kept = [m for m in kept if _is_current(m)]
+    return kept[:PROMPT_HOOK_MAX_MATCHES]
+
+
+def _is_current(match: dict) -> bool:
+    """Is this match still something to act on, rather than history?
+
+    The injected line names a record's kind and title, not its status, so a
+    superseded decision would read as current guidance: the relevance evals
+    (WM-61) caught the hook injecting the very decision its replacement retired.
+    Superseded, rejected, stale and quarantined records, answered questions and
+    records past their TTL stay out, as they do in the packet. A settled
+    verification that has not expired stays in: "this was fixed, like so" is
+    what a prompt about the same failure needs.
+    """
     # WM-52: a branch-scoped record written on another branch is not about the
     # work checked out here — the packet and guard's live set leave it out too.
-    kept = [m for m in kept if not (m.get("scope") == "branch" and m.get("branch_mismatch"))]
-    return kept[:PROMPT_HOOK_MAX_MATCHES]
+    if match.get("scope") == "branch" and match.get("branch_mismatch"):
+        return False
+    if match.get("expired"):
+        return False
+    if match.get("kind") == "verification":
+        return match.get("lifecycle", "active") == "active"
+    if match.get("kind") == "question":
+        return match.get("status") == "open"
+    return (match.get("status") or "active") == "active"
 
 
 def render(matches: list[dict]) -> str:

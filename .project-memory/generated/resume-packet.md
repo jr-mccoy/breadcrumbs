@@ -1,17 +1,21 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: afa73bb | inputs_hash: 922e55e6c662 | generated_at: 2026-09-22T22:28:34+00:00 -->
+<!-- source_commit: 433af7f | inputs_hash: 922e55e6c662 | generated_at: 2026-09-23T02:51:21+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `afa73bb` · 12 uncommitted file(s) · handoff: handoffs/claude-agentic-memory-system-mybkpi-f4c610.md
+branch `claude/agentic-memory-system-mybkpi` · commit `433af7f` · clean · handoff: handoffs/claude-agentic-memory-system-mybkpi-f4c610.md
 
 ## Current Focus
 Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
 
 ## Next Action
 Phase 5 shipped and the repo store is at schema 4. Next: Phase 6 starting with WM-61 (relevance eval harness: evals/, tasks.yml, precision@5/recall, baseline + CI job), then WM-60 (usage --decay) and WM-62 (field-test protocol + hook log). Read roadmap section 0.10 first.
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 433af7f Finish Phase 5 docs; keep the lock through init --force and break stale locks exclusively
 
 ## Active Decisions
 - `dec_20260922_the-user-pre-approves-store-migrations-of-this-repo-s-own` — The user said (2026-09-22): 'I approve any migration.' A crumb migrate of this repo's own store may proceed without asking again; still run guard, back up (migrate does), validate after, and commit the result.
@@ -104,18 +108,18 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 35 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 35 days old with no update — is this still true?
 - active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 35 days old with no update — is this still true?
 - active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 36 days old with no update — is this still true?
-- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 37 days old with no update — is this still true?
-- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 37 days old with no update — is this still true?
+- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 38 days old with no update — is this still true?
+- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 38 days old with no update — is this still true?
 - active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 38 days old with no update — is this still true?
 - active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 38 days old with no update — is this still true?
 - active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 38 days old with no update — is this still true?
 - active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 38 days old with no update — is this still true?
-- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 38 days old with no update — is this still true?
-- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 38 days old with no update — is this still true?
-- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 38 days old with no update — is this still true?
-- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 38 days — did this ever get resolved?
+- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 39 days old with no update — is this still true?
+- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 39 days old with no update — is this still true?
+- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 39 days old with no update — is this still true?
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 39 days — did this ever get resolved?
