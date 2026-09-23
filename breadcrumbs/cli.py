@@ -11230,6 +11230,8 @@ def _strip_packet_volatile(md: str) -> str:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
+    if getattr(args, "hook_log", False):
+        return _doctor_hook_log(args, root / MEMORY_DIRNAME)
     report = doctor_report(root)
     if args.json:
         _print_json(args, report)
@@ -11242,6 +11244,48 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print("\n" + FIRST_RUN_NUDGE)
     # Non-zero when a store exists but nothing is wired up (the §5 finding, machine-checkable).
     return 0 if (report["integrated"] or not report["store"]) else 1
+
+
+def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
+    """`crumb doctor --hook-log` (WM-62): what the hooks did, from the local log."""
+    from breadcrumbs import hooklog as _hooklog
+
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found. Run `crumb init` first.")
+        return 2
+    summary = _hooklog.summarize(_hooklog.read_log(memory_dir))
+    if args.json:
+        _print_json(args, summary)
+        return 0
+    rel = f"{MEMORY_DIRNAME}/private/{_hooklog.HOOK_LOG_FILENAME}"
+    if not summary["entries"]:
+        print(f"crumb doctor --hook-log: no hook firings logged yet ({rel}).")
+        return 0
+    print(
+        f"crumb doctor --hook-log — {summary['entries']} firing(s) across "
+        f"{summary['sessions']} session(s), {summary['first_at']} to {summary['last_at']}\n"
+    )
+    for name, ev in summary["events"].items():
+        outcomes = ", ".join(f"{k} {v}" for k, v in sorted(ev["outcomes"].items()))
+        rate = f"{ev['spoke_rate'] * 100:.0f}%" if ev["spoke_rate"] is not None else "-"
+        print(f"  {name:<9} {ev['count']:>5}  spoke {rate:>4}  ({outcomes})")
+        print(f"            ms p50 {ev['ms_p50']}  p95 {ev['ms_p95']}  max {ev['ms_max']}")
+        if ev.get("verdicts"):
+            verdicts = ", ".join(f"{k} {v}" for k, v in sorted(ev["verdicts"].items()))
+            print(f"            verdicts: {verdicts}")
+        if ev.get("counts"):
+            counts = ", ".join(f"{k} {v}" for k, v in sorted(ev["counts"].items()))
+            print(f"            {counts}")
+    if summary["locked"]:
+        print(
+            f"\n{summary['locked']} writing hook firing(s) skipped because another "
+            "writer held the store lock."
+        )
+    print(
+        f"\nLocal to this machine ({rel}, never committed; counts and verdicts "
+        "only). See docs/field-test.md."
+    )
+    return 0
 
 
 # ---- crumb hook session|guard|capture -------------------------------------- #
@@ -11556,6 +11600,9 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         # A truthy non-dict tool_input crashed with a raw traceback where every
         # other malformed-payload path degrades to {}.
         tool_input = {}
+    from breadcrumbs import hooklog as _hooklog
+
+    _hooklog.note(tool=str(payload.get("tool_name") or "") or None)
     action, files = _hook_action_from_tool(payload.get("tool_name") or "", tool_input)
     if not action:
         print(json.dumps({}))
@@ -11571,6 +11618,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         or _prefilter_trap_hit(memory_dir, action, files)
     )
     if not risky:
+        _hooklog.note(skipped="prefilter")
         print(json.dumps({}))
         return 0
     result = guard(memory_dir, root, action, files=files)
@@ -11585,6 +11633,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     ):
         verdict = GUARD_READ_ONLY_CEILING
         result = {**result, "verdict": verdict}
+    _hooklog.note(verdict=verdict)
     if verdict == "PROCEED":
         print(json.dumps({}))
         return 0
@@ -11613,6 +11662,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         session_id = str(payload.get("session_id") or "unknown")
         try:
             if _hook_guard_advisory_seen(memory_dir, session_id, key):
+                _hooklog.note(deduped=True)
                 print(json.dumps({}))
                 return 0
         except Exception:  # pragma: no cover - dedupe must never block the hook
@@ -11892,13 +11942,16 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     # firing that will stay silent — a continuation, a redundant snapshot, a
     # store with the prompt switched off — should still salvage what the
     # transcript shows, because nothing else will read it again.
-    _transcript.mine_transcript_into_jots(
+    from breadcrumbs import hooklog as _hooklog
+
+    mined = _transcript.mine_transcript_into_jots(
         memory_dir,
         root,
         payload.get("transcript_path"),
         session_id=session_key,
         use_cursor=True,
     )
+    _hooklog.note(mined=len(mined.get("written") or []))
     try:
         redundant = _hook_capture_is_redundant(memory_dir, root)
     except Exception:  # pragma: no cover - a dedupe failure must not block Stop
@@ -11912,9 +11965,11 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     if payload.get("stop_hook_active"):
         if not redundant:
             _hook_capture_snapshot(root, host_session)
+            _hooklog.note(snapshot=True)
         print(json.dumps({}))
         return 0
     if redundant:
+        _hooklog.note(redundant=True)
         print(json.dumps({}))
         return 0
     if _extraction_enabled(memory_dir):
@@ -11934,9 +11989,11 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
             hooks_common.record_extraction_asked(
                 memory_dir, session_key, [j["id"] for j in jots[:EXTRACTION_MAX_JOTS_SHOWN]]
             )
+            _hooklog.note(offered=len(jots[:EXTRACTION_MAX_JOTS_SHOWN]))
             print(json.dumps({"decision": "block", "reason": _extraction_reason(commits, jots)}))
             return 0
     _hook_capture_snapshot(root, host_session)
+    _hooklog.note(snapshot=True)
     print(json.dumps({}))
     return 0
 
@@ -11952,6 +12009,16 @@ def cmd_hook(args: argparse.Namespace) -> int:
     payload = _read_hook_stdin()
     root = _hook_root(payload)
     memory_dir = root / MEMORY_DIRNAME
+    # WM-62: one line per firing in private/hook-log.jsonl — what the hook did,
+    # never what it read. The handler's output reaches the host unchanged.
+    from breadcrumbs import hooklog as _hooklog
+
+    return _hooklog.run_logged(
+        event, memory_dir, payload, lambda: _run_hook(event, memory_dir, root, payload), now_iso
+    )
+
+
+def _run_hook(event: str, memory_dir: Path, root: Path, payload: dict) -> int:
     if event == "session":
         return _hook_session(memory_dir, root, payload)
     if event == "guard":
@@ -11969,6 +12036,9 @@ def cmd_hook(args: argparse.Namespace) -> int:
         with _lock.store_lock(memory_dir, timeout=_lock.HOOK_TIMEOUT):
             return _dispatch_writing_hook(event, memory_dir, root, payload)
     except _lock.StoreLocked:
+        from breadcrumbs import hooklog as _hooklog
+
+        _hooklog.note(outcome="locked")
         print("{}")
         return 0
 
@@ -12166,7 +12236,9 @@ def _add_init(sub, global_parser: argparse.ArgumentParser) -> None:
         nargs="?",
         const="*",
         metavar="EVENTS",
-        help="install Claude Code hooks (optional: comma list of session,guard,capture)",
+        help="install Claude Code hooks (bare: all of them; or a comma list of "
+        + ",".join(HOOK_EVENTS)
+        + ")",
     )
     p_init.add_argument(
         "--no-hooks", dest="hooks", action="store_const", const=False, help="do not install hooks"
@@ -12942,6 +13014,12 @@ def _add_doctor(sub, global_parser: argparse.ArgumentParser) -> None:
         "doctor",
         parents=[global_parser],
         help="report whether memory is actually wired up (adapter/mcp/hooks/packet)",
+    )
+    p_doctor.add_argument(
+        "--hook-log",
+        action="store_true",
+        help="instead summarise private/hook-log.jsonl: firings, outcomes and timings "
+        "per hook (the field-test report, docs/field-test.md)",
     )
     p_doctor.set_defaults(func=cmd_doctor)
 

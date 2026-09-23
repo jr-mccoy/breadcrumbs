@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from breadcrumbs import cli, hooks_common, transcript
+from breadcrumbs import cli, hooklog, hooks_common, transcript
 
 # Reserved manifest key for the deferred "hold the subagent" behaviour (WM-13).
 # Read here so the name is claimed and a store can set it before the behaviour
@@ -59,6 +59,7 @@ def hook_compact(memory_dir: Path, root: Path, payload: dict) -> dict:
         session_id=session_id,
         use_cursor=True,
     )
+    hooklog.note(mined=len(report.get("written") or []))
     # The marker is written even when nothing was mined. "The context was
     # compacted and nothing survived" is exactly what the post-compaction
     # SessionStart needs to say; an absent marker would read as "no compaction
@@ -87,7 +88,7 @@ def hook_subagent(memory_dir: Path, root: Path, payload: dict) -> dict:
     extra_tags = ["subagent"]
     if agent_type:
         extra_tags.append(f"agent:{agent_type}")
-    transcript.mine_transcript_into_jots(
+    report = transcript.mine_transcript_into_jots(
         memory_dir,
         root,
         payload.get("transcript_path"),
@@ -98,4 +99,5 @@ def hook_subagent(memory_dir: Path, root: Path, payload: dict) -> dict:
         use_cursor=False,
         extra_tags=extra_tags,
     )
+    hooklog.note(mined=len(report.get("written") or []))
     return {}

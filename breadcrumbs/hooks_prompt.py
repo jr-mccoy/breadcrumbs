@@ -25,7 +25,7 @@ import re
 
 from pathlib import Path
 
-from breadcrumbs import cli, hooks_common
+from breadcrumbs import cli, hooklog, hooks_common
 
 # Below this a prompt is an acknowledgement ("ok", "go on", "yes") with nothing
 # to retrieve against.
@@ -180,6 +180,7 @@ def _capture_correction(memory_dir: Path, root: Path, prompt: str, session_id: s
                 host_session=session_id,
                 fingerprint=fingerprint,
             )
+        hooklog.note(correction=True)
     except Exception:  # pragma: no cover - capture never breaks the prompt
         pass
 
@@ -202,6 +203,7 @@ def hook_prompt(memory_dir: Path, root: Path, payload: dict) -> dict:
         matches = retrieve(memory_dir, root, prompt)
     except Exception:  # pragma: no cover - retrieval never breaks the prompt
         return {}
+    hooklog.note(matches=len(matches))
     if not matches:
         return {}
 
@@ -212,6 +214,7 @@ def hook_prompt(memory_dir: Path, root: Path, payload: dict) -> dict:
     # the id set, so a different area of the store still speaks.
     key = "prompt|" + ",".join(sorted(ids))
     if hooks_common.advisory_seen(memory_dir, session_id, key):
+        hooklog.note(deduped=True)
         return {}
 
     text = render(matches)
