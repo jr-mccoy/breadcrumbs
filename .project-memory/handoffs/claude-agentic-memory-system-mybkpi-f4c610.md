@@ -1,14 +1,14 @@
 # Project Handoff
 
-_Last updated: 2026-09-22T22:28:34+00:00_
+_Last updated: 2026-09-23T03:25:49+00:00_
 _Branch: claude/agentic-memory-system-mybkpi_
-_Commit: afa73bb_
+_Commit: 89b94b9_
 
 ## Current Focus
-Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
+Phases 0-6 of the working-memory roadmap shipped
 
 ## Next Action
-Phase 5 shipped and the repo store is at schema 4. Next: Phase 6 starting with WM-61 (relevance eval harness: evals/, tasks.yml, precision@5/recall, baseline + CI job), then WM-60 (usage --decay) and WM-62 (field-test protocol + hook log). Read roadmap section 0.10 first.
+Phase 6 shipped (evals/, usage --decay, hook log). Next: run docs/field-test.md in a real session to answer the extraction-turn questions; Phase 7 (WM-70) only if the field test shows the hooks pay for themselves. Any retrieval change must pass python evals/run.py or rewrite the baseline with reasons.
 
 ## Blockers / Open Questions
 

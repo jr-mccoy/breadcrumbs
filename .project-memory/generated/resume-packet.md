@@ -1,24 +1,17 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 5db5432 | inputs_hash: a213de62cd01 | generated_at: 2026-09-23T03:20:06+00:00 -->
+<!-- source_commit: 89b94b9 | inputs_hash: 70f12dac18c6 | generated_at: 2026-09-23T03:25:49+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `5db5432` · 9 uncommitted file(s) · handoff: handoffs/claude-agentic-memory-system-mybkpi-f4c610.md
+branch `claude/agentic-memory-system-mybkpi` · commit `89b94b9` · 3 uncommitted file(s) · handoff: handoffs/claude-agentic-memory-system-mybkpi-f4c610.md
 
 ## Current Focus
-Phases 0 and 1 shipped; Phase 2 (retrieval by relevance) is next
+Phases 0-6 of the working-memory roadmap shipped
 
 ## Next Action
-Phase 5 shipped and the repo store is at schema 4. Next: Phase 6 starting with WM-61 (relevance eval harness: evals/, tasks.yml, precision@5/recall, baseline + CI job), then WM-60 (usage --decay) and WM-62 (field-test protocol + hook log). Read roadmap section 0.10 first.
-
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- 5db5432 Add the hook log, crumb doctor --hook-log and the field-test protocol (WM-62)
-- a6a45d8 Add crumb usage --sessions and --decay, and audit's decay-candidate (WM-60)
-- aca2257 Add the relevance eval harness (WM-61); fix two retrieval bugs it found
-- 433af7f Finish Phase 5 docs; keep the lock through init --force and break stale locks exclusively
+Phase 6 shipped (evals/, usage --decay, hook log). Next: run docs/field-test.md in a real session to answer the extraction-turn questions; Phase 7 (WM-70) only if the field test shows the hooks pay for themselves. Any retrieval change must pass python evals/run.py or rewrite the baseline with reasons.
 
 ## Active Decisions
 - `dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against` — A ranking regression is invisible to unit tests. Building stores through the CLI keeps the eval honest to the current writers.
@@ -112,7 +105,7 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 4 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 35 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 35 days old with no update — is this still true?
 - active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 35 days old with no update — is this still true?
@@ -127,3 +120,6 @@ _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 39 days old with no update — is this still true?
 - active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 39 days old with no update — is this still true?
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 39 days — did this ever get resolved?
+- possible drift: `ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52` recorded "Phase 5 of the working-memory roadmap (WM-50 to WM-52) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
+- possible drift: `ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43` recorded "Phase 4 of the working-memory roadmap (WM-40 to WM-43) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
+- possible drift: `ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35` recorded "Phase 3 of the working-memory roadmap (WM-30 to WM-35) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
