@@ -183,6 +183,31 @@ so two waiters cannot both take it. Read paths
 never wait: `resume`, the listings, `search`, `guard`, the `SessionStart` and
 `PreToolUse` hooks, and the prompt hook's injection.
 
+**Retrieval is measured, not assumed (Phase 6).** Three instruments, none of
+which changes a record on its own. *Relevance evals*: `evals/run.py` builds
+three synthetic stores (`evals/suites/`) through the real CLI with a pinned
+clock, runs each task through the prompt hook's retrieval, the task-ordered
+resume packet and `guard`, and compares precision@5, recall@5, rejected-record
+hits, quiet on control tasks and guard verdict accuracy with
+`evals/baseline.json`. CI fails on a regression. The packet and the evals rank
+by one function, `cli.task_relevance_scores`, so the two cannot drift apart.
+The first run found two retrieval bugs. The prompt hook injected superseded,
+stale, expired and answered records, and its line names kind and title but not
+status, so a retired decision read as current guidance; it now injects current
+records only (`hooks_prompt._is_current`). And a short action such as `npm
+test` could never reach `guard`'s two-keyword floor, because "test" is a
+generic word; a record whose title holds every word of such a query now passes
+the gate (`cli._score_item`). *Decay from use*: `crumb usage --decay` lists
+active decisions, attempts and traps that are old and that nothing has
+surfaced for the whole window (180 days by default), each with the
+`mark-status … stale` command. It needs that much local usage history
+(`started_at` in `private/usage.json`), prints commands and never runs them;
+`audit` reports the same records as `decay-candidate`. *The hook log*: every
+hook firing appends one line of counts and verdicts, never content, to
+`private/hook-log.jsonl`, and `crumb doctor --hook-log` summarises it. The
+field-test protocol ([`field-test.md`](field-test.md)) turns those counts into
+answers about what the hooks cost and whether they help.
+
 See [`record-schema.md`](record-schema.md) for the directory layout and the
 git-tracking policy.
 
@@ -258,6 +283,13 @@ Everything is in the `breadcrumbs` package, standard library only.
 | `handoffs.py` | One handoff per branch (schema 4): the default-branch rule, the handoff file name (slug, plus a hash when the slug is not the branch name), which file a capture writes and a resume or `memory://handoff` reads (and the label it reports), seeding a new branch handoff with `handoff.md`'s Current Focus, and `prune handoffs`. |
 | `lock.py` | The store write lock: `store_lock(memory_dir, timeout)` over `private/.write-lock` (exclusive create; pid, time and host; a 15 s heartbeat; stale after 60 s untouched or a dead pid on this host; broken under an exclusive `.write-lock.break` with a re-check), an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts. Which CLI invocations take it is `cli._needs_lock`. |
 | `transcript.py` | Deterministic transcript mining into jot candidates. |
-| `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook, the `PreCompact` / `SubagentStop` hooks. |
-| `usage.py` | Local surfacing counts (`private/usage.json`). |
+| `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook (retrieval keeps current records only), the `PreCompact` / `SubagentStop` hooks. |
+| `hooklog.py` | The hook log (WM-62): `run_logged` wraps every `crumb hook` firing, passes its output through unchanged and appends one line to `private/hook-log.jsonl` (event, time, ms, outcome, the handler's `note()` detail; never content), bounded at 5000 lines; `summarize` for `crumb doctor --hook-log`. |
+| `usage.py` | Local surfacing counts (`private/usage.json`, with `started_at`), the `--sessions` ordering, and decay candidates for `usage --decay` and audit's `decay-candidate`. |
 | `mcp_core.py`, `mcp_server.py` | The MCP adapter over the same core functions, and its SDK binding. |
+
+`evals/` sits outside the package and ships in neither the wheel nor the sdist.
+`evals/run.py` (standard library only) builds each suite's store from its
+`store.crumb` commands, runs `tasks.yml`, and exits 1 when a rate falls more
+than 0.05 below `evals/baseline.json` or a count rises; the `evals` CI job runs
+it. See [`evals/README.md`](../evals/README.md).

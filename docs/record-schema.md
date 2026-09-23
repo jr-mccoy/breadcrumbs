@@ -44,6 +44,7 @@ writes outside the store.
     README.md
     inbox/                    # machine-local jots — never committed
     # usage.json              — local surfacing counts, written on demand
+    # hook-log.jsonl          — one line per hook firing, written on demand (WM-62)
     # migrations/<stamp>/     — pre-migration store backup
     # .write-lock             — present only while a command writes the store (WM-51)
 
@@ -52,6 +53,22 @@ writes outside the store.
     # search.sqlite           — disposable search index, built at reindex once
     #                           the store has 200+ indexable records (§12)
 ```
+
+**Two local telemetry files under `private/`.** Neither is a record, and
+neither is ever committed.
+
+- `usage.json` holds `records` (per record id: `surfaced`, `by` source,
+  `last_surfaced_at`, and the last 20 `sessions`) and `started_at`, when
+  counting began on this machine. `crumb usage --decay` needs `started_at` to
+  know how much history "not surfaced in N days" is measured over. A file
+  written before `started_at` existed gets it on its next write, set to its
+  oldest `last_surfaced_at`.
+- `hook-log.jsonl` has one JSON object per hook firing: `event`, `at`, `ms`,
+  `outcome` (`silent`, `context`, `ask`, `block`, `locked`, `other`,
+  `unparsed`), `session` when the host sent one, and the counts and verdicts the handler noted. It
+  holds no prompt, command, path or transcript text. It is cut back to its
+  newest 4000 lines once it passes 5000. `crumb doctor --hook-log` reads it;
+  see `cli-spec.md` → *Hook log*.
 
 **Schema versions.** `manifest.yml` records the on-disk format version and
 `crumb migrate` moves a store forward; `validate` fails a store that is behind

@@ -58,7 +58,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `inbox promote <id> <type>` | one jot | a decision / attempt / verification / trap / question / idea, + the jot | Turn a jot into a durable record **through that type's normal writer**, so the evidence rule and the validate gate apply exactly as they would to a record written by hand. The jot's file evidence and tags carry over; the jot is marked `superseded` with `superseded_by`, never deleted. | **built (WM-03)** |
 | `inbox drop <id>` | one jot | status change | Retire a jot as noise (`rejected`). Kept as history; `prune jots` deletes. | **built (WM-03)** |
 | `migrate [--dry-run]` | `manifest.yml`, the store | store format + `manifest.yml` | Bring the store's on-disk format up to this build's `schema_version`. Steps are ordered and idempotent, the manifest is written after each one (so a failure halts at the last completed version), and the whole store is copied to `private/migrations/<timestamp>/` first. `validate` fails with `run \`crumb migrate\`` on an older store and `upgrade crumb-kit` on a newer one. See `migrate` below for the steps. | **built (WM-01)** |
-| `usage [--never] [--top N]` | `private/usage.json` | report (read-only) | Which records actually get **shown** — a packet printed or injected, a guard verdict, a hook advisory. Counts are local to the machine and never committed. `--never` lists active records nothing has ever reached. | **built (WM-02)** |
+| `usage [--never \| --sessions \| --decay [DAYS]] [--top N]` | `private/usage.json` | report (read-only) | Which records actually get **shown** — a packet printed or injected, a guard verdict, a hook advisory. Counts are local to the machine and never committed. `--never` lists active records nothing has ever reached; `--sessions` orders by distinct sessions instead of raw count; `--decay` lists old records nothing has surfaced lately, with the `mark-status … stale` command for each (it never runs them). The three are mutually exclusive. See [`usage`](#usage-built-wm-02-wm-60). | **built (WM-02, WM-60)** |
 | `resume` | current, handoff, records, git state | generated resume packet | Print a bounded resume packet (≤5k tokens) with computed staleness. `--fast` = git snapshot + focus + next action + staleness (print-only). `--task TEXT` scopes `likely_files` to matching records and orders every list section by relevance to the task (print-only). | **4 (built)** |
 | `search [<query>]` | decisions, attempts, verifications, ideas, jots, traps, open questions | search output (read-only — `search` writes nothing) | Deterministic keyword/tag/file lookup over the records; the permissive layer `guard` builds on. Keyword and tag matching folds morphological variants — query and record tokens are stemmed by a small deterministic suffix-stripper (plus a tiny curated alias table: auth/config/db/repo, and the store's own `aliases.txt`), so "reconciliation" meets a record that says "reconciler"; `keyword_overlap` in `--json` output therefore contains stems. `--explain` prints the stems the query became. | **5 (built)** |
 | `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff (**not** ideas) | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). Exits with the verdict-mapped code — see `guard` section. | **5 (built)** |
@@ -75,9 +75,9 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `consolidate --merge ID ID… --title "…"` | the named records | one merged record + status changes + reindex | Write one decision / attempt / verification / idea from the sources and mark every source `superseded`. See `consolidate` below. | **built (WM-33)** |
 | `promote <id> [--to CLAUDE.md\|AGENTS.md] [--rule "…"]` | one decision, attempt or trap | one rule line in the instruction file's promoted-rules block + `promoted_to`/`promoted_at` on the record + reindex | Make an active record a standing rule in the long-term tier. Never creates the instruction file. See `promote` and `demote` below. | **built (WM-40)** |
 | `demote <id> [--reason "…"]` | `CLAUDE.md`, `AGENTS.md`, the record | the rule line removed + promotion fields cleared + reindex | Take a promoted rule back out; the record is otherwise unchanged. | **built (WM-41)** |
-| `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. A `promoted_rules` row (`CLAUDE.md: 3 rule(s), 612 chars`), present only when a promoted-rules block has rules, says what the long-term tier costs every session; it does not change the exit code either. | **built** |
+| `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` (`--hook-log`: `private/hook-log.jsonl`) | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. A `promoted_rules` row (`CLAUDE.md: 3 rule(s), 612 chars`), present only when a promoted-rules block has rules, says what the long-term tier costs every session; it does not change the exit code either. `--hook-log` instead summarises `private/hook-log.jsonl` per hook (exit 0; 2 with no store) — see [Hook log](#hook-log-built-wm-62). | **built** |
 | `mcp serve\|register\|doctor` | `.mcp.json` | running server / registration / health | Run the MCP server, merge its `.mcp.json` entry, or report MCP wiring (`[mcp]` extra + registration). | **built** |
-| `hook session\|guard\|capture\|prompt\|compact\|subagent` | hook stdin payload | hook JSON on stdout (+ mined jots) | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve). Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). Re-running `init --with-hooks` also brings an entry **we own** up to the current matcher, which is how an existing install picked up `Task\|Agent` on the guard. The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. **Every event exits 0 and prints JSON**, whatever the payload. See the per-event table below. | **built** |
+| `hook session\|guard\|capture\|prompt\|compact\|subagent` | hook stdin payload | hook JSON on stdout (+ mined jots, one `private/hook-log.jsonl` line) | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve). Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). Re-running `init --with-hooks` also brings an entry **we own** up to the current matcher, which is how an existing install picked up `Task\|Agent` on the guard. The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. **Every event exits 0 and prints JSON**, whatever the payload. See the per-event table below. | **built** |
 
 ### Hook events
 
@@ -86,7 +86,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `session` | `SessionStart` | — | Emits the resume packet as `additionalContext`. With `source: compact` it prepends what was in flight before the compaction: the last prompt, the records surfaced for it, and the mined candidates waiting in the inbox — and builds the packet with that last prompt as its task, so the sections are ordered by relevance to it (see `resume --task`). |
 | `guard` | `PreToolUse` | `Bash\|Edit\|Write\|MultiEdit\|Task\|Agent` | Cost-aware guard verdict. A subagent launch (`Task`/`Agent`) is scored on its launch prompt and **capped at `READ_FIRST`**: the launch is not itself irreversible, and the subagent's own calls hit this same hook. |
 | `capture` | `Stop` | — | Mines the transcript (always, as a side effect), then snapshots a session record or holds the stop once for the extraction turn. The extraction instruction includes one line saying a write refused with exit 3 is a near-duplicate, answered with `--supersedes <id>` or `--allow-duplicate`. |
-| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, leaving out branch-scoped records written on another branch, with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Captures a correction to `private/inbox/`. **Never blocks** — that would erase the prompt. |
+| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Injects **current records only**: superseded, rejected, stale, disputed and quarantined records, answered and closed questions, records past their `expires_at`, and branch-scoped records written on another branch stay out. A verification stays in while its own lifecycle status is `active`, whatever its outcome. Captures a correction to `private/inbox/`. **Never blocks** — that would erase the prompt. |
 | `compact` | `PreCompact` | — | Mines the transcript and writes a marker for the next `SessionStart`. Emits nothing: this event's stdout never reaches the model. |
 | `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript, tagged `subagent` and `agent:<type>`. Does not hold the subagent. |
 
@@ -108,12 +108,19 @@ being blocked. `prompt` takes the lock only around its correction jot, with
 the same 0.5-second wait; on contention the correction is skipped and the
 records are still injected. `session` and `guard` never take the lock.
 
+**Every firing is logged.** Each event appends one line to
+`private/hook-log.jsonl`: the event, the time, how long it took and what the
+host received (`silent`, `context`, `ask`, `block`, or `locked` when a writing
+event skipped on the lock). No prompt, command, path or transcript text is
+logged. The hook's output reaches the host unchanged. `crumb doctor --hook-log`
+summarises the file — see [Hook log](#hook-log-built-wm-62).
+
 ### Integration flags on `init`
 
 ```text
 init --with-adapter[=CLAUDE.md,…] / --no-adapter   # signpost block in detected guidance files
 init --with-mcp / --no-mcp                          # merge .mcp.json entry
-init --with-hooks[=session,guard,capture] / --no-hooks
+init --with-hooks[=session,guard,capture,prompt,compact,subagent] / --no-hooks
 init --print-integrations                           # dry run
 init --remove-integrations                          # reverse everything
 ```
@@ -128,7 +135,8 @@ block that `crumb promote` writes into the same files (see `promote` and
 `crumb demote` is how one comes out.
 
 Both lists are validated **before any filesystem mutation** — `--with-hooks` against
-`session|guard|capture`, `--with-adapter` against the known guidance filenames —
+the six events (`session|guard|capture|prompt|compact|subagent`; bare
+`--with-hooks` installs all of them), `--with-adapter` against the known guidance filenames —
 and a typo exits 2 naming the valid values, with nothing written. `init` never
 injects the signpost into a file outside that list, because `--remove-integrations`
 would not know to look there. (For stores already in that state, removal scans the
@@ -583,6 +591,15 @@ Behavior (deltas from `search` — everything there applies here too):
   Until 0.1.11 a keyword-only *trap* match floored `READ_FIRST` unconditionally;
   in a store whose vocabulary overlaps the codebase that made one trap fire on
   every edit of a session (the 0.1.10 field test's 13-for-13).
+- **A short action can still match on its title.** `guard` does not relax the
+  two-keyword floor the way `search` does, so an action with fewer specific
+  words than the floor (`npm test`: "test" is a generic word) could never match
+  a record on text. Such an action passes the gate for a record whose **title**
+  holds every word of the action, generic words included and English function
+  words aside: `npm test` matches a trap titled "npm test …", but not every
+  record that mentions npm. The match is keyword-only, so it escalates only
+  through the score bands. The prompt hook uses the same gate. Found by the
+  relevance evals (`evals/`, WM-61).
 - **Staleness on the guard path is risks-only.** Only abnormal states — cold
   handoff (`⚠`), detached HEAD, handoff branch mismatch — ride along with a
   verdict. The routine store facts (fresh handoff age, aged records, low
@@ -687,7 +704,18 @@ carry a severity:
     low` and not promoted, at least 60 days old and surfaced in at least 5
     distinct sessions according to `private/usage.json`. The message names
     `crumb promote <id>`. The session count is machine-local, so two clones can
-    disagree.
+    disagree;
+  - **`decay-candidate`** — what `crumb usage --decay` lists with its default
+    window of 180 days (see [`usage`](#usage-built-wm-02-wm-60)): an active
+    decision, attempt or trap at least 180 days old that nothing has surfaced
+    in 180 days. The message carries the `crumb mark-status <id> stale
+    --reason "not surfaced in 180 days"` command; nothing is changed. Up to 10
+    (`AUDIT_DECAY_MAX`), and none until this machine has 180 days of usage
+    history;
+  - **`never-surfaced`** — an active record at least 90 days old with no entry
+    in `private/usage.json` (up to 10). A record already reported as a
+    `decay-candidate` is not reported again here. Both checks run only when
+    `usage.json` holds some history.
 
 Exit codes: `1` when any **fail** finding is present (a secret), else `0`; `2` when no
 `.project-memory/` store is present.
@@ -1141,6 +1169,104 @@ other.
   [`mcp-spec.md`](mcp-spec.md)).
 - A lock held by a process that is still running but stuck keeps its
   heartbeat and is not broken; deleting the file releases it.
+
+---
+
+## `usage` (built, WM-02, WM-60)
+
+```bash
+crumb usage                  # records with surfacing history, most-surfaced first
+crumb usage --sessions       # ...ordered by distinct sessions instead
+crumb usage --never          # active records nothing has ever surfaced, oldest first
+crumb usage --decay          # old records nothing surfaced in the last 180 days
+crumb usage --decay 90       # ...with a 90-day window
+crumb usage --top N          # rows to print (default: 25)
+```
+
+`--never`, `--sessions` and `--decay` are mutually exclusive (exit 2 on a
+combination).
+
+Behavior:
+
+- **What counts.** A record counts when it is shown: a packet printed or
+  injected, a guard verdict, a hook advisory. A reindex does not count, or the
+  numbers would measure writes. The counts live in `private/usage.json`
+  (machine-local, never committed; see [`record-schema.md`](record-schema.md)
+  §1): per record the total, the count by source, `last_surfaced_at` and the
+  last 20 session ids.
+- **`--sessions`** sorts by distinct sessions, then by raw count. Forty guard
+  calls in one session are one piece of evidence; five sessions are five. Only
+  the last 20 session ids are kept per record, so a row at that cap prints
+  `20+`, and every `--json` row carries `sessions_capped`.
+- **`--decay [DAYS]`** (default 180, `DECAY_DAYS_DEFAULT`) lists active
+  decisions, attempts and traps that are at least DAYS old and that nothing
+  has surfaced in the last DAYS, oldest first. Age is taken from `updated_at`,
+  else `created_at`, so an edit resets it. Each row carries the command a
+  person can run:
+
+  ```text
+  crumb mark-status <id> stale --reason "not surfaced in DAYS days"
+  ```
+
+  `usage --decay` prints the commands and never runs them. Left out:
+  promoted records (the packet hides them on purpose, so they are never
+  surfaced), records past their `expires_at`, and traps confirmed with `crumb
+  traps --confirm` within the window. Verifications and questions have TTLs of
+  their own and are never candidates. A trap still stored as a block (a
+  schema-2 store) has no file to date it and is never a candidate either.
+- **Decay needs history.** "Nothing surfaced it in 180 days" needs 180 days of
+  counting, so `usage.json` records `started_at`, when counting began on this
+  machine. With less history than DAYS, `--decay` says how much it has and
+  lists nothing. A file written before `started_at` existed falls back to its
+  oldest `last_surfaced_at`, which can only understate the history.
+- `--json` under `--decay` returns `days`, `coverage_start`, `coverage_days`,
+  `enough_history` and `candidates` (also as `items`).
+- `audit` reports the same candidates, with the default window, as
+  `decay-candidate` (see `audit`).
+- Exit codes: `0` on success (including an empty report), `2` on a usage error
+  or when no `.project-memory/` store is present.
+
+---
+
+## Hook log (built, WM-62)
+
+```bash
+crumb doctor --hook-log         # per-hook summary of private/hook-log.jsonl
+crumb doctor --hook-log --json
+```
+
+Every hook firing appends one line to `.project-memory/private/hook-log.jsonl`
+(gitignored with the rest of `private/`). The line is one JSON object:
+
+- `event` (`session`, `guard`, `capture`, `prompt`, `compact`, `subagent`),
+  `at`, `ms` (how long the hook took), and `session` when the payload carried
+  a session id;
+- `outcome`, read off the JSON the hook printed, so it describes what the host
+  received: `silent` (`{}`), `context` (`additionalContext`), `ask` (a
+  permission prompt), `block` (the Stop hook's extraction turn), `locked` (a
+  writing hook skipped on the store lock), `other` (any other JSON object) or
+  `unparsed` (output that was not JSON);
+- what the handler noted: guard's `tool`, `verdict`, `skipped: "prefilter"`
+  and `deduped`; the prompt hook's `matches`, `deduped` and `correction`;
+  `capture`'s `mined`, `snapshot`, `redundant` and `offered`; `mined` for
+  `compact` and `subagent`.
+
+No prompt, command, file path or transcript text is logged, only counts and
+verdicts. The hook's stdout is captured and then written out unchanged, even
+when the handler raises. Logging is best-effort and takes no lock: a failed
+write is dropped. The line is written only when `private/` exists; a hook does
+not create it. The file is bounded: past 5000 lines (`HOOK_LOG_MAX_LINES`) it
+is cut back to the newest 4000 (`HOOK_LOG_TRIM_TO`), so a busy session does
+not rewrite it on every call.
+
+`crumb doctor --hook-log` summarises the log per event: firings, outcomes, the
+spoke rate (the share that were `context`, `ask` or `block`), `ms` p50 / p95 /
+max, verdicts, and the handler counts (numbers summed, flags counted). It adds
+the total, the number of sessions, the first and last timestamp, and how many
+writing firings skipped on the lock. `--json` returns `entries`, `first_at`,
+`last_at`, `sessions`, `events` and `locked`. It exits `0`, including when
+nothing is logged yet, and `2` when no store is present.
+[`field-test.md`](field-test.md) is the protocol that reads it.
 
 ---
 

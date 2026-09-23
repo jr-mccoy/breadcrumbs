@@ -120,6 +120,7 @@ crumb jot "flaky under -n auto"  # short-term note: a TTL, no evidence rule
 crumb inbox                      # triage the jots; promote the durable ones
 crumb migrate                    # bring an older store up to this build's schema
 crumb usage --never              # which records nothing has ever surfaced
+crumb usage --decay              # old records nothing surfaced in 180 days (prints mark-status commands)
 crumb retitle "ses_…" "what that session was really about"   # fix a title that says nothing
 crumb traps --stale              # traps nobody has confirmed lately, and what they cost
 crumb expired                    # records past their expires_at (still on disk, out of the packet)
@@ -139,6 +140,7 @@ crumb guard "rewrite the auth middleware"   # warn before repeating a known mist
 crumb audit                      # heuristic health/safety report (stale/unsafe/bloated)
 crumb scan-secrets               # block if committed memory holds token-like strings
 crumb doctor                     # is memory actually wired into your agent?
+crumb doctor --hook-log          # what each hook did: firings, outcomes, timings
 crumb mcp serve | register | doctor   # run / register / health-check the optional MCP server
 ```
 
@@ -633,6 +635,8 @@ python crumb.py migrate --dry-run        # what would change
 python crumb.py migrate                  # apply; backs the store up first
 python crumb.py usage                    # most-surfaced records
 python crumb.py usage --never            # active records nothing has ever reached
+python crumb.py usage --sessions         # ordered by distinct sessions, not raw count
+python crumb.py usage --decay            # old records nothing surfaced in the last 180 days
 ```
 
 `migrate` moves a store's on-disk format up to this build's `schema_version`.
@@ -656,6 +660,13 @@ and deliberately not when a write triggers a reindex, which would make the
 counts measure writes. The counts live in `private/usage.json` and are never
 committed: in frontmatter they would churn every record on every guard call, and
 in a committed file they would conflict on every merge.
+
+`usage --decay [DAYS]` (default 180) lists active decisions, attempts and traps
+at least DAYS old that nothing has surfaced in the last DAYS, each with the
+`crumb mark-status <id> stale --reason "not surfaced in DAYS days"` command to
+retire it. It prints the commands and never runs them, and it lists nothing
+until this machine has counted usage for DAYS. `audit` reports the same records
+as `decay-candidate`.
 
 ### Branches and parallel sessions
 
@@ -854,7 +865,10 @@ piece is independent:
     *this prompt* — the moment the task is finally known, and the one the
     recency-ordered resume packet cannot serve. It scores the prompt with the
     same retrieval `guard` uses and shows at most five matches, pointing at
-    `crumb show <id>` (or `memory://records/{id}`) for the full text. It **never
+    `crumb show <id>` (or `memory://records/{id}`) for the full text. It
+    injects current records only: a superseded, stale or expired record, or
+    an answered question, stays out, because the injected line does not show
+    status. It **never
     blocks**: that decision is available on this event and it erases the
     prompt, which is the worst thing a memory tool could do.
 
@@ -928,6 +942,14 @@ piece is independent:
 packet is stale), exiting non-zero when a store exists but nothing is wired up.
 When rules have been promoted it also reports how many, and their size, per
 instruction file.
+
+Every hook firing also appends one line to `private/hook-log.jsonl`: the
+event, how long it took and what the host received (silent, context, a
+permission prompt, a held stop, or skipped on the store lock), plus counts and
+verdicts. It never records a prompt, command, path or transcript text, and it
+is capped at 5000 lines. `crumb doctor --hook-log` summarises it per hook, and
+[`docs/field-test.md`](docs/field-test.md) is the protocol for reading it after
+a real session.
 
 `crumb mcp serve` runs the server over stdio (same as `breadcrumbs-mcp`); `crumb
 mcp register` is the standalone form of `--with-mcp`.
@@ -1013,7 +1035,7 @@ automatically so it stays in step.)
 | `jot` / `inbox` / `inbox promote` / `inbox drop` (short-term tier) | implemented |
 | `migrate` (store-format upgrade, backed up and idempotent; schema 3 = one file per trap/question, schema 4 = `handoffs/`) | implemented |
 | Branches and parallel sessions: one handoff per branch, `prune handoffs`, `--scope branch` on jots and verifications, the store write lock | implemented |
-| `usage` (local surfacing counts, `--never`) | implemented |
+| `usage` (local surfacing counts, `--never`, `--sessions`, `--decay`) | implemented |
 | `retitle` (rewrite a record's title; id/slug/filename unchanged) | implemented |
 | `traps` (staleness + always-on context cost, `--stale`, `--confirm`) | implemented |
 | Lifecycle: per-type TTLs, `expired`, `questions --aging`, `verify --recheck`, near-duplicate gate (exit 3), `consolidate`, contradiction warnings, `rollup sessions` | implemented |
@@ -1021,6 +1043,7 @@ automatically so it stays in step.)
 | `pipx`/`pip` packaging (`crumb` console script, bundled templates) | implemented |
 | MCP server (`breadcrumbs-mcp`: 14 resources, 6 prompts, 13 tools) | implemented (**optional**) |
 | Integrations: `init` bootstrapper, `doctor`, `mcp`, `hook` (adapter + `.mcp.json` + hooks) | implemented |
+| Measurement: relevance evals (`evals/`, repo only, run in CI), the hook log and `doctor --hook-log` | implemented |
 
 The full loop (capture → resume → trust) is complete and CI-guarded, and ships as
 a `pipx`-installable `crumb` binary (see **Install** above). An **optional** MCP
