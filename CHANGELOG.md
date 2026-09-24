@@ -3,10 +3,26 @@
 All notable changes to **crumb-kit** (the `breadcrumbs` package) are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/), and the project
 uses semantic versioning. The package version is independent of the on-disk record
-`schema_version` (now `2` — see `docs/record-schema.md` §1); `crumb --version`
+`schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
-## [Unreleased]
+## [0.3.0] — 2026-09-24
+
+The working-memory release: phases 0 through 6 of
+`docs/roadmap-working-memory.md`. The roadmap planned one release per phase;
+none was cut, so all seven land here together. Sections below are grouped by
+phase, newest first.
+
+**Upgrading from 0.2.0.** Record `schema_version` goes from `1` to `4`. Run
+`crumb migrate` once per store. It copies the whole committed store to
+`private/migrations/<timestamp>/` first, and `--dry-run` lists the steps
+without changing anything. Until you migrate, `crumb resume` still reads the
+store, but `crumb validate` fails and names `crumb migrate` as the fix. To pick
+up the new hooks (`UserPromptSubmit`, `PreCompact`, `SubagentStop`) and the
+guard's subagent matcher, re-run `crumb init --with-hooks`. Behaviour a script might be pinned to is listed
+under each phase's **Changed** heading. Examples: a new exit code 3 for a write
+refused as a near-duplicate, `q_<slug>` question ids, and six hooks instead
+of three.
 
 ### Added — Phase 6: measurement and evals
 
