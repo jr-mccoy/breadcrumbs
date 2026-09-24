@@ -1,19 +1,20 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 89b94b9 | inputs_hash: 70f12dac18c6 | generated_at: 2026-09-23T03:25:49+00:00 -->
+<!-- source_commit: 7a4a07f | inputs_hash: 943c05929407 | generated_at: 2026-09-24T19:45:46+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/agentic-memory-system-mybkpi` · commit `89b94b9` · 3 uncommitted file(s) · handoff: handoffs/claude-agentic-memory-system-mybkpi-f4c610.md
+branch `claude/release-prep-publish-dw1xzf` · commit `7a4a07f` · 10 uncommitted file(s) · handoff: handoffs/claude-release-prep-publish-dw1xzf-5a1864.md
 
 ## Current Focus
-Phases 0-6 of the working-memory roadmap shipped
+Release 0.3.0 (working-memory phases 0-6)
 
 ## Next Action
-Phase 6 shipped (evals/, usage --decay, hook log). Next: run docs/field-test.md in a real session to answer the extraction-turn questions; Phase 7 (WM-70) only if the field test shows the hooks pay for themselves. Any retrieval change must pass python evals/run.py or rewrite the baseline with reasons.
+Merge the 0.3.0 release-prep PR to main, then run release.yml from main: mode=dry-run first, then mode=publish. Never tag by hand.
 
 ## Active Decisions
+- `dec_20260924_phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per` — No per-phase release was ever cut. The next minor after 0.2.0 is the honest number for a schema 1->4 jump, and cli.py already said the guard matcher changed in 0.3.0. Numbering it 0.9.0 would imply six releases that never existed.
 - `dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against` — A ranking regression is invisible to unit tests. Building stores through the CLI keeps the eval honest to the current writers.
 - `dec_20260922_the-user-pre-approves-store-migrations-of-this-repo-s-own` — The user said (2026-09-22): 'I approve any migration.' A crumb migrate of this repo's own store may proceed without asking again; still run guard, back up (migrate does), validate after, and commit the result.
 - `dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store` — Every writer reindexes, so per-writer locking would take the lock many times per command and still not cover multi-writer sequences like capture. Hooks must never block the host. A feature branch's next action must not be what a session on main reads first.
@@ -28,8 +29,7 @@ Phase 6 shipped (evals/, usage --decay, hook log). Next: run docs/field-test.md 
 - `dec_20260922_usage-telemetry-counts-surfacings-at-the-call-sites` — Every mutation reindexes and every reindex builds a packet, so counting inside build_resume_packet would have measured writes rather than surfacings. Splitting guard between the command and the hook avoids double-counting every hook advisory, since the hook shows a filtered subset of the same result. Counters in frontmatter would churn every record on every guard call and break 'records are authored facts'; a committed counter file would conflict on every merge.
 - `dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn` — A machine-local jot in a committed projection makes that file differ between two checkouts of one store while _inputs_hash calls both fresh, since the hash cannot read gitignored input without the same problem. That is the cross-machine ping-pong _hashed_input_dirs already exists to prevent. Excluding private jots from the packet keeps the projection machine-independent by construction.
 - `dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases` — Hook facts were verified against the Claude Code hooks reference: PreCompact output never reaches the model (so it mines and marks; SessionStart source=compact re-injects), SubagentStop can block but the plan defers that behind the existing prompt-fatigue open question, UserPromptSubmit additionalContext reaches the model, and the transcript file may lag the current turn. New code goes in new modules; cli.py is 10.7k lines. Usage telemetry is local-only in v1 to avoid churning records and merge conflicts.
-- `dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns` — Neither is a scoring problem. Overlap is symmetric, so corpus frequency reads as relevance and no weighting fixes a command that cannot do the thing being warned about. And a gate that is hand-overridden every time has stopped being a gate — worse, it punishes exactly the records that cite a concrete path, which are the most useful ones a store has. Both classifications are conservative: an unrecognized action keeps its full verdict, and a structured credential still blocks.
-_(… 16 more omitted to stay within the per-section cap)_
+_(… 17 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -48,9 +48,12 @@ _(none recorded)_
 
 ## Inbox (unsorted, expires)
 _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or drop with `crumb inbox drop <id>`)_
-- `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (0d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
+- `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (2d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- CHANGELOG.md
+- docs/roadmap-working-memory.md
+- breadcrumbs/__init__.py
 - evals/run.py
 - evals/baseline.json
 - breadcrumbs/handoffs.py
@@ -64,13 +67,10 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/cli.py
 - breadcrumbs/usage.py
 - breadcrumbs/inbox.py
-- docs/roadmap-working-memory.md
-- CHANGELOG.md
 - README.md
 - pyproject.toml
 - breadcrumbs/templates/project-memory/README.md
 - tests/test_note.py
-- .github/workflows/release.yml:36
 _(… 3 more omitted to stay within the per-section cap)_
 
 ## Verifications
@@ -106,20 +106,17 @@ _(… 7 more omitted to stay within the per-section cap)_
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
-- active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 35 days old with no update — is this still true?
-- active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 35 days old with no update — is this still true?
-- active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 35 days old with no update — is this still true?
-- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 36 days old with no update — is this still true?
-- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 38 days old with no update — is this still true?
-- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 38 days old with no update — is this still true?
-- active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 38 days old with no update — is this still true?
-- active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 38 days old with no update — is this still true?
-- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 38 days old with no update — is this still true?
-- active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 39 days old with no update — is this still true?
-- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 39 days old with no update — is this still true?
-- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 39 days old with no update — is this still true?
-- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 39 days old with no update — is this still true?
-- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 39 days — did this ever get resolved?
-- possible drift: `ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52` recorded "Phase 5 of the working-memory roadmap (WM-50 to WM-52) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
-- possible drift: `ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43` recorded "Phase 4 of the working-memory roadmap (WM-40 to WM-43) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
-- possible drift: `ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35` recorded "Phase 3 of the working-memory roadmap (WM-30 to WM-35) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
+- active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 37 days old with no update — is this still true?
+- active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 37 days old with no update — is this still true?
+- active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 37 days old with no update — is this still true?
+- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 38 days old with no update — is this still true?
+- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 39 days old with no update — is this still true?
+- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 39 days old with no update — is this still true?
+- active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 39 days old with no update — is this still true?
+- active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 39 days old with no update — is this still true?
+- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 40 days old with no update — is this still true?
+- active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 40 days old with no update — is this still true?
+- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 40 days old with no update — is this still true?
+- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 40 days old with no update — is this still true?
+- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 40 days old with no update — is this still true?
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 40 days — did this ever get resolved?
