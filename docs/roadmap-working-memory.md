@@ -103,16 +103,18 @@ three days, **L** a week.
 | Phase | Theme | Items | Release |
 |---|---|---|---|
 | 0 | Foundations: migration, inbox, telemetry — **shipped**, see §0.5 | WM-01, WM-02, WM-03 | 0.3.0 |
-| 1 | Capture everywhere: new hooks and the transcript miner — **shipped**, see §0.6 | WM-10 to WM-16 | 0.4.0 |
-| 2 | Retrieval by relevance — **shipped**, see §0.7 | WM-20 to WM-25 | 0.5.0 |
-| 3 | Lifecycle: decay, dedup, consolidation, contradiction — **shipped**, see §0.8 | WM-30 to WM-35 | 0.6.0 |
-| 4 | The bridge to long-term memory — **shipped**, see §0.9 | WM-40 to WM-43 | 0.7.0 |
-| 5 | Scope and multi-agent — **shipped**, see §0.10 | WM-50 to WM-52 | 0.8.0 |
-| 6 | Measurement and evals — **shipped**, see §0.11 | WM-60 to WM-62 | 0.9.0 |
+| 1 | Capture everywhere: new hooks and the transcript miner — **shipped**, see §0.6 | WM-10 to WM-16 | 0.3.0 |
+| 2 | Retrieval by relevance — **shipped**, see §0.7 | WM-20 to WM-25 | 0.3.0 |
+| 3 | Lifecycle: decay, dedup, consolidation, contradiction — **shipped**, see §0.8 | WM-30 to WM-35 | 0.3.0 |
+| 4 | The bridge to long-term memory — **shipped**, see §0.9 | WM-40 to WM-43 | 0.3.0 |
+| 5 | Scope and multi-agent — **shipped**, see §0.10 | WM-50 to WM-52 | 0.3.0 |
+| 6 | Measurement and evals — **shipped**, see §0.11 | WM-60 to WM-62 | 0.3.0 |
 | 7 | Other harnesses | WM-70 | 1.0.0 |
 
-Each phase ends with a release. A release is only the two steps in
-`CLAUDE.md`: bump `__version__`, add the CHANGELOG entry, run `release.yml`.
+Each phase was planned to end with a release. None was cut until Phase 6
+was done, so phases 0 to 6 all shipped together in 0.3.0. A release is only
+the two steps in `CLAUDE.md`: bump `__version__`, add the CHANGELOG entry, run
+`release.yml`.
 
 ### 0.5 Phase 0: what shipped, and where it differs from this plan
 
