@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "943c05929407",
+ "inputs_hash": "12d3b5fc0e04",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -39,8 +39,8 @@
   ],
   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one": [
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
-   "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path"
   ],
   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them": [
    "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
@@ -55,7 +55,7 @@
   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap": [
    "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns"
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
   ],
   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode": [
    "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
@@ -78,9 +78,9 @@
    "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap"
   ],
   "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call": [
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns"
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
   ],
   "dec_20260905_path-extraction-is-structural-and-a-mined-path": [
    "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
@@ -90,7 +90,7 @@
   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
   ],
   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
@@ -105,12 +105,12 @@
   "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store": [
    "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
   ],
   "dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps": [
    "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim",
    "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35"
   ],
   "dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
@@ -129,8 +129,8 @@
   ],
   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first",
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
   ],
   "dec_20260922_the-user-pre-approves-store-migrations-of-this-repo-s-own": [
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
@@ -138,9 +138,9 @@
    "dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store"
   ],
   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases": [
-   "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
    "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn",
-   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only"
+   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
+   "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02"
   ],
   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons": [
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
@@ -174,8 +174,8 @@
   ],
   "trap_a-hand-written-version-literal-in-prose-drifts-silently": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "dec_20260815_cut-0-1-10-as-the-agent-authorship-release",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
+   "dec_20260815_cut-0-1-10-as-the-agent-authorship-release"
   ],
   "trap_a-record-s-remedy-fields-are-mined-for-file-paths": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
@@ -185,12 +185,12 @@
   "trap_eval-baseline-after-retrieval-change": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
    "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
-   "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval"
+   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
   ],
   "trap_guard-exit-code-in-ci": [
    "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed",
-   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20",
-   "trap_eval-baseline-after-retrieval-change"
+   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20"
   ],
   "trap_hand-tagged-releases": [
    "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
@@ -209,8 +209,8 @@
   ],
   "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed": [
    "trap_guard-exit-code-in-ci",
-   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
-   "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re"
+   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25"
   ],
   "ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed": [
    "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
@@ -289,13 +289,18 @@
   ],
   "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52": [
    "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
-   "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35",
-   "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store"
+   "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
+   "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35"
   ],
   "ver_20260923_relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
    "trap_eval-baseline-after-retrieval-change",
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author"
+  ],
+  "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci": [
+   "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed",
+   "trap_guard-exit-code-in-ci",
+   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo"
   ]
  },
  "skipped": null
