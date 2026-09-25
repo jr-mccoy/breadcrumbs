@@ -488,7 +488,22 @@ class WorkflowHygieneTests(unittest.TestCase):
         text = self.files["ci.yml"]
         self.assertIn("list_resources()", text)
         self.assertIn("list_resource_templates()", text)
-        self.assertIn("== 8", text)
+        from breadcrumbs import mcp_core
+
+        declared = len(mcp_core.STATIC_RESOURCES) + len(mcp_core.TEMPLATE_RESOURCES)
+        self.assertIn(f"len(static) + len(templates) == {declared}", text)
+
+    def test_mcp_job_pins_the_registered_tool_count(self):
+        """The mcp job's counts are literals, and only that job has the SDK to
+        check them, so they went stale unnoticed: WM-03 and WM-21 took the server
+        to 13 tools and 14 resources while ci.yml still said 10 and 8, and every
+        mcp leg failed. Count the registrations in the source here, where the
+        stdlib-only suite runs, so the next new tool fails locally instead."""
+        text = self.files["ci.yml"]
+        source = (REPO_ROOT / "breadcrumbs" / "mcp_server.py").read_text(encoding="utf-8")
+        registered = source.count("@mcp.tool()")
+        self.assertGreater(registered, 0)
+        self.assertIn(f"assert len(tools) == {registered},", text)
 
     def test_ci_has_a_lint_job(self):
         text = self.files["ci.yml"]

@@ -233,12 +233,14 @@ jobs:
           assert mcp_server.sdk_available(), "SDK not importable after [mcp] install"
           server = mcp_server.build_server()
           tools = asyncio.run(server.list_tools())
-          assert len(tools) == 10, [t.name for t in tools]
+          # 13 since WM-03 (memory_jot, memory_inbox_promote) and WM-21
+          # (memory_show); the README's Status table states the same count.
+          assert len(tools) == 13, [t.name for t in tools]
           prompts = asyncio.run(server.list_prompts())
           assert len(prompts) == 6, [p.name for p in prompts]
-          # The 8 resources the README and docs/mcp-spec.md advertise were the one
-          # advertised count CI never checked. Compare against the
-          # declared registries, so a URI cannot be renamed without noticing.
+          # The 14 resources the README and docs/mcp-spec.md advertise (8 through
+          # 0.2.0; WM-03 and WM-21 added 6). Compare against the declared
+          # registries, so a URI cannot be renamed without noticing.
           static = {str(r.uri) for r in asyncio.run(server.list_resources())}
           # SDK 2.0 renamed every camelCase model attribute to snake_case while
           # keeping the JSON aliases, so read by the stable JSON key rather than
@@ -250,7 +252,7 @@ jobs:
           }
           assert static == set(mcp_core.STATIC_RESOURCES), static
           assert templates == set(mcp_core.TEMPLATE_RESOURCES), templates
-          assert len(static) + len(templates) == 8, (static, templates)
+          assert len(static) + len(templates) == 14, (static, templates)
           # On an SDK that accepts it, the server advertises the
           # *package* version rather than the SDK's own.
           if mcp_server._SERVER_ACCEPTS_VERSION:
