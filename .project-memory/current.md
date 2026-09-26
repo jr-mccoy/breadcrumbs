@@ -3,12 +3,9 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Release 0.3.0 (working-memory phases 0-6)
+Stabilization per the 2026-09-26 audit roadmap (WP00 done, awaiting review)
 
 ## Recently Changed
-- 7a4a07f Merge pull request #51 from jr-mccoy/claude/agentic-memory-system-mybkpi
-- ecde2fb Capture the Phase 6 session
-
-_Prefill window: `89b94b9`..HEAD — 2 commit(s) since the last session record._
+Added the audit bundle under docs/reviews/ and tools/audit/, byte-identical to its checksums. Recorded the WP00 baseline: HEAD is the audited commit. Full suite 1147 run, 0 failures, 6 skipped. Evals exit 0 but still report npm test -> PROCEED. All 19 probe defect signals reproduce identically, with 0 errors. All 26 findings are still present.
 
 ## Watch Out For

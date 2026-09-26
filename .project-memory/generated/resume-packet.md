@@ -1,30 +1,17 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 30e41f6 | inputs_hash: b8114c3b46a5 | generated_at: 2026-09-26T23:13:12+00:00 -->
+<!-- source_commit: 31e56da | inputs_hash: c9a8a7c2e394 | generated_at: 2026-09-26T23:13:24+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `30e41f6` · 4 uncommitted file(s) · handoff: handoff.md (no branch handoff)
+branch `claude/new-session-9f1k6i` · commit `31e56da` · 3 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
-Release 0.3.0 (working-memory phases 0-6)
+Stabilization per the 2026-09-26 audit roadmap (WP00 done, awaiting review)
 
 ## Next Action
-Phase 4 shipped (WM-40..43). Next: cut a release per CLAUDE.md (bump __version__ and CHANGELOG, merge to main, run release.yml), or start Phase 5 (WM-50 scope) from docs/roadmap-working-memory.md; read section 0.9 first.
-
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- 30e41f6 Merge pull request #53 from jr-mccoy/claude/release-prep-publish-dw1xzf
-- f646ef1 memory: record the mcp CI count fix
-- a5de654 ci: fix the mcp job's stale tool and resource counts
-- ac03e26 Merge pull request #52 from jr-mccoy/claude/release-prep-publish-dw1xzf
-- 2adeee0 memory: hand off the 0.3.0 release
-- bbe567b release: 0.3.0
-- 7a4a07f Merge pull request #51 from jr-mccoy/claude/agentic-memory-system-mybkpi
-- ecde2fb Capture the Phase 6 session
-- 89b94b9 Finish Phase 6 docs: usage decay, hook log, evals and the retrieval fixes
-- f962478 Document Phase 6 in the CHANGELOG and roadmap; record it in memory
+Review WP00 (docs/reviews/2026-09-26-breadcrumbs-wp00-baseline/README.md). Once approved, mark it completed in the tracker. Then pick ONE dependency-ready package (WP01, WP02, WP05, WP13 or WP18) and follow report section 8: reproduce, write a failing regression, make the smallest fix, and stop for review.
 
 ## Active Decisions
 - `dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record` — The audit evidence is only useful if it stays exactly what was reviewed. Reformatting the scripts would break the checksums. Each package's regressions belong in ordinary tests when that package lands, not in the probe script.
@@ -118,7 +105,7 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- ⚠ handoff is 4 day(s) old, written 22 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
 - active decision dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head is 23 days old with no update — is this still true?
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 39 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 39 days old with no update — is this still true?
@@ -134,6 +121,3 @@ _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 42 days old with no update — is this still true?
 - active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 42 days old with no update — is this still true?
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 42 days — did this ever get resolved?
-- possible drift: `ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52` recorded "Phase 5 of the working-memory roadmap (WM-50 to WM-52) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
-- possible drift: `ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43` recorded "Phase 4 of the working-memory roadmap (WM-40 to WM-43) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
-- possible drift: `ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35` recorded "Phase 3 of the working-memory roadmap (WM-30 to WM-35) is implemented and green" as **fixed** on 2026-09-22, but Current Focus / Next Action still claims that work — re-check before redoing it.
