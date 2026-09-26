@@ -1,0 +1,185 @@
+{
+  "repository": "jr-mccoy/breadcrumbs",
+  "commit": "30e41f6a36195faffdc197d0565abc7caf7c78da",
+  "tree": "14bba98b0d56b4e639dd08f11b5683e8ce46a648",
+  "package_version": "0.3.0",
+  "record_schema": 4,
+  "retrieved_on": "2026-09-26",
+  "artifact": {
+    "workflow_run": 36083177179,
+    "artifact_id": 10842602043,
+    "name": "dist",
+    "zip_sha256": "208e9ad62397036c3bff280de1f43caf82473234c3b217f6fec78fc0ea4588b6"
+  },
+  "modules": [
+    {
+      "path": "breadcrumbs/__init__.py",
+      "git_blob_sha1": "96624b4fe523bb6db7e4f15fc97c6d9bf17c27fd",
+      "sha256": "712a96cb6d6b4e7353b4262259232e016f78b26cae72864ec80c04556736d924",
+      "bytes": 2205,
+      "lines": 45,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/__main__.py",
+      "git_blob_sha1": "6e58e8d6ee6ef2bd599f2029218d286739d9b9f2",
+      "sha256": "9a1c5ef2253d651f561ddd4a8dfde5548da5871329aa59209e5a28283cb1c9d0",
+      "bytes": 165,
+      "lines": 6,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/blockfiles.py",
+      "git_blob_sha1": "f18c258f5317d1a32cd35f353611282fbcd0a821",
+      "sha256": "83cc7a2a2a299ee66ad77e7c6a5b6d4116e58aef319ee742e6dd5b21b0b6b9cd",
+      "bytes": 27846,
+      "lines": 722,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/cli.py",
+      "git_blob_sha1": "9d4403ffa2e6d44e68f2ac64c50b6ddb430b151f",
+      "sha256": "fd7db8544fc0f0ff3186b45747ea07f54f84afb91c6c8a3b0180fa28b0246231",
+      "bytes": 555629,
+      "lines": 13272,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/handoffs.py",
+      "git_blob_sha1": "0eb6bb0199df782f3c009b4e5445b0b82d5f5335",
+      "sha256": "d643f9516d094545fe306eadefadea4009b12c234f1fcf6140081b82f9036a3a",
+      "bytes": 8084,
+      "lines": 200,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/hooklog.py",
+      "git_blob_sha1": "4aa4da3947dfd6cf8f7b3af8d099065cff3fef6d",
+      "sha256": "e3723d87e9f5138900c7d1ac50f9a8775055eab8eea9061841c00a8a46d464ec",
+      "bytes": 8215,
+      "lines": 223,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/hooks_common.py",
+      "git_blob_sha1": "791efebd4be11c9d63f3789406b5c7f4ecc85b1f",
+      "sha256": "478423a80b36ba6d38e5527a80f88ebfb51c858603d73835cff881bd9f2ccf29",
+      "bytes": 8976,
+      "lines": 228,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/hooks_compact.py",
+      "git_blob_sha1": "24ac39e0b5ca32b063064095d5a341a8c3c30e21",
+      "sha256": "d0de60df69f1bc1a3f41d8f079c32e0247dfb74d06a808e94c41152ffcafc260",
+      "bytes": 4446,
+      "lines": 103,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/hooks_prompt.py",
+      "git_blob_sha1": "7c5cb9e6374630ed0b9e403cd8ed17fad5395207",
+      "sha256": "54741dc12c6a4e4edbdc1c9be485a3e94c7a5e2bace66b1644c50148a2435abf",
+      "bytes": 9393,
+      "lines": 231,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/inbox.py",
+      "git_blob_sha1": "4c07e4fbd4671e2d9326920868971a2675f32603",
+      "sha256": "21dd230801f0058f68b202e3cc95a685d578d7beaf8b023599d8bf6849be5af8",
+      "bytes": 20680,
+      "lines": 571,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/lifecycle.py",
+      "git_blob_sha1": "40c98fba0de31c722fe7891597431d77c49b021a",
+      "sha256": "d96bd4246b42a382b24d093c35ef0b8b089a6f0119f829b1d256d641c1dc2574",
+      "bytes": 42876,
+      "lines": 1104,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/lifecycle_cmds.py",
+      "git_blob_sha1": "9132561d621f5480a8c7594c1f98a5b7a789552e",
+      "sha256": "de00080284a5a5cdbf1e63ad4011bd99b369b29023b12404e201de168ddcab0b",
+      "bytes": 12067,
+      "lines": 327,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/lock.py",
+      "git_blob_sha1": "292068c66667e48ec038c594c6480ad77869f29a",
+      "sha256": "a6ed5b790a369d71cde2f69853054acc000e34e0bd3cb054cc0d926009e3d530",
+      "bytes": 8017,
+      "lines": 231,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/mcp_core.py",
+      "git_blob_sha1": "0fa33056a08e57c3a6f5d21445e8f841b2ac028b",
+      "sha256": "3e04fbdad28c42f82666b251d5defb805bc139d8eba1accb21fb880a8e1c27e9",
+      "bytes": 32279,
+      "lines": 873,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/mcp_server.py",
+      "git_blob_sha1": "8a2bdb624b42dae66c4617bc895ce8dbd32ef901",
+      "sha256": "6823ae860b5d8348868281e84f51cd90ca23a4a7dc29a3ab96e883bd84d3a126",
+      "bytes": 20067,
+      "lines": 509,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/migrate.py",
+      "git_blob_sha1": "d4a0797e9dfbab384cf01f8ea343860fbe982100",
+      "sha256": "2951ca0a70438b3588017d8fc78f607e545305acdb04e835807f5d58af7724b9",
+      "bytes": 12982,
+      "lines": 328,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/promote.py",
+      "git_blob_sha1": "b2c0042100194801be8aa0382620e5c2dc6c0667",
+      "sha256": "9cb38e1ca51967d6c40a25bc7e49ee6aacb66abfc47873fff74ac1f1898ea775",
+      "bytes": 24808,
+      "lines": 624,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/related.py",
+      "git_blob_sha1": "638d05b5334ca4a795bfc9d4db9a070599911e1b",
+      "sha256": "4870cacae831fdbb8c9d8cdf0780b6997e51526d214c9582732747f09b742f1f",
+      "bytes": 4907,
+      "lines": 114,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/searchindex.py",
+      "git_blob_sha1": "5348febfb631e46be9ce5f8680d9712661b7a904",
+      "sha256": "fb5f2028cf57796ce6d95ad9eb7f96a10b006ad19345b355e7a11c43a34fa862",
+      "bytes": 14736,
+      "lines": 347,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/transcript.py",
+      "git_blob_sha1": "346e1d86fffabf4fe865d8decefd912cf47d5728",
+      "sha256": "90658aac91516d9571350cfdeabe9cc18a465cc133b2aa81625a14d4ec32b518",
+      "bytes": 23498,
+      "lines": 632,
+      "matches_pinned_tree": true
+    },
+    {
+      "path": "breadcrumbs/usage.py",
+      "git_blob_sha1": "fb97e33edda792f9e2551a3ecbe83a09b2993d6e",
+      "sha256": "b5439cdae032f78ab42561b540942fcc9a5faa29c65c00b28379c01f22e26031",
+      "bytes": 14087,
+      "lines": 348,
+      "matches_pinned_tree": true
+    }
+  ],
+  "local_source_note": "Release sdist, not a complete Git checkout. Tests used an audit-only compatibility shim for the excluded root crumb.py. The 21 package modules above were not modified. Missing repository fixtures and environment-sensitive test exclusions are recorded separately."
+}

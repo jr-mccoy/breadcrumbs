@@ -1,0 +1,63 @@
+{
+  "reviewed_commit": "30e41f6a36195faffdc197d0565abc7caf7c78da",
+  "checked_on": "2026-09-26",
+  "scope": "Delivered audit documentation, trackers, evidence, and diagnostic-script syntax; not product-fix verification.",
+  "report_words": 15788,
+  "findings": 26,
+  "work_packages": 23,
+  "all_findings_mapped_to_packages": true,
+  "dependency_graph_acyclic": true,
+  "one_valid_execution_order": [
+    "WP00",
+    "WP01",
+    "WP02",
+    "WP05",
+    "WP13",
+    "WP18",
+    "WP03",
+    "WP04",
+    "WP06",
+    "WP07",
+    "WP09",
+    "WP21",
+    "WP08",
+    "WP10",
+    "WP14",
+    "WP11",
+    "WP12",
+    "WP16",
+    "WP15",
+    "WP17",
+    "WP19",
+    "WP20",
+    "WP22"
+  ],
+  "all_package_statuses": "not_started",
+  "internal_links_checked": 43,
+  "pinned_package_source_line_anchors_checked": 59,
+  "script_ast_checks": [
+    "tools/audit/benchmark_smoke.py",
+    "tools/audit/regression_probes.py",
+    "tools/audit/run_selected_tests.py"
+  ],
+  "json_documents_parsed": 6,
+  "verified_source_modules": 21,
+  "source_package_unchanged": true,
+  "diagnostic_probes": {
+    "total": 19,
+    "observed_defect_signals": 19,
+    "setup_errors": 0
+  },
+  "selected_upstream_tests": {
+    "run": 243,
+    "failures": 0,
+    "errors": 0
+  },
+  "full_upstream_suite_run_locally": false,
+  "remaining_limits": [
+    "External web links are pinned/listed, not an exhaustive live-link-availability audit.",
+    "Source anchor checks validate location bounds; source interpretation is the substantive audit, not this mechanical check.",
+    "Diagnostic cases include controlled faults; native Windows/macOS and OS stress qualification remain future work.",
+    "No product repairs, release, migration, or repository-permission changes were executed."
+  ]
+}

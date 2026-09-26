@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "12d3b5fc0e04",
+ "inputs_hash": "b8114c3b46a5",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -162,6 +162,11 @@
    "dec_20260815_cut-0-1-10-as-the-agent-authorship-release",
    "ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16"
   ],
+  "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record": [
+   "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+  ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
@@ -295,7 +300,7 @@
   "ver_20260923_relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
    "trap_eval-baseline-after-retrieval-change",
-   "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author"
+   "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record"
   ],
   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci": [
    "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed",

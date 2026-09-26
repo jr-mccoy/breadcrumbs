@@ -1,0 +1,1776 @@
+test_a_quoted_hash_is_still_a_value (test_parser.CommentOnlyValueTests.test_a_quoted_hash_is_still_a_value) ... ok
+test_comment_only_value_is_null (test_parser.CommentOnlyValueTests.test_comment_only_value_is_null) ... ok
+test_trailing_comments_still_strip (test_parser.CommentOnlyValueTests.test_trailing_comments_still_strip) ... ok
+test_a_fenced_heading_is_not_a_section (test_parser.FenceAwareSectionsTests.test_a_fenced_heading_is_not_a_section) ... ok
+test_agrees_with_the_other_splitter (test_parser.FenceAwareSectionsTests.test_agrees_with_the_other_splitter) ... ok
+test_content_after_a_fenced_heading_is_not_lost (test_parser.FenceAwareSectionsTests.test_content_after_a_fenced_heading_is_not_lost) ... ok
+test_duplicate_headings_are_merged_not_last_wins (test_parser.FenceAwareSectionsTests.test_duplicate_headings_are_merged_not_last_wins)
+The dict view must not silently drop a body. ... ok
+test_defaults_present_when_flags_absent (test_parser.GlobalFlagPositionTests.test_defaults_present_when_flags_absent) ... ok
+test_global_project_targets_store_from_unrelated_cwd (test_parser.GlobalFlagPositionTests.test_global_project_targets_store_from_unrelated_cwd)
+The real-world bug: from a cwd that is not the project, a global ... Initialized /tmp/tmppegsss8p/.project-memory
+  project:                       tmppegsss8p
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmppegsss8p/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+validate: OK — 9 checks passed, 0 problems.
+ok
+test_json_honored_before_subcommand (test_parser.GlobalFlagPositionTests.test_json_honored_before_subcommand) ... ok
+test_plain_honored_before_subcommand (test_parser.GlobalFlagPositionTests.test_plain_honored_before_subcommand) ... ok
+test_project_honored_after_subcommand (test_parser.GlobalFlagPositionTests.test_project_honored_after_subcommand) ... ok
+test_project_honored_before_nested_subcommand (test_parser.GlobalFlagPositionTests.test_project_honored_before_nested_subcommand) ... ok
+test_project_honored_before_subcommand (test_parser.GlobalFlagPositionTests.test_project_honored_before_subcommand) ... ok
+test_verbose_honored_before_subcommand (test_parser.GlobalFlagPositionTests.test_verbose_honored_before_subcommand) ... ok
+test_inline_comment_stripped_on_unquoted_scalar (test_parser.ParserTests.test_inline_comment_stripped_on_unquoted_scalar) ... ok
+test_no_frontmatter_returns_body_verbatim (test_parser.ParserTests.test_no_frontmatter_returns_body_verbatim) ... ok
+test_quoted_value_with_hash_is_preserved (test_parser.ParserTests.test_quoted_value_with_hash_is_preserved) ... ok
+test_roundtrips_full_schema (test_parser.ParserTests.test_roundtrips_full_schema) ... ok
+test_top_level_indentation_is_malformed (test_parser.ParserTests.test_top_level_indentation_is_malformed) ... ok
+test_unterminated_fence_is_malformed (test_parser.ParserTests.test_unterminated_fence_is_malformed) ... ok
+test_from_file_captures_parse_error (test_parser.RecordModelTests.test_from_file_captures_parse_error) ... ok
+test_sections_split_on_h2 (test_parser.RecordModelTests.test_sections_split_on_h2) ... ok
+test_full_parser_still_offers_every_command (test_parser.StartupCostTests.test_full_parser_still_offers_every_command)
+`only` is an optimisation — the registry stays the complete set. ... ok
+test_only_builds_one_subparser_but_parses_it_identically (test_parser.StartupCostTests.test_only_builds_one_subparser_but_parses_it_identically) ... ok
+test_requested_command_finds_the_subcommand (test_parser.StartupCostTests.test_requested_command_finds_the_subcommand) ... ok
+test_secret_and_poison_patterns_compile_on_first_use (test_parser.StartupCostTests.test_secret_and_poison_patterns_compile_on_first_use)
+~3.5 ms of module body that only `audit`/`scan-secrets` ever need. ... ok
+test_version_output_is_unchanged (test_parser.StartupCostTests.test_version_output_is_unchanged) ... ok
+test_one_bad_heading_does_not_discard_the_rest_of_the_call (test_sections.CaptureSessionSetTests.test_one_bad_heading_does_not_discard_the_rest_of_the_call) ... Initialized /tmp/tmpc6hya3bl/.project-memory
+  project:                       tmpc6hya3bl
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpc6hya3bl/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_warnings_are_on_stderr_not_in_json_stdout (test_sections.CaptureSessionSetTests.test_warnings_are_on_stderr_not_in_json_stdout) ... Initialized /tmp/tmp35nfq227/.project-memory
+  project:                       tmp35nfq227
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp35nfq227/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_case_space_and_punctuation_are_ignored (test_sections.NormalizeSectionsTests.test_case_space_and_punctuation_are_ignored) ... ok
+test_exact_headings_pass_through_unchanged (test_sections.NormalizeSectionsTests.test_exact_headings_pass_through_unchanged) ... ok
+test_normalization_is_idempotent (test_sections.NormalizeSectionsTests.test_normalization_is_idempotent) ... ok
+test_obvious_synonyms_resolve (test_sections.NormalizeSectionsTests.test_obvious_synonyms_resolve) ... ok
+test_parked_content_is_rendered_into_the_body (test_sections.NormalizeSectionsTests.test_parked_content_is_rendered_into_the_body) ... ok
+test_several_unmatched_headings_all_survive (test_sections.NormalizeSectionsTests.test_several_unmatched_headings_all_survive) ... ok
+test_unmatched_heading_is_parked_with_its_original_name (test_sections.NormalizeSectionsTests.test_unmatched_heading_is_parked_with_its_original_name) ... ok
+test_the_mcp_record_tool_parks_instead_of_silently_dropping (test_sections.RecordWriterTests.test_the_mcp_record_tool_parks_instead_of_silently_dropping)
+`render_body` walks the vocabulary, so an unknown heading used to vanish. ... Initialized /tmp/tmp_1sco3ph/.project-memory
+  project:                       tmp_1sco3ph
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp_1sco3ph/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_commit_line_is_titled_by_its_subject_not_its_sha (test_naming.DerivedTitleTests.test_a_commit_line_is_titled_by_its_subject_not_its_sha) ... ok
+test_a_derived_title_is_bounded (test_naming.DerivedTitleTests.test_a_derived_title_is_bounded) ... Initialized /tmp/tmpez8pgdub/.project-memory
+  project:                       tmpez8pgdub
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpez8pgdub/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_session_with_no_title_is_named_from_its_next_action (test_naming.DerivedTitleTests.test_a_session_with_no_title_is_named_from_its_next_action) ... Initialized /tmp/tmpknnuvfoy/.project-memory
+  project:                       tmpknnuvfoy
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpknnuvfoy/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_snapshot_with_nothing_to_derive_from_still_writes (test_naming.DerivedTitleTests.test_a_snapshot_with_nothing_to_derive_from_still_writes)
+The fallback must remain — a machine snapshot may say nothing at all. ... ok
+test_an_explicit_title_is_never_overridden (test_naming.DerivedTitleTests.test_an_explicit_title_is_never_overridden) ... Initialized /tmp/tmpqb_mxu_e/.project-memory
+  project:                       tmpqb_mxu_e
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpqb_mxu_e/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_focus_wins_over_the_next_action (test_naming.DerivedTitleTests.test_focus_wins_over_the_next_action) ... Initialized /tmp/tmp45nxe_t7/.project-memory
+  project:                       tmp45nxe_t7
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp45nxe_t7/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_placeholder_text_never_becomes_a_title (test_naming.DerivedTitleTests.test_placeholder_text_never_becomes_a_title) ... ok
+test_no_status_at_all_is_an_error_that_names_the_vocabulary (test_naming.MarkStatusFlagTests.test_no_status_at_all_is_an_error_that_names_the_vocabulary) ... Initialized /tmp/tmps63doaag/.project-memory
+  project:                       tmps63doaag
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmps63doaag/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_status_flag_is_accepted_like_the_positional (test_naming.MarkStatusFlagTests.test_status_flag_is_accepted_like_the_positional) ... Initialized /tmp/tmp90nzkf7a/.project-memory
+  project:                       tmp90nzkf7a
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp90nzkf7a/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_the_positional_still_works (test_naming.MarkStatusFlagTests.test_the_positional_still_works) ... Initialized /tmp/tmpiy8dk1_y/.project-memory
+  project:                       tmpiy8dk1_y
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpiy8dk1_y/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_two_conflicting_statuses_are_refused (test_naming.MarkStatusFlagTests.test_two_conflicting_statuses_are_refused) ... Initialized /tmp/tmpa4roarxo/.project-memory
+  project:                       tmpa4roarxo
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpa4roarxo/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_retitle_leaves_identity_alone (test_naming.RetitleTests.test_retitle_leaves_identity_alone) ... Initialized /tmp/tmp6y0i9smo/.project-memory
+  project:                       tmp6y0i9smo
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp6y0i9smo/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_retitle_of_an_unknown_id_fails_cleanly (test_naming.RetitleTests.test_retitle_of_an_unknown_id_fails_cleanly) ... Initialized /tmp/tmp9q5phgx2/.project-memory
+  project:                       tmp9q5phgx2
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp9q5phgx2/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_retitle_refuses_an_empty_title (test_naming.RetitleTests.test_retitle_refuses_an_empty_title) ... Initialized /tmp/tmp45xf7gus/.project-memory
+  project:                       tmp45xf7gus
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp45xf7gus/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_retitle_rewrites_the_searchable_title (test_naming.RetitleTests.test_retitle_rewrites_the_searchable_title) ... Initialized /tmp/tmpc24_8mor/.project-memory
+  project:                       tmpc24_8mor
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpc24_8mor/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_durable_records_keep_their_readable_names (test_naming.UniqueSessionIdTests.test_durable_records_keep_their_readable_names) ... Initialized /tmp/tmpbjf7o2rx/.project-memory
+  project:                       tmpbjf7o2rx
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpbjf7o2rx/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_session_names_stay_inside_the_slug_budget (test_naming.UniqueSessionIdTests.test_session_names_stay_inside_the_slug_budget) ... Initialized /tmp/tmpm7bwn_g5/.project-memory
+  project:                       tmpm7bwn_g5
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpm7bwn_g5/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_the_suffix_does_not_depend_on_what_this_checkout_can_see (test_naming.UniqueSessionIdTests.test_the_suffix_does_not_depend_on_what_this_checkout_can_see)
+The ordinal did — which is why two checkouts produced the same name. ... ok
+test_two_sessions_with_the_same_title_get_different_ids (test_naming.UniqueSessionIdTests.test_two_sessions_with_the_same_title_get_different_ids) ... Initialized /tmp/tmpk4cm1dxk/.project-memory
+  project:                       tmpk4cm1dxk
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpk4cm1dxk/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_cli_write_fails_with_exit_1_and_names_the_pid (test_lock.CallerTests.test_a_cli_write_fails_with_exit_1_and_names_the_pid) ... Initialized /tmp/tmp2i2y3lrq/.project-memory
+  project:                       tmp2i2y3lrq
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp2i2y3lrq/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_read_command_does_not_wait (test_lock.CallerTests.test_a_read_command_does_not_wait) ... Initialized /tmp/tmp0ehw8vnp/.project-memory
+  project:                       tmp0ehw8vnp
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp0ehw8vnp/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_writing_hook_prints_empty_json_fast (test_lock.CallerTests.test_a_writing_hook_prints_empty_json_fast) ... Initialized /tmp/tmpnfso_o2o/.project-memory
+  project:                       tmpnfso_o2o
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpnfso_o2o/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_an_mcp_writer_returns_a_refusal (test_lock.CallerTests.test_an_mcp_writer_returns_a_refusal) ... Initialized /tmp/tmp3fson3ec/.project-memory
+  project:                       tmp3fson3ec
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp3fson3ec/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_heartbeat_keeps_a_long_writer_s_lock (test_lock.LockFixTests.test_a_heartbeat_keeps_a_long_writer_s_lock) ... Initialized /tmp/tmpzvd6bd7o/.project-memory
+  project:                       tmpzvd6bd7o
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpzvd6bd7o/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_thread_timeout_does_not_blame_this_process (test_lock.LockFixTests.test_a_thread_timeout_does_not_blame_this_process) ... Initialized /tmp/tmpabn8xuyv/.project-memory
+  project:                       tmpabn8xuyv
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpabn8xuyv/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_breaking_a_stale_lock_never_removes_a_fresh_one (test_lock.LockFixTests.test_breaking_a_stale_lock_never_removes_a_fresh_one) ... Initialized /tmp/tmp_e_hn6ng/.project-memory
+  project:                       tmp_e_hn6ng
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp_e_hn6ng/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_init_force_keeps_its_own_lock (test_lock.LockFixTests.test_init_force_keeps_its_own_lock) ... Initialized /tmp/tmp3nex23ck/.project-memory
+  project:                       tmp3nex23ck
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp3nex23ck/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_listings_and_resume_do_not_wait (test_lock.LockFixTests.test_listings_and_resume_do_not_wait) ... Initialized /tmp/tmpn3uv99i9/.project-memory
+  project:                       tmpn3uv99i9
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpn3uv99i9/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_only_one_waiter_breaks_at_a_time (test_lock.LockFixTests.test_only_one_waiter_breaks_at_a_time) ... Initialized /tmp/tmplo5gbpmw/.project-memory
+  project:                       tmplo5gbpmw
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmplo5gbpmw/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_live_foreign_lock_times_out (test_lock.StoreLockTests.test_a_live_foreign_lock_times_out) ... Initialized /tmp/tmpbprbc78h/.project-memory
+  project:                       tmpbprbc78h
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpbprbc78h/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_lock_whose_process_is_gone_is_broken (test_lock.StoreLockTests.test_a_lock_whose_process_is_gone_is_broken) ... Initialized /tmp/tmp_ma8qqc5/.project-memory
+  project:                       tmp_ma8qqc5
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp_ma8qqc5/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_stale_lock_is_broken (test_lock.StoreLockTests.test_a_stale_lock_is_broken) ... Initialized /tmp/tmp6i3vabm_/.project-memory
+  project:                       tmp6i3vabm_
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp6i3vabm_/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_it_is_reentrant_in_one_thread (test_lock.StoreLockTests.test_it_is_reentrant_in_one_thread) ... Initialized /tmp/tmpdsrpoyp0/.project-memory
+  project:                       tmpdsrpoyp0
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpdsrpoyp0/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_the_lock_file_exists_only_while_held (test_lock.StoreLockTests.test_the_lock_file_exists_only_while_held) ... Initialized /tmp/tmpjjpjyn4i/.project-memory
+  project:                       tmpjjpjyn4i
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpjjpjyn4i/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_two_threads_writing_jots_produce_two_files (test_lock.StoreLockTests.test_two_threads_writing_jots_produce_two_files) ... Initialized /tmp/tmp85vr572s/.project-memory
+  project:                       tmp85vr572s
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp85vr572s/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+Initialized /tmp/tmpo327x2fv/.project-memory
+  project:                       tmpo327x2fv
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpo327x2fv/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+test_indexed_search_returns_exactly_the_full_scan (test_searchindex.SearchIndexEquivalenceTests.test_indexed_search_returns_exactly_the_full_scan) ... ok
+test_the_index_is_actually_used (test_searchindex.SearchIndexEquivalenceTests.test_the_index_is_actually_used) ... ok
+test_the_index_is_built_for_a_large_store (test_searchindex.SearchIndexEquivalenceTests.test_the_index_is_built_for_a_large_store) ... ok
+test_a_corrupt_index_falls_back (test_searchindex.SearchIndexFallbackTests.test_a_corrupt_index_falls_back) ... Initialized /tmp/tmpbk2o7k93/.project-memory
+  project:                       tmpbk2o7k93
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpbk2o7k93/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_small_store_builds_no_index (test_searchindex.SearchIndexFallbackTests.test_a_small_store_builds_no_index) ... Initialized /tmp/tmpea4ya796/.project-memory
+  project:                       tmpea4ya796
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpea4ya796/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_stale_index_is_never_used (test_searchindex.SearchIndexFallbackTests.test_a_stale_index_is_never_used) ... Initialized /tmp/tmp28gscdzq/.project-memory
+  project:                       tmp28gscdzq
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp28gscdzq/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_doctor_reports_the_index (test_searchindex.SearchIndexFallbackTests.test_doctor_reports_the_index) ... Initialized /tmp/tmpdahohmmt/.project-memory
+  project:                       tmpdahohmmt
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpdahohmmt/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_forced_small_index_still_matches_the_full_scan (test_searchindex.SearchIndexFallbackTests.test_forced_small_index_still_matches_the_full_scan) ... Initialized /tmp/tmpr1v4z536/.project-memory
+  project:                       tmpr1v4z536
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpr1v4z536/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_reindex_search_index_flag_forces_a_build (test_searchindex.SearchIndexFallbackTests.test_reindex_search_index_flag_forces_a_build) ... Initialized /tmp/tmpv4imt7wn/.project-memory
+  project:                       tmpv4imt7wn
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpv4imt7wn/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+Reindexed projections: /tmp/tmpv4imt7wn/.project-memory/generated/resume-packet.md
+Search index: built, 40 record(s)
+ok
+test_the_index_lives_under_the_ignored_index_dir (test_searchindex.SearchIndexFallbackTests.test_the_index_lives_under_the_ignored_index_dir) ... Initialized /tmp/tmpniekj8r1/.project-memory
+  project:                       tmpniekj8r1
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpniekj8r1/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_malformed_line_is_an_audit_warning (test_aliases.AliasSearchTests.test_a_malformed_line_is_an_audit_warning) ... Initialized /tmp/tmpqujsv8d0/.project-memory
+  project:                       tmpqujsv8d0
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpqujsv8d0/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_an_alias_makes_the_synonym_match (test_aliases.AliasSearchTests.test_an_alias_makes_the_synonym_match) ... Initialized /tmp/tmpl7a6nzfe/.project-memory
+  project:                       tmpl7a6nzfe
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpl7a6nzfe/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_editing_aliases_makes_projections_stale (test_aliases.AliasSearchTests.test_editing_aliases_makes_projections_stale) ... Initialized /tmp/tmp2e8dic6j/.project-memory
+  project:                       tmp2e8dic6j
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp2e8dic6j/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_explain_shows_the_query_stems (test_aliases.AliasSearchTests.test_explain_shows_the_query_stems) ... Initialized /tmp/tmpcotfixc9/.project-memory
+  project:                       tmpcotfixc9
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpcotfixc9/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_guard_sees_the_alias (test_aliases.AliasSearchTests.test_guard_sees_the_alias) ... Initialized /tmp/tmphwjpxb9d/.project-memory
+  project:                       tmphwjpxb9d
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmphwjpxb9d/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+Reindexed projections: /tmp/tmphwjpxb9d/.project-memory/generated/resume-packet.md
+ok
+test_removing_the_file_turns_aliases_off (test_aliases.AliasSearchTests.test_removing_the_file_turns_aliases_off) ... Initialized /tmp/tmpm7_dlbb6/.project-memory
+  project:                       tmpm7_dlbb6
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpm7_dlbb6/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_one_word_line_is_a_problem_not_a_crash (test_aliases.ParseAliasesTests.test_a_one_word_line_is_a_problem_not_a_crash) ... ok
+test_an_earlier_group_keeps_a_word (test_aliases.ParseAliasesTests.test_an_earlier_group_keeps_a_word) ... ok
+test_chains_resolve_so_stemming_stays_idempotent (test_aliases.ParseAliasesTests.test_chains_resolve_so_stemming_stays_idempotent) ... ok
+test_comments_and_blank_lines_are_ignored (test_aliases.ParseAliasesTests.test_comments_and_blank_lines_are_ignored) ... ok
+test_first_word_is_canonical (test_aliases.ParseAliasesTests.test_first_word_is_canonical) ... ok
+test_a_branch_with_no_handoff_falls_back_and_says_so (test_handoffs.BranchHandoffTests.test_a_branch_with_no_handoff_falls_back_and_says_so) ... Initialized /tmp/tmprf0qxnqs/.project-memory
+  project:                       tmprf0qxnqs
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmprf0qxnqs/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_a_feature_branch_capture_writes_its_own_handoff (test_handoffs.BranchHandoffTests.test_a_feature_branch_capture_writes_its_own_handoff) ... Initialized /tmp/tmphrbz3zfb/.project-memory
+  project:                       tmphrbz3zfb
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmphrbz3zfb/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_a_schema3_store_keeps_one_handoff (test_handoffs.BranchHandoffTests.test_a_schema3_store_keeps_one_handoff) ... Initialized /tmp/tmp02x3b5s2/.project-memory
+  project:                       tmp02x3b5s2
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp02x3b5s2/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_origin_head_names_the_default_branch (test_handoffs.BranchHandoffTests.test_origin_head_names_the_default_branch) ... Initialized /tmp/tmpwb7cqky3/.project-memory
+  project:                       tmpwb7cqky3
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpwb7cqky3/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_resume_reads_the_branch_handoff_and_says_so (test_handoffs.BranchHandoffTests.test_resume_reads_the_branch_handoff_and_says_so) ... Initialized /tmp/tmpim3q9ubd/.project-memory
+  project:                       tmpim3q9ubd
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpim3q9ubd/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_the_first_branch_capture_carries_the_focus_over (test_handoffs.BranchHandoffTests.test_the_first_branch_capture_carries_the_focus_over) ... Initialized /tmp/tmpd6j4wwgt/.project-memory
+  project:                       tmpd6j4wwgt
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpd6j4wwgt/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_without_git_everything_is_handoff_md (test_handoffs.BranchHandoffTests.test_without_git_everything_is_handoff_md) ... Initialized /tmp/tmp2gsikuvk/.project-memory
+  project:                       tmp2gsikuvk
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp2gsikuvk/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_first_branch_handoff_does_not_inherit_the_next_action (test_handoffs.HandoffFixTests.test_a_first_branch_handoff_does_not_inherit_the_next_action) ... Initialized /tmp/tmpqxvazrgd/.project-memory
+  project:                       tmpqxvazrgd
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpqxvazrgd/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_branches_that_slug_alike_get_different_files (test_handoffs.HandoffFixTests.test_branches_that_slug_alike_get_different_files) ... ok
+test_the_mcp_handoff_resource_reads_the_branch_handoff (test_handoffs.HandoffFixTests.test_the_mcp_handoff_resource_reads_the_branch_handoff) ... Initialized /tmp/tmp0potnusy/.project-memory
+  project:                       tmp0potnusy
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp0potnusy/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_init_creates_the_directory (test_handoffs.MigrationTests.test_init_creates_the_directory) ... Initialized /tmp/tmpc5ns3u7e/.project-memory
+  project:                       tmpc5ns3u7e
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpc5ns3u7e/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_step_4_adds_the_directory_and_is_idempotent (test_handoffs.MigrationTests.test_step_4_adds_the_directory_and_is_idempotent) ... Initialized /tmp/tmp8vrg6bcn/.project-memory
+  project:                       tmp8vrg6bcn
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp8vrg6bcn/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_branch_that_only_exists_on_origin_is_live (test_handoffs.PruneTests.test_a_branch_that_only_exists_on_origin_is_live) ... Initialized /tmp/tmpt5ty2h2r/.project-memory
+  project:                       tmpt5ty2h2r
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpt5ty2h2r/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_prune_removes_an_old_orphan_only (test_handoffs.PruneTests.test_prune_removes_an_old_orphan_only) ... Initialized /tmp/tmpi336u7u0/.project-memory
+  project:                       tmpi336u7u0
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpi336u7u0/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_another_branchs_record_is_not_a_duplicate_here (test_scope.ScopeFixTests.test_another_branchs_record_is_not_a_duplicate_here) ... Initialized /tmp/tmp15bujlu1/.project-memory
+  project:                       tmp15bujlu1
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp15bujlu1/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_mcp_rejects_an_unknown_scope (test_scope.ScopeFixTests.test_mcp_rejects_an_unknown_scope) ... Initialized /tmp/tmpfh00815a/.project-memory
+  project:                       tmpfh00815a
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpfh00815a/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_the_prompt_hook_leaves_out_another_branchs_records (test_scope.ScopeFixTests.test_the_prompt_hook_leaves_out_another_branchs_records) ... Initialized /tmp/tmp6he9iall/.project-memory
+  project:                       tmp6he9iall
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp6he9iall/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_a_branch_scoped_jot_leaves_the_packet_on_another_branch (test_scope.ScopeTests.test_a_branch_scoped_jot_leaves_the_packet_on_another_branch) ... Initialized /tmp/tmp6lrte1ra/.project-memory
+  project:                       tmp6lrte1ra
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp6lrte1ra/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_a_branch_scoped_verification_is_live_only_on_its_branch (test_scope.ScopeTests.test_a_branch_scoped_verification_is_live_only_on_its_branch) ... Initialized /tmp/tmpkwkqcr5q/.project-memory
+  project:                       tmpkwkqcr5q
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpkwkqcr5q/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_a_project_jot_stays_everywhere (test_scope.ScopeTests.test_a_project_jot_stays_everywhere) ... Initialized /tmp/tmptlayc034/.project-memory
+  project:                       tmptlayc034
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmptlayc034/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_a_project_verification_is_live_on_every_branch (test_scope.ScopeTests.test_a_project_verification_is_live_on_every_branch) ... Initialized /tmp/tmp5hnfqp7t/.project-memory
+  project:                       tmp5hnfqp7t
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp5hnfqp7t/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_hook_written_jots_default_to_branch_scope (test_scope.ScopeTests.test_hook_written_jots_default_to_branch_scope) ... Initialized /tmp/tmpc7q_hekj/.project-memory
+  project:                       tmpc7q_hekj
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpc7q_hekj/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_mcp_writers_take_scope (test_scope.ScopeTests.test_mcp_writers_take_scope) ... Initialized /tmp/tmplc9xnssh/.project-memory
+  project:                       tmplc9xnssh
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmplc9xnssh/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+ok
+test_without_git_nothing_is_elsewhere (test_scope.ScopeTests.test_without_git_nothing_is_elsewhere) ... ok
+test_drop_retires_without_deleting (test_inbox.DropAndPruneTests.test_drop_retires_without_deleting) ... ok
+test_prune_command (test_inbox.DropAndPruneTests.test_prune_command) ... ok
+test_prune_deletes_only_old_retired_or_expired_jots (test_inbox.DropAndPruneTests.test_prune_deletes_only_old_retired_or_expired_jots) ... ok
+test_an_expired_jot_drops_out_of_the_live_views (test_inbox.ExpiryTests.test_an_expired_jot_drops_out_of_the_live_views) ... ok
+test_an_unparseable_ttl_falls_back_to_the_default (test_inbox.ExpiryTests.test_an_unparseable_ttl_falls_back_to_the_default) ... ok
+test_the_ttl_is_configurable_per_store (test_inbox.ExpiryTests.test_the_ttl_is_configurable_per_store) ... ok
+test_empty_inbox_says_so (test_inbox.ListCommandTests.test_empty_inbox_says_so) ... ok
+test_json_envelope (test_inbox.ListCommandTests.test_json_envelope) ... ok
+test_listing_shows_text_source_and_flags (test_inbox.ListCommandTests.test_listing_shows_text_source_and_flags) ... ok
+test_needs_a_store (test_inbox.ListCommandTests.test_needs_a_store) ... CRUMB-ERROR: crumb inbox: no .project-memory/ found at /tmp/tmpj8k7ehya. Run `crumb init` first.
+CRUMB-ERROR: crumb jot: no .project-memory/ found at /tmp/tmpj8k7ehya. Run `crumb init` first.
+ok
+test_the_audit_trail_comment_never_leaks_into_the_text (test_inbox.ListCommandTests.test_the_audit_trail_comment_never_leaks_into_the_text)
+`set_record_status` appends an HTML comment; a jot's body is printed raw. ... ok
+test_resource_lists_both_inboxes (test_inbox.McpTests.test_resource_lists_both_inboxes) ... ok
+test_resource_on_an_empty_inbox (test_inbox.McpTests.test_resource_on_an_empty_inbox) ... ok
+test_tool_jot_and_promote_round_trip (test_inbox.McpTests.test_tool_jot_and_promote_round_trip) ... ok
+test_a_local_private_jot_validates_where_a_committed_one_would_not (test_inbox.PrivacyTests.test_a_local_private_jot_validates_where_a_committed_one_would_not) ... ok
+test_a_repo_safe_record_under_private_is_a_finding (test_inbox.PrivacyTests.test_a_repo_safe_record_under_private_is_a_finding)
+The inverse rule: `private/` is where nothing is committed. ... ok
+test_local_jots_land_under_private_and_are_gitignored (test_inbox.PrivacyTests.test_local_jots_land_under_private_and_are_gitignored) ... ok
+test_the_committed_packet_never_lists_a_private_jot (test_inbox.PrivacyTests.test_the_committed_packet_never_lists_a_private_jot)
+Otherwise the packet differs between checkouts while its hash agrees. ... ok
+test_a_promoted_jot_cannot_be_promoted_twice (test_inbox.PromoteTests.test_a_promoted_jot_cannot_be_promoted_twice) ... CRUMB-ERROR: crumb inbox: jot_20260926_an-idea-worth-keeping-ead4 is already superseded; only an active jot promotes
+ok
+test_an_unknown_jot_is_refused (test_inbox.PromoteTests.test_an_unknown_jot_is_refused) ... CRUMB-ERROR: crumb inbox: no jot with id 'jot_nope'
+ok
+test_an_unknown_target_is_refused (test_inbox.PromoteTests.test_an_unknown_target_is_refused) ... ok
+test_promote_to_a_decision_carries_evidence_and_supersedes_the_jot (test_inbox.PromoteTests.test_promote_to_a_decision_carries_evidence_and_supersedes_the_jot) ... ok
+test_promote_to_a_trap (test_inbox.PromoteTests.test_promote_to_a_trap) ... ok
+test_promote_to_a_verification (test_inbox.PromoteTests.test_promote_to_a_verification) ... ok
+test_promoting_a_private_jot_publishes_the_content_not_the_file (test_inbox.PromoteTests.test_promoting_a_private_jot_publishes_the_content_not_the_file) ... ok
+test_promotion_obeys_the_evidence_rule (test_inbox.PromoteTests.test_promotion_obeys_the_evidence_rule)
+A jot is a shortcut into memory, not around its contract. ... CRUMB-ERROR: crumb inbox: decision rejected by validate: decision has no evidence and confidence is not 'low' — pass --evidence or --confidence low
+ok
+test_fast_drops_the_section (test_inbox.RetrievalTests.test_fast_drops_the_section) ... ok
+test_guard_never_rests_on_a_jot (test_inbox.RetrievalTests.test_guard_never_rests_on_a_jot)
+A jot naming the file being edited must not raise a verdict. ... ok
+test_it_is_trimmed_before_the_durable_sections (test_inbox.RetrievalTests.test_it_is_trimmed_before_the_durable_sections)
+At no budget is a decision dropped while a jot is still in the packet. ... ok
+test_search_finds_a_jot (test_inbox.RetrievalTests.test_search_finds_a_jot) ... ok
+test_the_packet_section_appears_only_when_there_is_something_in_it (test_inbox.RetrievalTests.test_the_packet_section_appears_only_when_there_is_something_in_it) ... ok
+test_the_section_is_capped (test_inbox.RetrievalTests.test_the_section_is_capped) ... ok
+test_a_jot_is_valid_without_evidence (test_inbox.WriteTests.test_a_jot_is_valid_without_evidence)
+The whole point: no evidence, no --confidence low, still a valid record. ... ok
+test_empty_text_is_refused (test_inbox.WriteTests.test_empty_text_is_refused) ... CRUMB-ERROR: crumb jot: a jot needs some text
+ok
+test_files_become_file_evidence (test_inbox.WriteTests.test_files_become_file_evidence) ... ok
+test_it_carries_a_ttl_and_a_source (test_inbox.WriteTests.test_it_carries_a_ttl_and_a_source) ... ok
+test_long_text_is_truncated_not_refused (test_inbox.WriteTests.test_long_text_is_truncated_not_refused) ... ok
+test_two_jots_with_one_text_get_distinct_files (test_inbox.WriteTests.test_two_jots_with_one_text_get_distinct_files) ... ok
+test_whitespace_is_flattened (test_inbox.WriteTests.test_whitespace_is_flattened) ... ok
+test_clusters_are_listed (test_lifecycle.ConsolidateTests.test_clusters_are_listed) ... Initialized /tmp/tmpd4osvzqh/.project-memory
+  project:                       tmpd4osvzqh
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpd4osvzqh/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_merge_writes_one_record_and_supersedes_the_sources (test_lifecycle.ConsolidateTests.test_merge_writes_one_record_and_supersedes_the_sources) ... Initialized /tmp/tmpuxi5tjki/.project-memory
+  project:                       tmpuxi5tjki
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpuxi5tjki/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_mixed_types_refuse (test_lifecycle.ConsolidateTests.test_mixed_types_refuse) ... Initialized /tmp/tmppsuv30t9/.project-memory
+  project:                       tmppsuv30t9
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmppsuv30t9/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_sessions_are_never_merged (test_lifecycle.ConsolidateTests.test_sessions_are_never_merged) ... Initialized /tmp/tmptxfkf96o/.project-memory
+  project:                       tmptxfkf96o
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmptxfkf96o/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_decision_written_before_the_attempt_is_not_flagged (test_lifecycle.ContradictionTests.test_a_decision_written_before_the_attempt_is_not_flagged) ... Initialized /tmp/tmpw5fzwla3/.project-memory
+  project:                       tmpw5fzwla3
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpw5fzwla3/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_later_decision_redoing_a_do_not_retry_attempt_is_flagged (test_lifecycle.ContradictionTests.test_a_later_decision_redoing_a_do_not_retry_attempt_is_flagged) ... Initialized /tmp/tmpvklfclre/.project-memory
+  project:                       tmpvklfclre
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpvklfclre/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_retired_attempt_is_not_flagged (test_lifecycle.ContradictionTests.test_a_retired_attempt_is_not_flagged) ... Initialized /tmp/tmp79lc3n52/.project-memory
+  project:                       tmp79lc3n52
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp79lc3n52/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_overlapping_decisions_close_together_are_not (test_lifecycle.ContradictionTests.test_overlapping_decisions_close_together_are_not) ... Initialized /tmp/tmpzzfbsa8s/.project-memory
+  project:                       tmpzzfbsa8s
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpzzfbsa8s/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_overlapping_decisions_far_apart_are_flagged (test_lifecycle.ContradictionTests.test_overlapping_decisions_far_apart_are_flagged) ... Initialized /tmp/tmpigsdfi3_/.project-memory
+  project:                       tmpigsdfi3_
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpigsdfi3_/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_the_fixtures_hold_no_contradictions (test_lifecycle.ContradictionTests.test_the_fixtures_hold_no_contradictions) ... ok
+test_the_projection_is_written_at_reindex (test_lifecycle.ContradictionTests.test_the_projection_is_written_at_reindex) ... Initialized /tmp/tmpep933tmq/.project-memory
+  project:                       tmpep933tmq
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpep933tmq/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+Reindexed projections: /tmp/tmpep933tmq/.project-memory/generated/resume-packet.md
+ok
+test_a_record_citing_a_deleted_file_warns (test_lifecycle.EvidenceStalenessTests.test_a_record_citing_a_deleted_file_warns) ... Initialized /tmp/tmpkwpbzmg5/.project-memory
+  project:                       tmpkwpbzmg5
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpkwpbzmg5/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_the_packet_caps_the_warnings (test_lifecycle.EvidenceStalenessTests.test_the_packet_caps_the_warnings) ... Initialized /tmp/tmp0pmem_a_/.project-memory
+  project:                       tmp0pmem_a_
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp0pmem_a_/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_urls_globs_and_absolute_paths_are_not_checked (test_lifecycle.EvidenceStalenessTests.test_urls_globs_and_absolute_paths_are_not_checked) ... ok
+test_a_reverified_subject_is_a_duplicate_until_superseded (test_lifecycle.NearDuplicateTests.test_a_reverified_subject_is_a_duplicate_until_superseded) ... Initialized /tmp/tmpgyxbiuam/.project-memory
+  project:                       tmpgyxbiuam
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpgyxbiuam/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_allow_duplicate_writes_both (test_lifecycle.NearDuplicateTests.test_allow_duplicate_writes_both) ... Initialized /tmp/tmpvbo8k9wb/.project-memory
+  project:                       tmpvbo8k9wb
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpvbo8k9wb/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_audit_lists_a_planted_pair (test_lifecycle.NearDuplicateTests.test_audit_lists_a_planted_pair) ... Initialized /tmp/tmp7mw29l7a/.project-memory
+  project:                       tmp7mw29l7a
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp7mw29l7a/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_different_topics_are_not_refused (test_lifecycle.NearDuplicateTests.test_different_topics_are_not_refused) ... Initialized /tmp/tmp20l2v8kr/.project-memory
+  project:                       tmp20l2v8kr
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp20l2v8kr/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_notes_and_jots_are_gated (test_lifecycle.NearDuplicateTests.test_notes_and_jots_are_gated) ... Initialized /tmp/tmpaj9ngla8/.project-memory
+  project:                       tmpaj9ngla8
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpaj9ngla8/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_supersedes_must_name_a_live_record_of_the_same_type (test_lifecycle.NearDuplicateTests.test_supersedes_must_name_a_live_record_of_the_same_type) ... Initialized /tmp/tmpj6mqq_4i/.project-memory
+  project:                       tmpj6mqq_4i
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpj6mqq_4i/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_supersedes_writes_and_retires_the_old_one (test_lifecycle.NearDuplicateTests.test_supersedes_writes_and_retires_the_old_one) ... Initialized /tmp/tmpnyugtcbr/.project-memory
+  project:                       tmpnyugtcbr
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpnyugtcbr/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_the_fixtures_hold_no_near_duplicates (test_lifecycle.NearDuplicateTests.test_the_fixtures_hold_no_near_duplicates) ... ok
+test_the_mcp_writers_return_a_structured_refusal (test_lifecycle.NearDuplicateTests.test_the_mcp_writers_return_a_structured_refusal) ... Initialized /tmp/tmpe3wrblxf/.project-memory
+  project:                       tmpe3wrblxf
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpe3wrblxf/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_the_same_decision_twice_is_refused_with_exit_3 (test_lifecycle.NearDuplicateTests.test_the_same_decision_twice_is_refused_with_exit_3) ... Initialized /tmp/tmp__36qqym/.project-memory
+  project:                       tmp__36qqym
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp__36qqym/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_failing_command_records_open (test_lifecycle.RecheckTests.test_a_failing_command_records_open) ... Initialized /tmp/tmplx3c8i6m/.project-memory
+  project:                       tmplx3c8i6m
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmplx3c8i6m/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_passing_command_records_fixed_and_supersedes (test_lifecycle.RecheckTests.test_a_passing_command_records_fixed_and_supersedes) ... Initialized /tmp/tmpo8finzyp/.project-memory
+  project:                       tmpo8finzyp
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpo8finzyp/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_status_is_still_required_for_a_plain_verify (test_lifecycle.RecheckTests.test_a_status_is_still_required_for_a_plain_verify) ... Initialized /tmp/tmpjgq_q1a6/.project-memory
+  project:                       tmpjgq_q1a6
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpjgq_q1a6/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_all_takes_every_verification_with_a_command (test_lifecycle.RecheckTests.test_all_takes_every_verification_with_a_command) ... Initialized /tmp/tmpg2glj1qg/.project-memory
+  project:                       tmpg2glj1qg
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpg2glj1qg/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_without_yes_and_without_a_terminal_nothing_runs (test_lifecycle.RecheckTests.test_without_yes_and_without_a_terminal_nothing_runs) ... Initialized /tmp/tmpqtt2wm91/.project-memory
+  project:                       tmpqtt2wm91
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpqtt2wm91/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_bad_date_is_usage_error (test_lifecycle.RollupTests.test_a_bad_date_is_usage_error) ... Initialized /tmp/tmpsz9jl08a/.project-memory
+  project:                       tmpsz9jl08a
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpsz9jl08a/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_dry_run_deletes_nothing (test_lifecycle.RollupTests.test_dry_run_deletes_nothing) ... Initialized /tmp/tmpepnvkm76/.project-memory
+  project:                       tmpepnvkm76
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpepnvkm76/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_snapshots_roll_into_one_record (test_lifecycle.RollupTests.test_snapshots_roll_into_one_record) ... Initialized /tmp/tmpmlb6kx_z/.project-memory
+  project:                       tmpmlb6kx_z
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpmlb6kx_z/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_ten_snapshots_give_ten_supersedes (test_lifecycle.RollupTests.test_ten_snapshots_give_ten_supersedes) ... Initialized /tmp/tmppercv15l/.project-memory
+  project:                       tmppercv15l
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmppercv15l/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_the_rollup_does_not_become_the_newest_session (test_lifecycle.RollupTests.test_the_rollup_does_not_become_the_newest_session) ... Initialized /tmp/tmp6s43fpyd/.project-memory
+  project:                       tmp6s43fpyd
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp6s43fpyd/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_bad_supersedes_is_usage_error_on_every_writer (test_lifecycle.SupersedeGuardTests.test_a_bad_supersedes_is_usage_error_on_every_writer) ... Initialized /tmp/tmps8ck2obo/.project-memory
+  project:                       tmps8ck2obo
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmps8ck2obo/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_an_already_superseded_verification_cannot_be_superseded_again (test_lifecycle.SupersedeGuardTests.test_an_already_superseded_verification_cannot_be_superseded_again) ... Initialized /tmp/tmphjzx4255/.project-memory
+  project:                       tmphjzx4255
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmphjzx4255/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_recheck_of_a_retired_verification_names_the_reason (test_lifecycle.SupersedeGuardTests.test_recheck_of_a_retired_verification_names_the_reason) ... Initialized /tmp/tmprme4igg6/.project-memory
+  project:                       tmprme4igg6
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmprme4igg6/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_traps_stale_uses_the_store_ttl (test_lifecycle.SupersedeGuardTests.test_traps_stale_uses_the_store_ttl) ... Initialized /tmp/tmpesuck840/.project-memory
+  project:                       tmpesuck840
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpesuck840/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_current_md_nobody_touched_asks_about_the_focus (test_lifecycle.TtlTests.test_a_current_md_nobody_touched_asks_about_the_focus) ... Initialized /tmp/tmp1mci2b9l/.project-memory
+  project:                       tmp1mci2b9l
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp1mci2b9l/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_settled_verification_expires_and_an_actionable_one_does_not (test_lifecycle.TtlTests.test_a_settled_verification_expires_and_an_actionable_one_does_not) ... Initialized /tmp/tmpfcvffz8l/.project-memory
+  project:                       tmpfcvffz8l
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpfcvffz8l/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_an_expired_record_goes_to_guard_history (test_lifecycle.TtlTests.test_an_expired_record_goes_to_guard_history) ... Initialized /tmp/tmpzkspswol/.project-memory
+  project:                       tmpzkspswol
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpzkspswol/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_an_expired_verification_leaves_the_packet_and_is_listed (test_lifecycle.TtlTests.test_an_expired_verification_leaves_the_packet_and_is_listed) ... Initialized /tmp/tmpoocy5lul/.project-memory
+  project:                       tmpoocy5lul
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpoocy5lul/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_an_old_actionable_verification_asks_for_a_recheck (test_lifecycle.TtlTests.test_an_old_actionable_verification_asks_for_a_recheck) ... Initialized /tmp/tmpr1kprjav/.project-memory
+  project:                       tmpr1kprjav
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpr1kprjav/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_an_unconfirmed_trap_asks_for_a_confirmation (test_lifecycle.TtlTests.test_an_unconfirmed_trap_asks_for_a_confirmation) ... Initialized /tmp/tmp3k60v3do/.project-memory
+  project:                       tmp3k60v3do
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp3k60v3do/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_decisions_never_expire_on_their_own (test_lifecycle.TtlTests.test_decisions_never_expire_on_their_own) ... Initialized /tmp/tmp7psc4shs/.project-memory
+  project:                       tmp7psc4shs
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmp7psc4shs/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_manifest_overrides_the_lifespan (test_lifecycle.TtlTests.test_manifest_overrides_the_lifespan) ... Initialized /tmp/tmpbifxn7no/.project-memory
+  project:                       tmpbifxn7no
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmpbifxn7no/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_questions_aging (test_lifecycle.TtlTests.test_questions_aging) ... Initialized /tmp/tmplma6a79q/.project-memory
+  project:                       tmplma6a79q
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmplma6a79q/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_the_jot_ttl_keeps_its_old_key (test_lifecycle.TtlTests.test_the_jot_ttl_keeps_its_old_key) ... Initialized /tmp/tmptbibmwth/.project-memory
+  project:                       tmptbibmwth
+  schema_version:                4
+  session_tracking:              full
+  commit_generated_projections:  True
+  .gitignore:                    /tmp/tmptbibmwth/.gitignore
+
+note: .project-memory/ is set up, but no agent integration was installed.
+      The store is only used if your agent is told to use it. Wire it up with
+      `crumb init --with-adapter --with-mcp` (and `--with-hooks`), or check
+      status anytime with `crumb doctor`.
+
+Notice: no git repo detected; git-derived record fields will use sentinels branch='(no-git)', commit='(no-git)', dirty_files=[]
+ok
+test_a_young_record_is_not_flagged (test_usage.AuditTests.test_a_young_record_is_not_flagged) ... ok
+test_finding_fires_for_an_old_untouched_record (test_usage.AuditTests.test_finding_fires_for_an_old_untouched_record) ... ok
+test_no_finding_without_history (test_usage.AuditTests.test_no_finding_without_history)
+A fresh clone has no history, so 'never surfaced' is true of everything. ... ok
+test_a_write_alone_records_nothing (test_usage.CallSiteTests.test_a_write_alone_records_nothing)
+The reindex every mutation triggers builds a packet. That must not count. ... ok
+test_guard_records_its_matches (test_usage.CallSiteTests.test_guard_records_its_matches) ... ok
+test_resume_records_the_ids_it_printed (test_usage.CallSiteTests.test_resume_records_the_ids_it_printed) ... ok
+test_search_records_nothing (test_usage.CallSiteTests.test_search_records_nothing) ... ok
+test_session_start_hook_records_the_packet (test_usage.CallSiteTests.test_session_start_hook_records_the_packet) ... ok
+test_a_promoted_record_never_decays (test_usage.DecayTests.test_a_promoted_record_never_decays) ... ok
+test_a_shorter_window_and_json (test_usage.DecayTests.test_a_shorter_window_and_json) ... ok
+test_an_old_file_falls_back_to_its_oldest_surfacing (test_usage.DecayTests.test_an_old_file_falls_back_to_its_oldest_surfacing) ... ok
+test_audit_reports_candidates_once_and_caps_them (test_usage.DecayTests.test_audit_reports_candidates_once_and_caps_them) ... ok
+test_counting_start_is_stamped_once (test_usage.DecayTests.test_counting_start_is_stamped_once) ... ok
+test_old_unsurfaced_records_are_candidates_and_nothing_is_changed (test_usage.DecayTests.test_old_unsurfaced_records_are_candidates_and_nothing_is_changed) ... ok
+test_without_enough_history_nothing_is_a_candidate (test_usage.DecayTests.test_without_enough_history_nothing_is_a_candidate) ... ok
+test_active_records_with_no_history_are_listed (test_usage.NeverSurfacedTests.test_active_records_with_no_history_are_listed) ... ok
+test_retired_records_are_not_listed (test_usage.NeverSurfacedTests.test_retired_records_are_not_listed) ... ok
+test_sessions_orders_by_distinct_sessions_and_marks_the_cap (test_usage.SessionsTests.test_sessions_orders_by_distinct_sessions_and_marks_the_cap) ... ok
+test_an_unreadable_file_reads_as_no_data (test_usage.StorageTests.test_an_unreadable_file_reads_as_no_data) ... ok
+test_counts_accrue_per_source (test_usage.StorageTests.test_counts_accrue_per_source) ... ok
+test_empty_ids_write_nothing (test_usage.StorageTests.test_empty_ids_write_nothing) ... ok
+test_it_lives_under_private_and_is_gitignored (test_usage.StorageTests.test_it_lives_under_private_and_is_gitignored) ... ok
+test_sessions_are_deduped (test_usage.StorageTests.test_sessions_are_deduped) ... ok
+test_telemetry_never_raises (test_usage.StorageTests.test_telemetry_never_raises) ... ok
+test_the_record_cap_drops_the_least_recently_surfaced (test_usage.StorageTests.test_the_record_cap_drops_the_least_recently_surfaced) ... ok
+test_empty_history_says_so (test_usage.UsageCommandTests.test_empty_history_says_so) ... ok
+test_needs_a_store (test_usage.UsageCommandTests.test_needs_a_store) ... CRUMB-ERROR: crumb usage: no .project-memory/ found at /tmp/tmpfgwjs1ul. Run `crumb init` first.
+ok
+test_never_flag_and_json_envelope (test_usage.UsageCommandTests.test_never_flag_and_json_envelope) ... ok
+test_rows_are_printed_most_surfaced_first (test_usage.UsageCommandTests.test_rows_are_printed_most_surfaced_first) ... ok
+test_an_empty_log_says_so (test_hooklog.DoctorHookLogTests.test_an_empty_log_says_so) ... ok
+test_the_summary_counts_outcomes_verdicts_and_sessions (test_hooklog.DoctorHookLogTests.test_the_summary_counts_outcomes_verdicts_and_sessions) ... ok
+test_a_writer_skipped_by_the_lock_is_logged_as_locked (test_hooklog.HookLogTests.test_a_writer_skipped_by_the_lock_is_logged_as_locked) ... ok
+test_every_hook_logs_one_line_and_its_output_is_unchanged (test_hooklog.HookLogTests.test_every_hook_logs_one_line_and_its_output_is_unchanged) ... ok
+test_no_store_means_no_log (test_hooklog.HookLogTests.test_no_store_means_no_log) ... ok
+test_outcomes_read_off_the_printed_json (test_hooklog.HookLogTests.test_outcomes_read_off_the_printed_json) ... ok
+test_output_survives_a_handler_that_raises (test_hooklog.HookLogTests.test_output_survives_a_handler_that_raises) ... ok
+test_the_log_is_bounded (test_hooklog.HookLogTests.test_the_log_is_bounded) ... ok
+test_the_log_never_holds_what_the_hook_read (test_hooklog.HookLogTests.test_the_log_never_holds_what_the_hook_read) ... ok
+
+----------------------------------------------------------------------
+Ran 243 tests in 19.134s
+
+OK
+{
+  "modules": [
+    "test_parser",
+    "test_sections",
+    "test_naming",
+    "test_lock",
+    "test_searchindex",
+    "test_aliases",
+    "test_handoffs",
+    "test_scope",
+    "test_inbox",
+    "test_lifecycle",
+    "test_usage",
+    "test_hooklog"
+  ],
+  "excluded": {
+    "test_parser.CommentOnlyValueTests.test_superseded_without_a_target_fails_validate": "test data absent from release sdist",
+    "test_parser.FenceAwareSectionsTests.test_validate_sees_no_next_action_in_a_fence": "test data absent from release sdist",
+    "test_parser.RecordModelTests.test_load_records_walks_type_dirs": "test data absent from release sdist",
+    "test_searchindex.FixtureEquivalenceTests.test_fixture_10_answers_the_same_through_the_index": "fixture-10 absent from release sdist",
+    "test_parser.StartupCostTests.test_version_is_not_resolved_while_building_the_parser": "audit interpreter imports metadata/email/zipfile/csv before Breadcrumbs; separately verified"
+  },
+  "tests_run": 243,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "successful": true,
+  "note": "Selected upstream tests only; not the complete repository test suite."
+}
+exit=0
