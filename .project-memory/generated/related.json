@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "7a7148336d17",
+ "inputs_hash": "92e787eaca2d",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -109,8 +109,8 @@
   ],
   "dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps": [
    "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering",
+   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
   ],
   "dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes": [
    "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
@@ -118,9 +118,9 @@
    "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43"
   ],
   "dec_20260922_related-records-use-a-pure-overlap-score-so-the-committed": [
+   "dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering",
    "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
-   "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim",
-   "dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our"
+   "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim"
   ],
   "dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our": [
    "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
@@ -191,6 +191,11 @@
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
    "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
    "dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes"
+  ],
+  "dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering": [
+   "dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps",
+   "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim",
+   "dec_20260922_related-records-use-a-pure-overlap-score-so-the-committed"
   ],
   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer": [
    "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
