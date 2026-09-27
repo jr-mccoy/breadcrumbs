@@ -101,6 +101,31 @@ class TtlTests(unittest.TestCase):
             expires = _cli._parse_iso(fixed["expires_at"])
             self.assertEqual((expires - created).days, lifecycle.TTL_DEFAULTS["verification"])
 
+    def test_expiry_and_created_at_are_one_instant(self):
+        """A clock read twice across a second boundary made the 90-day TTL 89
+        days (CI, run 245). The expiry and `created_at` now share one instant."""
+        import itertools
+        from datetime import datetime, timezone
+
+        base = datetime(2026, 9, 27, 23, 59, 58, tzinfo=timezone.utc)
+        ticks = itertools.count()
+
+        class Ticking(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                t = base + timedelta(seconds=next(ticks))  # one second per read
+                return t if tz else t.replace(tzinfo=None)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            with mock.patch.object(_cli, "datetime", Ticking):
+                fixed = crumb.verify(mem, Path(tmp), "cache eviction works", status="fixed")
+            rec = crumb.find_record_by_id(mem, fixed["id"])
+            created = _cli._parse_iso(rec.meta["created_at"])
+            expires = _cli._parse_iso(fixed["expires_at"])
+            self.assertEqual(expires - created, timedelta(days=lifecycle.TTL_DEFAULTS["verification"]))
+            self.assertTrue(rec.path.name.startswith(rec.meta["created_at"][:10]))
+
     def test_manifest_overrides_the_lifespan(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)

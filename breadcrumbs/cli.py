@@ -4828,8 +4828,12 @@ def verify(
             }
 
     # WM-30: a settled verification (fixed / not_applicable) is the kind that
-    # silently goes stale, so it expires; an actionable one never does.
-    expires_at = _lifecycle.verification_expiry(memory_dir, status, now_iso())
+    # silently goes stale, so it expires; an actionable one never does. The
+    # expiry and the record's `created_at` (and its dated filename) are one
+    # instant: two clock reads straddling a second made a 90-day TTL 89 days.
+    instant = _now()
+    with clock(lambda: instant):
+        expires_at = _lifecycle.verification_expiry(memory_dir, status, now_iso())
 
     sections = {"Subject": subject, "Outcome": status}
     if method:
@@ -4842,7 +4846,7 @@ def verify(
     # The new result and the retirement of the one it replaces are one change
     # (audit F20).
     try:
-        with _mutations.transaction(memory_dir, "verify"):
+        with _mutations.transaction(memory_dir, "verify"), clock(lambda: instant):
             try:
                 path, meta = write_record(
                     memory_dir,
