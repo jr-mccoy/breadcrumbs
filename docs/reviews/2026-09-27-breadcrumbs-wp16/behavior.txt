@@ -1,0 +1,26 @@
+## before (fa2df0e, worktree)
+{
+ "domain_import_loads_parser": true,
+ "record_write_implementations": 2,
+ "write_pipeline_duplicated": true,
+ "alias_stems": {
+  "a": "bill",
+  "b": "bill"
+ },
+ "aliases_shared_across_stores": true,
+ "no_operation_scoped_clock": true,
+ "defects_observed": 4
+}
+## after (this change)
+{
+ "domain_import_loads_parser": false,
+ "record_write_implementations": 0,
+ "write_pipeline_duplicated": false,
+ "alias_stems": {
+  "a": "bill",
+  "b": "pay"
+ },
+ "aliases_shared_across_stores": false,
+ "no_operation_scoped_clock": false,
+ "defects_observed": 0
+}

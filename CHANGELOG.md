@@ -531,6 +531,32 @@ items without saying so. Measurements: `docs/reviews/2026-09-27-breadcrumbs-wp15
   gate), so capture cost grows linearly: 0.15 s at 1,000 records and 1.4 s at
   10,000 here.
 
+### Changed — an application layer the CLI, MCP and hooks share (audit WP16)
+
+Finding F21. `cli.py` was both the CLI and the domain kernel. `crumb
+remember` and `memory_record` were two copies of one write pipeline. Search
+aliases were one process-wide table, so a store with no aliases could stem
+with another store's aliases when two were in use at once.
+
+- **`breadcrumbs.service`.**
+  - `Context` (root, store, channel, clock, agent) and `active(ctx)`.
+  - `record`, the one decision/attempt write both transports use, plus
+    `mark_status`, `search`, `guard`, `resume_packet`, `prompt_lookup` and
+    `admit`.
+  - The CLI commands, the MCP tools, the guard hook and the prompt hook call
+    it. Wording, exit codes and envelopes stay in the transports.
+- **The argument parser moved to `breadcrumbs.cli_parser`.** Importing
+  `breadcrumbs.cli` or `breadcrumbs.service` no longer defines or imports it.
+  `cli.build_parser` and the other moved names are forwarded, and the
+  `crumb.py` shim re-exports them.
+- **Aliases and the clock are per operation.** `cli.store_aliases(memory_dir)`
+  and `cli.clock(fn)` are scoped and per-thread. Patching `cli._now` still
+  works.
+- **No output changes.** `tests/test_application_parity.py` replays one
+  session through every transport. It compares the outputs with a golden
+  captured before the extraction: ids, scores, verdicts, packets, envelopes,
+  exit codes and generated files all match.
+
 ## [0.3.1] — 2026-09-27
 
 A hotfix: **an older `crumb` on PATH blocked every prompt.**

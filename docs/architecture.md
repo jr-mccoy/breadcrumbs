@@ -273,9 +273,22 @@ not a haunted attic of embeddings.
 
 Everything is in the `breadcrumbs` package, standard library only.
 
+**Layers (audit WP16).** The CLI, the MCP server and the hooks are
+transports. What they do to a store goes through `service.py`, the
+application layer. Each operation runs in an explicit `service.Context` that
+carries the root, the channel, the clock and the agent. Argument parsing,
+prompts, wording, exit codes and host payload mapping stay in the
+transports. The domain functions still live mostly in `cli.py`, but the
+argument parser does not: `service.py` and the domain modules import without
+it (`tests/test_application_parity.py` checks this). A golden of every
+transport's serialized output, captured before the extraction, holds ids,
+scores and wire contracts in place.
+
 | Module | Holds |
 |---|---|
-| `cli.py` | The CLI: record I/O, validate, the resume packet, search/guard scoring, audit, doctor, the integrations and the hook translators. The other modules call back into it. Since audit WP15 every command runs inside `operation()`: a parse cache keyed by each file's path, type and content digest (so it can never serve stale content), and `op_memo` for derived results keyed by the exact records they read. |
+| `service.py` | The application layer (audit WP16): `Context` (root, store, channel, clock, agent) and `active(ctx)`, which makes those current for one operation (the admission channel, the clock, the store's search aliases per thread, one parse cache). `record` is the one decision/attempt write both `crumb remember` and `memory_record` use. `mark_status`, `search`, `guard`, `resume_packet`, `prompt_lookup` and `admit` complete it. Failures are a `ServiceError` with a `kind` the adapter words. It never prints and does not import the parser. |
+| `cli_parser.py` | The `crumb` argument parser (moved out of `cli.py`, audit WP16). `cli.main` builds it lazily, and `cli.build_parser` and the other moved names are forwarded. |
+| `cli.py` | The CLI commands and most domain functions: record I/O, validate, the resume packet, search/guard scoring, audit, doctor, the integrations and the hook translators. The other modules call back into it. Since audit WP15 every command runs inside `operation()`: a parse cache keyed by each file's path, type and content digest (so it can never serve stale content), and `op_memo` for derived results keyed by the exact records they read. |
 | `blockfiles.py` | Traps and questions as one file each (schema 3): reading them in the dict shape the block readers return, writing them, rebuilding `known-traps.md` / `open-questions.md` as indexes, adopting hand-written blocks, and migration step 3. |
 | `related.py` | `generated/related.json`: "see also" by pure overlap, written at reindex. Since audit WP15 only pairs sharing a feature are scored (the same result as all pairs, kept as the `_compute_related_full` oracle), with no corpus cutoff; past a pair budget it records `degraded`, which `audit` reports. |
 | `searchindex.py` | `index/search.sqlite`: build, freshness check, and the narrowed candidate set `search` uses when the index is fresh. |
@@ -298,7 +311,7 @@ Everything is in the `breadcrumbs` package, standard library only.
 | `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state (each session's entry updated under a side lock, `update_state`; the latest task kept apart from the latest lookup, audit WP12), the `UserPromptSubmit` hook (retrieval keeps current records only; counts only the ids it prints), the `PreCompact` / `SubagentStop` hooks. |
 | `hooklog.py` | The hook log (WM-62): `run_logged` wraps every `crumb hook` firing, passes its output through unchanged and appends one line to `private/hook-log.jsonl` (event, time, ms, outcome, the handler's `note()` detail; never content), bounded at about 5000 lines by a locked rotation into `hook-log.1.jsonl` that never drops a parallel hook's line (audit WP12); `summarize` for `crumb doctor --hook-log`. |
 | `usage.py` | Local surfacing counts: one event file per emission in `private/usage-events/`, folded exactly once into `private/usage.json` (with `started_at` and `accounting`) under `.usage.lock` (audit WP12). Counts only emitted ids, never retrieved or trimmed ones. The `--sessions` ordering, and decay candidates for `usage --decay` and audit's `decay-candidate`. |
-| `mcp_core.py`, `mcp_server.py` | The MCP adapter over the same core functions, and its SDK binding. |
+| `mcp_core.py`, `mcp_server.py` | The MCP adapter: tools and resources over the application layer (`service.py`), with the MCP envelope and wording; and its SDK binding. |
 
 `evals/` sits outside the package and ships in neither the wheel nor the sdist.
 `evals/run.py` (standard library only) builds each suite's store from its
