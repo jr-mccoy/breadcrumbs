@@ -20,9 +20,10 @@ anything.
 
 Commands run through the platform's shell, as they always have, so a recorded
 command means what its author typed. POSIX parsing is never applied to a
-Windows string. Each run gets its own process group and bounded, rolling output
-capture. The whole group is terminated on timeout, on interruption, and after
-the command returns, so a background child cannot outlive its check.
+Windows string. Each run gets its own process group (on Windows, a Job Object)
+and bounded, rolling output capture. The whole group is terminated on timeout,
+on interruption, and after the command returns, so a background child cannot
+outlive its check.
 """
 
 from __future__ import annotations
@@ -125,7 +126,90 @@ def _tail(raw: bytes) -> list[str]:
     ]
 
 
-def _kill_tree(proc: subprocess.Popen) -> None:
+def _windows_job(proc: subprocess.Popen):
+    """Put `proc` in a new Windows Job Object and return its handle (or None).
+
+    A process group is not a tree on Windows: once the shell has returned,
+    `taskkill /T` can no longer find a child it left running, and that child
+    outlived its check (seen on the WP17 native CI job). Every process `proc`
+    starts after this call is in the job too, whether or not its parent is
+    still alive, and terminating the job ends them all. The job is also
+    kill-on-close, so the tree ends if this process dies first. One window
+    remains: a child started between the shell starting and joining the job
+    (immediately after `Popen` returns) would not be in it. Shell startup is
+    far slower than that call, but the race is not eliminated; closing it
+    needs a suspended start, which `subprocess` does not offer.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+
+        class _Basic(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class _Io(ctypes.Structure):
+            _fields_ = [
+                (name, ctypes.c_uint64)
+                for name in ("Read", "Write", "Other", "ReadBytes", "WriteBytes", "OtherBytes")
+            ]
+
+        class _Extended(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _Basic),
+                ("IoInfo", _Io),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+        info = _Extended()
+        info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))
+        if not kernel32.AssignProcessToJobObject(job, int(proc._handle)):
+            kernel32.CloseHandle(job)
+            return None
+        return job
+    except Exception:  # pragma: no cover - fall back to taskkill
+        return None
+
+
+def _end_windows_job(job) -> None:
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.TerminateJobObject(job, 1)
+        kernel32.CloseHandle(job)
+    except Exception:  # pragma: no cover
+        pass
+
+
+def _kill_tree(proc: subprocess.Popen, job=None) -> None:
     """End the run's whole process group; best effort, never raises."""
     if os.name == "posix":
         # SIGTERM first, so the leader can clean up; then SIGKILL for whatever
@@ -145,7 +229,11 @@ def _kill_tree(proc: subprocess.Popen) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError, OSError):
             pass
-    else:  # pragma: no cover - exercised on Windows only
+    else:  # pragma: no cover - exercised on Windows only (the native CI job)
+        if job is not None:
+            # Ends every process the run started, orphans included.
+            _end_windows_job(job)
+            return
         try:
             subprocess.run(
                 ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
@@ -192,6 +280,7 @@ def run_check(
     except (OSError, ValueError) as exc:
         result.detail = f"could not start: {exc}"
         return result
+    job = _windows_job(proc) if os.name == "nt" else None
 
     kept = bytearray()
     seen = [0]
@@ -217,12 +306,12 @@ def run_check(
     except subprocess.TimeoutExpired:
         result.timed_out = True
     except KeyboardInterrupt:
-        _kill_tree(proc)
+        _kill_tree(proc, job)
         raise
     finally:
         # After a timeout this ends the command; after a normal return it ends
         # whatever the command left running in the background.
-        _kill_tree(proc)
+        _kill_tree(proc, job)
     try:
         proc.wait(timeout=KILL_GRACE_SECONDS + 1)
     except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL did not land

@@ -106,230 +106,27 @@ def main() -> int:
         checks[name] = {"ok": bool(ok), **detail}
 
     env = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
-    with tempfile.TemporaryDirectory() as tmp:
-        root = Path(tmp) / "proj with spaces ünï"
-        root.mkdir()
-        for a in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
-            subprocess.run(["git", *a], cwd=root, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "i"], cwd=root, check=True)
-        mem = root / ".project-memory"
+    tmp = tempfile.mkdtemp(prefix="crumb-smoke-")
+    try:
+        _checks(crumb, args, tmp, env, check, observations)
+    except Exception as exc:  # a crash is a failed check, never a lost report
+        import traceback
 
-        code, out, err = run([*crumb, "--version"], root, env=env)
         check(
-            "version",
-            code == 0 and b"record schema_version" in out,
-            stdout=out.decode(errors="replace").strip(),
+            "smoke_script_completed",
+            False,
+            error=f"{type(exc).__name__}: {exc}",
+            traceback=traceback.format_exc()[-1500:],
         )
+    finally:
+        import shutil
 
-        code, out, err = run([*crumb, "init", "--session-tracking", "full"], root, env=env)
-        check(
-            "init_bundled_templates",
-            code == 0 and (mem / "decisions").is_dir() and (mem / "manifest.yml").is_file(),
-            exit=code,
-            stderr=err.decode(errors="replace")[-400:],
-        )
-
-        evidence = "src/pricing cache/cache café.py"
-        code, out, err = run(
-            [
-                *crumb,
-                "remember",
-                "decision",
-                "--title",
-                TITLE,
-                "--set",
-                "Decision",
-                "cache pricing responses for 300 seconds",
-                "--evidence",
-                "file",
-                evidence,
-                "--tags",
-                "pricing,cache",
-                "--json",
-            ],
-            root,
-            env=env,
-        )
-        rid = None
-        try:
-            rid = json.loads(out)["id"]
-        except (ValueError, KeyError):
-            pass
-        files = list((mem / "decisions").glob("*.md"))
-        on_disk = files[0].read_text(encoding="utf-8") if files else ""
-        check(
-            "unicode_and_quoting_on_disk",
-            code == 0 and TITLE in on_disk and evidence in on_disk,
-            exit=code,
-            id=rid,
-            stderr=err.decode(errors="replace")[-400:],
-        )
-        # Whether the title survives the console encoding. `--json` escapes
-        # non-ASCII, so this reads `show`'s human output.
-        code_h, out_h, _ = run([*crumb, "show", str(rid)], root, env=env)
-        observations["stdout_encoding"] = {
-            "human_output_roundtrips_non_ascii": TITLE.encode("utf-8") in out_h,
-            "python_io_encoding": os.environ.get("PYTHONIOENCODING"),
-        }
-
-        code, out, err = run([*crumb, "search", "pricing cache", "--json"], root, env=env)
-        try:
-            found = [m["id"] for m in json.loads(out)["matches"]]
-        except (ValueError, KeyError):
-            found = []
-        check("search_finds_it", code == 0 and rid in found, exit=code, found=found)
-
-        code, out, err = run([*crumb, "resume", "--json"], root, env=env)
-        try:
-            packet = json.loads(out)
-            ok = rid in [d["id"] for d in packet["active_decisions"]]
-        except (ValueError, KeyError):
-            ok = False
-        check("resume_json_parses", code == 0 and ok, exit=code)
-
-        code, out, err = run(
-            [*crumb, "guard", "change the pricing cache ttl", "--json"], root, env=env
-        )
-        try:
-            verdict = json.loads(out)["verdict"]
-        except (ValueError, KeyError):
-            verdict = None
-        check(
-            "guard_exit_matches_verdict",
-            verdict in VERDICT_EXIT and code == VERDICT_EXIT[verdict],
-            exit=code,
-            verdict=verdict,
-        )
-
-        payload = json.dumps(
-            {
-                "cwd": str(root),
-                "session_id": "smoke",
-                "tool_name": "PowerShell",
-                "tool_input": {"command": "Remove-Item ./cache -Recurse -Force"},
-            }
-        )
-        code, out, err = run(
-            [*crumb, "hook", "guard"], root, stdin=payload.encode("utf-8"), env=env
-        )
-        try:
-            json.loads(out)
-            ok = True
-        except ValueError:
-            ok = False
-        check(
-            "hook_guard_powershell_json",
-            code == 0 and ok,
-            exit=code,
-            stdout=out.decode(errors="replace")[:300],
-        )
-
-        # Locks: another process holds the store lock; a write must fail fast.
-        holder = subprocess.Popen(
-            [
-                args.python,
-                "-c",
-                textwrap.dedent(f"""
-                import sys, time
-                from pathlib import Path
-                from breadcrumbs import lock
-                with lock.store_lock(Path({str(mem)!r}), timeout=5):
-                    print("held", flush=True)
-                    time.sleep(8)
-            """),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        line = holder.stdout.readline().strip()
-        started = time.monotonic()
-        code, out, err = run(
-            [*crumb, "note", "question", "Is the lock honored?", "--json"], root, env=env
-        )
-        waited = round(time.monotonic() - started, 2)
-        holder.wait(timeout=30)
-        code2, out2, err2 = run(
-            [*crumb, "note", "question", "Is the lock released?", "--json"], root, env=env
-        )
-        check(
-            "lock_contention_fails_fast_then_releases",
-            line == "held" and code != 0 and waited < 15 and code2 == 0,
-            holder=line,
-            contended_exit=code,
-            waited_s=waited,
-            released_exit=code2,
-            contended_stderr=err.decode(errors="replace")[-300:],
-        )
-
-        # Atomic replacement leaves no temporary files behind.
-        run([*crumb, "reindex"], root, env=env)
-        leftovers = [
-            str(p.relative_to(mem))
-            for p in mem.rglob("*")
-            if ".tmp" in p.name or p.name.startswith(".tmp")
-        ]
-        check("no_temp_files_left", not leftovers, leftovers=leftovers)
-
-        # Replay containment: an assertion that floods output and leaves a child.
-        pidfile = Path(tmp) / "child.pid"
-        script = Path(tmp) / "flood.py"
-        script.write_text(
-            textwrap.dedent(f"""
-            import subprocess, sys
-            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
-            open({str(pidfile)!r}, "w").write(str(child.pid))
-            for i in range(200000):
-                print("line", i, "x" * 40)
-            sys.exit(0)
-        """),
-            encoding="utf-8",
-        )
-        assertion = f'"{args.python}" "{script}"'
-        code, out, err = run(
-            [
-                *crumb,
-                "verify",
-                "flood check",
-                "--status",
-                "open",
-                "--assert",
-                assertion,
-                "--note",
-                "smoke",
-                "--json",
-            ],
-            root,
-            env=env,
-        )
-        try:
-            vid = json.loads(out)["id"]
-        except (ValueError, KeyError):
-            vid = None
-        code, out, err = run(
-            [*crumb, "verify", "--recheck", str(vid), "--yes", "--json"], root, env=env, timeout=600
-        )
-        try:
-            report = json.loads(out)
-        except ValueError:
-            report = {}
-        text = json.dumps(report)
-        child = int(pidfile.read_text()) if pidfile.exists() else None
-        time.sleep(1)
-        alive = pid_alive(child) if child else None
-        check(
-            "replay_bounded_and_contained",
-            vid is not None
-            and child is not None
-            and alive is False
-            and len(text) < 64_000
-            and '"truncated": true' in text,
-            recheck_exit=code,
-            child_pid=child,
-            child_alive=alive,
-            report_chars=len(text),
-            stderr=err.decode(errors="replace")[-300:],
-        )
+        leftover = []
+        shutil.rmtree(tmp, onerror=lambda fn, path, exc: leftover.append(path))
+        if leftover:
+            # Windows cannot delete a directory a live process is using: that
+            # is itself evidence that something outlived the smoke test.
+            observations["cleanup_blocked"] = leftover[:5]
 
     result = {
         "platform": platform.platform(),
@@ -344,6 +141,235 @@ def main() -> int:
         args.json.write_text(text + "\n", encoding="utf-8")
     sys.stdout.buffer.write(text.encode("utf-8") + b"\n")
     return 1 if result["failed"] else 0
+
+
+def _checks(crumb, args, tmp, env, check, observations) -> None:
+    root = Path(tmp) / "proj with spaces ünï"
+    root.mkdir()
+    for a in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", *a], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-q", "--allow-empty", "-m", "i"], cwd=root, check=True)
+    mem = root / ".project-memory"
+
+    code, out, err = run([*crumb, "--version"], root, env=env)
+    check(
+        "version",
+        code == 0 and b"record schema_version" in out,
+        stdout=out.decode(errors="replace").strip(),
+    )
+
+    code, out, err = run([*crumb, "init", "--session-tracking", "full"], root, env=env)
+    check(
+        "init_bundled_templates",
+        code == 0 and (mem / "decisions").is_dir() and (mem / "manifest.yml").is_file(),
+        exit=code,
+        stderr=err.decode(errors="replace")[-400:],
+    )
+
+    evidence = "src/pricing cache/cache café.py"
+    code, out, err = run(
+        [
+            *crumb,
+            "remember",
+            "decision",
+            "--title",
+            TITLE,
+            "--set",
+            "Decision",
+            "cache pricing responses for 300 seconds",
+            "--evidence",
+            "file",
+            evidence,
+            "--tags",
+            "pricing,cache",
+            "--json",
+        ],
+        root,
+        env=env,
+    )
+    rid = None
+    try:
+        rid = json.loads(out)["id"]
+    except (ValueError, KeyError):
+        pass
+    files = list((mem / "decisions").glob("*.md"))
+    on_disk = files[0].read_text(encoding="utf-8") if files else ""
+    check(
+        "unicode_and_quoting_on_disk",
+        code == 0 and TITLE in on_disk and evidence in on_disk,
+        exit=code,
+        id=rid,
+        stderr=err.decode(errors="replace")[-400:],
+    )
+    # Whether the title survives the console encoding. `--json` escapes
+    # non-ASCII, so this reads `show`'s human output.
+    code_h, out_h, _ = run([*crumb, "show", str(rid)], root, env=env)
+    observations["stdout_encoding"] = {
+        "human_output_roundtrips_non_ascii": TITLE.encode("utf-8") in out_h,
+        "python_io_encoding": os.environ.get("PYTHONIOENCODING"),
+    }
+
+    code, out, err = run([*crumb, "search", "pricing cache", "--json"], root, env=env)
+    try:
+        found = [m["id"] for m in json.loads(out)["matches"]]
+    except (ValueError, KeyError):
+        found = []
+    check("search_finds_it", code == 0 and rid in found, exit=code, found=found)
+
+    code, out, err = run([*crumb, "resume", "--json"], root, env=env)
+    try:
+        packet = json.loads(out)
+        ok = rid in [d["id"] for d in packet["active_decisions"]]
+    except (ValueError, KeyError):
+        ok = False
+    check("resume_json_parses", code == 0 and ok, exit=code)
+
+    code, out, err = run([*crumb, "guard", "change the pricing cache ttl", "--json"], root, env=env)
+    try:
+        verdict = json.loads(out)["verdict"]
+    except (ValueError, KeyError):
+        verdict = None
+    check(
+        "guard_exit_matches_verdict",
+        verdict in VERDICT_EXIT and code == VERDICT_EXIT[verdict],
+        exit=code,
+        verdict=verdict,
+    )
+
+    payload = json.dumps(
+        {
+            "cwd": str(root),
+            "session_id": "smoke",
+            "tool_name": "PowerShell",
+            "tool_input": {"command": "Remove-Item ./cache -Recurse -Force"},
+        }
+    )
+    code, out, err = run([*crumb, "hook", "guard"], root, stdin=payload.encode("utf-8"), env=env)
+    try:
+        json.loads(out)
+        ok = True
+    except ValueError:
+        ok = False
+    check(
+        "hook_guard_powershell_json",
+        code == 0 and ok,
+        exit=code,
+        stdout=out.decode(errors="replace")[:300],
+    )
+
+    # Locks: another process holds the store lock; a write must fail fast.
+    holder = subprocess.Popen(
+        [
+            args.python,
+            "-c",
+            textwrap.dedent(f"""
+            import sys, time
+            from pathlib import Path
+            from breadcrumbs import lock
+            with lock.store_lock(Path({str(mem)!r}), timeout=5):
+                print("held", flush=True)
+                time.sleep(8)
+        """),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    line = holder.stdout.readline().strip()
+    started = time.monotonic()
+    code, out, err = run(
+        [*crumb, "note", "question", "Is the lock honored?", "--json"], root, env=env
+    )
+    waited = round(time.monotonic() - started, 2)
+    holder.wait(timeout=30)
+    code2, out2, err2 = run(
+        [*crumb, "note", "question", "Is the lock released?", "--json"], root, env=env
+    )
+    check(
+        "lock_contention_fails_fast_then_releases",
+        line == "held" and code != 0 and waited < 15 and code2 == 0,
+        holder=line,
+        contended_exit=code,
+        waited_s=waited,
+        released_exit=code2,
+        contended_stderr=err.decode(errors="replace")[-300:],
+    )
+
+    # Atomic replacement leaves no temporary files behind.
+    run([*crumb, "reindex"], root, env=env)
+    leftovers = [
+        str(p.relative_to(mem))
+        for p in mem.rglob("*")
+        if ".tmp" in p.name or p.name.startswith(".tmp")
+    ]
+    check("no_temp_files_left", not leftovers, leftovers=leftovers)
+
+    # Replay containment: an assertion that floods output and leaves a child.
+    pidfile = Path(tmp) / "child.pid"
+    script = Path(tmp) / "flood.py"
+    script.write_text(
+        textwrap.dedent(f"""
+        import subprocess, sys
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        open({str(pidfile)!r}, "w").write(str(child.pid))
+        for i in range(200000):
+            print("line", i, "x" * 40)
+        sys.exit(0)
+    """),
+        encoding="utf-8",
+    )
+    assertion = f'"{args.python}" "{script}"'
+    code, out, err = run(
+        [
+            *crumb,
+            "verify",
+            "flood check",
+            "--status",
+            "open",
+            "--assert",
+            assertion,
+            "--note",
+            "smoke",
+            "--json",
+        ],
+        root,
+        env=env,
+    )
+    try:
+        vid = json.loads(out)["id"]
+    except (ValueError, KeyError):
+        vid = None
+    code, out, err = run(
+        [*crumb, "verify", "--recheck", str(vid), "--yes", "--json"], root, env=env, timeout=600
+    )
+    try:
+        report = json.loads(out)
+    except ValueError:
+        report = {}
+    text = json.dumps(report)
+    child = int(pidfile.read_text()) if pidfile.exists() else None
+    time.sleep(1)
+    alive = pid_alive(child) if child else None
+    if alive:  # record it, then end it so it cannot hold the directory
+        kill = (
+            ["taskkill", "/F", "/T", "/PID", str(child)]
+            if os.name == "nt"
+            else ["kill", "-9", str(child)]
+        )
+        subprocess.run(kill, capture_output=True)
+    check(
+        "replay_bounded_and_contained",
+        vid is not None
+        and child is not None
+        and alive is False
+        and len(text) < 64_000
+        and '"truncated": true' in text,
+        recheck_exit=code,
+        child_pid=child,
+        child_alive=alive,
+        report_chars=len(text),
+        stderr=err.decode(errors="replace")[-300:],
+    )
 
 
 if __name__ == "__main__":
