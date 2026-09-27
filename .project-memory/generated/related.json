@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "023cf80b2792",
+ "inputs_hash": "4521963af110",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -168,9 +168,9 @@
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
   ],
   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts": [
+   "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
    "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns"
   ],
   "dec_20260927_evals-score-delivered-context-and-critical-cases": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
@@ -179,18 +179,23 @@
   ],
   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted": [
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
-   "dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+   "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
+   "dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes"
   ],
   "dec_20260927_projections-are-stamped-from-a-verified-snapshot": [
+   "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+  ],
+  "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full": [
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
-   "dec_20260927_evals-score-delivered-context-and-critical-cases"
+   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted"
   ],
   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls": [
    "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+   "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
