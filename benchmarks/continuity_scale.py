@@ -6,9 +6,9 @@ share files, tags and vocabulary the way a real store does), then measures:
 - a full `crumb reindex`, and one `remember` (a write plus its reindex);
 - a machine-local jot (local capture);
 - the prompt and guard hooks, and an indexed search;
-- per operation: wall time (median of `--repeat` runs), records parsed,
-  whole-store input hashes, peak Python memory (tracemalloc), and bytes
-  written (write amplification);
+- per operation: wall time (median of `--repeat` untraced runs), records
+  parsed, whole-store input hashes, bytes written (write amplification), and
+  peak Python memory (tracemalloc, from one extra run);
 - what "see also" and the conflict report still produce at N (quality: a
   projection that silently stops being built is a regression, not a speedup).
 
@@ -153,29 +153,40 @@ def build_store(root: Path, n: int, seed: int = 7) -> Path:
 
 
 def measure(fn, repeat: int) -> dict:
-    times, parses, hashes, written, peaks = [], [], [], [], []
-    for _ in range(repeat):
+    """Median wall time, parses, hashes and bytes written over `repeat` runs,
+    then one more run under tracemalloc for peak memory. Timed runs are not
+    traced: tracemalloc slows allocation-heavy code several-fold."""
+    times, parses, hashes, written = [], [], [], []
+
+    def once() -> Counters:
         counters = Counters()
-        tracemalloc.start()
         with counters.watch():
             t = time.perf_counter()
             code = fn()
-            times.append((time.perf_counter() - t) * 1000)
+            counters.ms = (time.perf_counter() - t) * 1000
         # A refused or failed command is not a measurement of the command.
         if code:
-            tracemalloc.stop()
             raise SystemExit(f"benchmarked command exited {code}")
-        peaks.append(tracemalloc.get_traced_memory()[1] / 1e6)
-        tracemalloc.stop()
+        return counters
+
+    for _ in range(repeat):
+        counters = once()
+        times.append(counters.ms)
         parses.append(counters.parses)
         hashes.append(counters.hashes)
         written.append(counters.bytes_written)
+    tracemalloc.start()
+    try:
+        once()
+        peak = tracemalloc.get_traced_memory()[1] / 1e6
+    finally:
+        tracemalloc.stop()
     return {
         "ms": round(statistics.median(times), 1),
         "parses": int(statistics.median(parses)),
         "input_hashes": int(statistics.median(hashes)),
         "bytes_written": int(statistics.median(written)),
-        "peak_mb": round(statistics.median(peaks), 1),
+        "peak_mb": round(peak, 1),
     }
 
 
