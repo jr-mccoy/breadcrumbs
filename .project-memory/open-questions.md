@@ -8,6 +8,7 @@ ones are live blockers._
 _Ask one: `crumb note question "<question>" --why … --needs …`.
 Resolve one: `crumb mark-status q_<slug> answered --reason "…"`._
 
+- `q_should-release-yml-run-python-evals-run-py-relea-a2a751` [open] Should release.yml run python evals/run.py --release (blocking publishes while known critical cases such as F10 remain)? — `questions/should-release-yml-run-python-evals-run-py-relea-a2a751.md`
 - `q_should-the-extraction-turn-also-fire-on-precompa-ebd583` [open] Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first. — `questions/should-the-extraction-turn-also-fire-on-precompa-ebd583.md`
 - `q_migrate-this-repo-s-own-project-memory-store-to-4bd707` [answered] Migrate this repo's own .project-memory store to schema 3? — `questions/migrate-this-repo-s-own-project-memory-store-to-4bd707.md`
 - `q_migrate-this-repo-s-own-project-memory-store-to-5562a0` [answered] Migrate this repo's own .project-memory store to schema 4 (adds handoffs/)? — `questions/migrate-this-repo-s-own-project-memory-store-to-5562a0.md`
