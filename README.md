@@ -125,7 +125,7 @@ crumb retitle "ses_…" "what that session was really about"   # fix a title tha
 crumb traps --stale              # traps nobody has confirmed lately, and what they cost
 crumb expired                    # records past their expires_at (still on disk, out of the packet)
 crumb questions --aging          # open questions older than the question TTL
-crumb verify --recheck "ver_…"   # rerun a verification's commands; record the result (asks first)
+crumb verify --recheck "ver_…"   # rerun its checks; only an --assert can settle it (asks first)
 crumb consolidate                # clusters of near-duplicate records; --merge them into one
 crumb rollup sessions --before 2026-09-01   # fold old machine session snapshots into one record
 crumb prune handoffs --dry-run   # branch handoffs whose branch is gone and which are 30+ days old
@@ -278,10 +278,18 @@ A `fixed` or `not_applicable` result expires after 90 days
 (`ttl_verification_days`): it leaves the packet's list and `guard`'s live set,
 and stays searchable. An actionable one never expires; after 90 days the packet
 asks for a recheck. `crumb verify --recheck <id>` (repeatable) or `--all`
-reruns the recorded `command`/`test` evidence in the project root and writes the
-result as a new verification (`fixed` if every command exited 0, else `open`,
-with exit codes and the last output lines in its notes) that supersedes the old
-one. It prints each command and asks first; `--yes` skips the question, and
+reruns a verification's checks in the project root. Only an **assertion**
+settles the claim. Declare one with `--assert CMD`: a command that exits 0
+exactly when the subject is fixed.
+
+When every assertion ran, the result is written as a new verification (`fixed`,
+`open` or `regressed`) that supersedes the old one and keeps its scope and
+confidence. A plain `command` is a diagnostic: it runs and is reported, but it
+cannot close or reopen anything unless you bind it with `--bind-commands`. A
+missing tool or a timeout is inconclusive and writes nothing. `test` file paths
+are never executed.
+
+Recheck prints each command and asks first; `--yes` skips the question, and
 without a terminal it refuses (exit 2) unless `--yes` is given. There is no MCP
 equivalent.
 

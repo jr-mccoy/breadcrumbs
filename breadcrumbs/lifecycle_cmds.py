@@ -116,18 +116,20 @@ def cmd_questions(args: argparse.Namespace) -> int:
 
 
 def run_recheck(args: argparse.Namespace, memory_dir: Path, root: Path) -> int:
-    """`crumb verify --recheck <id>… | --all [--yes]`.
+    """`crumb verify --recheck <id>… | --all [--yes] [--bind-commands]`.
 
-    Runs commands a record names, so it asks first: every command is printed,
-    and nothing runs without `--yes` or a `y` at a terminal. With neither — a
-    hook, a pipe, CI — it exits 2 having run nothing. There is no MCP
+    Runs commands a record names, so it asks first: every command is printed with
+    what it is (an assertion that can settle the claim, or a diagnostic that
+    cannot), and nothing runs without `--yes` or a `y` at a terminal. With
+    neither — a hook, a pipe, CI — it exits 2 having run nothing. There is no MCP
     equivalent on purpose: running arbitrary commands from the store is a
     human-confirmed, CLI-only act.
     """
+    bind = bool(getattr(args, "bind_commands", False))
     ids = None if args.recheck_all else list(args.recheck or [])
-    targets, problems = lifecycle.recheck_targets(memory_dir, ids)
+    targets, problems = lifecycle.recheck_targets(memory_dir, ids, root)
     if not targets:
-        why = "; ".join(problems) or "no active verification names a command to rerun"
+        why = "; ".join(problems) or "no active verification names an assertion or command"
         cli._emit_error(args, f"nothing to recheck: {why}")
         return 1
     for problem in problems:
@@ -143,23 +145,33 @@ def run_recheck(args: argparse.Namespace, memory_dir: Path, root: Path) -> int:
     results = []
     for rec in targets:
         rid = rec.meta.get("id", rec.stem)
-        commands = cli._evidence_refs(rec, ("command", "test"))
+        plan = lifecycle.recheck_plan(rec, bind_commands=bind)
         if not args.json:
             print(f"{rid}:")
-            for c in commands:
-                print(f"  $ {c}")
+            for kind, item in plan:
+                print(f"  $ {item['ref']}    [{kind}]")
+            if not any(kind == "assert" for kind, _ in plan):
+                print("    (diagnostics only: the claim cannot be settled by this run)")
         if not args.yes:
             answer = input("  run these? [y/N] ").strip().lower()
             if answer not in ("y", "yes"):
                 results.append({"ok": False, "id": rid, "skipped": True})
                 continue
-        res = lifecycle.recheck(memory_dir, root, rec, agent=getattr(args, "agent", None))
+        res = lifecycle.recheck(
+            memory_dir, root, rec, agent=getattr(args, "agent", None), bind_commands=bind
+        )
         results.append(res)
         if not args.json:
-            if res.get("ok"):
+            for run in res.get("runs", []):
+                code = "" if run["exit_code"] is None else f", exit {run['exit_code']}"
+                size = f", {run['output_bytes']} bytes (truncated)" if run["truncated"] else ""
+                print(f"  {run['status']}{code}{size}: {run['command']}")
+            if not res.get("ok"):
+                print(f"  -> not recorded: {res.get('error')}")
+            elif res.get("settled"):
                 print(f"  -> {res['outcome']}: {res['new_id']} (supersedes {rid})")
             else:
-                print(f"  -> not recorded: {res.get('error')}")
+                print(f"  -> not settled, {rid} unchanged: {res['reason']}")
 
     failed = [r for r in results if not r.get("ok") and not r.get("skipped")]
     if args.json:
@@ -169,8 +181,11 @@ def run_recheck(args: argparse.Namespace, memory_dir: Path, root: Path) -> int:
             ok=not failed,
             summary={
                 "rechecked": sum(1 for r in results if r.get("ok")),
+                "settled": sum(1 for r in results if r.get("settled")),
+                "not_settled": sum(1 for r in results if r.get("ok") and not r.get("settled")),
                 "fixed": sum(1 for r in results if r.get("outcome") == "fixed"),
                 "open": sum(1 for r in results if r.get("outcome") == "open"),
+                "regressed": sum(1 for r in results if r.get("outcome") == "regressed"),
                 "skipped": sum(1 for r in results if r.get("skipped")),
             },
         )

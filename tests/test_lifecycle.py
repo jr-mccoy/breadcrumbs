@@ -260,10 +260,24 @@ class RecheckTests(unittest.TestCase):
         )["id"]
         return mem, vid
 
-    def test_a_passing_command_records_fixed_and_supersedes(self):
+    def test_a_plain_command_is_a_diagnostic_and_settles_nothing(self):
+        # Audit F04: a command that exits 0 has not proven the subject fixed.
         with tempfile.TemporaryDirectory() as tmp:
             mem, vid = self._verified(tmp, "true")
             code, out = run(["verify", "--recheck", vid, "--yes", "--project", tmp, "--json"])
+            self.assertEqual(code, 0, out)
+            res = json.loads(out)["items"][0]
+            self.assertFalse(res["settled"])
+            self.assertIsNone(res["new_id"])
+            self.assertEqual(res["runs"][0]["status"], "passed")
+            self.assertEqual(crumb.find_record_by_id(mem, vid).meta["status"], "active")
+
+    def test_a_bound_passing_command_records_fixed_and_supersedes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, vid = self._verified(tmp, "true")
+            code, out = run(
+                ["verify", "--recheck", vid, "--bind-commands", "--yes", "--project", tmp, "--json"]
+            )
             self.assertEqual(code, 0, out)
             res = json.loads(out)["items"][0]
             self.assertEqual(res["outcome"], "fixed")
@@ -274,13 +288,16 @@ class RecheckTests(unittest.TestCase):
             self.assertEqual(old.meta["status"], "superseded")
             self.assertEqual(old.meta["superseded_by"], res["new_id"])
 
-    def test_a_failing_command_records_open(self):
+    def test_a_bound_failing_command_records_a_regression(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem, vid = self._verified(tmp, "echo broken >&2; false")
-            code, out = run(["verify", "--recheck", vid, "--yes", "--project", tmp, "--json"])
+            code, out = run(
+                ["verify", "--recheck", vid, "--bind-commands", "--yes", "--project", tmp, "--json"]
+            )
             self.assertEqual(code, 0, out)
             res = json.loads(out)["items"][0]
-            self.assertEqual(res["outcome"], "open")
+            # The claim was recorded as fixed, so a failing assertion is a regression.
+            self.assertEqual(res["outcome"], "regressed")
             text = crumb.find_record_by_id(mem, res["new_id"]).path.read_text("utf-8")
             self.assertIn("exit 1", text)
             self.assertIn("broken", text)

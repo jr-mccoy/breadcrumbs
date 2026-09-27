@@ -4531,6 +4531,12 @@ def verify(
     return out
 
 
+def _checks_mod():
+    from breadcrumbs import checks
+
+    return checks
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
@@ -4560,7 +4566,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
         status=args.status,
         method=args.method,
         note=args.note,
-        evidence=_parse_evidence_pairs(args.evidence),
+        evidence=_parse_evidence_pairs(args.evidence)
+        + [_checks_mod().assertion_item(c) for c in (getattr(args, "assertions", None) or [])],
         tags=_split_tags(args.tags),
         confidence=args.confidence,
         agent=getattr(args, "agent", None),
@@ -12618,18 +12625,35 @@ def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
         "(default: project)",
     )
     p_verify.add_argument(
+        "--assert",
+        dest="assertions",
+        metavar="CMD",
+        action="append",
+        default=None,
+        help="an assertion for this subject: a command that exits 0 exactly when it is "
+        "fixed (a regression test). Only assertions let `--recheck` settle the claim "
+        "(repeatable)",
+    )
+    p_verify.add_argument(
+        "--bind-commands",
+        action="store_true",
+        help="with --recheck: treat the record's command evidence as its assertion for this "
+        "run, and record it as one (otherwise a command is only a diagnostic)",
+    )
+    p_verify.add_argument(
         "--recheck",
         metavar="ID",
         action="append",
         default=None,
-        help="rerun the command evidence of this verification and record the result as a "
-        "new verification that supersedes it (repeatable; asks before running anything)",
+        help="rerun this verification's assertions (and any command evidence, as diagnostics); "
+        "a new verification supersedes it only when its assertions settle the claim "
+        "(repeatable; asks before running anything)",
     )
     p_verify.add_argument(
         "--all",
         dest="recheck_all",
         action="store_true",
-        help="with --recheck semantics: every active verification that names a command",
+        help="with --recheck semantics: every active verification with an assertion or command",
     )
     p_verify.add_argument(
         "--yes",

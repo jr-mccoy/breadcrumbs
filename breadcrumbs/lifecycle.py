@@ -31,6 +31,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from breadcrumbs import checks as _checks
 from breadcrumbs import cli
 
 # --------------------------------------------------------------------------- #
@@ -246,10 +247,11 @@ def _trap_written_at(trap: dict) -> str | None:
 # hundred vanished files, and the first few are the signal.
 EVIDENCE_MISSING_MAX = 5
 
-# A recheck runs a command a record names. Five minutes is generous for a test
-# suite and short enough that a hung command does not hang the CLI forever.
-RECHECK_TIMEOUT_SECONDS = 300
-RECHECK_OUTPUT_LINES = 3
+# A recheck runs a command a record names; the limits live with the runner in
+# breadcrumbs/checks.py (audit F25). Five minutes is generous for a test suite
+# and short enough that a hung command does not hang the CLI forever.
+RECHECK_TIMEOUT_SECONDS = _checks.TIMEOUT_SECONDS
+RECHECK_OUTPUT_LINES = _checks.TAIL_LINES
 
 
 def _evidence_path(ref: str) -> str | None:
@@ -311,21 +313,43 @@ def missing_evidence_warnings(root: Path, records: list) -> list[str]:
     return lines
 
 
-def recheck_targets(memory_dir: Path, ids: list[str] | None) -> tuple[list, list[str]]:
+def recheck_targets(
+    memory_dir: Path, ids: list[str] | None, root: Path | None = None
+) -> tuple[list, list[str]]:
     """Verifications to recheck and the ids that could not be used, with why.
 
-    `ids` None means every active verification that names a command. A named id
-    that is not a verification, or has no command evidence, is reported rather
-    than silently skipped — the user asked for that one.
+    A verification qualifies when it declares an assertion or names a command
+    (a diagnostic). `test` evidence is a pointer to a test file, never something
+    to execute, so it does not qualify on its own (audit F25). `ids` None means
+    every such active verification.
+
+    A branch-scoped verification from another branch is not rechecked from this
+    checkout: the run would describe this branch, not the one the claim is about
+    (audit F04). A named id that fails any of this is reported rather than
+    silently skipped — the user asked for that one.
     """
     memory_dir = Path(memory_dir)
+    current = cli.git_branch(Path(root)) if root is not None else None
     problems: list[str] = []
+
+    def usable(rec) -> str | None:
+        if not (_checks.assertion_items(rec.meta) or _checks.diagnostic_commands(rec.meta)):
+            return "names no assertion or command to rerun (test-file evidence is not run)"
+        if current is not None and cli.branch_scoped_elsewhere(rec.meta, current):
+            return (
+                f"scoped to branch {rec.meta.get('branch')}; check that branch out to "
+                "recheck it (a run here would describe this branch)"
+            )
+        return None
+
     if ids is None:
-        recs = [
-            r
-            for r in cli.active_records(memory_dir, "verification")
-            if cli._evidence_refs(r, ("command", "test"))
-        ]
+        recs = []
+        for r in cli.active_records(memory_dir, "verification"):
+            why = usable(r)
+            if why is None:
+                recs.append(r)
+            elif "scoped to branch" in why:
+                problems.append(f"{r.meta.get('id', r.stem)}: {why}")
         return recs, problems
     recs = []
     for rid in ids:
@@ -338,86 +362,98 @@ def recheck_targets(memory_dir: Path, ids: list[str] | None) -> tuple[list, list
                 f"{rid}: already {rec.meta.get('status')} — recheck the record that replaced it"
             )
             continue
-        if not cli._evidence_refs(rec, ("command", "test")):
-            problems.append(f"{rid}: names no command evidence to rerun")
+        why = usable(rec)
+        if why:
+            problems.append(f"{rid}: {why}")
             continue
         recs.append(rec)
     return recs, problems
 
 
-def run_command(command: str, root: Path) -> dict:
-    """Run one recorded command in the project root. Never raises."""
-    import subprocess
+def recheck_plan(rec, *, bind_commands: bool = False) -> list[tuple[str, dict]]:
+    """What a recheck of `rec` would run: `(kind, item)` pairs, assertions first.
 
-    try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=RECHECK_TIMEOUT_SECONDS,
-        )
-        code, output = proc.returncode, (proc.stdout or "") + (proc.stderr or "")
-    except subprocess.TimeoutExpired as exc:
-        code = None
-        output = f"timed out after {RECHECK_TIMEOUT_SECONDS}s\n" + str(exc.output or "")
-    except OSError as exc:
-        code, output = None, f"could not run: {exc}"
-    lines = [ln for ln in output.splitlines() if ln.strip()][-RECHECK_OUTPUT_LINES:]
-    from breadcrumbs.transcript import redact_secrets
-
-    tail = [
-        ln if redact_secrets(ln) is not None else "[line dropped: looked like a secret]"
-        for ln in lines
-    ]
-    return {"command": command, "exit_code": code, "tail": tail}
-
-
-def recheck(memory_dir: Path, root: Path, rec, *, agent: str | None = None) -> dict:
-    """Rerun `rec`'s commands and record the result as a new verification.
-
-    The new record has the same subject, `method: runtime`, outcome `fixed` when
-    every command exited 0 and `open` otherwise, the commands as evidence, and a
-    note with each exit code and the last lines of output. The old record is
-    superseded by it: the new one is the current answer, the old one history.
+    `bind_commands` is the operator saying, for this recheck, that the record's
+    command evidence *is* its assertion — the command exits 0 exactly when the
+    subject is fixed. Without it a command is only a diagnostic.
     """
-    commands = cli._evidence_refs(rec, ("command", "test"))
-    runs = [run_command(c, root) for c in commands]
-    ok = all(r["exit_code"] == 0 for r in runs)
+    plan: list[tuple[str, dict]] = [("assert", item) for item in _checks.assertion_items(rec.meta)]
+    for command in _checks.diagnostic_commands(rec.meta):
+        if bind_commands:
+            plan.append(("assert", _checks.assertion_item(command)))
+        else:
+            plan.append(("diagnostic", {"type": "command", "ref": command}))
+    return plan
+
+
+def recheck(
+    memory_dir: Path,
+    root: Path,
+    rec,
+    *,
+    agent: str | None = None,
+    bind_commands: bool = False,
+    timeout: float | None = None,
+) -> dict:
+    """Rerun `rec`'s checks; settle its claim only if an assertion allows it.
+
+    Every run is a `checks.CheckResult`. Diagnostics are reported and settle
+    nothing. When every assertion was evaluated, the outcome is `fixed` (all
+    passed), `regressed` (one failed on a claim recorded as fixed) or `open`. It
+    is written as a new verification that supersedes `rec` and keeps its
+    subject, scope, branch, confidence, tags and evidence, including any
+    commands `bind_commands` turned into assertions.
+
+    Otherwise nothing is written: no assertion, or one that could not be
+    evaluated (missing tool, timeout, signal, unknown spec), leaves the claim
+    standing exactly as it was. The result says why (`settled: false`).
+    """
+    old_id = rec.meta.get("id", rec.stem)
+    runs = []
+    for kind, item in recheck_plan(rec, bind_commands=bind_commands):
+        if kind == "assert":
+            runs.append(_checks.run_assertion(item, Path(root), timeout=timeout))
+        else:
+            runs.append(_checks.run_check(item["ref"], Path(root), timeout=timeout))
+    old_outcome = rec.meta.get("outcome")
+    outcome, why = _checks.settle(old_outcome, [r for r in runs if r.kind == "assert"])
+    base = {"id": old_id, "runs": [r.to_dict() for r in runs], "reason": why}
+    if outcome is None:
+        return {"ok": True, "settled": False, "new_id": None, "outcome": None, **base}
+
     note_lines = []
     for r in runs:
-        code = "no exit code" if r["exit_code"] is None else f"exit {r['exit_code']}"
-        note_lines.append(f"`{r['command']}` — {code}")
-        note_lines.extend(f"    {ln}" for ln in r["tail"])
-    old_id = rec.meta.get("id", rec.stem)
-    note_lines.append(f"Recheck of {old_id}.")
+        how = r.status if r.exit_code is None else f"{r.status}, exit {r.exit_code}"
+        note_lines.append(f"`{r.command}` [{r.kind}] — {how}")
+        note_lines.extend(f"    {ln}" for ln in r.tail)
+    note_lines.append(f"Recheck of {old_id} ({old_outcome or 'no outcome'} -> {outcome}): {why}.")
+    evidence = [e for e in (rec.meta.get("evidence") or []) if isinstance(e, dict)]
+    if bind_commands:
+        evidence = [
+            _checks.assertion_item(e["ref"]) if e.get("type") == "command" else e for e in evidence
+        ]
+    scope = str(rec.meta.get("scope") or "project")
     subject = rec.meta.get("subject") or rec.meta.get("title") or old_id
     result = cli.verify(
         memory_dir,
         root,
         str(subject),
-        status="fixed" if ok else "open",
+        status=outcome,
         method="runtime",
         note="\n".join(note_lines),
-        evidence=[
-            e
-            for e in (rec.meta.get("evidence") or [])
-            if isinstance(e, dict) and e.get("type") in ("command", "test")
-        ],
+        evidence=evidence,
         tags=[str(t) for t in (rec.meta.get("tags") or [])],
+        confidence=rec.meta.get("confidence") or None,
         agent=agent,
         supersedes=old_id,
+        scope=scope,
+        # A branch-scoped claim belongs to the branch it was made on, whatever
+        # HEAD looks like now (a detached checkout of that branch, say).
+        extra={"branch": rec.meta.get("branch")} if scope == "branch" else None,
     )
     if not result.get("ok"):
-        return {"ok": False, "id": old_id, "error": result.get("error"), "runs": runs}
-    return {
-        "ok": True,
-        "id": old_id,
-        "new_id": result["id"],
-        "outcome": result["outcome"],
-        "runs": runs,
-    }
+        return {"ok": False, "settled": False, "error": result.get("error"), **base}
+    return {"ok": True, "settled": True, "new_id": result["id"], "outcome": outcome, **base}
 
 
 # --------------------------------------------------------------------------- #

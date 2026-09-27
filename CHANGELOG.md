@@ -84,6 +84,28 @@ gate.
 - **Private jots are guarded.** The output says when a private jot's text is now
   committed, and a private jot carrying a credential-shaped string is refused.
 
+### Changed — recheck separates execution from proof (audit WP04)
+
+Findings F04 and F25. `crumb verify --recheck` wrote `fixed` whenever every
+recorded command exited 0, so a `python -c pass` could close a bug report. It
+also ran test-file paths as programs and lost the original's branch scope.
+
+- **Only an assertion settles a claim.** Declare one with `verify --assert CMD`:
+  a command that exits 0 exactly when the subject is fixed, stored as
+  `{type: assert, ref, spec: "1"}`. The result is `fixed`, `open` or
+  `regressed` (an assertion that fails on a claim recorded as fixed).
+- **Plain `command` evidence is a diagnostic.** It runs (with consent) and is
+  reported, but changes nothing unless bound for that run with
+  `--bind-commands`, which also records the binding.
+- **Inconclusive runs write nothing.** A missing tool, a timeout, a signal or an
+  unknown spec leaves the claim as it was (`settled: false`).
+- **`test` evidence is never executed.**
+- **A settled recheck keeps the claim's scope, branch and confidence.** A
+  branch-scoped claim is not rechecked from another branch.
+- **Runs are bounded (new `breadcrumbs/checks.py`).** Output is kept in a
+  rolling 64 KiB window, and each run gets its own process group, terminated on
+  timeout, on Ctrl-C and when the command returns.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

@@ -1,0 +1,298 @@
+"""Replay: running a recorded check, and what its result may claim (audit F04, F25).
+
+`crumb verify --recheck` used to run every `command` and `test` evidence string
+and write `fixed` when all of them exited 0. A successful process is not proof:
+a `python -c pass` "fixed" an authentication bug, and a test-file path was run
+as if it were a program. This module keeps two things apart:
+
+- **Execution** — a `CheckResult`: did the command run, how did it end, what did
+  it print (bounded). It says nothing about the subject.
+- **Settlement** — only an *assertion* may settle a verification's claim. An
+  assertion is an evidence item `{type: assert, ref: <command>, spec: "1"}`
+  declaring that the command exits 0 exactly when the subject is fixed (a
+  regression test for it). Legacy `command` evidence is a *diagnostic*: it may be
+  run, with consent, and reported, but it cannot change the claim. `test`
+  evidence is a pointer to a test file and is never executed.
+
+A check that could not be evaluated (the tool is missing, it timed out, it was
+killed, its spec is unknown) is inconclusive: it neither opens nor fixes
+anything.
+
+Commands run through the platform's shell, as they always have, so a recorded
+command means what its author typed. POSIX parsing is never applied to a
+Windows string. Each run gets its own process group and bounded, rolling output
+capture. The whole group is terminated on timeout, on interruption, and after
+the command returns, so a background child cannot outlive its check.
+"""
+
+from __future__ import annotations
+
+import os
+import platform
+import signal
+import subprocess
+import threading
+import time
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+# The assertion format this build evaluates. An assertion with any other `spec`
+# is reported and not run: guessing what a newer format meant is how a check
+# settles a claim it was never written to settle.
+ASSERTION_SPEC = "1"
+ASSERT_TYPE = "assert"
+DIAGNOSTIC_TYPE = "command"
+
+TIMEOUT_SECONDS = 300
+# What is kept of a run's output while it runs: a rolling window, so a command
+# that prints gigabytes costs this much memory, not gigabytes.
+OUTPUT_WINDOW_BYTES = 64 * 1024
+TAIL_LINES = 3
+KILL_GRACE_SECONDS = 2.0
+
+# Execution statuses. Only PASSED and FAILED are evaluations; the rest say the
+# check did not produce one.
+PASSED = "passed"
+FAILED = "failed"
+UNAVAILABLE = "unavailable"  # could not start, or the shell could not find/run it
+TIMEOUT = "timeout"
+KILLED = "killed"  # ended by a signal it did not ask for
+UNSUPPORTED = "unsupported"  # an assertion spec this build does not know
+EVALUATED = (PASSED, FAILED)
+
+# What a shell reports when it could not run the command at all: POSIX `sh`
+# uses 127 (not found) and 126 (found, not executable); `cmd.exe` uses 9009.
+_UNAVAILABLE_CODES = (126, 127) if os.name == "posix" else (9009,)
+
+
+@dataclass
+class CheckResult:
+    """One execution of one recorded command. Never a verdict on a subject."""
+
+    command: str
+    kind: str  # "assert" | "diagnostic"
+    status: str
+    exit_code: int | None = None
+    signal: int | None = None
+    timed_out: bool = False
+    duration_s: float = 0.0
+    output_bytes: int = 0
+    truncated: bool = False
+    tail: list[str] = field(default_factory=list)
+    cwd: str = ""
+    platform: str = ""
+    detail: str | None = None
+
+    @property
+    def evaluated(self) -> bool:
+        return self.status in EVALUATED
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def assertion_items(meta: dict) -> list[dict]:
+    """A verification's declared assertions, in order."""
+    return [
+        e
+        for e in (meta.get("evidence") or [])
+        if isinstance(e, dict) and e.get("type") == ASSERT_TYPE and str(e.get("ref") or "").strip()
+    ]
+
+
+def diagnostic_commands(meta: dict) -> list[str]:
+    """Legacy `command` evidence: runnable, reportable, never settling."""
+    return [
+        str(e["ref"])
+        for e in (meta.get("evidence") or [])
+        if isinstance(e, dict) and e.get("type") == DIAGNOSTIC_TYPE and e.get("ref")
+    ]
+
+
+def assertion_item(command: str) -> dict:
+    """The evidence item `crumb verify --assert CMD` writes."""
+    return {"type": ASSERT_TYPE, "ref": command, "spec": ASSERTION_SPEC}
+
+
+def _tail(raw: bytes) -> list[str]:
+    from breadcrumbs.transcript import redact_secrets
+
+    text = raw.decode("utf-8", errors="replace")
+    lines = [ln for ln in text.splitlines() if ln.strip()][-TAIL_LINES:]
+    return [
+        ln if redact_secrets(ln) is not None else "[line dropped: looked like a secret]"
+        for ln in lines
+    ]
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """End the run's whole process group; best effort, never raises."""
+    if os.name == "posix":
+        # SIGTERM first, so the leader can clean up; then SIGKILL for whatever
+        # is left. The group itself cannot be polled for "done": an exited
+        # member stays a zombie until its parent reaps it, and an orphan's new
+        # parent (PID 1, which in a container is often not a real init) may not
+        # reap it promptly. So wait on the one process we own, the leader.
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError, OSError):
+            return  # the group is gone
+        deadline = time.monotonic() + KILL_GRACE_SECONDS
+        while proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        time.sleep(0.05)  # a moment for the rest of the group's SIGTERM handlers
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    else:  # pragma: no cover - exercised on Windows only
+        try:
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                capture_output=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+def run_check(
+    command: str,
+    cwd: Path,
+    *,
+    kind: str = "diagnostic",
+    timeout: float | None = None,
+    window: int | None = None,
+) -> CheckResult:
+    """Run one command in `cwd` and describe how it ended. Never raises except
+    KeyboardInterrupt, which first ends the whole process group."""
+    timeout = TIMEOUT_SECONDS if timeout is None else timeout
+    window = OUTPUT_WINDOW_BYTES if window is None else window
+    result = CheckResult(
+        command=command,
+        kind=kind,
+        status=UNAVAILABLE,
+        cwd=str(cwd),
+        platform=f"{platform.system()} ({'sh' if os.name == 'posix' else 'cmd'})",
+    )
+    kwargs: dict = {
+        "shell": True,
+        "cwd": str(cwd),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+    }
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    else:  # pragma: no cover
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    started = time.monotonic()
+    try:
+        proc = subprocess.Popen(command, **kwargs)
+    except (OSError, ValueError) as exc:
+        result.detail = f"could not start: {exc}"
+        return result
+
+    kept = bytearray()
+    seen = [0]
+
+    def read() -> None:
+        stream = proc.stdout
+        try:
+            while True:
+                chunk = stream.read1(65536) if hasattr(stream, "read1") else stream.read(65536)
+                if not chunk:
+                    return
+                seen[0] += len(chunk)
+                kept.extend(chunk)
+                if len(kept) > window:
+                    del kept[: len(kept) - window]
+        except (OSError, ValueError):
+            return
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        result.timed_out = True
+    except KeyboardInterrupt:
+        _kill_tree(proc)
+        raise
+    finally:
+        # After a timeout this ends the command; after a normal return it ends
+        # whatever the command left running in the background.
+        _kill_tree(proc)
+    try:
+        proc.wait(timeout=KILL_GRACE_SECONDS + 1)
+    except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL did not land
+        pass
+    reader.join(timeout=KILL_GRACE_SECONDS + 1)
+    if not reader.is_alive():
+        # Closing while the reader still blocks on the pipe would wait for every
+        # writer to exit — including one that escaped the group (`setsid`). The
+        # daemon reader is left to end with the pipe instead.
+        try:
+            proc.stdout.close()
+        except OSError:  # pragma: no cover
+            pass
+    escaped = reader.is_alive()
+
+    result.duration_s = round(time.monotonic() - started, 3)
+    result.output_bytes = seen[0]
+    result.truncated = seen[0] > len(kept)
+    result.tail = _tail(bytes(kept))
+    code = proc.returncode
+    if result.timed_out:
+        result.status = TIMEOUT
+        result.detail = f"timed out after {timeout:g}s; process group terminated"
+    elif code is None:  # pragma: no cover
+        result.status = KILLED
+    elif code < 0:
+        result.status, result.signal = KILLED, -code
+    else:
+        result.exit_code = code
+        if code in _UNAVAILABLE_CODES:
+            result.status = UNAVAILABLE
+            result.detail = f"exit {code}: the shell could not find or run the command"
+        else:
+            result.status = PASSED if code == 0 else FAILED
+    if escaped:
+        note = "a process that left the group kept the output open and was not ended"
+        result.detail = f"{result.detail}; {note}" if result.detail else note
+    return result
+
+
+def run_assertion(item: dict, cwd: Path, **kwargs) -> CheckResult:
+    """Run one assertion item, or report why it cannot be run."""
+    command = str(item.get("ref") or "")
+    spec = str(item.get("spec") or "")
+    if spec != ASSERTION_SPEC:
+        return CheckResult(
+            command=command,
+            kind="assert",
+            status=UNSUPPORTED,
+            cwd=str(cwd),
+            detail=f"assertion spec {spec or '(none)'!r} is not one this build evaluates "
+            f"(supported: {ASSERTION_SPEC})",
+        )
+    return run_check(command, cwd, kind="assert", **kwargs)
+
+
+def settle(old_outcome: str | None, assertions: list[CheckResult]) -> tuple[str | None, str]:
+    """(new outcome or None, why) from a verification's assertion runs.
+
+    None means the claim stands as it was: there was no assertion, or one of
+    them could not be evaluated. Diagnostics are never passed in here.
+    """
+    if not assertions:
+        return None, "no assertion is declared; diagnostics do not settle a claim"
+    unevaluated = [r for r in assertions if not r.evaluated]
+    if unevaluated:
+        first = unevaluated[0]
+        return None, f"inconclusive: `{first.command}` {first.status}"
+    if all(r.status == PASSED for r in assertions):
+        return "fixed", "every assertion passed"
+    if (old_outcome or "") in ("fixed", "not_applicable"):
+        return "regressed", "an assertion failed on a subject recorded as fixed"
+    return "open", "an assertion failed"

@@ -47,7 +47,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash` such as `related.json` and `conflicts.json`) whose stamped `inputs_hash` no longer matches the live records. Also checks the record contract (`record-schema.md` §4): field vocabularies, evidence shape, timestamps, scope, and `superseded_by` links (a missing target, a self-link or a cycle). Every finding carries a stable `code`, and `--json` includes it. | **2 (built)** |
 | `remember decision` | git state, user input | decision record | Capture a durable choice. Refuses a near-duplicate of a live decision (exit 3) unless `--supersedes ID` or `--allow-duplicate`. | **3 (built)** |
 | `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. Same near-duplicate gate as `remember decision`. | **3 (built)** |
-| `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns recorded command evidence instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). `--scope branch` makes the result apply only while the current branch is checked out (default `project`; see [Branch scope](#branch-scope-built-wm-52)). Reindexes on write. | **built** |
+| `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--assert CMD` (repeatable) declares an assertion, the only kind of check a recheck may settle the claim with. `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns a verification's checks instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). `--scope branch` makes the result apply only while the current branch is checked out (default `project`; see [Branch scope](#branch-scope-built-wm-52)). Reindexes on write. | **built** |
 | `reindex` | all canonical files | `generated/` projections, the trap/question indexes (schema 3), `index/search.sqlite` | Rebuild the generated projections from the records (mutations reindex automatically). `--search-index` builds the search index even below its size threshold — see `reindex` below. | **built** |
 | `capture session` | git state (log, status, diff --shortstat) | session record, handoff, current | Record session end; git-prefill body sections (Files Touched is a counts-only summary) over a bounded window (`since..HEAD`, capped at 20 commits) that the record names. `--fast` = git-only snapshot + one-line next action; `--next` + `--set` runs unattended without dropping narrative. At schema 4, on a branch that is not the default branch, the handoff written is `handoffs/<branch-slug>.md` instead of `handoff.md` — see [Branch handoffs](#branch-handoffs-built-wm-50). | **3 (built)** |
 | `schema [<type>]` | (none) | record contract | Print body sections / vocab / rules from source constants. `--template <type>` emits a `remember` skeleton (a `verify` one for `verification`, a `crumb note …` one for `trap` and `question`). | **built** |
@@ -814,37 +814,83 @@ grouped by `consolidate`.
 
 ---
 
-## `verify --recheck` (built, WM-31)
+## `verify --recheck` (built, WM-31; replay contract: audit WP04)
 
 ```bash
-crumb verify --recheck ver_20260801_unit-suite-open          # asks y/N per record
-crumb verify --recheck ver_… --recheck ver_… --yes           # runs without asking
-crumb verify --all --yes                                     # every active verification with a command
+crumb verify "login rejects expired tokens" --status open \
+  --assert "pytest tests/test_auth.py::test_expired_token"   # declare an assertion
+crumb verify --recheck ver_20260801_login-bug                 # asks y/N per record
+crumb verify --recheck ver_… --recheck ver_… --yes            # runs without asking
+crumb verify --recheck ver_… --bind-commands --yes            # treat its commands as assertions
+crumb verify --all --yes                                      # every active verification with a check
 ```
 
-Reruns the `command`/`test` evidence a verification recorded and writes the
-result as a **new** verification. Each record's commands are printed first;
-without `--yes`, a terminal is asked `run these? [y/N]` per record, and with no
+Reruns a verification's checks. Only an **assertion** can change the claim.
+Each record's commands are printed first, marked `[assert]` or `[diagnostic]`.
+Without `--yes`, a terminal is asked `run these? [y/N]` per record; with no
 terminal the command exits 2 having run nothing. There is no MCP equivalent, on
 purpose: running commands taken from the store is a human-confirmed, CLI-only
 act.
 
-- Each command runs with `shell=True` in the project root, with a 300-second
-  timeout.
-- The new verification has the same subject, `method: runtime`, outcome `fixed`
-  when every command exited 0 and `open` otherwise, the commands as `command`
-  evidence, and a `Notes` section with each command's exit code and its last 3
-  non-empty output lines — a line that looks like a secret is replaced by
-  `[line dropped: looked like a secret]`. The old record is marked `superseded`
-  by it. The near-duplicate gate does not apply.
-- `--all` takes every active verification that names a command. A named id that
-  is not a verification or has no command evidence is reported with a
-  `CRUMB-WARN` line and skipped.
-- Exit codes: `0` all recorded (a declined record counts as skipped, not
-  failed), `1` nothing to recheck or a new record could not be written, `2` no
-  store or no terminal without `--yes`. `--json` returns `{rechecked: [{ok, id,
-  new_id, outcome, runs: [{command, exit_code, tail}]}], summary: {rechecked,
-  fixed, open, skipped}}`.
+**What runs, and what it may claim** (`breadcrumbs/checks.py`):
+
+- **Assertion.** An evidence item `{type: assert, ref: <command>, spec: "1"}`
+  declares that the command exits 0 exactly when the subject is fixed — a
+  regression test for it. `verify --assert CMD` (repeatable) writes one, and
+  MCP `memory_verify` can pass the same item in `evidence`. Only assertions
+  settle a claim.
+- **Diagnostic.** Legacy `command` evidence is run and reported, but it never
+  changes the claim: a command that exits 0 has not shown that the subject is
+  fixed. `--bind-commands` is the operator saying that, for this record, the
+  command *is* the assertion; the new record then stores it as one.
+- **Pointer.** `test` evidence is a test-file path and is never executed.
+
+**Settlement.** When every assertion was evaluated:
+- all passed → `fixed`;
+- one failed on a claim recorded as `fixed` or `not_applicable` → `regressed`;
+- otherwise → `open`.
+
+The result is a new verification that supersedes the old one and keeps its
+subject, scope, branch, confidence, tags and evidence (`method: runtime`). A
+`Notes` section lists each run's status, exit code and last 3 non-empty output
+lines; a line that looks like a secret is replaced by
+`[line dropped: looked like a secret]`.
+
+If no assertion is declared, or one could not be evaluated, **nothing is
+written**, the old record stands unchanged, and the result carries
+`settled: false` and a `reason`. An assertion is not evaluated when the shell
+could not find or run the command (exit 126/127, or 9009 on Windows), it timed
+out, it was killed by a signal, or its `spec` is not `1`.
+
+**Where it runs.** A branch-scoped verification recorded on another branch is
+not rechecked from this checkout: the run would describe this branch. Check that
+branch out first.
+
+**How it runs.** Each command runs through the platform's shell in the project
+root, as typed; POSIX parsing is never applied to a Windows string. Each run
+gets its own process group and a 300-second timeout, and output is kept in a
+rolling 64 KiB window while it runs. The whole group is terminated on timeout,
+on Ctrl-C, and after the command returns, so a background child cannot outlive
+its check. On Windows, `taskkill /T` is used; a process that detaches itself
+from the group is out of reach.
+
+**Other behavior:**
+- The near-duplicate gate does not apply.
+- `--all` takes every active verification with an assertion or a command.
+- A named id that is not a verification, has nothing to run, or is scoped to
+  another branch is reported with a `CRUMB-WARN` line and skipped.
+
+**Exit codes:** `0` means every record was processed (settled or not; a
+declined record counts as skipped); `1` means nothing to recheck, or a new
+record could not be written; `2` means no store, or no terminal without
+`--yes`.
+
+**JSON output.** `--json` returns `{rechecked: [{ok, id, settled, new_id,
+outcome, reason, runs}], summary: {rechecked, settled, not_settled, fixed, open,
+regressed, skipped}}`. Each run is `{command, kind, status, exit_code, signal,
+timed_out, duration_s, output_bytes, truncated, tail, cwd, platform, detail}`,
+where `status` is one of `passed`, `failed`, `unavailable`, `timeout`, `killed`
+or `unsupported`.
 
 ---
 
