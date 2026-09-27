@@ -81,6 +81,16 @@ def _features(item: dict, ubiquitous: frozenset[str]) -> set[tuple[str, str]]:
     return feats
 
 
+def _offer(kept: list[tuple[int, str]], entry: tuple[int, str]) -> None:
+    """Keep `kept` as the smallest `RELATED_MAX_PER_ITEM` entries, sorted."""
+    if len(kept) < RELATED_MAX_PER_ITEM:
+        kept.append(entry)
+        kept.sort()
+    elif entry < kept[-1]:
+        kept[-1] = entry
+        kept.sort()
+
+
 def compute_related(memory_dir: Path) -> dict:
     """`{"related": {id: [id, …]}, "skipped": None, "degraded"?: {...}}` for the live corpus.
 
@@ -121,7 +131,12 @@ def compute_related(memory_dir: Path) -> dict:
         )
         for it in items
     ]
-    scores: dict[str, list[tuple[int, str]]] = {it["id"]: [] for it in items}
+    # Only each item's best `RELATED_MAX_PER_ITEM` are kept as pairs are
+    # scored, ordered by score then id (ids are unique, so the order is total
+    # and the result is exactly a full sort's first entries): memory stays
+    # linear in the store, not in the pairs.
+    # Keyed by id, as before: duplicate ids (a `validate` failure) share one list.
+    best: dict[str, list[tuple[int, str]]] = {it["id"]: [] for it in items}
     for i, lists in enumerate(usable):
         near: set[int] = set()
         for members in lists:
@@ -132,17 +147,9 @@ def compute_related(memory_dir: Path) -> dict:
             score = len(fa & fb) * W_FILE + len(ta & tb) * W_TAG + len(sa & sb) * W_STEM
             if score < cli.GUARD_NOISE_FLOOR:
                 continue
-            a, b = items[i], items[j]
-            scores[a["id"]].append((score, b["id"]))
-            scores[b["id"]].append((score, a["id"]))
-    related = {}
-    for rid, found in scores.items():
-        if not found:
-            continue
-        # Highest score first, then id — a tie must resolve the same way on
-        # every machine or the committed file churns.
-        found.sort(key=lambda p: (-p[0], p[1]))
-        related[rid] = [other for _, other in found[:RELATED_MAX_PER_ITEM]]
+            _offer(best[items[i]["id"]], (-score, items[j]["id"]))
+            _offer(best[items[j]["id"]], (-score, items[i]["id"]))
+    related = {rid: [other for _, other in found] for rid, found in best.items() if found}
     doc: dict = {"related": dict(sorted(related.items())), "skipped": None}
     if dropped:
         doc["degraded"] = {
