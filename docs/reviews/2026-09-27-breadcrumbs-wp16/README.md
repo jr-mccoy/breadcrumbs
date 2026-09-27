@@ -142,7 +142,16 @@ records the package as `review_required` for that reason.
 
 ## Results
 
-RESULTS_TABLE
+| Command | Exit | Result |
+|---|---|---|
+| `python -m unittest discover -s tests -p "test_*.py"` (3.11) | 0 | 1337 run, 0 failures, 7 skipped |
+| parity, parser, aliases, MCP, admission, remember, hooks and integrations tests on 3.9.23 | 0 | 236 OK (6 skipped: MCP SDK) |
+| `test_mcp`, `test_admission_policy` and `test_application_parity` with MCP SDK 2.2.0 | 0 | 62 OK (2 skipped) |
+| `python evals/run.py --verbose` | 0 | Identical to WP15 apart from timings ([evals.txt](evals.txt)) |
+| `python evals/run.py --release` | 0 | 20 critical cases pass |
+| `regression_probes.py … --fail-on-observed` | 2 | Unchanged: 3 defect signals, 3 probe errors ([probe-results.json](probe-results.json)) |
+| CI `test` job fixture steps, replayed | 0 | All 7 pass |
+| `ruff check . && ruff format --check .` (0.16.1) | 0 | Clean |
 
 ## Compatibility
 

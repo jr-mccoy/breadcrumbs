@@ -1176,7 +1176,7 @@
       "title": "Finish extracting the application layer from the CLI",
       "priority": "P2",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP06",
         "WP07",
@@ -1209,7 +1209,17 @@
         "`test_refactor_preserves_ids_scores_and_wire_contracts`"
       ],
       "done_when": "The CLI is an adapter for the repaired operations rather than the dependency every internal module must import.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "fa2df0e",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp16/README.md",
+          "summary": "breadcrumbs/service.py: explicit Context (root, store, channel, clock, agent) and active(ctx) (admission channel, clock, per-thread store aliases, one parse cache); service.record is the one decision/attempt write both `crumb remember` and `memory_record` use (they duplicated the pipeline); mark_status, search, guard, resume_packet, prompt_lookup and admit; ServiceError kinds worded by the adapters. CLI remember/mark-status/search/guard/resume, the MCP tools and _admit, the guard hook and the prompt hook call it; `crumb hook` runs each firing in a hook-channel context. The argparse layer moved to breadcrumbs/cli_parser.py (43 nodes, AST-driven; names forwarded; crumb.py shim re-exports). Store aliases and the clock are scoped per-thread state (cli.store_aliases, cli.clock) instead of module globals.",
+          "tests": "tests/test_application_parity.py: 5 tests. The parity golden (tests/fixtures/application_parity.json) was captured and committed (83628b3) from the pre-extraction code and still matches after (ids, scores, verdicts, packets, envelopes, exit codes, hook output, generated files); service import loads neither the parser nor argparse and prints nothing; CLI/MCP/hook admission parity across 4 policies x 4 payloads x 3 channels, spied through service.admit; two store contexts in two threads keep their own aliases, policy and clock.",
+          "results": "Suite 1337 run, 0 failures, 7 skipped (3.11); 3.9 subset 236 OK; MCP SDK 62 OK; evals identical to WP15 apart from timings; --release 20 critical pass; probes unchanged (3 signals, 3 errors); CI fixture steps 7/7; ruff clean. Behavior: 4 defects before (parser loaded by the domain import; two record-write implementations; aliases shared across stores in two threads: 'payments' stemmed to 'bill' in the store without aliases; no operation-scoped clock), 0 after.",
+          "limits": "F21 is not finished: cli.py still holds most domain functions (13,915 lines, from 15,025) and 18 modules, service.py included, still import it. note/verify/jot/inbox/promote/review/policy/capture/lifecycle commands still call domain functions directly (admission already channel-keyed). Hooks have no guidance-writing transport; hook-channel guidance writes are tested through service.record in the hook context."
+        }
+      ]
     },
     {
       "id": "WP17",
