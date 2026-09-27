@@ -122,7 +122,17 @@ def main() -> int:
         import shutil
 
         leftover = []
-        shutil.rmtree(tmp, onerror=lambda fn, path, exc: leftover.append(path))
+
+        def retry_writable(fn, path, exc):
+            # git's object files are read-only, and Windows will not delete a
+            # read-only file; that is not a live process holding it.
+            try:
+                os.chmod(path, 0o700)
+                fn(path)
+            except OSError:
+                leftover.append(path)
+
+        shutil.rmtree(tmp, onerror=retry_writable)
         if leftover:
             # Windows cannot delete a directory a live process is using: that
             # is itself evidence that something outlived the smoke test.
@@ -357,6 +367,8 @@ def _checks(crumb, args, tmp, env, check, observations) -> None:
             else ["kill", "-9", str(child)]
         )
         subprocess.run(kill, capture_output=True)
+    runs = [r for item in report.get("items") or [] for r in item.get("runs") or []]
+    containment = runs[0].get("containment") if runs else None
     check(
         "replay_bounded_and_contained",
         vid is not None
@@ -368,6 +380,7 @@ def _checks(crumb, args, tmp, env, check, observations) -> None:
         child_pid=child,
         child_alive=alive,
         report_chars=len(text),
+        containment=containment,
         stderr=err.decode(errors="replace")[-300:],
     )
 

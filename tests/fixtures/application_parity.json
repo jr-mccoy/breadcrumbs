@@ -417,7 +417,7 @@
    "source": {
     "commit": "<SHA>",
     "generated_at": "2026-09-20T12:00:00+00:00",
-    "inputs_hash": "6083a1188a16"
+    "inputs_hash": "515ef9caa22c"
    },
    "stale_after_days": 21,
    "verification": [],
@@ -687,11 +687,11 @@
  "generated_conflicts.json": {
   "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
   "conflicts": [],
-  "inputs_hash": "6083a1188a16"
+  "inputs_hash": "515ef9caa22c"
  },
  "generated_related.json": {
   "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
-  "inputs_hash": "6083a1188a16",
+  "inputs_hash": "515ef9caa22c",
   "related": {
    "att_20260920_tried-an-in-memory-cache-for-pricing": [
     "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api"
@@ -962,7 +962,7 @@
   "source": {
    "commit": "<SHA>",
    "generated_at": "2026-09-20T12:00:00+00:00",
-   "inputs_hash": "6083a1188a16"
+   "inputs_hash": "515ef9caa22c"
   },
   "stale_after_days": 21,
   "verification": [],

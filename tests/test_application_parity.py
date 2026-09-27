@@ -261,7 +261,10 @@ def scenario(root: Path) -> dict:
 
 
 def run_scenario() -> dict:
-    env = {k: v for k, v in os.environ.items() if k not in AGENT_MARKERS}
+    # The author a record names comes from $USER; pin it (and drop USERNAME) so
+    # the records, and every inputs hash over them, are machine-independent.
+    env = {k: v for k, v in os.environ.items() if k not in AGENT_MARKERS and k != "USERNAME"}
+    env["USER"] = "parity"
     suffixes = (f"{n:04x}" for n in range(1, 1 << 16))
     with (
         tempfile.TemporaryDirectory() as tmp,

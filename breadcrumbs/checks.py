@@ -83,6 +83,10 @@ class CheckResult:
     cwd: str = ""
     platform: str = ""
     detail: str | None = None
+    # How the run's processes were contained, so a report can say what ended
+    # them (audit F25): "process-group" (POSIX), "job-object" (Windows), or
+    # "taskkill" with the reason a job was not available.
+    containment: str = ""
 
     @property
     def evaluated(self) -> bool:
@@ -127,7 +131,7 @@ def _tail(raw: bytes) -> list[str]:
 
 
 def _windows_job(proc: subprocess.Popen):
-    """Put `proc` in a new Windows Job Object and return its handle (or None).
+    """Put `proc` in a new Windows Job Object: `(handle, None)`, or `(None, why not)`.
 
     A process group is not a tree on Windows: once the shell has returned,
     `taskkill /T` can no longer find a child it left running, and that child
@@ -186,16 +190,95 @@ def _windows_job(proc: subprocess.Popen):
 
         job = kernel32.CreateJobObjectW(None, None)
         if not job:
-            return None
+            return None, f"CreateJobObject failed ({ctypes.get_last_error()})"
         info = _Extended()
         info.BasicLimitInformation.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-        kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info))
-        if not kernel32.AssignProcessToJobObject(job, int(proc._handle)):
+        if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            note = f"SetInformationJobObject failed ({ctypes.get_last_error()})"
             kernel32.CloseHandle(job)
-            return None
-        return job
-    except Exception:  # pragma: no cover - fall back to taskkill
-        return None
+            return None, note
+        if not kernel32.AssignProcessToJobObject(job, int(proc._handle)):
+            note = f"AssignProcessToJobObject failed ({ctypes.get_last_error()})"
+            kernel32.CloseHandle(job)
+            return None, note
+        return job, None
+    except Exception as exc:  # pragma: no cover - fall back to taskkill
+        return None, f"{type(exc).__name__}: {exc}"
+
+
+def _windows_sweep(root_pid: int, started_filetime: int) -> int:
+    """End every process descended from `root_pid` that started after the run
+    did; return how many. Windows only, best effort.
+
+    Windows keeps a process's parent id after the parent exits, so an orphan
+    is still found through a dead intermediate. A process that started before
+    the run cannot be a descendant (its id could have been reused), so it is
+    never touched.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+        class _Entry(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_wchar * 260),
+            ]
+
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+        if not snap or snap == wintypes.HANDLE(-1).value:
+            return 0
+        parents: dict[int, int] = {}
+        try:
+            entry = _Entry()
+            entry.dwSize = ctypes.sizeof(_Entry)
+            ok = kernel32.Process32FirstW(snap, ctypes.byref(entry))
+            while ok:
+                parents[entry.th32ProcessID] = entry.th32ParentProcessID
+                ok = kernel32.Process32NextW(snap, ctypes.byref(entry))
+        finally:
+            kernel32.CloseHandle(snap)
+        tree, frontier = set(), {root_pid}
+        while frontier:
+            frontier = (
+                {pid for pid, ppid in parents.items() if ppid in frontier} - tree - {root_pid}
+            )
+            tree |= frontier
+        ended = 0
+        for pid in tree:
+            handle = kernel32.OpenProcess(0x1000 | 0x0001, False, pid)  # QUERY_LIMITED | TERMINATE
+            if not handle:
+                continue
+            try:
+                created, t1, t2, t3 = (wintypes.FILETIME() for _ in range(4))
+                if kernel32.GetProcessTimes(
+                    handle, *(ctypes.byref(t) for t in (created, t1, t2, t3))
+                ):
+                    when = (created.dwHighDateTime << 32) | created.dwLowDateTime
+                    if when >= started_filetime and kernel32.TerminateProcess(handle, 1):
+                        ended += 1
+            finally:
+                kernel32.CloseHandle(handle)
+        return ended
+    except Exception:  # pragma: no cover
+        return 0
+
+
+def _filetime_now() -> int:
+    """Now, as a Windows FILETIME (100 ns ticks since 1601)."""
+    return int((time.time() + 11644473600) * 10_000_000)
 
 
 def _end_windows_job(job) -> None:
@@ -209,7 +292,7 @@ def _end_windows_job(job) -> None:
         pass
 
 
-def _kill_tree(proc: subprocess.Popen, job=None) -> None:
+def _kill_tree(proc: subprocess.Popen, job=None, started_filetime: int | None = None) -> int:
     """End the run's whole process group; best effort, never raises."""
     if os.name == "posix":
         # SIGTERM first, so the leader can clean up; then SIGKILL for whatever
@@ -220,7 +303,7 @@ def _kill_tree(proc: subprocess.Popen, job=None) -> None:
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError, OSError):
-            return  # the group is gone
+            return 0  # the group is gone
         deadline = time.monotonic() + KILL_GRACE_SECONDS
         while proc.poll() is None and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -231,17 +314,23 @@ def _kill_tree(proc: subprocess.Popen, job=None) -> None:
             pass
     else:  # pragma: no cover - exercised on Windows only (the native CI job)
         if job is not None:
-            # Ends every process the run started, orphans included.
+            # Ends every process the run started that is in the job.
             _end_windows_job(job)
-            return
-        try:
-            subprocess.run(
-                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                capture_output=True,
-                timeout=10,
-            )
-        except (OSError, subprocess.SubprocessError):
-            pass
+        else:
+            try:
+                subprocess.run(
+                    ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                    capture_output=True,
+                    timeout=10,
+                )
+            except (OSError, subprocess.SubprocessError):
+                pass
+        # A job does not hold a child that broke away from it (a CI runner's
+        # job can allow that silently), and taskkill cannot find an orphan
+        # whose parent has exited. The sweep finds both by parent id.
+        if started_filetime is not None:
+            return _windows_sweep(proc.pid, started_filetime)
+    return 0
 
 
 def run_check(
@@ -275,15 +364,22 @@ def run_check(
     else:  # pragma: no cover
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     started = time.monotonic()
+    started_filetime = _filetime_now() - 10_000_000  # a second of clock slack
     try:
         proc = subprocess.Popen(command, **kwargs)
     except (OSError, ValueError) as exc:
         result.detail = f"could not start: {exc}"
         return result
-    job = _windows_job(proc) if os.name == "nt" else None
+    job = None
+    if os.name == "nt":  # pragma: no cover - exercised on Windows only
+        job, why_not = _windows_job(proc)
+        result.containment = "job-object" if job is not None else f"taskkill ({why_not})"
+    else:
+        result.containment = "process-group"
 
     kept = bytearray()
     seen = [0]
+    swept = 0
 
     def read() -> None:
         stream = proc.stdout
@@ -306,12 +402,11 @@ def run_check(
     except subprocess.TimeoutExpired:
         result.timed_out = True
     except KeyboardInterrupt:
-        _kill_tree(proc, job)
-        raise
+        raise  # the `finally` below ends the whole tree first, exactly once
     finally:
         # After a timeout this ends the command; after a normal return it ends
         # whatever the command left running in the background.
-        _kill_tree(proc, job)
+        swept += _kill_tree(proc, job, started_filetime)
     try:
         proc.wait(timeout=KILL_GRACE_SECONDS + 1)
     except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL did not land
@@ -346,6 +441,8 @@ def run_check(
             result.detail = f"exit {code}: the shell could not find or run the command"
         else:
             result.status = PASSED if code == 0 else FAILED
+    if swept:
+        result.containment += f"; {swept} descendant(s) outside it ended by the sweep"
     if escaped:
         note = "a process that left the group kept the output open and was not ended"
         result.detail = f"{result.detail}; {note}" if result.detail else note
