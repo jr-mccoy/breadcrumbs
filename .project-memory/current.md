@@ -3,9 +3,9 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Stabilization per the 2026-09-26 audit roadmap (WP00-01 done; WP02 awaiting review)
+Stabilization per the 2026-09-26 audit roadmap (WP00-02 done; WP03 awaiting review)
 
 ## Recently Changed
-WP02: transcript miner classifies each tool call as success/failure/interrupted/not_run/unknown from harness signals then full output (failure words are a failure only for test/lint/build commands, unknown otherwise); attempts need observed failure then success and are worded as a sequence; only successful edits count. 22 new tests; suite green; checked against a real Claude Code transcript.
+WP03: jot promotion carries the note into every target (body section or a 'From jot <id>' provenance paragraph), records promoted_from/digest, inherits scope and confidence unless explicitly widened/raised, applies the near-duplicate gate on all targets, refuses publishing a private jot with a credential. CLI/MCP gain --scope/--allow-duplicate/--supersedes. 13 new tests; suite green; MCP tests green with SDK.
 
 ## Watch Out For
