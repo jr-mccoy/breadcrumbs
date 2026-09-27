@@ -1,20 +1,21 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: da542cd | inputs_hash: 394a4d3415de | generated_at: 2026-09-27T03:17:20+00:00 -->
-<!-- view: markdown | budget: 3486/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 9bdcd58 | inputs_hash: 9b3865e4a51b | generated_at: 2026-09-27T03:58:21+00:00 -->
+<!-- view: markdown | budget: 3431/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `da542cd` · 8 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `9bdcd58` · 8 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Next Action
-WP08 is at review_required (commit da542cd). Wait for operator approval; then mark WP08 completed in docs/reviews/2026-09-26-breadcrumbs-work-packages.json and start the next package in the roadmap's single-agent order (WP09).
+WP09 is at review_required (commit 9bdcd58). Wait for operator approval; then mark WP09 completed in docs/reviews/2026-09-26-breadcrumbs-work-packages.json and start the next package in the roadmap's single-agent order (WP18).
 
 ## Active Decisions
+- `dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls` — Audit F02: an entry count over a sliding 8 MB tail froze once transcripts outgrew it, lost cross-firing call/result pairs, and discarded capped or failed candidates silently.
 - `dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted` — Audit F14: the bound covered lists only (7,333 tokens under a 5,000 ceiling). F13: a promoted decision vanished from every packet when CLAUDE.md was gone or unread by the consumer. Promotion is an extra delivery channel, not a reason for memory to disappear.
 - `dec_20260927_projections-are-stamped-from-a-verified-snapshot` — Audit F07/F11/F12: a stamp taken after the read certified omitted records; an unusable pre-filter silenced real hazards; a size/mtime shortcut made indexed search diverge from the full scan. Re-hashing costs ~17 ms at 1000 records; the unverified hook path costs ~40-90 ms, never silence.
 - `dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record` — The audit evidence is only useful if it stays exactly what was reviewed. Reformatting the scripts would break the checksums. Each package's regressions belong in ordinary tests when that package lands, not in the probe script.
@@ -29,8 +30,7 @@ WP08 is at review_required (commit da542cd). Wait for operator approval; then ma
 - `dec_20260922_related-records-use-a-pure-overlap-score-so-the-committed` — A committed projection that differs per machine churns on every reindex and every commit.
 - `dec_20260922_traps-and-questions-are-one-file-each-the-singletons` — Ids are cited in records and commit messages, so they must not change and a dated filename would change them. Pure projections would silently delete blocks that humans, older tool versions or unmigrated branches still append; merging two versions of a trap is a judgement call the tool must not make.… [excerpt: 300 of 457 chars; full text: crumb show dec_20260922_traps-and-questions-are-one-file-each-the-singletons]
 - `dec_20260922_the-transcript-miner-is-deterministic-and-writes-only` — A model-driven miner would be unreproducible, would cost a round trip exactly when a session is ending, and could not run in PreCompact at all — that hook's output never reaches the model. Four narrow rules that are usually right beat one broad rule that cannot be tested. And what a regex noticed is… [excerpt: 300 of 431 chars; full text: crumb show dec_20260922_the-transcript-miner-is-deterministic-and-writes-only]
-- `dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first` — Launching a subagent is not itself irreversible; the subagent's own tool calls hit the same guard, which is where the blast radius actually is. Asking twice for one piece of work is how a gate becomes noise. Both tool names are matched because the tool has carried both across harness versions and a… [excerpt: 299 of 336 chars; full text: crumb show dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first]
-_(… 20 more omitted to stay within the per-section cap)_
+_(… 21 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -52,6 +52,9 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (4d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/transcript.py
+- breadcrumbs/hooks_common.py
+- docs/reviews/2026-09-27-breadcrumbs-wp09/README.md
 - breadcrumbs/cli.py
 - breadcrumbs/promote.py
 - docs/reviews/2026-09-27-breadcrumbs-wp08/README.md
@@ -69,10 +72,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/lock.py
 - breadcrumbs/lifecycle.py
 - breadcrumbs/searchindex.py
-- breadcrumbs/related.py
-- breadcrumbs/blockfiles.py
-- breadcrumbs/transcript.py
-_(… 9 more omitted to stay within the per-section cap)_
+_(… 11 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -110,11 +110,11 @@ _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 22 days old with no update — is this still true?
 - active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 22 days old with no update — is this still true?
 - active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 22 days old with no update — is this still true?
-- active decision dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head is 23 days old with no update — is this still true?
+- active decision dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head is 24 days old with no update — is this still true?
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 39 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 39 days old with no update — is this still true?
 - active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 39 days old with no update — is this still true?
-- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 40 days old with no update — is this still true?
+- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 41 days old with no update — is this still true?
 - active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 42 days old with no update — is this still true?
 - active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 42 days old with no update — is this still true?
 - active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 42 days old with no update — is this still true?

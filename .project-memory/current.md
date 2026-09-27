@@ -6,9 +6,9 @@ _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Recently Changed
-- da542cd WP08: bound packets as delivered and keep promoted rules portable
-- 344fd88 Project memory: WP07 decision and session capture
+- 9bdcd58 WP09: durable incremental transcript ingestion
+- 22a1bff Project memory: WP08 decision and session capture
 
-_Prefill window: `89f5967`..HEAD — 2 commit(s) since the last session record._
+_Prefill window: `da542cd`..HEAD — 2 commit(s) since the last session record._
 
 ## Watch Out For

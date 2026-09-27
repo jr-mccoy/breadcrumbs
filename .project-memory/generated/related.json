@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "394a4d3415de",
+ "inputs_hash": "9b3865e4a51b",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -129,8 +129,8 @@
   ],
   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
+   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns"
   ],
   "dec_20260922_the-user-pre-approves-store-migrations-of-this-repo-s-own": [
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
@@ -175,7 +175,12 @@
   "dec_20260927_projections-are-stamped-from-a-verified-snapshot": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
    "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
-   "dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our"
+   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls"
+  ],
+  "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls": [
+   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
