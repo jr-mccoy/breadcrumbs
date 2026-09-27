@@ -313,6 +313,15 @@ def _promote(
             "code": 2,
             "error": f"{item['id']} is confidence: low; add evidence before making it permanent",
         }
+    # A standing rule every session loads is the highest-impact write there is.
+    # The team profile requires a review that still matches the record (F18).
+    from breadcrumbs import admission as _admission
+
+    try:
+        meta, body = _record_meta_and_body(item)
+        _admission.check_promote(_admission.context(memory_dir), meta, body)
+    except _admission.Refused as exc:
+        return {"ok": False, "code": 1, "error": str(exc)}
     target, problem = _resolve_target(root, to)
     if problem:
         return {"ok": False, "code": 2, "error": problem}
@@ -409,6 +418,17 @@ def _as_operation(kind: str, memory_dir: Path, run) -> dict:
         return {"ok": False, "code": 1, "error": str(exc)}
     except _mutations.MutationFailed as exc:
         return {"ok": False, "code": 1, "error": _mutations.describe(exc)}
+
+
+def _record_meta_and_body(item: dict) -> tuple[dict, str]:
+    """The item's frontmatter and body as written (a trap block has only meta)."""
+    path = item.get("path")
+    if path and Path(path).suffix == ".md" and Path(path).parent.name in cli.DIR_TYPES:
+        try:
+            return cli.parse_frontmatter(path_policy.read_text(Path(path)))
+        except Exception:
+            pass
+    return dict(item.get("meta") or {}), str(item.get("text") or "")
 
 
 def promote(

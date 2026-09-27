@@ -501,7 +501,9 @@ class WorkflowHygieneTests(unittest.TestCase):
         stdlib-only suite runs, so the next new tool fails locally instead."""
         text = self.files["ci.yml"]
         source = (REPO_ROOT / "breadcrumbs" / "mcp_server.py").read_text(encoding="utf-8")
-        registered = source.count("@mcp.tool()")
+        # Writing tools register through `write_tool` (audit WP14: a read-only
+        # store's server omits them); the CI store is writable, so all count.
+        registered = source.count("@mcp.tool()") + source.count("@write_tool()")
         self.assertGreater(registered, 0)
         self.assertIn(f"assert len(tools) == {registered},", text)
 

@@ -133,16 +133,36 @@ def _data_view(fn):
 
 
 def _data_tree(fn):
-    """Every string in a tool's result through `safetext.block` (keys unchanged)."""
+    """Every string in a tool's result through `safetext.block` (keys unchanged).
+
+    Also where a tool call is marked as arriving through MCP (audit F18): the
+    store's policy decides what that channel may write, and no payload field
+    can change which channel it is.
+    """
     import functools
 
-    from breadcrumbs import safetext
+    from breadcrumbs import admission, safetext
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        return safetext.tree(fn(*args, **kwargs), MCP_TEXT_LIMIT)
+        with admission.channel("mcp"):
+            return safetext.tree(fn(*args, **kwargs), MCP_TEXT_LIMIT)
 
     return wrapper
+
+
+def _admit(mem: Path, payload: dict | None = None, *, supersedes=None) -> dict | None:
+    """`{ok: false, error}` when the store's policy refuses this MCP write."""
+    from breadcrumbs import admission
+
+    ctx = admission.context(mem, "mcp")
+    try:
+        admission.check_write(ctx, payload)
+        if supersedes:
+            admission.check_status_change(ctx, "active", "superseded")
+    except admission.Refused as exc:
+        return {"ok": False, "error": str(exc), "refused_by": "policy"}
+    return None
 
 
 def _read_singleton(memory_dir: Path, name: str) -> str:
@@ -475,6 +495,9 @@ def _locked(fn):
         _, mem = resolve(root)
         if not mem.is_dir():
             return fn(*args, **kwargs)
+        refused = _admit(mem)  # mcp_mode: read-only refuses every writer
+        if refused:
+            return refused
         try:
             with _lock.store_lock(mem, timeout=_lock.MCP_TIMEOUT):
                 return fn(*args, **kwargs)
@@ -503,6 +526,9 @@ def tool_record(
         return missing
     if type not in ("decision", "attempt"):
         return {"ok": False, "error": "type must be 'decision' or 'attempt'"}
+    refused = _admit(mem, payload, supersedes=(payload or {}).get("supersedes"))
+    if refused:
+        return refused
 
     title = (payload or {}).get("title")
     if not title:
@@ -646,6 +672,9 @@ def tool_verify(
         return {"ok": False, "error": f"scope must be one of {', '.join(cli.RECORD_SCOPES)}"}
     if (missing := _memory_missing(mem)) is not None:
         return missing
+    refused = _admit(mem, supersedes=supersedes)
+    if refused:
+        return refused
     return _relativize(
         cli.verify(
             mem,
@@ -827,6 +856,9 @@ def tool_inbox_promote(
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
+    refused = _admit(mem, supersedes=supersedes)
+    if refused:
+        return refused
     return _relativize(
         _inbox.promote_jot(
             mem,
@@ -865,6 +897,16 @@ def tool_mark_status(
     _, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
+    # What memory authorizes changes here; the policy may keep that for a
+    # person (audit F18).
+    from breadcrumbs import admission
+
+    item = cli.find_item(mem, id)
+    old = (item or {}).get("status")
+    try:
+        admission.check_status_change(admission.context(mem, "mcp"), old, status)
+    except admission.Refused as exc:
+        return {"ok": False, "error": str(exc), "refused_by": "policy"}
     return _relativize(
         cli.set_record_status(
             mem, id, status, reason, agent=agent or _agent_label(), superseded_by=superseded_by

@@ -1,0 +1,25 @@
+# python behavior.py <tree>  (script: behavior.py; subprocess per tree, team policy written to the manifest)
+
+# before (5f5566c, after WP21)
+{
+ "mcp_agent_human_accepted": true,
+ "mcp_forged_review_fields_not_refused": true,
+ "mcp_guidance_written_as_proposal": false,
+ "mcp_quarantine_allowed_in_team": true,
+ "unreviewed_promotion_allowed_in_team": true,
+ "mcp_write_allowed_when_read_only": true,
+ "info_writes_a_store_requiring_review_profiles": false,
+ "defects_observed": 6
+}
+
+# after
+{
+ "mcp_agent_human_accepted": false,
+ "mcp_forged_review_fields_not_refused": false,
+ "mcp_guidance_written_as_proposal": true,
+ "mcp_quarantine_allowed_in_team": false,
+ "unreviewed_promotion_allowed_in_team": false,
+ "mcp_write_allowed_when_read_only": false,
+ "info_writes_a_store_requiring_review_profiles": true,
+ "defects_observed": 0
+}

@@ -843,6 +843,19 @@ a managed block of its own, separate from the `init` signpost:
 The rule is rendered from the record (a decision's title, an attempt's "do
 not retry … unless …", a trap's summary and safe approach), or given with
 `--rule`. A record that is not active, or is `confidence: low`, is refused.
+
+**Review profiles.** A store is `solo` by default: review is a convention, as
+it always was.
+- `crumb policy set team` is for shared memory whose authority needs a person.
+  Guidance written through MCP, a hook or an agent session becomes a proposal
+  (`review_status: needs-review`), and is still written unattended.
+  Superseding, rejecting or quarantining through MCP is left to a person.
+- `crumb promote` then needs a review that still matches the record: a person
+  runs `crumb review <id>`, and an edit afterwards makes the review stale.
+- `--mcp-mode read-only` or `propose` narrows MCP further.
+- This binds MCP clients and hooks. An agent with a shell can still edit files
+  directly, so for those the boundary is Git review of what they commit
+  ([`docs/security.md`](docs/security.md) §4).
 The record stays `active`, `guard` still uses it, and `search` marks it
 `promoted`. The resume packet keeps it, shown as the rule in force
 (`` `<id>` — standing rule in CLAUDE.md: … ``), because the packet's reader may

@@ -473,6 +473,32 @@ the operator.
 - **Merged 0.3.1** into this line of work. `RELEASING.md` records a stray,
   never-published tag `0.1.13` (no `v`).
 
+### Added — review profiles: who may make memory authoritative (audit WP14)
+
+Finding F18. `review_status: reviewed` and `agent: human` were claims anyone
+could make, and nothing separated routine capture from the writes that make
+memory authoritative. Details: `docs/security.md` §4.
+
+- **`crumb policy set solo|team [--mcp-mode write|propose|read-only]`.**
+  - `solo` (the default) changes nothing.
+  - `team`: guidance written through MCP, hooks, or the CLI inside an agent
+    session is written unattended as a proposal
+    (`review_status: needs-review`). Superseding, rejecting or quarantining
+    through MCP is refused. `crumb promote` needs a valid review. The store
+    declares `requires: review-profiles`.
+  - `mcp_mode: read-only` refuses every MCP write, and the server does not
+    list the writing tools.
+  - Unknown values fail closed (to `team`, and to `read-only`).
+- **`crumb review <id>`.** A content-bound stamp (`reviewed_by`,
+  `reviewed_at`, `reviewed_hash`). An edit makes it stale. A `reviewed` with
+  no matching stamp is only "claimed".
+- **Payloads cannot forge identity.** MCP and hook payloads may not set review
+  fields or claim `agent: human`; such calls return
+  `{ok: false, refused_by: "policy"}`. The channel is set by the transport.
+- **Stated limits.** This binds MCP clients and hooks, not an agent with a
+  shell; for those, Git review of `.project-memory/` and the instruction files
+  is the boundary. Old releases (0.3.1 and earlier) do not enforce profiles.
+
 ## [0.3.1] — 2026-09-27
 
 A hotfix: **an older `crumb` on PATH blocked every prompt.**

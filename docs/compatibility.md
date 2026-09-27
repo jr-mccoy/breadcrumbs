@@ -45,7 +45,7 @@ release itself; bumping it is step 1 of `RELEASING.md`.
 |---|---|---|---|---|
 | `package` | `__version__` | `breadcrumbs/__init__.py` (the one place it is written) | every release | `crumb --version` reports it; nothing reads it from a store |
 | `schema_version` | 4 | `cli.SCHEMA_VERSION`, written to `manifest.yml` | on-disk record format | older: read as is, `crumb migrate` upgrades; newer: writes refused, reads warned (§4) |
-| `requires` | (none known) | `compat.KNOWN_FEATURES`, `manifest.yml` `requires:` | a change old readers must not ignore without a format change | an unknown feature is treated like a newer `schema_version` |
+| `requires` | review-profiles | `compat.KNOWN_FEATURES`, `manifest.yml` `requires:` | a change old readers must not ignore without a format change | an unknown feature is treated like a newer `schema_version` |
 | `generation-manifest` | 1 | `projections.MANIFEST_FORMAT` (`index/generation.json`) | projection publication format | treated as unverified; the next publication rewrites it |
 | `guard-prefilter` | 3 | `cli.GUARD_PREFILTER_FORMAT` (`generated/guard-prefilter.json`) | pre-filter contents | treated as unverified (the hook runs full guard) until republished |
 | `search-index` | 2 | `searchindex.INDEX_FORMAT` (`index/search.sqlite`) | index schema | ignored (full scan); `crumb reindex` rebuilds it |
@@ -123,17 +123,25 @@ This was reproduced on 0.3.1 against a `schema_version: 5` store: `remember`
 wrote a record, `guard` and `resume` ran, and `validate` failed. So a change
 that such readers must not misread is designed to **fail safe for them**:
 
-1. **Bump `schema_version`.** Their `validate` fails, and so does CI that runs
-   it.
-2. **Keep the new meaning out of what they already interpret.** Put it in a
-   field they ignore (unknown keys are ignored and kept), or a directory they
-   do not read, never in a changed meaning of an existing field or value.
-   Example for audit WP14's review profiles: an old reader treats every
-   `status: active` record as live guidance. So a record that is "active but
-   awaiting review" under the new semantics must not be written as
-   `status: active` where an old reader would take it as authoritative.
-3. **Add a `requires:` feature** so this build and every later one refuse to
-   write it until they implement the feature.
+1. **A store-wide change bumps `schema_version`.** Their `validate` fails, and
+   so does CI that runs it.
+2. **An opt-in change** (a policy only some stores enable) is declared with a
+   `requires:` feature on the stores that enable it. Every build from 0.4.0 on
+   refuses to write such a store unless it implements the feature. This avoids
+   forcing every store through a migration for something most never use.
+3. **Keep the new meaning out of what old readers already interpret.** Put it
+   in a field they ignore (unknown keys are ignored and kept) or a directory
+   they do not read, never in a changed meaning of an existing field or value.
+
+**Review profiles** (audit WP14) are an opt-in change. A team store declares
+`requires: review-profiles`. Its proposals use an existing value,
+`review_status: needs-review`, and keep `status: active`: they are ordinary
+guidance to an old reader, which is what they were before profiles existed.
+What an old reader cannot do is *enforce* the team profile. It would promote
+an unreviewed record, and nothing local stops a 0.3.1 install from that. The
+documented boundary for team stores is Git review of `CLAUDE.md` and
+`AGENTS.md` changes, plus `crumb validate` from a current build in CI
+(`security.md` §4.2).
 
 ### An older store, read by this build
 
@@ -171,7 +179,7 @@ meant, or raising a confidence, would invent facts.
 | Invalid `confidence`, `review_status`, evidence or timestamps | `validate`: the `record-schema.md` §4 codes | Left as is and reported; never auto-corrected, never raised |
 | `superseded_by` naming a record that is gone (for example rolled up) | `validate`: `superseded-by-missing` | Reported; `supersedes` targets are deliberately not checked (§4) |
 | Unknown frontmatter keys | Nothing: not an error | Kept by every migration step and every writer |
-| `review_status: reviewed` | Nothing enforces it yet | A claim, not authority (F18). Enforcing it is WP14, which ships as a schema bump plus a `requires:` feature (§4) |
+| `review_status: reviewed` without a `crumb review` stamp | `admission.review_state` reports it as `claimed` | Kept as is. In the team profile it is not authority: promotion needs a stamp that matches the content (`security.md` §4) |
 | Traps and questions as blocks (schema ≤ 2) | `validate`: `schema-version` | Migrated (schema 3) with ids kept; readers accept blocks until migrated |
 | Projections, indexes, pre-filters, private state | Format markers (§2) | Rebuilt, never migrated |
 | Links inside the store | `validate`: `path-link` | `migrate` refuses until they are replaced (WP13) |

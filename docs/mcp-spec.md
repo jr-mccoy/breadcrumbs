@@ -454,6 +454,22 @@ name rather than silently written.
   can only take a promoted rule out, by retiring its record.
 - **Secret-scan before commit.** `memory_scan_secrets` is available so an agent
   can check before any "commit memory" step (§2.6, §15, Fixture 6).
+- **The store's review policy decides what MCP may write** (audit WP14,
+  [`security.md`](security.md) §4).
+  - Every tool call is marked as arriving through MCP by the server, never by
+    its payload.
+  - A payload may not set `review_status` (beyond `unreviewed` or
+    `needs-review`), `reviewed_by`, `reviewed_at` or `reviewed_hash`, or claim
+    `agent: human`. Such a call returns `{ok: false, error, refused_by:
+    "policy"}`.
+  - Under the `team` profile (or `mcp_mode: propose`), guidance written here
+    is a proposal (`review_status: needs-review`), and superseding, rejecting
+    or quarantining a record is refused.
+  - Under `mcp_mode: read-only`, every writing tool refuses, and the server
+    does not list them.
+  - No tool changes the policy or reviews a record: `crumb policy` and `crumb
+    review` are CLI-only. That binds MCP clients; it is not a boundary against
+    an agent that also has a shell.
 - **Nothing outside the store is read or written through it** (audit WP13).
   Nothing inside `.project-memory/` may be a symbolic link or junction: the
   store directory, its directories and every file read or written. A link is

@@ -182,6 +182,17 @@ def _root() -> str | None:
     return os.environ.get("BREADCRUMBS_PROJECT") or None
 
 
+def _read_only() -> bool:
+    """Does the served store's policy make MCP read-only? Never raises."""
+    try:
+        from breadcrumbs import admission
+
+        _, mem = mcp_core.resolve(_root())
+        return mem.is_dir() and admission.policy(mem).mcp_mode == admission.MCP_READ_ONLY
+    except Exception:  # pragma: no cover - a policy read never breaks startup
+        return False
+
+
 def build_server():  # -> FastMCP
     """Construct and fully register the FastMCP server (resources, prompts, tools).
 
@@ -198,6 +209,11 @@ def build_server():  # -> FastMCP
     # no way to change it rather than being unconditional.
     kwargs = {"version": mcp_core.cli.get_version()} if _SERVER_ACCEPTS_VERSION else {}
     mcp = FastMCP(SERVER_NAME, **kwargs)
+
+    # A store whose policy makes MCP read-only (audit WP14) is served without
+    # its writing tools at all, not with tools that always refuse. The core
+    # refuses too, so a client that calls one anyway is still turned away.
+    write_tool = mcp.tool if not _read_only() else (lambda: lambda fn: fn)
 
     # ---------------- Resources (8) — read-only views ---------------------- #
     # Bound explicitly (not in a loop) so each URI is a distinct, documented
@@ -298,7 +314,7 @@ def build_server():  # -> FastMCP
         """
         return mcp_core.tool_search(query, filters=filters, files=files, root=_root())
 
-    @mcp.tool()
+    @write_tool()
     def memory_record(type: str, payload: RecordPayload) -> dict:
         """Write a durable decision/attempt; passes the same validate gate as the CLI.
 
@@ -328,7 +344,7 @@ def build_server():  # -> FastMCP
         """Fetch one record, trap, question or jot by id, with its "see also" list."""
         return mcp_core.tool_show(id, root=_root())
 
-    @mcp.tool()
+    @write_tool()
     def memory_jot(
         text: str,
         tags: list[str] | None = None,
@@ -353,7 +369,7 @@ def build_server():  # -> FastMCP
             root=_root(),
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_inbox_promote(
         id: str,
         target: str,
@@ -386,7 +402,7 @@ def build_server():  # -> FastMCP
             supersedes=supersedes,
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_note(
         kind: str,
         text: str,
@@ -412,7 +428,7 @@ def build_server():  # -> FastMCP
             root=_root(),
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_mark_status(
         id: str, status: str, reason: str, superseded_by: str | None = None
     ) -> dict:
@@ -432,7 +448,7 @@ def build_server():  # -> FastMCP
             id, status, reason, superseded_by=superseded_by, root=_root()
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_verify(
         subject: str,
         status: str,
@@ -472,7 +488,7 @@ def build_server():  # -> FastMCP
             root=_root(),
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_reindex() -> dict:
         """Rebuild the generated/ projections from the canonical records (wraps `crumb reindex`)."""
         return mcp_core.tool_reindex(root=_root())

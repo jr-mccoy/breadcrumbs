@@ -1577,6 +1577,12 @@ def derive_fields(
     }
 
 
+def _admission_review_status(memory_dir: Path, rtype: str) -> str:
+    from breadcrumbs import admission as _admission
+
+    return _admission.review_status_for(memory_dir, rtype)
+
+
 def default_fields() -> dict:
     """Defaulted, overridable frontmatter fields (constants)."""
     return {
@@ -2738,7 +2744,9 @@ def write_record(
         "dirty_files": derived["dirty_files"],
         "confidence": confidence or defaults["confidence"],
         "privacy": privacy or defaults["privacy"],
-        "review_status": defaults["review_status"],
+        # A proposal (`needs-review`) when the store's policy says this channel
+        # writes guidance for a person to review (audit F18, `admission.py`).
+        "review_status": _admission_review_status(memory_dir, rtype),
         "reviewed_by": defaults["reviewed_by"],
         "supersedes": defaults["supersedes"],
         "superseded_by": defaults["superseded_by"],
@@ -13384,9 +13392,14 @@ def cmd_hook(args: argparse.Namespace) -> int:
     # never what it read. The handler's output reaches the host unchanged.
     from breadcrumbs import hooklog as _hooklog
 
-    return _hooklog.run_logged(
-        event, memory_dir, payload, lambda: _run_hook(event, memory_dir, root, payload), now_iso
-    )
+    from breadcrumbs import admission as _admission
+
+    def handler() -> int:
+        # Everything a hook writes arrives through the hook channel (audit F18).
+        with _admission.channel("hook"):
+            return _run_hook(event, memory_dir, root, payload)
+
+    return _hooklog.run_logged(event, memory_dir, payload, handler, now_iso)
 
 
 def _run_hook(event: str, memory_dir: Path, root: Path, payload: dict) -> int:
@@ -14536,6 +14549,92 @@ def _add_hook(sub, global_parser: argparse.ArgumentParser) -> None:
 # full set is still built for `--help`, for an unrecognised command (so the
 # "invalid choice" message lists everything), and for any caller that wants the
 # whole parser. Insertion order is the order `--help` lists them in.
+# review / policy — the authority model (audit WP14, `breadcrumbs/admission.py`)
+def _add_review(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "review",
+        parents=[global_parser],
+        help="stamp a record as reviewed by a person (content-bound; an edit makes it stale)",
+    )
+    p.add_argument("id", help="decision, attempt, verification or trap id")
+    p.add_argument(
+        "--reviewer", default=None, help="who reviewed (default: git user.email, else the OS user)"
+    )
+    p.set_defaults(func=cmd_review)
+
+
+def _add_policy(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "policy",
+        parents=[global_parser],
+        help="show or set the store's review profile (solo | team) and MCP mode",
+    )
+    p.add_argument("action", nargs="?", choices=["show", "set"], default="show")
+    p.add_argument("profile", nargs="?", choices=["solo", "team"], default=None)
+    p.add_argument(
+        "--mcp-mode",
+        choices=["write", "propose", "read-only"],
+        default=None,
+        help="what MCP may write (default: write for solo, propose for team)",
+    )
+    p.set_defaults(func=cmd_policy)
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import admission as _admission
+
+    result = _admission.review_record(memory_dir, root, args.id, args.reviewer)
+    if args.json:
+        _print_json(
+            args, {**result, "items": [result] if result.get("ok") else []}, ok=result["ok"]
+        )
+        return 0 if result["ok"] else 1
+    if not result["ok"]:
+        _emit_error(args, result["error"])
+        return 1
+    try_reindex_projections(memory_dir, root)
+    print(
+        f"review: {result['id']} reviewed by {result['reviewed_by']} "
+        f"(stamp {result['reviewed_hash']}; an edit to the record makes it stale)"
+    )
+    return 0
+
+
+def cmd_policy(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import admission as _admission
+
+    if args.action == "set":
+        if not args.profile:
+            _emit_error(args, "policy set needs a profile: solo or team")
+            return 2
+        result = _admission.set_policy(memory_dir, args.profile, args.mcp_mode)
+        if not result["ok"]:
+            _emit_error(args, result["error"])
+            return 1
+    pol = _admission.policy(memory_dir)
+    doc = {"profile": pol.profile, "mcp_mode": pol.mcp_mode}
+    if args.json:
+        _print_json(args, {**doc, "items": [doc]})
+        return 0
+    print(f"policy: profile {pol.profile}, mcp_mode {pol.mcp_mode}")
+    if pol.profile == "team":
+        print(
+            "  guidance written through MCP, hooks or an agent session is a proposal "
+            "(needs-review); promotion needs `crumb review`; see docs/security.md §4"
+        )
+    return 0
+
+
 _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "init": _add_init,
     "validate": _add_validate,
@@ -14554,6 +14653,8 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "consolidate": _add_consolidate,
     "promote": _add_promote,
     "demote": _add_demote,
+    "review": _add_review,
+    "policy": _add_policy,
     "prune": _add_prune,
     "rollup": _add_rollup,
     "migrate": _add_migrate,
@@ -14684,9 +14785,11 @@ LOCKED_COMMANDS = frozenset(
         "migrate",
         "reindex",
         "recover",
+        "policy",
         "capture",
         "promote",
         "demote",
+        "review",
         "consolidate",
         "rollup",
     }
@@ -14710,7 +14813,7 @@ def _needs_lock(args: argparse.Namespace) -> bool:
         return bool(getattr(args, "confirm", None))
     if args.command == "consolidate":
         return bool(getattr(args, "merge", None))
-    return True
+    return True if args.command != "policy" else getattr(args, "action", None) == "set"
 
 
 # Read commands that show the compatibility warning in their own output.

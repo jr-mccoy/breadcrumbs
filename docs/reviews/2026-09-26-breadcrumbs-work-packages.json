@@ -1074,7 +1074,7 @@
       "title": "Implement proportional review and capability policies",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP01",
         "WP06",
@@ -1108,7 +1108,17 @@
         "`test_legacy_reader_policy_mismatch_is_detected_or_excluded`"
       ],
       "done_when": "The supported authority model is implemented, tested, and described without claiming stronger protection than the deployment actually provides.",
-      "evidence": [],
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "5f5566c",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp14/README.md",
+          "summary": "breadcrumbs/admission.py: solo (default, unchanged) and team profiles plus mcp_mode (write/propose/read-only) in the manifest, set by the CLI-only `crumb policy`; the channel (cli/mcp/hook) is set by the transport; payload review fields and MCP/hook `agent: human` refused; team makes agent-written guidance a needs-review proposal (unattended), refuses high-impact MCP status changes and MCP supersedes, requires a valid content-bound review (`crumb review`, reviewed_hash) for promote, and declares requires: review-profiles; read-only MCP refuses writes and the server omits writing tools; unknown values fail closed. security.md section 4 states the model and what it does not bind (full-shell agents, old releases). tests/test_admission_policy.py (7 incl. the 4 named). Before/after: 6 defects -> 0. Full suite 1326 OK; evals identical; probes unchanged.",
+          "compatibility": "solo default unchanged except forged payload review fields / agent: human are refused; new crumb review and crumb policy; manifest review_profile, mcp_mode; frontmatter reviewed_at, reviewed_hash; team stores require review-profiles; SCHEMA_VERSION stays 4.",
+          "limitations": "Does not bind a full-shell agent (Git review is the boundary); agent detection is an environment claim used only for caution; reviewer label is not authentication; review hash proves consistency not authority; <=0.3.1 ignores profiles; readers do not flag proposals; schema-2 trap blocks cannot be reviewed.",
+          "note": "The roadmap says 'the approved profiles'; no separate profile design had been approved. This package proposes solo (default, unchanged) and team (opt-in), for the operator's review."
+        }
+      ],
       "priority_note": "P1 design / P2 rollout"
     },
     {
@@ -1368,7 +1378,7 @@
       "title": "Approve and test the compatibility and migration policy",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP01",
         "WP06"
@@ -1410,6 +1420,10 @@
           "summary": "Merged origin/main (v0.3.1) with a merge commit (751283f). docs/compatibility.md: version policy, machine-checked surface and release tables, two-versions-one-store rules, compatibility surfaces, legacy classification, upgrade guarantees. breadcrumbs/compat.py + lock.IncompatibleStore: a store with a newer schema_version or an unknown requires: feature is refused at the write lock (CLI exit 1, MCP ok:false, hooks skip, resume prints without publishing); reads warn (packet, guard, guard hook, stderr); migrate --restore is the one repair write. migrate: verified backup (backup-manifest.json), in-progress marker with resume against the original backup, --restore with verification, dry-run backup size and legacy report. get_version returns __version__ (stale metadata reported 0.3.0 from a 0.3.1 checkout). RELEASING.md: number policy, compatibility row at release, stray 0.1.13 tag recorded. tests/test_store_upgrade_contract.py (9 incl. the 3 named + documentation check). Before/after (behavior.txt): 7 defects -> 0 (same 7 on released v0.3.1). Full suite 1319 OK; evals identical to WP13; --release passes; probes unchanged.",
           "compatibility": "Newer stores are read with a warning and never written (only migrate --restore); new manifest key requires:; new migrate --restore and backup/in-progress files; packet/guard gain compatibility only when relevant; pre-0.3.2 backups (no manifest) are not auto-restored; get_version reports __version__; releases add a row to docs/compatibility.md section 3; branch now at 0.3.1, next release 0.4.0.",
           "limitations": "Released readers (<=0.3.1) run no check; protection for them is design guidance in compatibility.md section 4; compatibility surfaces other than the version tables are enforced by review; restore replaces the committed store wholesale; the interruption marker is machine-local; no migration step was needed so SCHEMA_VERSION stays 4."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"I approve, continue with the remaining work, whatever needs to be done\")."
         }
       ],
       "priority_note": "P1 prerequisite for semantic changes"

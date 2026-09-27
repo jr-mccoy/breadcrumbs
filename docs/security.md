@@ -172,13 +172,81 @@ A record change requires human review when it:
 - marks a major decision `superseded`,
 - quarantines or unquarantines memory.
 
-**Enforcement is still an open question.** Nothing in the tool distinguishes a
-high-impact record change from a routine one, so the list above is a review
-convention, not a check. What exists today is narrower and blocking: `scan-secrets`
-(and `audit`'s secret sub-check) fails the build on a committed secret, and `audit`
-*warns* on instruction-like text — which catches the "says to skip the tests" row
-and nothing else on this list. Whether the rest becomes a CI gate, a pre-commit
-hook, or stays advisory is a dogfood decision that has not been made.
+### 4.1 The authority model (audit F18, WP14; `breadcrumbs/admission.py`)
+
+Three things are kept apart:
+- **The claim's lifecycle:** `status`: active, superseded, and so on.
+- **Its evidence confidence:** `confidence`.
+- **Whether a person reviewed it:** `review_status`, `reviewed_by`,
+  `reviewed_at` and `reviewed_hash`.
+
+A review never changes a status, and a verification's outcome is not a
+review.
+
+**Profiles.** The operator sets one with `crumb policy set solo|team
+[--mcp-mode write|propose|read-only]`, which writes `manifest.yml`. No MCP
+tool can change it, and the CLI refuses to change it inside an agent session.
+
+| | `solo` (default) | `team` |
+|---|---|---|
+| Guidance written through MCP, a hook, or the CLI inside an agent session | admitted, `unreviewed` (as before) | admitted unattended as a **proposal**, `review_status: needs-review` |
+| Routine capture (jots, session snapshots, questions, ideas) | admitted | admitted, unchanged |
+| High-impact status change (superseded, rejected, quarantined, leaving quarantine) through MCP | admitted | **refused**: a person runs `crumb mark-status` |
+| `crumb promote` (a standing rule every session loads) | admitted | **needs a valid review** |
+| MCP mode default | `write` | `propose` |
+| Old builds | no requirement | the manifest declares `requires: review-profiles`; a build without the feature refuses to write the store (`compatibility.md` §4) |
+
+`mcp_mode` narrows MCP further. `propose` makes MCP guidance writes proposals
+and refuses high-impact changes, even in `solo`. `read-only` refuses every MCP
+write, and the server does not list the writing tools. An unknown profile reads
+as `team`, and an unknown MCP mode as `read-only` (fail closed).
+
+**Identity comes from the channel, not the payload.**
+- The transport that received a call (CLI, MCP or hook) marks it.
+- No payload may set `review_status` beyond `unreviewed`/`needs-review`, or
+  `reviewed_by`, `reviewed_at` or `reviewed_hash`.
+- An MCP or hook payload may not claim `agent: human`.
+- These are refused with `refused_by: policy`, not silently dropped.
+
+**A review is a stamp on content.**
+- `crumb review <id>` records the reviewer (`--reviewer`, else git's
+  `user.email`, else the OS user), the time, and `reviewed_hash`, a digest of
+  the record's claim.
+- An edit makes the review **stale**.
+- `reviewed` with no matching stamp (typed by hand, or imported) is only
+  **claimed**.
+- Neither counts as authority in the team profile. So an old approval, or
+  text inside a record saying "approved by the lead", is never permission for
+  a new high-impact change.
+- In the team profile, `crumb review` is refused inside an agent session.
+
+**Private to shared.** Promoting a machine-local jot (`private/inbox/`) into
+the committed store says so in its result (`from_private`). In the team
+profile, the new guidance record is a proposal like any other agent write.
+
+### 4.2 What this does not protect against
+
+- **An agent with a full shell** can edit record files, the manifest, the
+  instruction files and the environment directly (it can clear the variables
+  that mark an agent session). Locally, nothing stops that. For such actors
+  the boundary is **Git review** of what they commit: CODEOWNERS or branch
+  protection on `.project-memory/`, `CLAUDE.md` and `AGENTS.md`. The team
+  profile makes the *intended* flow visible and stops mistakes; it does not
+  replace that review.
+- **What the admission layer does bind:** callers that reach the store only
+  through this code, meaning MCP clients (the server has no tool to edit the
+  manifest or instruction files), hooks, and the CLI used as documented.
+- **Old releases.** crumb-kit 0.3.1 and earlier do not know profiles. In a
+  team store they read proposals as ordinary guidance and can promote without
+  review. Run `crumb validate` from a current build in CI, and review
+  instruction-file changes in Git.
+- **These are not enforcement:** CLI-only commands, MCP tool annotations, the
+  "data, not instruction" banner, secret scanning and the content hash. Each
+  is a useful control with the limits stated here.
+
+What stays narrower and blocking: `scan-secrets` (and `audit`'s secret
+sub-check) fails the build on a committed secret, and `audit` warns on
+instruction-like text.
 
 ---
 

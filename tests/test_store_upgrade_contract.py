@@ -285,7 +285,7 @@ class NewerStoreTests(unittest.TestCase):
                 "newer schema",
                 lambda mem: migrate.set_manifest_version(mem, crumb.SCHEMA_VERSION + 1),
             ),
-            ("unknown feature", lambda mem: self._require(mem, "review-profiles")),
+            ("unknown feature", lambda mem: self._require(mem, "signed-reviews")),
         ):
             with self.subTest(label), tempfile.TemporaryDirectory() as tmp:
                 root, mem = make_project(tmp)

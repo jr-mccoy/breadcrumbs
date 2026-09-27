@@ -224,7 +224,9 @@ change what that store does:
 | `jot_ttl_days` | `14` | The older spelling of `ttl_jot_days` (below). Still read; when both are set, `ttl_jot_days` wins. |
 | `capture_corrections` | `true` | The `UserPromptSubmit` hook writes a prompt that opens like a correction to `private/inbox/`. `false` turns that off. |
 | `retain_prompt_text` | `true` | The `UserPromptSubmit` hook keeps the latest task's text (at most 300 characters, never one carrying a credential) in `private/session-state.json`, for the packet after a compaction. `false` keeps only a digest and a time (audit WP12). |
-| `requires` | (none) | Features a reader must implement to read this store correctly, comma-separated (`requires: review-profiles`). A build that does not implement one reads the store with a warning and never writes it, as for a newer `schema_version` (audit WP21, [`compatibility.md`](compatibility.md) §4). No feature is defined yet; the key exists so the first one does not need a format change to be refused by readers that lack it. |
+| `requires` | (none) | Features a reader must implement to read this store correctly, comma-separated (`requires: review-profiles`). A build that does not implement one reads the store with a warning and never writes it, as for a newer `schema_version` (audit WP21, [`compatibility.md`](compatibility.md) §4). Defined: `review-profiles`, written by `crumb policy set team`. |
+| `review_profile` | `solo` | `solo` or `team` (audit WP14, [`security.md`](security.md) §4). Set with `crumb policy set`. An unknown value reads as `team`. |
+| `mcp_mode` | `write` (`propose` under `team`) | What MCP may write: `write`, `propose` (guidance is a proposal, and no high-impact status changes) or `read-only`. An unknown value reads as `read-only`. |
 | `subagent_extraction` | `false` | **Reserved.** Whether a finished subagent may be held for its own extraction turn. Nothing reads it yet; it waits on the prompt-fatigue field test in `open-questions.md`, and it defaults off because the parent's Stop hook already asks once per unit of work. |
 
 **Lifespans (WM-30).** One flat key per type, `ttl_<type>_days` (flat because
@@ -273,8 +275,11 @@ commit: <short-sha>        # auto-derived from git HEAD
 dirty_files: []            # auto-derived from git status
 confidence: medium         # low | medium | high   (default: medium)
 privacy: repo-safe         # repo-safe | local-private | secret-prohibited  (default: repo-safe)
-review_status: unreviewed  # unreviewed | reviewed | needs-review  (default: unreviewed)
-reviewed_by: null
+review_status: unreviewed  # unreviewed | reviewed | needs-review  (default: unreviewed;
+                           #   needs-review for a proposal under the team profile, audit WP14)
+reviewed_by: null          # set only by `crumb review`, never by a payload
+# reviewed_at: 2026-09-27T12:00:00+00:00   # set by `crumb review`
+# reviewed_hash: 0123456789abcdef          # the claim the review covers; an edit makes it stale
 supersedes: []
 superseded_by: null
 expires_at: null

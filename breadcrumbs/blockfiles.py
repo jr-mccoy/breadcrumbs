@@ -245,7 +245,7 @@ def _write(
         "dirty_files": derived["dirty_files"],
         "confidence": defaults["confidence"],
         "privacy": defaults["privacy"],
-        "review_status": defaults["review_status"],
+        "review_status": cli._admission_review_status(memory_dir, rtype),
         "reviewed_by": defaults["reviewed_by"],
         "supersedes": defaults["supersedes"],
         "superseded_by": defaults["superseded_by"],

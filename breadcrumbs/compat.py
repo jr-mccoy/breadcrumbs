@@ -37,10 +37,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # Features this build implements, by the name a store lists under `requires`.
-# Empty: no store-level feature has been defined yet. A change that defines one
-# (audit WP14's review profiles, say) adds its name here in the same release
-# that starts writing it.
-KNOWN_FEATURES: frozenset[str] = frozenset()
+# A change that defines one adds its name here in the same release that starts
+# writing it. `review-profiles`: a team-profile store (`admission.py`, WP14).
+KNOWN_FEATURES: frozenset[str] = frozenset({"review-profiles"})  # audit WP14
 
 REQUIRES_KEY = "requires"
 
