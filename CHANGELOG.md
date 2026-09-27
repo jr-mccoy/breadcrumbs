@@ -255,6 +255,44 @@ tail slid, the count stopped moving, and new entries were never mined again:
 - Mining runs under the store lock. On contention nothing is consumed, and the
   next firing reads the same bytes.
 
+### Changed — evals measure delivery and hold critical cases (audit WP18)
+
+Finding F19. The evals scored ranking only:
+- `prompt` called retrieval directly, skipping the hook's length gate,
+  dedupe and rendering;
+- `packet` re-ranked the packet and dropped its noise;
+- the only gate was "not below the baseline".
+
+So `npm test` getting `PROCEED` against a recorded hazard sat inside an
+accepted baseline, and CI was green.
+
+- **Delivery systems.** `prompt_delivered` runs the real prompt hook, including
+  a repeat in the same session. `packet_delivered` scores `crumb resume --task`
+  as printed, in reading order, with its token cost and declared budget.
+  `hook_guard_accuracy` runs the real guard hook. The ranking diagnostics and
+  their definitions are unchanged.
+- **Critical cases** (`evals/critical/cases.yml`): false-safe verdicts, silent
+  guard hooks, superseded or speculative records delivered, missing relevant
+  records, noisy controls, over-budget or malformed delivery.
+  - A failing case fails the run whatever the aggregates say, and
+    `--write-baseline` refuses to write over it.
+  - `known: <finding>` keeps a tracked failure visible without blocking
+    development. It fails `--release`, and a stale marker fails the run.
+  - `waiver:` marks an unclaimed capability.
+  - Three cases are `known: F10` today.
+- **Reviewed baselines.** `--write-baseline` needs `--reason`, lists
+  task-level changes, and refuses regressions without
+  `--accept-regressions`. `baseline.json` keeps a per-task snapshot and a
+  change log.
+- **Definitions and denominators.** Every metric's definition and denominator
+  (`n`) is in `--json` output and `baseline.json`. For example, precision@5
+  divides by what was shown, not by 5.
+- **A holdout suite** (`holdout-ops`, `split: holdout`) is reported apart from
+  `overall`, which stays the development suites.
+- **Fixed, found by the delivery evals:** hook session state dropped the
+  session it had just written when eight others shared its one-second
+  timestamp, so a repeated prompt was injected again.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

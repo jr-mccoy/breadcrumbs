@@ -67,17 +67,27 @@ def read_state(memory_dir: Path, filename: str) -> dict:
     return sessions if isinstance(sessions, dict) else {}
 
 
-def write_state(memory_dir: Path, filename: str, sessions: dict) -> None:
+def write_state(
+    memory_dir: Path, filename: str, sessions: dict, current: str | None = None
+) -> None:
     """Replace the map, keeping only the most recently updated sessions.
+
+    `current`, the session being written, is always kept. `updated_at` has
+    one-second resolution, and on a tie the sort kept dict order, so a new
+    session written in the same second as eight others was the one dropped,
+    and its dedupe record was lost at once. The delivery evals (audit WP18)
+    found it.
 
     Best-effort: a failure here costs one deduplication, never a hook.
     """
     try:
-        keep = sorted(
-            sessions,
+        others = sorted(
+            (s for s in sessions if s != current),
             key=lambda s: str((sessions.get(s) or {}).get("updated_at") or ""),
             reverse=True,
-        )[:MAX_SESSIONS]
+        )
+        keep = ([current] if current in sessions else []) + others
+        keep = keep[:MAX_SESSIONS]
         path = private_path(memory_dir, filename)
         path.parent.mkdir(parents=True, exist_ok=True)
         cli.write_text_atomic(
@@ -122,7 +132,7 @@ def advisory_seen(
     entry["seen"] = (entry["seen"] + [key])[-MAX_KEYS_PER_SESSION:]
     entry["updated_at"] = cli.now_iso()
     sessions[session_id] = entry
-    write_state(memory_dir, filename, sessions)
+    write_state(memory_dir, filename, sessions, current=session_id)
     return False
 
 
@@ -253,7 +263,7 @@ def record_prompt_state(
         "at": cli.now_iso(),
         "updated_at": cli.now_iso(),
     }
-    write_state(memory_dir, SESSION_STATE_FILENAME, sessions)
+    write_state(memory_dir, SESSION_STATE_FILENAME, sessions, current=session_id)
 
 
 def prompt_state(memory_dir: Path, session_id: str) -> dict:
@@ -272,7 +282,7 @@ def record_compaction(
         "commit": commit,
         "jots": list(jots or []),
     }
-    write_state(memory_dir, COMPACTION_MARKER_FILENAME, sessions)
+    write_state(memory_dir, COMPACTION_MARKER_FILENAME, sessions, current=session_id)
 
 
 def compaction_marker(memory_dir: Path, session_id: str) -> dict:
@@ -304,4 +314,4 @@ def record_extraction_asked(memory_dir: Path, session_id: str, jot_ids: list[str
         "jots": sorted(known)[-MAX_KEYS_PER_SESSION:],
         "updated_at": cli.now_iso(),
     }
-    write_state(memory_dir, EXTRACTION_ASKED_FILENAME, sessions)
+    write_state(memory_dir, EXTRACTION_ASKED_FILENAME, sessions, current=session_id)

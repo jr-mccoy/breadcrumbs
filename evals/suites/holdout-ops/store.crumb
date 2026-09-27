@@ -1,0 +1,51 @@
+# HOLDOUT (audit WP18). An infrastructure repository: Terraform, Kubernetes
+# manifests, a GitHub Actions deploy. Written once, before the tool was run
+# against it, and not edited to suit the tool: a task this suite scores badly
+# is a measured gap. See evals/README.md → Holdout.
+
+@2026-03-02 remember decision --title "Terraform state lives in the S3 backend with DynamoDB locking"
+  --set Decision "Every stack uses the s3 backend in infra/backend.tf with the tf-locks DynamoDB table."
+  --set Rationale "Two engineers applying from laptops with local state destroyed the staging VPC."
+  --evidence file infra/backend.tf --tags terraform,state
+
+@2026-03-09 remember decision --title "Production deploys only from the deploy workflow"
+  --set Decision "kubectl apply against the prod cluster runs from .github/workflows/deploy.yml, never from a laptop."
+  --evidence file .github/workflows/deploy.yml --tags deploy,kubernetes,prod
+
+@2026-03-20 remember decision --title "Pin container images by digest in the manifests"
+  --set Decision "k8s/*.yaml reference images as name@sha256:…; tags are not used in manifests."
+  --set Rationale "A retagged latest image rolled an untested build into prod."
+  --evidence file k8s/api.yaml --tags kubernetes,images
+
+@2026-01-15 remember decision --title "Store secrets as Kubernetes Secrets in the repo, base64 encoded"
+  --set Decision "Secrets are committed under k8s/secrets/ as base64 Secret manifests."
+  --evidence file k8s/secrets/api.yaml --tags secrets,kubernetes
+
+@2026-04-02 remember decision --title "Secrets come from AWS Secrets Manager through External Secrets"
+  --set Decision "k8s/external-secrets/ maps Secrets Manager entries to Kubernetes Secrets; nothing secret is committed."
+  --evidence file k8s/external-secrets/api.yaml --tags secrets,kubernetes
+  --supersedes dec_20260115_store-secrets-as-kubernetes-secrets-in-the-repo-base64
+
+@2026-02-11 remember attempt --title "Ran terraform apply with -target to fix one resource"
+  --set Problem "One security group rule drifted."
+  --set Tried "terraform apply -target=aws_security_group_rule.api_ingress"
+  --set Result "The targeted apply skipped a dependent route; the next full plan wanted to recreate the NAT gateway."
+  --set Do\ Not\ Retry\ Unless "Never on shared stacks: fix drift with a full plan and apply."
+  --evidence file infra/network.tf --tags terraform
+
+@2026-05-06 note trap "terraform destroy in the wrong workspace deletes production" --slug terraform-destroy-workspace
+  --area "infra/"
+  --symptom "The prod workspace was still selected after a staging session."
+  --safe "Run terraform workspace show first; destroy only through the teardown workflow."
+
+@2026-05-19 note trap "kubectl delete namespace also deletes its PersistentVolumeClaims" --slug kubectl-delete-namespace
+  --area "k8s/"
+  --symptom "Postgres data was gone after recreating the namespace."
+  --safe "Back up the PVCs, or delete the workloads only."
+
+@2026-06-08 verify "Deploy workflow rolls back on a failed readiness probe" --status fixed
+  --evidence file .github/workflows/deploy.yml --evidence command "act -j deploy"
+
+@2026-07-01 note question "Should staging and prod share one EKS cluster?"
+
+@2026-07-15 note idea --title "Move the cluster to Karpenter autoscaling"

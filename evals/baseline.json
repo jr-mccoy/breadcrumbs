@@ -1,73 +1,1501 @@
 {
-  "comment": "Written by `python evals/run.py --write-baseline`. See evals/README.md.",
+  "changes": [
+    {
+      "added": 47,
+      "date": "2026-09-27",
+      "improvements": [],
+      "reason": "Audit WP18: adds the delivered-context systems (prompt_delivered, packet_delivered, hook_guard_accuracy), metric definitions and denominators, the holdout scope and the first task-level snapshot. The ranking diagnostics are unchanged.",
+      "regressions": [],
+      "removed": []
+    }
+  ],
+  "comment": "Written by `python evals/run.py --write-baseline --reason \u2026`. See evals/README.md.",
+  "definitions": {
+    "guard": {
+      "_system": "cli.guard(task, files): the verdict the library computes",
+      "guard_accuracy": {
+        "definition": "share of tasks whose verdict is one of those listed",
+        "denominator": "tasks that set `verdict`"
+      },
+      "hook_guard_accuracy": {
+        "definition": "share of tasks where `crumb hook guard` delivered a warning exactly when PROCEED is not listed (either is fine when both PROCEED and another verdict are listed); an Edit of `files[0]` when `files` is set, else a Bash command",
+        "denominator": "tasks that set `verdict`"
+      }
+    },
+    "packet": {
+      "_system": "build_resume_packet(task=\u2026): records the bounded packet kept, re-ranked by task_relevance_scores, zero-score entries dropped; not the reading order",
+      "precision_at_5": {
+        "definition": "as for prompt, over that re-ranked list",
+        "denominator": "tasks with a non-empty `expect`"
+      },
+      "recall_at_5": {
+        "definition": "as for prompt, over that re-ranked list",
+        "denominator": "tasks with a non-empty `expect`"
+      },
+      "reject_hits": {
+        "definition": "`reject` ids in a top 5, summed",
+        "denominator": "all tasks"
+      }
+    },
+    "packet_delivered": {
+      "_system": "`crumb resume --task TASK` as printed: Markdown, headers and warnings included, entries in reading order (the recency floor first)",
+      "precision_at_5": {
+        "definition": "|first5 \u2229 expect| / |first5|, first5 = the first 5 record entries in reading order, recency-floor entries included",
+        "denominator": "tasks with a non-empty `expect`"
+      },
+      "recall_in_view": {
+        "definition": "|delivered \u2229 expect| / |expect| over every record entry in the packet",
+        "denominator": "tasks with a non-empty `expect`"
+      },
+      "reject_hits": {
+        "definition": "`reject` ids among the delivered entries, summed",
+        "denominator": "all tasks"
+      },
+      "tokens_max": {
+        "definition": "largest approx_tokens of a printed packet",
+        "denominator": "all tasks"
+      },
+      "tokens_mean": {
+        "definition": "mean approx_tokens of the printed packet",
+        "denominator": "all tasks"
+      },
+      "within_budget": {
+        "definition": "share of packets whose printed text is within the budget its header declares",
+        "denominator": "all tasks"
+      }
+    },
+    "prompt": {
+      "_system": "hooks_prompt.retrieve(prompt=task): the prompt hook's ranking, before length gating, deduplication and rendering",
+      "precision_at_5": {
+        "definition": "|top \u2229 expect| / |top|, top = the first 5 returned (fewer if fewer were returned; not divided by 5); 0 when nothing is returned",
+        "denominator": "tasks with a non-empty `expect`"
+      },
+      "quiet": {
+        "definition": "share of control tasks where retrieve returned nothing",
+        "denominator": "control tasks (`expect: []`)"
+      },
+      "recall_at_5": {
+        "definition": "|top \u2229 expect| / |expect|",
+        "denominator": "tasks with a non-empty `expect`"
+      },
+      "reject_hits": {
+        "definition": "`reject` ids in a top 5, summed",
+        "denominator": "all tasks"
+      }
+    },
+    "prompt_delivered": {
+      "_system": "`crumb hook prompt` run for real (JSON in, JSON out), one fresh session per task: length gating, deduplication and rendering included",
+      "dedupe": {
+        "definition": "share of tasks the hook spoke on where the same prompt, repeated in the same session, was silent",
+        "denominator": "tasks the hook spoke on"
+      },
+      "precision_at_5": {
+        "definition": "|delivered \u2229 expect| / |delivered| over the ids in the injected text, in its order; 0 when silent",
+        "denominator": "tasks with a non-empty `expect`"
+      },
+      "quiet": {
+        "definition": "share of control tasks where the hook printed nothing",
+        "denominator": "control tasks (`expect: []`)"
+      },
+      "recall_at_5": {
+        "definition": "|delivered \u2229 expect| / |expect|",
+        "denominator": "tasks with a non-empty `expect`"
+      },
+      "reject_hits": {
+        "definition": "`reject` ids delivered, summed",
+        "denominator": "all tasks"
+      },
+      "tokens_max": {
+        "definition": "largest approx_tokens of an injected text",
+        "denominator": "tasks the hook spoke on"
+      },
+      "tokens_mean": {
+        "definition": "mean approx_tokens of the injected text",
+        "denominator": "tasks the hook spoke on"
+      }
+    }
+  },
   "scopes": {
-    "library": {
+    "holdout": {
       "guard": {
-        "guard_accuracy": 1.0
+        "guard_accuracy": 1.0,
+        "hook_guard_accuracy": 1.0,
+        "n": {
+          "guard_accuracy": 3,
+          "hook_guard_accuracy": 3
+        }
       },
       "packet": {
+        "n": {
+          "precision_at_5": 6,
+          "recall_at_5": 6,
+          "reject_hits": 8
+        },
+        "precision_at_5": 0.5139,
+        "recall_at_5": 1.0,
+        "reject_hits": 0
+      },
+      "packet_delivered": {
+        "n": {
+          "precision_at_5": 6,
+          "recall_in_view": 6,
+          "reject_hits": 8,
+          "tokens_max": 8,
+          "tokens_mean": 8,
+          "within_budget": 8
+        },
+        "precision_at_5": 0.1667,
+        "recall_in_view": 1.0,
+        "reject_hits": 0,
+        "tokens_max": 984,
+        "tokens_mean": 974.375,
+        "within_budget": 1.0
+      },
+      "prompt": {
+        "n": {
+          "precision_at_5": 6,
+          "quiet": 2,
+          "recall_at_5": 6,
+          "reject_hits": 8
+        },
+        "precision_at_5": 0.6667,
+        "quiet": 1.0,
+        "recall_at_5": 1.0,
+        "reject_hits": 0
+      },
+      "prompt_delivered": {
+        "dedupe": 1.0,
+        "n": {
+          "dedupe": 6,
+          "precision_at_5": 6,
+          "quiet": 2,
+          "recall_at_5": 6,
+          "reject_hits": 8,
+          "tokens_max": 6,
+          "tokens_mean": 6
+        },
+        "precision_at_5": 0.6667,
+        "quiet": 1.0,
+        "recall_at_5": 1.0,
+        "reject_hits": 0,
+        "tokens_max": 210,
+        "tokens_mean": 155.0
+      },
+      "tasks": 8
+    },
+    "holdout-ops": {
+      "guard": {
+        "guard_accuracy": 1.0,
+        "hook_guard_accuracy": 1.0,
+        "n": {
+          "guard_accuracy": 3,
+          "hook_guard_accuracy": 3
+        }
+      },
+      "packet": {
+        "n": {
+          "precision_at_5": 6,
+          "recall_at_5": 6,
+          "reject_hits": 8
+        },
+        "precision_at_5": 0.5139,
+        "recall_at_5": 1.0,
+        "reject_hits": 0
+      },
+      "packet_delivered": {
+        "n": {
+          "precision_at_5": 6,
+          "recall_in_view": 6,
+          "reject_hits": 8,
+          "tokens_max": 8,
+          "tokens_mean": 8,
+          "within_budget": 8
+        },
+        "precision_at_5": 0.1667,
+        "recall_in_view": 1.0,
+        "reject_hits": 0,
+        "tokens_max": 984,
+        "tokens_mean": 974.375,
+        "within_budget": 1.0
+      },
+      "prompt": {
+        "n": {
+          "precision_at_5": 6,
+          "quiet": 2,
+          "recall_at_5": 6,
+          "reject_hits": 8
+        },
+        "precision_at_5": 0.6667,
+        "quiet": 1.0,
+        "recall_at_5": 1.0,
+        "reject_hits": 0
+      },
+      "prompt_delivered": {
+        "dedupe": 1.0,
+        "n": {
+          "dedupe": 6,
+          "precision_at_5": 6,
+          "quiet": 2,
+          "recall_at_5": 6,
+          "reject_hits": 8,
+          "tokens_max": 6,
+          "tokens_mean": 6
+        },
+        "precision_at_5": 0.6667,
+        "quiet": 1.0,
+        "recall_at_5": 1.0,
+        "reject_hits": 0,
+        "tokens_max": 210,
+        "tokens_mean": 155.0
+      },
+      "tasks": 8
+    },
+    "library": {
+      "guard": {
+        "guard_accuracy": 1.0,
+        "hook_guard_accuracy": 1.0,
+        "n": {
+          "guard_accuracy": 4,
+          "hook_guard_accuracy": 4
+        }
+      },
+      "packet": {
+        "n": {
+          "precision_at_5": 10,
+          "recall_at_5": 10,
+          "reject_hits": 12
+        },
         "precision_at_5": 0.635,
         "recall_at_5": 0.9667,
         "reject_hits": 0
       },
+      "packet_delivered": {
+        "n": {
+          "precision_at_5": 10,
+          "recall_in_view": 10,
+          "reject_hits": 12,
+          "tokens_max": 12,
+          "tokens_mean": 12,
+          "within_budget": 12
+        },
+        "precision_at_5": 0.18,
+        "recall_in_view": 1.0,
+        "reject_hits": 0,
+        "tokens_max": 1317,
+        "tokens_mean": 1294.3333,
+        "within_budget": 1.0
+      },
       "prompt": {
+        "n": {
+          "precision_at_5": 10,
+          "quiet": 2,
+          "recall_at_5": 10,
+          "reject_hits": 12
+        },
         "precision_at_5": 0.6767,
         "quiet": 1.0,
         "recall_at_5": 0.8167,
         "reject_hits": 0
       },
+      "prompt_delivered": {
+        "dedupe": 1.0,
+        "n": {
+          "dedupe": 9,
+          "precision_at_5": 10,
+          "quiet": 2,
+          "recall_at_5": 10,
+          "reject_hits": 12,
+          "tokens_max": 9,
+          "tokens_mean": 9
+        },
+        "precision_at_5": 0.6767,
+        "quiet": 1.0,
+        "recall_at_5": 0.8167,
+        "reject_hits": 0,
+        "tokens_max": 312,
+        "tokens_mean": 160.1111
+      },
       "tasks": 12
     },
     "overall": {
       "guard": {
-        "guard_accuracy": 0.875
+        "guard_accuracy": 0.875,
+        "hook_guard_accuracy": 0.875,
+        "n": {
+          "guard_accuracy": 8,
+          "hook_guard_accuracy": 8
+        }
       },
       "packet": {
+        "n": {
+          "precision_at_5": 33,
+          "recall_at_5": 33,
+          "reject_hits": 39
+        },
         "precision_at_5": 0.5854,
         "recall_at_5": 0.9747,
         "reject_hits": 2
       },
+      "packet_delivered": {
+        "n": {
+          "precision_at_5": 33,
+          "recall_in_view": 33,
+          "reject_hits": 39,
+          "tokens_max": 39,
+          "tokens_mean": 39,
+          "within_budget": 39
+        },
+        "precision_at_5": 0.1273,
+        "recall_in_view": 1.0,
+        "reject_hits": 3,
+        "tokens_max": 1576,
+        "tokens_mean": 1354.2051,
+        "within_budget": 1.0
+      },
       "prompt": {
+        "n": {
+          "precision_at_5": 33,
+          "quiet": 6,
+          "recall_at_5": 33,
+          "reject_hits": 39
+        },
         "precision_at_5": 0.6606,
         "quiet": 1.0,
         "recall_at_5": 0.8687,
         "reject_hits": 1
       },
+      "prompt_delivered": {
+        "dedupe": 1.0,
+        "n": {
+          "dedupe": 29,
+          "precision_at_5": 33,
+          "quiet": 6,
+          "recall_at_5": 33,
+          "reject_hits": 39,
+          "tokens_max": 29,
+          "tokens_mean": 29
+        },
+        "precision_at_5": 0.6303,
+        "quiet": 1.0,
+        "recall_at_5": 0.8384,
+        "reject_hits": 1,
+        "tokens_max": 312,
+        "tokens_mean": 166.0345
+      },
       "tasks": 39
     },
     "service": {
       "guard": {
-        "guard_accuracy": 1.0
+        "guard_accuracy": 1.0,
+        "hook_guard_accuracy": 1.0,
+        "n": {
+          "guard_accuracy": 2,
+          "hook_guard_accuracy": 2
+        }
       },
       "packet": {
+        "n": {
+          "precision_at_5": 12,
+          "recall_at_5": 12,
+          "reject_hits": 14
+        },
         "precision_at_5": 0.5792,
         "recall_at_5": 0.9583,
         "reject_hits": 0
       },
+      "packet_delivered": {
+        "n": {
+          "precision_at_5": 12,
+          "recall_in_view": 12,
+          "reject_hits": 14,
+          "tokens_max": 14,
+          "tokens_mean": 14,
+          "within_budget": 14
+        },
+        "precision_at_5": 0.1167,
+        "recall_in_view": 1.0,
+        "reject_hits": 0,
+        "tokens_max": 1254,
+        "tokens_mean": 1228.3571,
+        "within_budget": 1.0
+      },
       "prompt": {
+        "n": {
+          "precision_at_5": 12,
+          "quiet": 2,
+          "recall_at_5": 12,
+          "reject_hits": 14
+        },
         "precision_at_5": 0.7361,
         "quiet": 1.0,
         "recall_at_5": 0.9583,
         "reject_hits": 0
       },
+      "prompt_delivered": {
+        "dedupe": 1.0,
+        "n": {
+          "dedupe": 12,
+          "precision_at_5": 12,
+          "quiet": 2,
+          "recall_at_5": 12,
+          "reject_hits": 14,
+          "tokens_max": 12,
+          "tokens_mean": 12
+        },
+        "precision_at_5": 0.7361,
+        "quiet": 1.0,
+        "recall_at_5": 0.9583,
+        "reject_hits": 0,
+        "tokens_max": 242,
+        "tokens_mean": 151.75
+      },
       "tasks": 14
     },
     "webapp": {
       "guard": {
-        "guard_accuracy": 0.5
+        "guard_accuracy": 0.5,
+        "hook_guard_accuracy": 0.5,
+        "n": {
+          "guard_accuracy": 2,
+          "hook_guard_accuracy": 2
+        }
       },
       "packet": {
+        "n": {
+          "precision_at_5": 11,
+          "recall_at_5": 11,
+          "reject_hits": 13
+        },
         "precision_at_5": 0.547,
         "recall_at_5": 1.0,
         "reject_hits": 2
       },
+      "packet_delivered": {
+        "n": {
+          "precision_at_5": 11,
+          "recall_in_view": 11,
+          "reject_hits": 13,
+          "tokens_max": 13,
+          "tokens_mean": 13,
+          "within_budget": 13
+        },
+        "precision_at_5": 0.0909,
+        "recall_in_view": 1.0,
+        "reject_hits": 3,
+        "tokens_max": 1576,
+        "tokens_mean": 1545.0,
+        "within_budget": 1.0
+      },
       "prompt": {
+        "n": {
+          "precision_at_5": 11,
+          "quiet": 2,
+          "recall_at_5": 11,
+          "reject_hits": 13
+        },
         "precision_at_5": 0.5636,
         "quiet": 1.0,
         "recall_at_5": 0.8182,
         "reject_hits": 1
       },
+      "prompt_delivered": {
+        "dedupe": 1.0,
+        "n": {
+          "dedupe": 8,
+          "precision_at_5": 11,
+          "quiet": 2,
+          "recall_at_5": 11,
+          "reject_hits": 13,
+          "tokens_max": 8,
+          "tokens_mean": 8
+        },
+        "precision_at_5": 0.4727,
+        "quiet": 1.0,
+        "recall_at_5": 0.7273,
+        "reject_hits": 1,
+        "tokens_max": 305,
+        "tokens_mean": 194.125
+      },
       "tasks": 13
+    }
+  },
+  "tasks": {
+    "holdout-ops::add a new secret for the payments API key": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "holdout-ops::fix the drifted security group with a targeted terraform apply": {
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PAUSE"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "holdout-ops::move terraform state to a local file for faster plans": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "holdout-ops::recreate the postgres namespace to clear stuck pods": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "holdout-ops::roll the api deployment to the new image tag": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "holdout-ops::set up autoscaling for the worker nodes": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "holdout-ops::terraform destroy the old staging stack": {
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "ASK_HUMAN"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "holdout-ops::update the README badges": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PROCEED"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::add PyYAML to parse the config file": {
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PAUSE"
+      },
+      "packet": {
+        "missed": [
+          "dec_20260208_no-runtime-dependencies"
+        ],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [
+          "dec_20260208_no-runtime-dependencies"
+        ],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [
+          "dec_20260208_no-runtime-dependencies"
+        ],
+        "rejected": []
+      }
+    },
+    "library::drop support for Python 3.9": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::fix a typo in the contributing guide": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PROCEED"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::git log --oneline": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PROCEED"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::print a check mark after each passing check": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::release version 0.3.0 to PyPI": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::remove the upper bound on the mcp extra": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::speed up the config parser": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::split a Windows path out of a command line string": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::tag the release commit by hand and push the tag": {
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "ASK_HUMAN"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "library::the atomic write fails on Windows with PermissionError": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [
+          "dec_20260301_write-files-atomically-with-a-temp-file-and-os-replace"
+        ],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [
+          "dec_20260301_write-files-atomically-with-a-temp-file-and-os-replace"
+        ],
+        "rejected": []
+      }
+    },
+    "library::upgrade ruff": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [
+          "dec_20260212_pin-ruff-to-one-version-in-ci-and-in-the-dev-extra"
+        ],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [
+          "dec_20260212_pin-ruff-to-one-version-in-ci-and-in-the-dev-extra"
+        ],
+        "rejected": []
+      }
+    },
+    "service::a celery task reads old data right after the request updated it": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::bump the markdown linter version": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::flush the rate limit keys in Redis": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::log request bodies in the login endpoint for debugging": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::logout no longer clears the session cookie": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::pg connections keep timing out": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::refactor the retry loop in the HTTP client": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PROCEED"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::rename the users.name column to full_name": {
+      "packet": {
+        "missed": [
+          "dec_20260305_schema-changes-go-through-alembic-migrations-never-create"
+        ],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [
+          "dec_20260305_schema-changes-go-through-alembic-migrations-never-create"
+        ],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [
+          "dec_20260305_schema-changes-go-through-alembic-migrations-never-create"
+        ],
+        "rejected": []
+      }
+    },
+    "service::rewrite the auth middleware to use the new session parser": {
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PAUSE"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::save uploaded profile avatars": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::send a welcome mail after signup": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::should we throttle per API key or per account": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::subscriptions expire an hour early after the clocks change": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "service::the db runs out of connections during deploys": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::add a feature flag for the beta dashboard": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::add a refunded order status": {
+      "packet": {
+        "missed": [],
+        "rejected": [
+          "dec_20260420_status-page-is-served-from-a-separate-static-site"
+        ]
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": [
+          "dec_20260420_status-page-is-served-from-a-separate-static-site"
+        ]
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::change the brand colors": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [
+          "dec_20260325_style-with-tailwind-and-a-single-theme-file"
+        ],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [
+          "dec_20260325_style-with-tailwind-and-a-single-theme-file"
+        ],
+        "rejected": []
+      }
+    },
+    "webapp::deleting an order throws Unexpected end of JSON input": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::fix the flaky screenshot test on CI": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": [
+          "trap_report-json-memory"
+        ]
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::git status": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PROCEED"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::make the Playwright run on CI faster": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::my VITE_API_URL change in .env is ignored": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [
+          "trap_vite-env-restart"
+        ],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [
+          "trap_vite-env-restart"
+        ],
+        "rejected": []
+      }
+    },
+    "webapp::npm test": {
+      "guard": {
+        "hook_ok": false,
+        "ok": false,
+        "verdict": "PROCEED"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [
+          "trap_npm-test-truncates-db"
+        ],
+        "rejected": []
+      }
+    },
+    "webapp::rename a local variable in the date formatting helper": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::store the user's session after login": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::stub fetch in the Vitest unit tests": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "webapp::write a script that reads data/report.json with json.load and totals the orders": {
+      "packet": {
+        "missed": [],
+        "rejected": [
+          "trap_screenshot-fonts"
+        ]
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": [
+          "trap_screenshot-fonts"
+        ]
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": [
+          "trap_screenshot-fonts"
+        ]
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": [
+          "trap_screenshot-fonts"
+        ]
+      }
     }
   },
   "tolerance": 0.05

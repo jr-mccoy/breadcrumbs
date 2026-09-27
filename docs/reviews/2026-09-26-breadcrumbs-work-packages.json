@@ -819,7 +819,7 @@
       "title": "Replace the relative transcript cursor with durable incremental ingestion",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP02",
         "WP03",
@@ -858,6 +858,10 @@
           "summary": "transcript.ingest (under the store lock): byte cursor at line boundaries with file identity (head + anchor digests; truncation/replacement reset to 0), <=8 MB per firing with unread bytes reported, partial last line left, over-long lines skipped and counted; Bash/edit calls carried between firings (pending + newest resolved, 200, secrets blanked) so late results and cross-firing fail/edit/pass join; candidates with stable keys and event ids queued into a durable backlog saved before any jot is written, flushed 10 per firing, removed only when written, found already written, or refused (counted), dropped after 5 failed writes (counted); cross-session acked-event ledger for replay/fork idempotency; rule caps counted; per-session state files private/miner/<session>.json; doctor miner row; hook-log miner fields. tests/test_transcript_recovery.py (13, incl. the 4 named) + 1 hook test; the 13 original all fail on 22a1bff (4 behaviorally). Full suite 1266 OK; sliding_cursor probe no longer observed (7 signals, 2 recorded instrument errors); evals identical; one firing on a 20 MB transcript 34 ms -> 6 ms.",
           "compatibility": "miner-cursor.json no longer read (sessions restart at byte 0; old jots recognised by old title fingerprints, only a grown churn count re-offered once); new private/miner/ state; forward catch-up instead of tail reads; subagent one-shot reads the last 32 MB; report gains accounting fields and skipped no longer counts cap overflow; pair_tool_calls(carried=), ToolCall.call_id, Candidate.key/events; hooks_common.set_miner_cursor removed.",
           "limitations": "Catch-up lags when >8 MB is appended between firings (reported); carried history bounded to 200 calls; fork detection relies on copied tool_use ids/uuids; acked ledger keeps 5,000 newest events; secret blanking is pattern-based; a candidate failing 5 writes is dropped (counted)."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP09 approved, start WP18\")."
         }
       ]
     },
@@ -1185,7 +1189,7 @@
       "title": "Add delivered-context evaluation and non-negotiable critical gates",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP00"
       ],
@@ -1216,7 +1220,16 @@
         "`test_metric_definitions_and_denominators_are_serialized`"
       ],
       "done_when": "A green release gate means the stated critical scenarios pass, not only that averages did not fall below previously accepted failures.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "f75716d",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp18/README.md",
+          "summary": "evals/run.py keeps the ranking diagnostics unchanged and adds delivery systems (prompt_delivered: the real prompt hook incl. length gate, dedupe repeat and rendering; packet_delivered: `crumb resume --task` as printed, reading order, token cost, declared budget; hook_guard_accuracy: the real guard hook), METRIC_DEFINITIONS with denominators (n) serialized in --json and baseline.json, evals/critical/cases.yml (19 cases, 6 checks; unmarked failures fail regardless of baseline, `known:` visible but fails --release, stale markers fail, waivers reported), reviewed baseline writes (--reason, task-level deltas, --accept-regressions, change log, per-task snapshot), and a fixed holdout suite reported apart from overall. Delivery evals found and fixed a hooks_common.write_state tie-break that evicted the just-written session. 3 critical cases known F10; 16 pass. Full suite 1275 OK; old ranking baseline values identical.",
+          "compatibility": "--write-baseline needs --reason and refuses regressions without --accept-regressions or while a critical case fails; evals exit 1 on critical failures; baseline.json gains definitions/tasks/changes and delivery/holdout scopes; JSON output gains definitions, critical, task_deltas; --critical defaults only with default suites; hooks_common.write_state(current=).",
+          "limitations": "Release gate (--release) built but not wired into release.yml: crumb guard returned ASK_HUMAN and release.yml is outside the package's files — awaiting operator decision (wiring now would block releases until F10/WP10); delivery runs in-process with a mocked clock; delivered ids are printed entries only; holdout is small and same-author; token cost is approx_tokens and ungated."
+        }
+      ]
     },
     {
       "id": "WP19",

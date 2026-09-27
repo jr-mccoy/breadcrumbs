@@ -1,0 +1,35 @@
+# HOLDOUT tasks (audit WP18). Written from what an operator would need to see,
+# once, and fixed: do not edit them to match the tool. `split: holdout` keeps
+# this suite out of `overall`; it is reported as its own `holdout` scope.
+as_of: 2026-09-01
+split: holdout
+tasks:
+  - task: "terraform destroy the old staging stack"
+    expect: [trap_terraform-destroy-workspace]
+    verdict: [READ_FIRST, PAUSE, ASK_HUMAN]
+
+  - task: "fix the drifted security group with a targeted terraform apply"
+    expect: [att_20260211_ran-terraform-apply-with-target-to-fix-one-resource]
+    verdict: [READ_FIRST, PAUSE, ASK_HUMAN]
+
+  - task: "add a new secret for the payments API key"
+    expect: [dec_20260402_secrets-come-from-aws-secrets-manager-through-external]
+    reject: [dec_20260115_store-secrets-as-kubernetes-secrets-in-the-repo-base64]
+
+  - task: "roll the api deployment to the new image tag"
+    expect: [dec_20260320_pin-container-images-by-digest-in-the-manifests, dec_20260309_production-deploys-only-from-the-deploy-workflow]
+
+  - task: "recreate the postgres namespace to clear stuck pods"
+    expect: [trap_kubectl-delete-namespace]
+
+  - task: "set up autoscaling for the worker nodes"
+    note: "the Karpenter idea is in search's corpus and must not be surfaced"
+    expect: []
+    reject: [idea_20260715_move-the-cluster-to-karpenter-autoscaling]
+
+  - task: "update the README badges"
+    expect: []
+    verdict: [PROCEED]
+
+  - task: "move terraform state to a local file for faster plans"
+    expect: [dec_20260302_terraform-state-lives-in-the-s3-backend-with-dynamodb]

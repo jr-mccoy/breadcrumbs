@@ -386,12 +386,18 @@ jobs:
       - name: ruff format --check
         run: ruff format --check --diff .
 
-  # WM-61: relevance evals. Builds the synthetic stores under evals/suites/,
-  # runs every task through the prompt hook's retrieval, the task-ordered resume
-  # packet and guard, and fails when precision@5 / recall@5 / quiet / guard
-  # accuracy fall more than 0.05 below evals/baseline.json, or a rejected record
-  # reaches a top 5. A deliberate retrieval change commits a new baseline
-  # (`python evals/run.py --write-baseline`) alongside it.
+  # WM-61 / audit WP18: relevance and delivery evals. Builds the synthetic
+  # stores under evals/suites/ and runs every task three ways:
+  # - the ranking diagnostics (retrieval, the re-ranked packet, guard);
+  # - what is actually delivered (the real prompt and guard hooks, and
+  #   `crumb resume --task` as printed);
+  # - the critical cases in evals/critical/cases.yml.
+  # It fails when a rate falls more than 0.05 below evals/baseline.json, a
+  # count rises, or a critical case fails. A baseline cannot approve a
+  # critical case. Cases marked `known:` (tracked findings) are annotated
+  # here on every run but only fail `--release`, the gate a release must
+  # pass. A deliberate retrieval change commits a new baseline
+  # (`python evals/run.py --write-baseline --reason "…"`) alongside it.
   #
   # Plain Python calling the library, not `crumb guard` in a shell: guard's
   # verdict exit codes (trap_guard-exit-code-in-ci) do not reach this step, so
@@ -406,5 +412,5 @@ jobs:
           python-version: "3.12"
 
       # Standard library only, like the test job: nothing to install.
-      - name: Relevance evals against the committed baseline
+      - name: Relevance, delivery and critical evals against the committed baseline
         run: python evals/run.py --verbose
