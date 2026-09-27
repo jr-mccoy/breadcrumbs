@@ -1,17 +1,17 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: a2b58ff | inputs_hash: 17ed23d916ea | generated_at: 2026-09-27T01:03:27+00:00 -->
+<!-- source_commit: b85314f | inputs_hash: e93b23d86b7c | generated_at: 2026-09-27T01:21:13+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `a2b58ff` · 3 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `b85314f` · 3 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
-Stabilization per the 2026-09-26 audit roadmap (WP00-02 done; WP03 awaiting review)
+Stabilization per the 2026-09-26 audit roadmap (WP00-03 done; WP04 awaiting review)
 
 ## Next Action
-Review WP03 (docs/reviews/2026-09-27-breadcrumbs-wp03/README.md), including whether private-jot promotion should require an explicit --share flag; once approved mark it completed in the tracker. Then pick ONE dependency-ready package: WP04, WP05, WP13 or WP18.
+Review WP04 (docs/reviews/2026-09-27-breadcrumbs-wp04/README.md); once approved mark it completed in the tracker. Then pick ONE dependency-ready package: WP05, WP13 or WP18 (WP06 needs WP05).
 
 ## Active Decisions
 - `dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record` — The audit evidence is only useful if it stays exactly what was reviewed. Reformatting the scripts would break the checksums. Each package's regressions belong in ordinary tests when that package lands, not in the probe script.
