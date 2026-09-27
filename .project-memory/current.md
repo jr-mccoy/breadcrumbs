@@ -6,9 +6,9 @@ _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Recently Changed
-- dca2a94 WP12: compaction follows the latest task; usage counts emissions
-- f534a77 Project memory: WP11 decision and session capture
+- a3e3f19 WP13: nothing in the store is a link; record text is rendered as data
+- 716e4a6 Project memory: WP12 decision and session capture
 
-_Prefill window: `e309db6`..HEAD — 2 commit(s) since the last session record._
+_Prefill window: `dca2a94`..HEAD — 2 commit(s) since the last session record._
 
 ## Watch Out For
