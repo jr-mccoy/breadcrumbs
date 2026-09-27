@@ -106,6 +106,30 @@ also ran test-file paths as programs and lost the original's branch scope.
   rolling 64 KiB window, and each run gets its own process group, terminated on
   timeout, on Ctrl-C and when the command returns.
 
+### Changed — the write lock is an OS lock (audit WP05)
+
+Findings F06 and F08. The write lock was a file judged by its age: a lock
+untouched for 60 seconds could be broken while its writer was still alive, for
+example after a suspension or a clock jump. And `crumb resume` rebuilt
+`generated/` and the search index without taking the lock at all.
+
+- **The lock is now `flock` / `msvcrt.locking`** on a permanent
+  `private/.store.lock`. The kernel releases it when its holder exits, so there
+  is no heartbeat, no staleness rule and no lock-breaking. A filesystem that
+  refuses OS locks makes writes fail with an explanation rather than run
+  uncoordinated.
+- **Publishing projections takes the lock.** `resume` prints its packet
+  regardless, and publishes only if the lock is free within 0.5 s; `--json`
+  reports `publication: {published, reason}`.
+- **The search index builds in a temp file of its own.**
+- **`init --force` keeps the lock file,** so it stays exclusive while it
+  replaces the store.
+- **Older versions.** A live 0.3.0-era `private/.write-lock` is waited on,
+  never removed. An older version does not see the new lock, so run one version
+  per checkout.
+- **The lock error now reads "try again shortly".** Deleting the file no longer
+  releases a lock; ending the holding process does.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

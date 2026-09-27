@@ -40,6 +40,8 @@ as staleness.
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 from breadcrumbs import cli
@@ -162,9 +164,11 @@ def build_index(memory_dir: Path, project_root: Path, *, force: bool = False) ->
 
         path = index_path(memory_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        if tmp.exists():
-            tmp.unlink()
+        # A temp file of its own (audit F06): with one fixed `.tmp` name, two
+        # builders would write into the same file and publish each other's work.
+        fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".index.", suffix=".tmp")
+        os.close(fd)
+        tmp = Path(tmp_name)
         conn = sqlite3.connect(str(tmp))
         try:
             conn.executescript(
@@ -202,8 +206,11 @@ def build_index(memory_dir: Path, project_root: Path, *, force: bool = False) ->
                 ],
             )
             conn.commit()
-        finally:
+        except BaseException:
             conn.close()
+            tmp.unlink(missing_ok=True)
+            raise
+        conn.close()
         tmp.replace(path)
         return {"built": True, "records": len(rows), "reason": None}
     except Exception as exc:  # pragma: no cover - the index is a convenience

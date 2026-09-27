@@ -555,18 +555,22 @@ def _replace_store_contents(memory_dir: Path, staging: Path) -> None:
     """`init --force`: replace everything in the store with `staging`'s contents,
     except the write lock this very command is holding (WM-51).
 
-    Deleting the directory wholesale took `private/.write-lock` with it and left
+    Deleting the directory wholesale took the lock file with it and left
     the rest of `init` — the new scaffold, the integrations, the reindex —
     running unlocked. The command holds the lock throughout, so the swap does
     not need to be a single rename to be safe from other writers.
     """
     from breadcrumbs import lock as _lock
 
-    keep = _lock.lock_path(memory_dir)
+    # Both lock files stay: this command's own (an OS lock lives on the file's
+    # inode, so replacing the file would let a second writer lock a new one while
+    # this one still runs), and an older version's, which is not ours to remove.
+    keep = {_lock.lock_path(memory_dir), _lock.legacy_lock_path(memory_dir)}
+    private = _lock.lock_path(memory_dir).parent
     for entry in list(memory_dir.iterdir()):
-        if entry == keep.parent:
+        if entry == private:
             for sub in list(entry.iterdir()):
-                if sub != keep:
+                if sub not in keep:
                     shutil.rmtree(sub) if sub.is_dir() else sub.unlink()
             continue
         shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
@@ -3854,13 +3858,37 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
 
 
 def try_reindex_projections(
-    memory_dir: Path, project_root: Path | None = None
+    memory_dir: Path, project_root: Path | None = None, *, lock_timeout: float | None = None
 ) -> tuple[bool, str | None]:
     """`reindex_projections` plus the reason it failed, for callers that report it.
 
     The bool-only form swallowed the exception, so `crumb reindex` could only say
     "Reindex failed" with no cause while projections silently stopped refreshing.
+
+    **Publication is a write, so it takes the store lock (audit F06).** Every
+    writer already holds it and re-enters for free. A caller that does not — a
+    `resume`, which only meant to show a packet — waits at most `lock_timeout`
+    (default: the CLI's wait) and otherwise publishes nothing, saying why. Four
+    files and an index replaced one by one are each atomic but not together, so
+    they must not interleave with another writer's.
     """
+    from breadcrumbs import lock as _lock
+
+    memory_dir = Path(memory_dir)
+    if not memory_dir.is_dir() or _lock.holds_lock(memory_dir):
+        return _publish_projections(memory_dir, project_root)
+    wait = _lock.CLI_TIMEOUT if lock_timeout is None else lock_timeout
+    try:
+        with _lock.store_lock(memory_dir, timeout=wait):
+            return _publish_projections(memory_dir, project_root)
+    except _lock.StoreLocked as exc:
+        return False, f"not published: {exc}"
+
+
+def _publish_projections(
+    memory_dir: Path, project_root: Path | None = None
+) -> tuple[bool, str | None]:
+    """Build and write every generated projection and the search index. Caller locks."""
     memory_dir = Path(memory_dir)
     project_root = Path(project_root) if project_root is not None else memory_dir.parent
     try:
@@ -7281,8 +7309,17 @@ def cmd_resume(args: argparse.Namespace) -> int:
     # while the fresh `inputs_hash` stamp made `audit` report zero packet drift,
     # hiding the staleness until the next mutation. It is also the only atomic
     # write path; the direct `write_text` here was the last torn-file risk.
+    #
+    # Publishing is a write and takes the store lock (audit F06), but a session
+    # must not fail to start because another one is capturing: resume waits
+    # only the hook's short time, then prints the packet it built anyway and
+    # reports that the files on disk were left to the writer that holds them.
+    publication = {"published": False, "reason": "a --fast or --task view is never published"}
     if not args.fast and not task:
-        ok, problem = try_reindex_projections(memory_dir, root)
+        from breadcrumbs import lock as _lock
+
+        ok, problem = try_reindex_projections(memory_dir, root, lock_timeout=_lock.HOOK_TIMEOUT)
+        publication = {"published": ok, "reason": problem}
         if not ok:
             print(
                 f"warning: generated projections not refreshed: {problem}",
@@ -7290,7 +7327,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
             )
 
     if args.json:
-        _print_json(args, packet)
+        _print_json(args, {**packet, "publication": publication})
     else:
         print(md)
     return 0

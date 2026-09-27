@@ -690,16 +690,18 @@ repository. Three things keep them apart:
   resume packet's lists, `guard`'s live set and the prompt hook's injections,
   is not held against a similar record as a near-duplicate, and stays
   searchable.
-- **One writer at a time.** Commands that write the store take a lock file,
-  `.project-memory/private/.write-lock`. A second writer waits up to 2 seconds
-  and then exits 1 with `store is locked by pid N; try again, or remove a stale
-  lock`; a hook waits 0.5 seconds and then skips its write rather than stall
-  the agent (the prompt hook still injects records); an MCP writer returns
-  `{ok: false, error}`. The holder refreshes the lock every 15 seconds; one
-  untouched for 60 seconds, or (on POSIX) whose process on this machine is
-  gone, is broken automatically. Only invocations that write wait: `resume`,
-  listings (`inbox`, `traps`, `consolidate` without `--merge`), `search`,
-  `guard`, `show`, `validate` and `audit` never do.
+- **One writer at a time.** Commands that write the store, and the rebuild of
+  `generated/`, take an operating-system lock on
+  `.project-memory/private/.store.lock`. A second writer waits up to 2 seconds
+  and then exits 1 with `store is locked by pid N; try again shortly`; a hook
+  waits 0.5 seconds and then skips its write rather than stall the agent (the
+  prompt hook still injects records); an MCP writer returns
+  `{ok: false, error}`. The kernel releases the lock when its holder exits,
+  however it exits, so nothing is ever judged "stale". `resume` always prints
+  its packet, but only writes the projections when it can take the lock within
+  0.5 seconds (`--json` reports `publication`). Listings (`inbox`, `traps`,
+  `consolidate` without `--merge`), `search`, `guard`, `show`, `validate` and
+  `audit` never wait. The store should live on a local filesystem.
 
 ### `crumb scan-secrets` and `crumb traps`
 

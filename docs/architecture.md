@@ -172,14 +172,14 @@ scope*: a record with `scope: branch` — a verification of work in progress, a
 jot a hook mined — applies only on the branch it was written on; elsewhere it
 leaves the packet's lists, `guard`'s live set, the prompt hook's injection and
 the near-duplicate candidates, and stays in `search`. *One writer at a time*:
-every writing invocation — CLI, hook write, MCP writer — takes an exclusive
-lock file, `private/.write-lock`, so two read-modify-write sequences cannot
-interleave and lose an update. The CLI and MCP wait 2 seconds and then refuse;
-a hook waits 0.5 seconds and then skips its write, because a hook must never
-block its host. The holder refreshes the file every 15 seconds; a lock
-untouched for 60 seconds, or whose process on this host is gone (POSIX), is
-broken — by one waiter at a time, holding a short break file while it re-checks,
-so two waiters cannot both take it. Read paths
+every writing invocation — CLI, hook write, MCP writer, and the publication of
+`generated/` projections — takes an operating-system lock on
+`private/.store.lock` (`flock` / `msvcrt.locking`). Two read-modify-write
+sequences therefore cannot interleave and lose an update. The CLI and MCP wait
+2 seconds and then refuse; a hook waits 0.5 seconds and then skips its write,
+because a hook must never block its host. The kernel releases the lock when its
+holder exits, so there is no heartbeat and no staleness rule that could hand a
+live writer's lock to a second one (audit WP05). Read paths
 never wait: `resume`, the listings, `search`, `guard`, the `SessionStart` and
 `PreToolUse` hooks, and the prompt hook's injection.
 
@@ -281,7 +281,7 @@ Everything is in the `breadcrumbs` package, standard library only.
 | `lifecycle_cmds.py` | The CLI surface of `lifecycle.py`: `expired`, `questions`, `consolidate`, `rollup` and the `verify --recheck` runner, imported only when one of them runs. |
 | `promote.py` | The bridge to long-term memory (Phase 4): `promote` / `demote` and their CLI surface, the promoted-rules block in `CLAUDE.md` / `AGENTS.md` (rendering, reading, rewriting), the `promoted_*` fields and the trap-block bullet, auto-demote on retire (called from `set_record_status`), the "is it promoted" predicates the packet uses, and the `promoted-bloat` / `demote-candidate` / `promoted-drift` / `promote-candidate` audit checks and the doctor summary. |
 | `handoffs.py` | One handoff per branch (schema 4): the default-branch rule, the handoff file name (slug, plus a hash when the slug is not the branch name), which file a capture writes and a resume or `memory://handoff` reads (and the label it reports), seeding a new branch handoff with `handoff.md`'s Current Focus, and `prune handoffs`. |
-| `lock.py` | The store write lock: `store_lock(memory_dir, timeout)` over `private/.write-lock` (exclusive create; pid, time and host; a 15 s heartbeat; stale after 60 s untouched or a dead pid on this host; broken under an exclusive `.write-lock.break` with a re-check), an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts. Which CLI invocations take it is `cli._needs_lock`. |
+| `lock.py` | The store write lock: `store_lock(memory_dir, timeout)`, an OS lock (`flock` / `msvcrt.locking`) on the permanent file `private/.store.lock`, which carries the holder's pid, time and host for messages only. Also an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts; waiting on a live 0.3.0-era `.write-lock`; `LockUnsupported` when the filesystem refuses. Which CLI invocations take it is `cli._needs_lock`; projection publication takes it in `cli.try_reindex_projections`. |
 | `transcript.py` | Deterministic transcript mining into jot candidates. |
 | `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook (retrieval keeps current records only), the `PreCompact` / `SubagentStop` hooks. |
 | `hooklog.py` | The hook log (WM-62): `run_logged` wraps every `crumb hook` firing, passes its output through unchanged and appends one line to `private/hook-log.jsonl` (event, time, ms, outcome, the handler's `note()` detail; never content), bounded at 5000 lines; `summarize` for `crumb doctor --hook-log`. |

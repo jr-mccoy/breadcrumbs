@@ -565,7 +565,7 @@
       "title": "Separate assertion replay from claim verification",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP01"
       ],
@@ -604,6 +604,10 @@
           "summary": "New breadcrumbs/checks.py: CheckResult (execution only), versioned assertion spec 1 ({type: assert, ref, spec}), settle() (only evaluated assertions settle; fixed/open/regressed), run_check() with process group, rolling 64 KiB output window, group termination on timeout/Ctrl-C/return. recheck: command evidence is a diagnostic unless --bind-commands; test evidence never executed; settled records keep subject/scope/branch/confidence; branch claims not rechecked from another branch; inconclusive runs write nothing. verify --assert. tests/test_replay_contract.py: 16 tests. Full suite 1217 OK.",
           "compatibility": "Recheck of command-only verifications no longer changes them (use --bind-commands or --assert); test evidence not executed; JSON gains settled/reason/runs fields; regressed outcome possible.",
           "limitations": "recheck_scope_and_claim probe now errors (the no-op writes no record) and is covered by regression tests instead; environment not filtered; Windows tree cleanup untested (taskkill /T); spec 1 is exit-code only; detached children reported, not ended."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"I approve, continue\")."
         }
       ]
     },
@@ -612,7 +616,7 @@
       "title": "Repair writer coordination and lock ownership",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP00"
       ],
@@ -641,7 +645,16 @@
         "`test_force_init_preserves_coordination`"
       ],
       "done_when": "Real-process exclusion and bounded contention behavior pass on qualified platforms; stale-clock logic no longer permits concurrent live owners.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "16aa8f1",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp05/README.md",
+          "summary": "lock.py rewritten on OS locks (flock / msvcrt.locking) over a permanent private/.store.lock: no heartbeat, staleness or breaking; LockUnsupported on filesystems that refuse; live legacy .write-lock waited on, never removed. Projection publication (try_reindex_projections) takes the lock; resume prints its packet regardless and publishes only within 0.5 s, reporting publication in --json. init --force keeps both lock files; the search index builds in a unique temp file. tests/test_lock_processes.py: 10 real-process tests (death, clock gap, SIGSTOP, parallel writers and reindexes, force init, legacy, unsupported FS). Full suite 1224 OK; 5x repeat clean.",
+          "compatibility": "New lock file; older versions do not see it (one version per checkout); resume may skip publishing under contention; deleting the lock file no longer releases a lock; non-local filesystems without OS locks refuse writes.",
+          "limitations": "Windows path untested (WP17); local filesystems only; private telemetry/hook state writes still unlocked (WP09/WP12); no snapshot coherence (WP07). live_lock_stale probe errors (API removed) and resume_ignores_lock reports a false positive (its fake file-content holder is not a lock); both covered by real-process tests."
+        }
+      ]
     },
     {
       "id": "WP06",

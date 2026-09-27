@@ -46,7 +46,7 @@ writes outside the store.
     # usage.json              — local surfacing counts, written on demand
     # hook-log.jsonl          — one line per hook firing, written on demand (WM-62)
     # migrations/<stamp>/     — pre-migration store backup
-    # .write-lock             — present only while a command writes the store (WM-51)
+    # .store.lock             — the write lock's file: an OS lock, permanent (WM-51, audit WP05)
 
   index/
     README.md

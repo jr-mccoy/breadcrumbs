@@ -1194,26 +1194,37 @@ already atomic; the lock stops two read-modify-write sequences (a handoff
 rewrite, an index rebuild) from interleaving so that one silently undoes the
 other.
 
-- **The lock file** is `.project-memory/private/.write-lock` (gitignored with
-  the rest of `private/`), created with `O_CREAT | O_EXCL` and holding the
-  owner's pid, a Unix timestamp and the host name. It exists only while a
-  writer holds it. Within one process an in-process lock per store serialises
-  threads, and the lock is re-entrant within a thread.
-- **The holder keeps it fresh.** A heartbeat thread touches the file every 15
-  seconds while the lock is held, so a long writer (a migration backup, a
-  search-index build) keeps it.
-- **Stale locks are broken.** A lock is stale when its file has not been
-  touched (mtime, or the timestamp inside) for 60 seconds, or — only for a lock
-  written on this host, and only on POSIX — when its pid no longer exists. A
-  lock from another host (a store on a shared filesystem) is judged by age
-  alone. Breaking is exclusive: a waiter first creates
-  `private/.write-lock.break`, re-checks that the lock is still stale while
-  holding it, and only then removes it. A fresh lock another waiter took
-  meanwhile passes that re-check and is left alone, so two waiters cannot both
-  proceed. A break file left by a crashed waiter is ignored after 5 seconds.
-- **`init --force`** keeps its own lock file while it replaces everything else
-  in the store, so the rest of `init` (scaffold, integrations, reindex) still
-  runs locked.
+- **The lock is an operating-system lock** (audit WP05): `flock` on POSIX and
+  `msvcrt.locking` on Windows, on `.project-memory/private/.store.lock`
+  (gitignored with the rest of `private/`). The kernel holds it, so it is
+  released the moment its holder exits, however that happens.
+  - There is no heartbeat, no age limit and no "stale lock" rule: a live
+    writer is never judged dead because a clock jumped or a process was
+    suspended, and a crashed one never wedges the store.
+  - The file is permanent and never unlinked. While a writer holds it, the file
+    carries the writer's pid, a Unix timestamp and the host, but only for error
+    messages.
+  - Within one process, an in-process lock per store serialises threads, and
+    the lock is re-entrant within a thread.
+- **Filesystems.** An OS lock is exact on a local filesystem. If the store's
+  filesystem refuses one (some network or sync-managed mounts), a write fails
+  with `cannot take a write lock on …; the store must be on a local filesystem
+  for concurrent writers to be safe` rather than proceeding uncoordinated.
+- **Older versions.** crumb-kit 0.3.0 and earlier used an exclusive-create
+  `private/.write-lock` with a heartbeat. While such a file is fresh (touched
+  within 60 seconds) and its process alive, this version waits for it too; it
+  never removes one. An older version does not see this version's lock, so run
+  one version per checkout.
+- **`init --force`** keeps both lock files while it replaces everything else in
+  the store. An OS lock lives on the file's inode, so replacing the file would
+  let a second writer lock a new one while `init` still runs.
+- **Publishing projections takes the lock.** The four `generated/` files and
+  the search index are each replaced atomically, but not together, so every
+  rebuild runs under the lock. A writer already holds it. `resume` waits only
+  0.5 seconds; if another writer holds the lock, it still prints the packet it
+  built but writes nothing, warns on stderr, and reports
+  `publication: {published: false, reason}` in `--json`. The search index is
+  built in a temp file of its own.
 - **Which invocations take it** is decided per invocation (`_needs_lock` over
   `LOCKED_COMMANDS` in `breadcrumbs/cli.py`): `init` (when a store exists),
   `remember`, `note`, `jot`, `inbox promote` and `inbox drop`, `verify`,
@@ -1222,14 +1233,15 @@ other.
   waits up to 2 seconds, then exits 1:
 
   ```text
-  CRUMB-ERROR: crumb jot: store is locked by pid 9502; try again, or remove a stale lock
+  CRUMB-ERROR: crumb jot: store is locked by pid 9502; try again shortly
   ```
 
   Under `--json` that is `{ok: false, command, error}`. When the holder is
   another thread of the same process, the message says `store is locked by
   another thread of this process; …`. With no store, the command runs without
   the lock and reports the missing store itself (exit 2).
-- **Invocations that never wait:** everything else — `resume` (see `resume`),
+- **Invocations that never wait:** everything else — `resume` (it waits 0.5
+  seconds to publish, never to show the packet),
   the `inbox`, `traps` and `consolidate` listings, `search`, `guard`, `show`,
   `validate`, `audit`, `scan-secrets`, `doctor`, `usage`, `expired`,
   `questions`, `schema`, `mcp`.
@@ -1238,8 +1250,8 @@ other.
   [Hook events](#hook-events)). The MCP writers wait 2 seconds and return
   `{ok: false, error: "store is locked by pid N; …"}` (see
   [`mcp-spec.md`](mcp-spec.md)).
-- A lock held by a process that is still running but stuck keeps its
-  heartbeat and is not broken; deleting the file releases it.
+- A lock held by a process that is still running but stuck stays held until
+  that process exits or is killed. Deleting the file does not release it.
 
 ---
 

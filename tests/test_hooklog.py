@@ -8,19 +8,19 @@ from __future__ import annotations
 import contextlib
 import io
 import json
-import subprocess
 import sys
 import tempfile
-import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import crumb  # noqa: E402
-from breadcrumbs import hooklog, lock  # noqa: E402
+from breadcrumbs import hooklog  # noqa: E402
+from _lockproc import held_by_another_process  # noqa: E402
 
 
 def init_store(tmp: str) -> Path:
@@ -94,15 +94,9 @@ class HookLogTests(unittest.TestCase):
     def test_a_writer_skipped_by_the_lock_is_logged_as_locked(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
-            try:
-                path = lock.lock_path(mem)
-                path.write_text(f"{proc.pid} {time.time():.3f}\n", encoding="utf-8")
+            # A real holder: the lock is an OS lock (audit WP05), not file content.
+            with held_by_another_process(mem):
                 out = hook("capture", {"cwd": tmp, "session_id": "s", "transcript_path": ""})
-            finally:
-                proc.kill()
-                proc.wait()
-                lock.lock_path(mem).unlink(missing_ok=True)
             self.assertEqual(out.strip(), "{}")
             self.assertEqual(hooklog.read_log(mem)[-1]["outcome"], "locked")
 

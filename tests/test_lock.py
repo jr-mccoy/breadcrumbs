@@ -21,8 +21,11 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import crumb  # noqa: E402
 from breadcrumbs import inbox, lock, mcp_core  # noqa: E402
+from _lockproc import can_take, held_by_another_process  # noqa: E402
 
 
 def _cli_module():
@@ -47,39 +50,30 @@ def init_store(tmp: str) -> Path:
     return Path(tmp) / crumb.MEMORY_DIRNAME
 
 
-@contextlib.contextmanager
-def held_by_another_process(mem: Path):
-    """A live foreign process owns the lock file for the `with` body."""
-    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
-    try:
-        path = lock.lock_path(mem)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(f"{proc.pid} {time.time():.3f}\n", encoding="utf-8")
-        yield proc.pid
-    finally:
-        proc.kill()
-        proc.wait()
-        path.unlink(missing_ok=True)
-
-
 class StoreLockTests(unittest.TestCase):
-    def test_the_lock_file_exists_only_while_held(self):
+    def test_the_lock_is_held_only_inside_the_block(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             with lock.store_lock(mem):
-                self.assertTrue(lock.lock_path(mem).exists())
                 self.assertTrue(lock.holds_lock(mem))
-            self.assertFalse(lock.lock_path(mem).exists())
+                self.assertFalse(can_take(mem), "another process took a held lock")
+                self.assertEqual(lock.lock_owner(mem), os.getpid())
             self.assertFalse(lock.holds_lock(mem))
+            self.assertTrue(can_take(mem))
+            # The file is permanent (an OS lock lives on its inode); only the
+            # owner line is cleared.
+            self.assertTrue(lock.lock_path(mem).exists())
+            self.assertIsNone(lock.lock_owner(mem))
 
     def test_it_is_reentrant_in_one_thread(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             with lock.store_lock(mem, timeout=0.1):
                 with lock.store_lock(mem, timeout=0.1):
-                    self.assertTrue(lock.lock_path(mem).exists())
-                self.assertTrue(lock.lock_path(mem).exists(), "inner exit must not release")
-            self.assertFalse(lock.lock_path(mem).exists())
+                    self.assertTrue(lock.holds_lock(mem))
+                self.assertTrue(lock.holds_lock(mem))
+                self.assertFalse(can_take(mem), "inner exit must not release")
+            self.assertTrue(can_take(mem))
 
     def test_two_threads_writing_jots_produce_two_files(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -113,7 +107,8 @@ class StoreLockTests(unittest.TestCase):
                 order.index("start second observation about queues"),
             )
 
-    def test_a_stale_lock_is_broken(self):
+    def test_an_old_owner_line_does_not_block(self):
+        # Only the kernel's lock decides; what the file says is for messages.
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             path = lock.lock_path(mem)
@@ -124,8 +119,7 @@ class StoreLockTests(unittest.TestCase):
             with lock.store_lock(mem, timeout=0.1):
                 self.assertIn(str(os.getpid()), path.read_text("utf-8"))
 
-    @unittest.skipUnless(os.name == "posix", "dead-pid detection is POSIX-only")
-    def test_a_lock_whose_process_is_gone_is_broken(self):
+    def test_a_dead_process_s_owner_line_does_not_block(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             proc = subprocess.Popen([sys.executable, "-c", "pass"])
@@ -205,68 +199,26 @@ class LockFixTests(unittest.TestCase):
                         self.assertEqual(code, 0, err)
                         self.assertLess(time.monotonic() - start, 3)
 
-    def test_a_heartbeat_keeps_a_long_writer_s_lock(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            mem = init_store(tmp)
-            with (
-                mock.patch.object(lock, "STALE_SECONDS", 0.4),
-                mock.patch.object(lock, "HEARTBEAT_SECONDS", 0.1),
-            ):
-                with lock.store_lock(mem):
-                    time.sleep(0.6)  # past STALE_SECONDS, kept alive by the heartbeat
-                    # Another *process* is what would break a stale lock; model it
-                    # by asking the stale test directly.
-                    self.assertFalse(lock._is_stale(lock.lock_path(mem)))
-
-    def test_breaking_a_stale_lock_never_removes_a_fresh_one(self):
-        # The waiter judged an old lock stale, but by the time it may break it
-        # another waiter has put a fresh lock there: the re-check under the
-        # break file must leave that one alone.
-        with tempfile.TemporaryDirectory() as tmp:
-            mem = init_store(tmp)
-            path = lock.lock_path(mem)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            fresh = f"{os.getppid()} {time.time():.3f} {lock._host()}\n"
-            path.write_text(fresh, encoding="utf-8")
-            lock._break_stale(path)
-            self.assertEqual(path.read_text("utf-8"), fresh)
-            self.assertFalse(path.with_name(path.name + ".break").exists())
-
-    def test_only_one_waiter_breaks_at_a_time(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            mem = init_store(tmp)
-            path = lock.lock_path(mem)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            old = time.time() - 120
-            path.write_text(f"{os.getppid()} {old:.3f}\n", encoding="utf-8")
-            os.utime(path, (old, old))
-            breaker = path.with_name(path.name + ".break")
-            breaker.write_text("", encoding="utf-8")  # another waiter is breaking it
-            lock._break_stale(path)
-            self.assertTrue(path.exists(), "a second breaker must not act")
-            abandoned = time.time() - 60
-            os.utime(breaker, (abandoned, abandoned))
-            lock._break_stale(path)  # clears the abandoned break file…
-            lock._break_stale(path)  # …and the next attempt breaks the lock
-            self.assertFalse(path.exists())
-
     def test_init_force_keeps_its_own_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            seen: list[bool] = []
+            inode = lock.lock_path(mem).stat().st_ino
+            seen: list[tuple[bool, bool]] = []
             real = _cli_module().try_reindex_projections
 
-            def spy(memory_dir, project_root):
-                seen.append(lock.lock_path(memory_dir).exists())
-                return real(memory_dir, project_root)
+            def spy(memory_dir, project_root, **kwargs):
+                seen.append((lock.holds_lock(memory_dir), can_take(memory_dir)))
+                return real(memory_dir, project_root, **kwargs)
 
             with mock.patch.object(_cli_module(), "try_reindex_projections", side_effect=spy):
                 code, _o, err = run(
                     ["init", "--project", tmp, "--force", "--session-tracking", "full"]
                 )
             self.assertEqual(code, 0, err)
-            self.assertEqual(seen, [True])
-            self.assertFalse(lock.lock_path(mem).exists(), "released at the end")
+            # Held, and exclusive, after the store's contents were replaced.
+            self.assertEqual(seen, [(True, False)])
+            self.assertEqual(lock.lock_path(mem).stat().st_ino, inode, "the lock file was replaced")
+            self.assertTrue(can_take(mem), "released at the end")
 
     def test_a_thread_timeout_does_not_blame_this_process(self):
         with tempfile.TemporaryDirectory() as tmp:

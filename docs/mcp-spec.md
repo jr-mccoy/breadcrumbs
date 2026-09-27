@@ -191,7 +191,7 @@ lock*). A call waits up to 2 seconds for another writer — a CLI command, a
 hook, another MCP call in the same server — and then returns without writing:
 
 ```jsonc
-{ "ok": false, "error": "store is locked by pid 4242; try again, or remove a stale lock" }
+{ "ok": false, "error": "store is locked by pid 4242; try again shortly" }
 ```
 
 When the holder is another MCP call in the same server process, the error
