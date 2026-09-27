@@ -35,6 +35,10 @@ import tempfile
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
+# The record contract. Stdlib-only and import-free, so importing it here costs
+# the hook pre-filter nothing (see StartupCostTests).
+from breadcrumbs import validation as _validation
+
 # --------------------------------------------------------------------------- #
 # Constants
 # --------------------------------------------------------------------------- #
@@ -1542,8 +1546,96 @@ def load_manifest(memory_dir: Path) -> dict | None:
 # --------------------------------------------------------------------------- #
 
 
-def _finding(check: str, status: str, path: str | None, message: str) -> dict:
-    return {"check": check, "status": status, "path": path, "message": message}
+def _finding(
+    check: str, status: str, path: str | None, message: str, code: str | None = None
+) -> dict:
+    """One validate result. `code` is the stable identifier (defaults to `check`)."""
+    return {
+        "check": check,
+        "status": status,
+        "path": path,
+        "message": message,
+        "code": code or check,
+    }
+
+
+# The validate `check` each record-contract code reports under.
+_CONTRACT_CHECK = {
+    _validation.CONFIDENCE_INVALID: "confidence",
+    _validation.REVIEW_STATUS_INVALID: "review",
+    _validation.SCOPE_UNSUPPORTED: "scope",
+    _validation.EVIDENCE_MALFORMED: "evidence",
+    _validation.TIMESTAMP_INVALID: "timestamp",
+    _validation.SUPERSEDED_BY_MALFORMED: "superseded",
+    _validation.SUPERSESSION_SELF: "superseded",
+    _validation.SUPERSEDED_BY_MISSING: "superseded",
+    _validation.SUPERSESSION_CYCLE: "superseded",
+}
+
+
+def _contract_finding(rel: str, issue: dict) -> dict:
+    return _finding(
+        _CONTRACT_CHECK.get(issue["code"], "contract"),
+        "fail",
+        rel,
+        issue["message"],
+        code=issue["code"],
+    )
+
+
+CONTRACT_WARNING_EXAMPLES = 3
+
+
+def record_contract_warnings(memory_dir: Path) -> list[str]:
+    """The packet's one-line notice that some records break the record contract.
+
+    Readers tolerate a malformed record — it never takes a hook or the packet
+    down — but tolerating it silently is how a `confidence: certainly` or an
+    `expires_at` nothing can parse goes unnoticed for months. This says so where
+    every session looks. Committed directories only: the packet is a committed
+    projection, and a machine-local jot must not make it differ between checkouts.
+    """
+    memory_dir = Path(memory_dir)
+    records = [
+        rec
+        for dirname, rtype in DIR_TYPES.items()
+        if (memory_dir / dirname).is_dir()
+        for rec in (Record.from_file(p, rtype) for p in sorted((memory_dir / dirname).glob("*.md")))
+    ]
+    entries = record_contract_entries(records, memory_dir)
+    linked = _validation.store_issues(entries)
+    problems: dict[str, list[str]] = {}
+    for rec, (rel, rid, meta) in zip(records, entries):
+        codes = ["frontmatter-malformed"] if rec.error else []
+        codes += [i["code"] for i in _validation.record_issues(meta, rec.rtype, rid)]
+        codes += [i["code"] for i in linked.get(rel, [])]
+        if codes:
+            problems[rid or rel] = codes
+    if not problems:
+        return []
+    shown = [
+        f"{rid} ({', '.join(dict.fromkeys(codes))})"
+        for rid, codes in sorted(problems.items())[:CONTRACT_WARNING_EXAMPLES]
+    ]
+    more = len(problems) - len(shown)
+    return [
+        f"⚠ {len(problems)} record(s) break the record contract: {'; '.join(shown)}"
+        + (f"; +{more} more" if more > 0 else "")
+        + " — they are still read; run `crumb validate`."
+    ]
+
+
+def record_contract_entries(records: list["Record"], memory_dir: Path) -> list[tuple]:
+    """`(relative path, derived id, meta)` per record, for `validation.store_issues`.
+
+    A record whose frontmatter did not parse is still a link target: its id comes
+    from its filename, so a replacement pointing at it is not reported missing.
+    """
+    out = []
+    for rec in records:
+        ident = derive_identity(rec.stem, rec.rtype)
+        out.append((str(rec.path.relative_to(memory_dir)), ident[0] if ident else None, rec.meta))
+    return out
 
 
 def run_validate(memory_dir: Path) -> list[dict]:
@@ -1746,10 +1838,16 @@ def run_validate(memory_dir: Path) -> list[dict]:
                 )
             )
 
+        # 16.8b — the record contract: vocabularies, evidence shape, timestamps,
+        # scope and self-links (breadcrumbs/validation.py; audit F05).
+        for issue in _validation.record_issues(rec.meta, rec.rtype, ident[0] if ident else None):
+            findings.append(_contract_finding(rel, issue))
+
         # 16.9 — decisions/attempts/verifications need evidence OR confidence: low.
+        # Only a well-formed pointer counts: any non-empty `evidence` used to
+        # satisfy this, so `[{nonsense: x}]` let a claim stand at medium.
         if rec.rtype in ("decision", "attempt", "verification"):
-            evidence = rec.meta.get("evidence")
-            has_evidence = bool(evidence) if evidence is not None else False
+            has_evidence = bool(_validation.well_formed_evidence(rec.meta.get("evidence")))
             if not has_evidence and rec.meta.get("confidence") != "low":
                 findings.append(
                     _finding(
@@ -1827,6 +1925,13 @@ def run_validate(memory_dir: Path) -> list[dict]:
                         "session record lacks a '## Next Action' or convergence/done marker",
                     )
                 )
+
+    # 16.10b — links between records: a `superseded_by` must name a record in
+    # this store, and a replacement chain must not loop back on itself.
+    for rel, issues in _validation.store_issues(
+        record_contract_entries(records, memory_dir)
+    ).items():
+        findings.extend(_contract_finding(rel, issue) for issue in issues)
 
     # 16.11 — handoff has branch, commit, next action, stale conditions.
     handoff = memory_dir / "handoff.md"
@@ -2551,15 +2656,46 @@ def write_record(
     for k, v in (extra or {}).items():
         if v is not None:
             meta[k] = v
+    # The record contract, before anything touches disk. Every writer already
+    # reverts on the post-write `validate` gate; checking first means a bad value
+    # from any surface (a free-text `--scope`, an MCP evidence item with no ref)
+    # is refused with the same ValueError the renderer uses, and no invalid file
+    # exists even briefly. A new write is held to the contract; a legacy record is
+    # only reported by `validate`, never rewritten.
+    issues = _validation.record_issues(meta, rtype, rid)
+    if issues:
+        raise ValueError("; ".join(i["message"] for i in issues))
     text = render_frontmatter(meta) + "\n\n" + render_body(rtype, sections)
     write_text_atomic(path, text)
     return path, meta
 
 
-def _validate_new_file(memory_dir: Path, path: Path) -> list[dict]:
-    """Run the deterministic checks and return failures that touch `path`."""
+def _validate_new_file(memory_dir: Path, path: Path, original: str | None = None) -> list[dict]:
+    """Run the deterministic checks and return failures that touch `path`.
+
+    `original` is the file's text before a rewrite of an existing record. Then
+    only failures the rewrite *introduced* are returned: a record that was
+    already invalid when a check was added (a legacy scalar evidence item, a
+    free-text scope) must stay retirable — refusing `mark-status stale` on it
+    would leave the bad record live. Found by re-checking the original, which is
+    only done when the new text fails, so the common path costs nothing extra.
+    """
     rel = str(Path(path).relative_to(memory_dir))
-    return [f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel]
+
+    def fails_here() -> list[dict]:
+        return [f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel]
+
+    fails = fails_here()
+    if not fails or original is None:
+        return fails
+    path = Path(path)
+    current = path.read_text(encoding="utf-8")
+    write_text_atomic(path, original)
+    try:
+        already = {(f["code"], f["message"]) for f in fails_here()}
+    finally:
+        write_text_atomic(path, current)
+    return [f for f in fails if (f["code"], f["message"]) not in already]
 
 
 # ---- record lookup + status mutation (shared by MCP `memory_mark_status`) --- #
@@ -2822,7 +2958,7 @@ def _set_record_status(
     new_text = rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n"
     write_text_atomic(rec.path, new_text)
 
-    fails = _validate_new_file(memory_dir, rec.path)
+    fails = _validate_new_file(memory_dir, rec.path, original)
     if fails:
         write_text_atomic(rec.path, original)  # revert
         return {
@@ -2886,7 +3022,7 @@ def set_record_title(memory_dir: Path, rid: str, title: str, *, agent: str | Non
         }
     write_text_atomic(rec.path, rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n")
 
-    fails = _validate_new_file(memory_dir, rec.path)
+    fails = _validate_new_file(memory_dir, rec.path, original)
     if fails:
         write_text_atomic(rec.path, original)  # revert
         return {
@@ -3033,7 +3169,7 @@ def set_trap_confirmed(memory_dir: Path, rid: str, *, when: str | None = None) -
         + original[end:]
     )
     write_text_atomic(path, new_text)
-    fails = _validate_new_file(memory_dir, path)
+    fails = _validate_new_file(memory_dir, path, original)
     if fails:
         write_text_atomic(path, original)  # revert
         return {
@@ -3126,7 +3262,7 @@ def set_trap_status(
     if after is None or after["status"] != status:
         write_text_atomic(path, original)  # revert
         return {"ok": False, "id": tid, "error": "edited trap did not parse back; reverted"}
-    fails = _validate_new_file(memory_dir, path)
+    fails = _validate_new_file(memory_dir, path, original)
     if fails:
         write_text_atomic(path, original)  # revert
         return {
@@ -3234,7 +3370,7 @@ def set_question_status(
     if len(after) != 1 or after[0]["status"] != status:
         write_text_atomic(path, original)  # revert
         return {"ok": False, "id": qid, "error": "edited question did not parse back; reverted"}
-    fails = _validate_new_file(memory_dir, path)
+    fails = _validate_new_file(memory_dir, path, original)
     if fails:
         write_text_atomic(path, original)  # revert
         return {
@@ -5051,7 +5187,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         before = coalesce.path.read_text(encoding="utf-8")
         path = _coalesce_into(coalesce, sections, root, args.agent, include_memory=include_memory)
         meta = dict(coalesce.meta)
-        fails = _validate_new_file(memory_dir, path)
+        fails = _validate_new_file(memory_dir, path, before)
         if fails:
             write_text_atomic(path, before)  # revert — never leave a broken snapshot
             _emit_error(
@@ -5060,16 +5196,20 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
             return 1
     else:
         extra = {"host_session": host_session} if host_session else None
-        path, meta = write_record(
-            memory_dir,
-            root,
-            "session",
-            title,
-            sections,
-            agent=args.agent,
-            extra=extra,
-            include_memory=include_memory,
-        )
+        try:
+            path, meta = write_record(
+                memory_dir,
+                root,
+                "session",
+                title,
+                sections,
+                agent=args.agent,
+                extra=extra,
+                include_memory=include_memory,
+            )
+        except ValueError as exc:
+            _emit_error(args, str(exc))
+            return 2
 
         fails = _validate_new_file(memory_dir, path)
         if fails:
@@ -5517,7 +5657,12 @@ def _parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.strip())
+        text = value.strip()
+        # `fromisoformat` learned `Z` only in 3.11. The record contract accepts
+        # it, so every supported interpreter must read it the same way.
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
     except (ValueError, TypeError):
         return None
 
@@ -5550,8 +5695,9 @@ def record_expired(meta: dict) -> bool:
 # `scope` values (WM-52). `project` is every record's default; `branch` says the
 # record describes this branch's state — a verification of work in progress, an
 # observation a hook mined mid-session — and applies only while that branch is
-# checked out. The branch is the record's existing `branch` key.
-RECORD_SCOPES = ("project", "branch")
+# checked out. The branch is the record's existing `branch` key. Owned by the
+# record contract, which rejects any other value on write.
+RECORD_SCOPES = _validation.RECORD_SCOPES
 
 
 def branch_scoped_elsewhere(meta: dict, current_branch: str) -> bool:
@@ -6687,6 +6833,7 @@ def build_resume_packet(
         ),
         "warnings": (
             [f"⚠ {u}" for u in unreadable]
+            + record_contract_warnings(memory_dir)
             + compute_staleness(
                 root,
                 handoff_meta,
@@ -12315,7 +12462,9 @@ def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
         pr.add_argument("--tags", help="comma-separated tags")
         pr.add_argument("--confidence", choices=("low", "medium", "high"))
         pr.add_argument("--privacy", choices=VALID_PRIVACY)
-        pr.add_argument("--scope")
+        # Free text until the record contract (audit F05): any other value was
+        # stored and silently read as `project`, whatever its author meant.
+        pr.add_argument("--scope", choices=RECORD_SCOPES)
         pr.add_argument("--status", choices=VALID_STATUS)
         pr.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author"))
         _add_duplicate_flags(pr)

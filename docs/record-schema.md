@@ -225,7 +225,7 @@ updated_at: 2026-06-25T14:30:00-05:00
 created_by: <username>      # human username or agent label, auto-derived
 agent: unknown             # unknown | agent | human | claude-code | codex | cursor | gemini | opencode | other
 project: <project-name>    # auto-derived from repo/dir name
-scope: project             # project | branch  (other text is accepted and read as project)
+scope: project             # project | branch  (other text: legacy only — read as project, reported by validate)
 branch: <current-branch>   # auto-derived from git HEAD
 commit: <short-sha>        # auto-derived from git HEAD
 dirty_files: []            # auto-derived from git status
@@ -300,9 +300,52 @@ leaves the resume packet's decision, attempt, verification and inbox lists and
 written on this branch; it stays on disk and in `search`. Without git, on a detached HEAD, or with no recorded branch, a
 branch-scoped record counts everywhere. `crumb jot` and `crumb verify` take
 `--scope project|branch`; jots written by a hook (`source` other than `human` or
-`agent`) default to `branch`. `crumb remember --scope` accepts free text, and
-`validate` does not check the value; anything other than `branch` is read as
-`project`.
+`agent`) default to `branch`. Every writer accepts only `project` or
+`branch`. Until 0.3.x, `crumb remember --scope` and the MCP `memory_record` tool
+accepted free text, so a legacy record may carry another value. It is still read
+as `project`, is never rewritten, and fails `validate` with `scope-unsupported`:
+the reader cannot tell whether its author meant something narrower, so the
+author must set the value explicitly.
+
+### The record contract
+
+`breadcrumbs/validation.py` holds the per-field and cross-record checks. Every
+writer runs them before writing (a refused value exits 2, or returns `{ok:
+false}` over MCP) and again through the post-write `validate` gate. `validate`
+runs them over the whole store. Each failure carries a stable `code`; `check`
+and `message` are for people. These checks establish that a record is well
+formed. They do not establish that its claim is true: a well-formed evidence
+pointer is still only a pointer.
+
+| Code | Fails when |
+|---|---|
+| `confidence-invalid` | `confidence` is not `low`, `medium` or `high` |
+| `review-status-invalid` | `review_status` is not `unreviewed`, `reviewed` or `needs-review` |
+| `scope-unsupported` | `scope` is not `project` or `branch` |
+| `evidence-malformed` | `evidence` is not a list, or an item is not a mapping with a non-empty `type` and `ref` |
+| `timestamp-invalid` | `created_at`, `updated_at`, `expires_at`, `last_confirmed` or `promoted_at` is not `YYYY-MM-DD`, optionally followed by `THH:MM[:SS[.fff\|.ffffff]]` and `Z` or `±HH:MM` |
+| `superseded-by-malformed` | `superseded_by` is not a single id |
+| `supersession-self` | a record is superseded by, or supersedes, itself |
+| `superseded-by-missing` | `superseded_by` names no record in this store |
+| `supersession-cycle` | following `superseded_by` returns to where it started, so no record on the loop is live |
+
+The evidence-or-low-confidence rule (§16.9) counts only well-formed items, so an
+`evidence` list holding nothing usable no longer lets a claim stand at `medium`.
+
+The timestamp format is one fixed subset. Python 3.11 widened what
+`datetime.fromisoformat` accepts, so relying on it would let a store pass
+`validate` on one interpreter and fail on another. `supersedes` targets are not
+checked, because `rollup sessions` deletes the snapshots it folds and the
+rollup's `supersedes` still names them. Unknown keys are not an error and
+survive every rewrite.
+
+**Legacy records.** A store written before the contract may already break it.
+`validate` reports such a record and never repairs it: no value is rewritten,
+and no confidence is raised to make a check pass. A status change or other
+rewrite of an existing record is refused only for a problem the rewrite
+*introduces*, so a legacy record can always be retired. The resume packet names
+records that break the contract in one `Stale / Risk Warnings` line, and still
+reads them.
 
 ---
 

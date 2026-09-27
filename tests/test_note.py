@@ -453,6 +453,14 @@ class TrapLifecycleTests(unittest.TestCase):
                 ["mark-status", "trap_old", "superseded", "--project", tmp, "--reason", "replaced"]
             )
             self.assertEqual(code, 1)
+            # ...and so does a pointer to a trap that does not exist (audit F05):
+            # retiring a record in favour of nothing leaves no live advice.
+            argv = ["mark-status", "trap_old", "superseded", "--project", tmp]
+            argv += ["--reason", "replaced", "--superseded-by", "trap_new"]
+            code, _ = run(argv)
+            self.assertEqual(code, 1)
+            self.assertEqual(crumb.find_trap_by_id(mem, "trap_old")["status"], "active")
+            self._trap(tmp, "Rotate the signing key before deploys", "new")
             self.assertEqual(crumb.find_trap_by_id(mem, "trap_old")["status"], "active")
             code, _ = run(
                 [

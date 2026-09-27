@@ -382,7 +382,7 @@ def set_last_confirmed(memory_dir: Path, rid: str, stamp: str) -> dict:
     except ValueError as exc:
         return {"ok": False, "id": rid, "error": f"cannot re-render frontmatter: {exc}"}
     cli.write_text_atomic(rec.path, rendered + "\n" + body.lstrip("\n"))
-    fails = cli._validate_new_file(memory_dir, rec.path)
+    fails = cli._validate_new_file(memory_dir, rec.path, original)
     if fails:
         cli.write_text_atomic(rec.path, original)
         return {

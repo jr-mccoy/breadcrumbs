@@ -208,8 +208,9 @@ stays in `memory_search`, whose matches carry `scope`. `memory_jot` defaults to
 `"project"`, as `crumb jot` does, and its result echoes the `scope` written. Any
 other value is refused before anything is written:
 `{ok: false, error: "scope must be one of project, branch"}`.
-`memory_record`'s `payload.scope` is free text as on `crumb remember`; the
-value `"branch"` has the same effect there.
+`memory_record`'s `payload.scope` takes the same two values; anything else is
+refused by the record contract (`record-schema.md` §4) with `{ok: false, error}`
+naming the value.
 
 ### Near-duplicate refusal (the four writers)
 
@@ -351,12 +352,12 @@ Mirrors the `remember` CLI surface:
 {
   "title": "Use markdown as the source of truth",     // required
   "sections": { "Decision": "…", "Rationale": "…" },  // {heading: text}
-  "evidence": [ { "type": "commit", "ref": "abc1234" } ],
+  "evidence": [ { "type": "commit", "ref": "abc1234" } ],  // each item needs a non-empty type and ref
   "tags": ["storage"],
   "confidence": "high",      // optional; omitted ⇒ "low" when no evidence; explicit
                              // medium/high without evidence is an error (validate §16.9)
   "privacy": "repo-safe",    // optional
-  "scope": "project",        // optional; free text, "branch" = applies on this branch only
+  "scope": "project",        // optional; "project" | "branch" (applies on this branch only)
   "status": "active",        // optional
   "agent": "agent",          // optional; recorded in created_by/agent
   "supersedes": "dec_…",     // optional; the live record of this type it replaces

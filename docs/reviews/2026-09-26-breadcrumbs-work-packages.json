@@ -383,7 +383,7 @@
       "title": "Establish the baseline and preserve reproducible evidence",
       "priority": "P1",
       "relative_complexity": "S",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [],
       "findings": [
         "F19",
@@ -411,6 +411,10 @@
           "record": "docs/reviews/2026-09-26-breadcrumbs-wp00-baseline/baseline.json",
           "summary": "HEAD is the audited commit (identical tree; 21/21 module hashes match). Full suite: 1147 run, 0 failures, 6 skipped (MCP SDK / typing_extensions absent), exit 0. Evals: exit 0, numbers match the CI observation, npm test still PROCEED. Probes: 19 defect signals, 0 errors, all identical to the audit excluding timings (exit 1 under --fail-on-observed). Selected tests: 243 pass. The 5 audit-excluded tests pass on a full checkout. All 26 findings classified still present; none fixed or changed.",
           "not_done": "tests/test_audit_regressions.py deferred to each repair package (WP00 step 3). No production behavior changed."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP00 approved, start WP01\")."
         }
       ]
     },
@@ -419,7 +423,7 @@
       "title": "Centralize and strengthen record validation",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP00"
       ],
@@ -448,7 +452,16 @@
         "`test_unknown_metadata_round_trips_without_loss`"
       ],
       "done_when": "The schema probes have intentional, documented outcomes and no adapter bypasses the shared contract; existing valid stores retain their identities and meaning.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "ec9dac7",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp01/README.md",
+          "summary": "New breadcrumbs/validation.py (record + store contract, stable codes) used by run_validate and a pre-write gate in write_record; rewrite gates refuse only newly introduced problems; packet warns on contract breaks. tests/test_validation_contract.py: 18 tests (16 fail on the old code). Full suite 1165 OK on 3.11.15 and 3.9.23; evals identical to WP00; schema_types probe no longer observes the defect, other 18 probes unchanged; CI fixture steps pass; ruff clean.",
+          "compatibility": "No record rewritten, no id changed; every record in this repo and all 12 fixtures already conformed. validate now fails on stores that break the contract; remember --scope and memory_record scope limited to project|branch; mark-status --superseded-by must name an existing record; validate findings gain a code key.",
+          "limitations": "Flow-sequence frontmatter still parses as a string and is not flagged; no size/depth limits; no external-reference namespace; hooks other than SessionStart do not surface the degraded signal; default confidence unchanged."
+        }
+      ]
     },
     {
       "id": "WP02",

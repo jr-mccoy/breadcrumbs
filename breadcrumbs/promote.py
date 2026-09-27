@@ -242,7 +242,7 @@ def _set_fields(memory_dir: Path, item: dict, fields: dict) -> dict:
             )
         new_text = original[:start] + block + original[end:]
     cli.write_text_atomic(path, new_text)
-    fails = cli._validate_new_file(memory_dir, path)
+    fails = cli._validate_new_file(memory_dir, path, original)
     if fails:
         cli.write_text_atomic(path, original)
         return {"ok": False, "error": "; ".join(f["message"] for f in fails)}

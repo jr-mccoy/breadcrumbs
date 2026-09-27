@@ -6,6 +6,46 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
+## [Unreleased]
+
+### Changed — the record contract (audit WP01)
+
+Work package WP01 of `docs/reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md`,
+finding F05. `validate` used to check that fields were present, not that their
+values made sense. `confidence: certainly`, a free-text `scope`, an evidence item
+with no `ref`, an `expires_at` nothing could parse, and a `superseded_by` naming
+no record all passed.
+
+- **New `breadcrumbs/validation.py`.** It holds the per-field and cross-record
+  checks. Every writer runs them before writing, and `validate` runs them over
+  the whole store. See `docs/record-schema.md` §4 → *The record contract* for
+  the codes.
+- **`validate` fails on** an invalid `confidence` or `review_status`; malformed
+  evidence; a timestamp outside the documented ISO-8601 subset; a scope other
+  than `project` or `branch`; and a `superseded_by` that is not a single id,
+  names no record, points at its own record, or loops.
+- **The evidence rule counts only well-formed items.** A record whose `evidence`
+  holds nothing usable now needs `confidence: low`, like one with no evidence.
+- **Every `validate` finding carries a stable `code`,** including in `--json`
+  output. Existing checks use their `check` name as the code.
+- **`crumb remember --scope` and `memory_record`'s `payload.scope` accept only
+  `project` or `branch`.** They were free text. The MCP tool also refuses an
+  evidence item with no `type` or `ref`.
+- **`mark-status --superseded-by` must name an existing record.**
+- **The resume packet warns** in one *Stale / Risk Warnings* line when
+  committed records break the contract. It still reads them.
+- **Timestamps ending in `Z`** are now read on Python 3.9 and 3.10, as they
+  already were on 3.11 and later.
+
+**Compatibility.** No record is rewritten and no id changes. A legacy record
+that breaks the contract is reported by `validate` and otherwise read exactly as
+before; for example, a free-text scope still counts as `project`. A status change
+or other rewrite is refused only for a problem it introduces, so such a record
+can still be retired. Every record in this repository's store and in every
+fixture already met the contract. A store that does not will see `crumb
+validate`, and any CI step that runs it, fail until those records are corrected
+by hand.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

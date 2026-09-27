@@ -1073,15 +1073,20 @@ def rollup_sessions(
     newest = recs[-1].meta
     pinned = {k: newest.get(k) for k in ("created_at", "updated_at", "branch", "commit")}
     pinned["dirty_files"] = []
-    path, meta = cli.write_record(
-        memory_dir,
-        root,
-        "session",
-        title,
-        sections,
-        agent=agent,
-        extra={"supersedes": ids, **{k: v for k, v in pinned.items() if v is not None}},
-    )
+    try:
+        path, meta = cli.write_record(
+            memory_dir,
+            root,
+            "session",
+            title,
+            sections,
+            agent=agent,
+            extra={"supersedes": ids, **{k: v for k, v in pinned.items() if v is not None}},
+        )
+    except ValueError as exc:
+        # The rollup is pinned to its newest source's timestamps; a legacy
+        # snapshot with one the record contract refuses stops here, sources intact.
+        return {"ok": False, "code": 1, "error": f"rollup record refused: {exc}"}
     fails = cli._validate_new_file(memory_dir, path)
     if fails:
         path.unlink()

@@ -44,7 +44,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | Command | Reads | Writes | Purpose | Phase |
 |---|---|---|---|---|
 | `init` | project root | `.project-memory/`, `manifest.yml`, `.gitignore` edits | Install memory layout; record session + generated-projection policy in `manifest.yml`. | **1 (built)** |
-| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash` such as `related.json` and `conflicts.json`) whose stamped `inputs_hash` no longer matches the live records. | **2 (built)** |
+| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash` such as `related.json` and `conflicts.json`) whose stamped `inputs_hash` no longer matches the live records. Also checks the record contract (`record-schema.md` §4): field vocabularies, evidence shape, timestamps, scope, and `superseded_by` links (a missing target, a self-link or a cycle). Every finding carries a stable `code`, and `--json` includes it. | **2 (built)** |
 | `remember decision` | git state, user input | decision record | Capture a durable choice. Refuses a near-duplicate of a live decision (exit 3) unless `--supersedes ID` or `--allow-duplicate`. | **3 (built)** |
 | `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. Same near-duplicate gate as `remember decision`. | **3 (built)** |
 | `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns recorded command evidence instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). `--scope branch` makes the result apply only while the current branch is checked out (default `project`; see [Branch scope](#branch-scope-built-wm-52)). Reindexes on write. | **built** |
@@ -1093,9 +1093,10 @@ existing `branch` field, derived from git at write time.
 - **Where it is set.** `--scope project|branch` on `jot` and `verify`, and the
   `scope` parameter on `memory_jot` / `memory_verify`. `crumb jot` and
   `memory_jot` default to `project`; jots the hooks write (a captured
-  correction, mined candidates) default to `branch`. `remember --scope` takes
-  free text, as it always has; any record whose `scope` is `branch` is treated
-  the same way, and any other value counts as `project`.
+  correction, mined candidates) default to `branch`. `remember --scope` and
+  `memory_record` take the same two values. They took free text before the
+  record contract, and a legacy record with another value still counts as
+  `project` but fails `validate` (`scope-unsupported`, `record-schema.md` §4).
 - **Elsewhere.** A record is *branch-scoped elsewhere* when its `scope` is
   `branch`, it has a recorded branch, the current branch is known, and the two
   differ. Such a record:
