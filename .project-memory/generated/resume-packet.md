@@ -1,20 +1,21 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: e309db6 | inputs_hash: 4521963af110 | generated_at: 2026-09-27T05:22:44+00:00 -->
-<!-- view: markdown | budget: 3325/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: dca2a94 | inputs_hash: 003bb6107d7d | generated_at: 2026-09-27T05:46:04+00:00 -->
+<!-- view: markdown | budget: 3359/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `e309db6` · 8 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `dca2a94` · 8 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Next Action
-WP11 is at review_required (commit e309db6). Wait for operator approval; then mark WP11 completed in the tracker and start the next package in the roadmap's single-agent order.
+WP12 is at review_required (commit dca2a94). Wait for operator approval; then mark WP12 completed in the tracker and start WP13 (next in the roadmap's single-agent order: WP13 -> WP21 -> WP14 ...).
 
 ## Active Decisions
+- `dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest` — A count must mean the host received the record; anything else inflates decay/promotion signals. Event files make acknowledged increments durable without a shared read-modify-write, and the fold's folded_last makes a crash between write and delete harmless. Telemetry never takes the store lock, so it… [excerpt: 300 of 322 chars; full text: crumb show dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest]
 - `dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full` — Audit F11/WP11: the traps-only pre-filter made the hook silent on 27 of 193 warnings full guard gives on the eval stores; the superset costs ~0.3 ms median on routine commands.
 - `dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts` — Audit F09/F10: memory vanished above 500 records and for prompts under 12 characters, and npm test got PROCEED from a trap about npm test.
 - `dec_20260927_evals-score-delivered-context-and-critical-cases` — Audit F19: a known false-safe (npm test -> PROCEED) sat inside an accepted baseline with CI green, and ranking metrics did not describe what readers receive.
@@ -29,8 +30,7 @@ WP11 is at review_required (commit e309db6). Wait for operator approval; then ma
 - `dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes` — An agent writing its own permanent instructions through a tool call is the persistence step of a prompt injection. A separate block keeps the signpost's bloat and removal semantics. A retired rule must not stay in the file every session loads, so demotion cannot be a second manual step.
 - `dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps` — Records about the same files are related (related.json says so), not duplicates. A refusal that fires on related work teaches agents to pass --allow-duplicate by reflex.
 - `dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim` — Deciding that a claim is wrong is the author's job, not a heuristic's. A status written on a clock needs a writer running on a clock and churns committed files; a computed flag does neither.
-- `dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our` — Equivalence is the one rule: indexed search must return exactly the full scan's matches and scores. Our own stems make that true by construction. Computing ubiquity over only the narrowed set changed scores. _inputs_hash reads every file, which cost as much as the scan the index saves.
-_(… 24 more omitted to stay within the per-section cap)_
+_(… 25 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -52,6 +52,10 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (4d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/usage.py
+- breadcrumbs/hooks_prompt.py
+- tests/test_emission_accounting.py
+- docs/reviews/2026-09-27-breadcrumbs-wp12/README.md
 - breadcrumbs/cli.py
 - tests/test_guard_delivery.py
 - docs/reviews/2026-09-27-breadcrumbs-wp11/README.md
@@ -68,11 +72,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/snapshots.py
 - breadcrumbs/projections.py
 - docs/reviews/2026-09-27-breadcrumbs-wp07/README.md
-- docs/reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md
-- docs/reviews/2026-09-26-breadcrumbs-wp00-baseline/baseline.json
-- CHANGELOG.md
-- docs/roadmap-working-memory.md
-_(… 17 more omitted to stay within the per-section cap)_
+_(… 20 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime

@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "4521963af110",
+ "inputs_hash": "003bb6107d7d",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -14,8 +14,8 @@
   ],
   "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
-   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap"
+   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
   ],
   "dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword": [
    "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
@@ -83,9 +83,9 @@
    "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
   ],
   "dec_20260905_path-extraction-is-structural-and-a-mined-path": [
+   "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first",
-   "trap_a-record-s-remedy-fields-are-mined-for-file-paths"
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
   ],
   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
@@ -139,8 +139,8 @@
   ],
   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases": [
    "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
-   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn",
-   "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02"
+   "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
   ],
   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons": [
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
@@ -148,9 +148,9 @@
    "dec_20260905_path-extraction-is-structural-and-a-mined-path"
   ],
   "dec_20260922_usage-telemetry-counts-surfacings-at-the-call-sites": [
+   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
    "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
   ],
   "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against": [
    "trap_eval-baseline-after-retrieval-change",
@@ -165,7 +165,7 @@
   "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+   "dec_20260927_evals-score-delivered-context-and-critical-cases"
   ],
   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts": [
    "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
@@ -174,8 +174,8 @@
   ],
   "dec_20260927_evals-score-delivered-context-and-critical-cases": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
-   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
-   "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record"
+   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
+   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted"
   ],
   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted": [
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
@@ -193,9 +193,14 @@
    "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted"
   ],
   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls": [
+   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
    "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
-   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
-   "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full"
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts"
+  ],
+  "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest": [
+   "dec_20260922_usage-telemetry-counts-surfacings-at-the-call-sites",
+   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
@@ -209,8 +214,8 @@
   ],
   "trap_a-hand-written-version-literal-in-prose-drifts-silently": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
-   "dec_20260815_cut-0-1-10-as-the-agent-authorship-release"
+   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
   ],
   "trap_a-record-s-remedy-fields-are-mined-for-file-paths": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
