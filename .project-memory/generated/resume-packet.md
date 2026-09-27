@@ -1,17 +1,17 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: b85314f | inputs_hash: e93b23d86b7c | generated_at: 2026-09-27T01:21:13+00:00 -->
+<!-- source_commit: 0eada75 | inputs_hash: 949b9571e1b5 | generated_at: 2026-09-27T01:36:55+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `b85314f` · 3 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `0eada75` · 3 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
-Stabilization per the 2026-09-26 audit roadmap (WP00-03 done; WP04 awaiting review)
+Stabilization per the 2026-09-26 audit roadmap (WP00-04 done; WP05 awaiting review)
 
 ## Next Action
-Review WP04 (docs/reviews/2026-09-27-breadcrumbs-wp04/README.md); once approved mark it completed in the tracker. Then pick ONE dependency-ready package: WP05, WP13 or WP18 (WP06 needs WP05).
+Review WP05 (docs/reviews/2026-09-27-breadcrumbs-wp05/README.md); once approved mark it completed in the tracker. Next in the report's single-agent order is WP06 (recoverable replacement/lifecycle mutations; depends on WP01+WP05); WP13 and WP18 are also ready.
 
 ## Active Decisions
 - `dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record` — The audit evidence is only useful if it stays exactly what was reviewed. Reformatting the scripts would break the checksums. Each package's regressions belong in ordinary tests when that package lands, not in the probe script.
@@ -120,7 +120,7 @@ _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 42 days old with no update — is this still true?
 - active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 42 days old with no update — is this still true?
 - active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 42 days old with no update — is this still true?
-- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 42 days old with no update — is this still true?
-- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 42 days old with no update — is this still true?
-- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 42 days old with no update — is this still true?
+- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 43 days old with no update — is this still true?
+- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 43 days old with no update — is this still true?
+- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 43 days old with no update — is this still true?
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 43 days — did this ever get resolved?
