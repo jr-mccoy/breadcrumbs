@@ -107,6 +107,14 @@ jobs:
       - name: Test suite (stdlib unittest)
         run: python -m unittest discover -s tests -p 'test_*.py'
 
+      # Audit WP18: the critical eval cases, strictly. Ordinary CI tolerates a
+      # case marked `known:` (a tracked finding still being repaired) and shows
+      # it; a release does not. A green release means every critical scenario in
+      # evals/critical/cases.yml passes, not only that the averages held against
+      # the baseline. Stdlib only, a few seconds; runs in dry-run too.
+      - name: Critical eval gate
+        run: python evals/run.py --release --verbose
+
       # A publish must not ship a commit whose CI failed. The suite above covers
       # the unit tests on 3.11; `ci` additionally runs the fixture/guard/MCP checks
       # and the full Python matrix, and it is the only place those exist.

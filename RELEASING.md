@@ -58,9 +58,12 @@ line, add a `CHANGELOG.md` entry, and merge to `main`.
 
 *Actions → release → Run workflow*, with the `main` branch selected:
 
-- **`mode: dry-run`** (default) — runs the full test suite, builds, and runs
-  every packaging check (`twine check`, bundled-template identity, an
-  installed-binary smoke test), but publishes nothing. Use it to confirm the
+- **`mode: dry-run`** (default) — runs the full test suite and the **critical
+  eval gate** (`python evals/run.py --release`: every case in
+  `evals/critical/cases.yml` must pass, including any marked `known:`, which
+  ordinary CI only reports), builds, and runs every packaging check
+  (`twine check`, bundled-template identity, an installed-binary smoke test),
+  but publishes nothing. Use it to confirm the
   artifact is clean. It does **not** re-run the fixture/guard/MCP checks or the
   Python matrix — those live in the `ci` workflow, which `publish` gates on.
 - **`mode: publish`** — everything dry-run does, plus: requires the `ci` workflow
