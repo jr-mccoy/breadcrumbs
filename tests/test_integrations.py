@@ -166,7 +166,7 @@ class HookMergeTests(unittest.TestCase):
             payload = json.loads(proc.stdout)["hookSpecificOutput"]
             self.assertEqual(payload["hookEventName"], "SessionStart")
             self.assertIn("INACTIVE", payload["additionalContext"])
-            self.assertIn("pip install crumb-kit", payload["additionalContext"])
+            self.assertIn("pip install -U crumb-kit", payload["additionalContext"])
             # the quiet events stay quiet
             for event in ("guard", "capture"):
                 quiet = self._sh(crumb.hook_command(event), tmp, PATH="/nonexistent")
@@ -194,6 +194,127 @@ class HookMergeTests(unittest.TestCase):
             shim.chmod(0o755)
             proc = self._sh(crumb.hook_command("capture"), tmp, PATH=str(bin_dir))
             self.assertIn("-m breadcrumbs hook capture", proc.stdout)
+
+    # What crumb-kit 0.2.0 does with an event it predates: an argparse usage
+    # error and exit 2, which Claude Code reads as "block this prompt".
+    STALE_CRUMB = (
+        "#!/bin/sh\n"
+        "cat >/dev/null\n"
+        'case "$2" in session|guard|capture) echo \'{"stale": true}\'; exit 0;; esac\n'
+        "echo \"crumb hook: error: argument <event>: invalid choice: '$2'\" >&2\n"
+        "exit 2\n"
+    )
+
+    @staticmethod
+    def _exe(path: Path, body: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+        path.chmod(0o755)
+        # the launcher buffers stdin with `cat`; give the fake PATH one
+        cat = shutil.which("cat")
+        if cat and not (path.parent / "cat").exists():
+            (path.parent / "cat").symlink_to(cat)
+
+    def _sh_stdin(self, command: str, cwd: str, stdin: str, **env: str):
+        sh = shutil.which("sh") or "/bin/sh"
+        if not Path(sh).exists():  # pragma: no cover - POSIX-only assertion
+            raise unittest.SkipTest("no POSIX shell available")
+        return subprocess.run(
+            [sh, "-c", command], cwd=cwd, env=env, input=stdin, capture_output=True, text=True
+        )
+
+    def test_a_stale_crumb_on_path_cannot_block_the_prompt(self):
+        """The field report: 0.3.0 installed a UserPromptSubmit hook, an older
+        crumb on PATH rejected `hook prompt` with exit 2, and every prompt in the
+        repo was refused. The launcher must never pass a failure through."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            self._exe(bin_dir / "crumb", self.STALE_CRUMB)
+            for event in ("prompt", "compact", "subagent"):
+                proc = self._sh_stdin(
+                    crumb.hook_command(event), tmp, '{"prompt": "hi"}', PATH=str(bin_dir)
+                )
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(json.loads(proc.stdout), {})
+                self.assertEqual(proc.stderr, "")
+
+    def test_a_failing_candidate_falls_through_to_the_next(self):
+        """A stale global crumb must not shadow the working one in the project venv,
+        and the venv's crumb must still see the hook payload the first one read."""
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            self._exe(bin_dir / "crumb", self.STALE_CRUMB)
+            self._exe(
+                Path(tmp) / ".venv" / "bin" / "crumb",
+                '#!/bin/sh\nprintf \'{"ran": "%s", "stdin": %s}\' "$*" "$(cat)"\n',
+            )
+            proc = self._sh_stdin(
+                crumb.hook_command("prompt"),
+                tmp,
+                '{"prompt": "hi"}',
+                PATH=str(bin_dir),
+                CLAUDE_PROJECT_DIR=tmp,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertEqual(
+                json.loads(proc.stdout), {"ran": "hook prompt", "stdin": {"prompt": "hi"}}
+            )
+            # an event the stale binary does handle is still answered by it
+            proc = self._sh_stdin(crumb.hook_command("guard"), tmp, "{}", PATH=str(bin_dir))
+            self.assertEqual(json.loads(proc.stdout), {"stale": True})
+
+    def test_the_launcher_never_exits_nonzero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            bin_dir = Path(tmp) / "bin"
+            self._exe(bin_dir / "crumb", "#!/bin/sh\necho partial\nexit 2\n")
+            self._exe(bin_dir / "python3", "#!/bin/sh\nexit 1\n")
+            for event in crumb.HOOK_EVENTS:
+                proc = self._sh_stdin(crumb.hook_command(event), tmp, "{}", PATH=str(bin_dir))
+                self.assertEqual(proc.returncode, 0, event)
+                self.assertNotIn("partial", proc.stdout)
+                json.loads(proc.stdout)
+
+    def test_the_0_3_0_launcher_is_upgraded_in_place(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            legacy = crumb._legacy_hook_command_0_3_0("prompt")
+            self.assertIn('exec "$c" hook prompt', legacy)
+            _write_settings(
+                root,
+                {
+                    "hooks": {
+                        "UserPromptSubmit": [
+                            {
+                                "hooks": [
+                                    {
+                                        "type": "command",
+                                        "command": legacy,
+                                        crumb.HOOK_MARKER: "prompt",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                },
+            )
+            crumb.install_claude_hooks(root, ["prompt"])
+            data = json.loads((root / ".claude" / "settings.json").read_text())
+            cmds = [h["command"] for g in data["hooks"]["UserPromptSubmit"] for h in g["hooks"]]
+            self.assertEqual(cmds, [crumb.hook_command("prompt")])
+
+    def test_an_unknown_hook_event_is_no_opinion_not_a_usage_error(self):
+        """The same skew from the other side: this CLI run by a newer install's hook."""
+        for argv in (
+            ["hook", "from-the-future"],
+            ["hook", "--project", ".", "from-the-future"],
+            ["--json", "hook", "from-the-future"],
+        ):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = crumb.main(argv)
+            self.assertEqual(rc, 0, argv)
+            self.assertEqual(json.loads(out.getvalue()), {})
+            self.assertIn("from-the-future", err.getvalue())
 
     def test_a_legacy_bare_hook_entry_is_upgraded_not_duplicated(self):
         with tempfile.TemporaryDirectory() as tmp:
