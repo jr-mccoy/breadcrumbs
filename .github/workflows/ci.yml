@@ -394,9 +394,12 @@ jobs:
       - name: Adapter and MCP contract tests
         run: python -m unittest discover -s tests -p "test_adapter_contracts.py" -v
 
+      # Verbose, and bounded: a test that hangs on this platform is named in
+      # the log (the last one started) instead of holding the run for hours.
       - name: Full unit suite (reported, not gating)
         continue-on-error: true
-        run: python -m unittest discover -s tests -p "test_*.py"
+        timeout-minutes: 25
+        run: python -m unittest discover -s tests -p "test_*.py" -v
 
   # Review #5 M13: the repo had no lint, formatter or type-checker of any kind —
   # every unused import, shadowed name and dead branch was left for a human review
