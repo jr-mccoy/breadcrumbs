@@ -110,6 +110,10 @@ neither is ever committed.
 `crumb migrate` moves a store forward; `validate` fails a store that is behind
 (`run \`crumb migrate\``) or ahead (`upgrade crumb-kit`). Readers tolerate the
 previous shape for one major version, so an un-migrated store keeps working.
+A store that is ahead (or `requires` a feature this build lacks) is read with
+a warning and never written (audit WP21). The version policy, the upgrade
+guarantees (preview, verified backup, resume, `--restore`) and what happens to
+legacy values are in [`compatibility.md`](compatibility.md).
 
 | Version | Change |
 |---|---|
@@ -220,6 +224,7 @@ change what that store does:
 | `jot_ttl_days` | `14` | The older spelling of `ttl_jot_days` (below). Still read; when both are set, `ttl_jot_days` wins. |
 | `capture_corrections` | `true` | The `UserPromptSubmit` hook writes a prompt that opens like a correction to `private/inbox/`. `false` turns that off. |
 | `retain_prompt_text` | `true` | The `UserPromptSubmit` hook keeps the latest task's text (at most 300 characters, never one carrying a credential) in `private/session-state.json`, for the packet after a compaction. `false` keeps only a digest and a time (audit WP12). |
+| `requires` | (none) | Features a reader must implement to read this store correctly, comma-separated (`requires: review-profiles`). A build that does not implement one reads the store with a warning and never writes it, as for a newer `schema_version` (audit WP21, [`compatibility.md`](compatibility.md) §4). No feature is defined yet; the key exists so the first one does not need a format change to be refused by readers that lack it. |
 | `subagent_extraction` | `false` | **Reserved.** Whether a finished subagent may be held for its own extraction turn. Nothing reads it yet; it waits on the prompt-fatigue field test in `open-questions.md`, and it defaults off because the parent's Stop hook already asks once per unit of work. |
 
 **Lifespans (WM-30).** One flat key per type, `ttl_<type>_days` (flat because

@@ -78,6 +78,15 @@ class StoreLocked(Exception):
         super().__init__(message or f"store is locked by {who}; try again shortly")
 
 
+class IncompatibleStore(StoreLocked):
+    """The store was written by a newer crumb-kit, or needs a feature this one
+    lacks; it is never written by this build (audit WP21, `breadcrumbs.compat`).
+    A `StoreLocked`, so every writer refuses it the way it refuses a busy store."""
+
+    def __init__(self, message: str):
+        super().__init__(None, message=message)
+
+
 class LockUnsupported(StoreLocked):
     """The store's filesystem refused an OS lock; writes are not coordinated there."""
 
@@ -254,8 +263,13 @@ def lock_owner(memory_dir: Path) -> int | None:
 
 
 @contextlib.contextmanager
-def store_lock(memory_dir: Path, timeout: float = CLI_TIMEOUT):
-    """Hold the store's write lock for the `with` body. Raises `StoreLocked`."""
+def store_lock(memory_dir: Path, timeout: float = CLI_TIMEOUT, *, compatible_only: bool = True):
+    """Hold the store's write lock for the `with` body. Raises `StoreLocked`.
+
+    `compatible_only=False` skips the compatibility refusal, for the one writer
+    whose job is to repair a store this build cannot otherwise write:
+    `crumb migrate --restore`.
+    """
     key = str(Path(memory_dir).resolve())
     depth: dict = getattr(_held, "depth", None) or {}
     _held.depth = depth
@@ -266,6 +280,14 @@ def store_lock(memory_dir: Path, timeout: float = CLI_TIMEOUT):
         finally:
             depth[key] -= 1
         return
+
+    # Refuse before waiting: a store this build does not fully understand is
+    # never written by it, however free the lock is (audit WP21).
+    from breadcrumbs import compat as _compat
+
+    compatibility = _compat.check(Path(memory_dir))
+    if compatible_only and not compatibility.writable:
+        raise IncompatibleStore(compatibility.message + " Reads still work; writes are refused.")
 
     with _registry_guard:
         thread_lock = _thread_locks.setdefault(key, threading.Lock())

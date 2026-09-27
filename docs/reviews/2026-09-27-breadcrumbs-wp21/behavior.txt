@@ -1,0 +1,43 @@
+# python behavior.py <tree>  (script: behavior.py; each tree's own CLI, in subprocesses)
+
+# before (751283f: 0.3.1 merged, pre-WP21)
+{
+ "writes_into_newer_schema_store": true,
+ "resume_warns_on_newer_store": false,
+ "writes_into_store_requiring_unknown_feature": true,
+ "dry_run_reports_backup_and_legacy": false,
+ "backup_has_verifiable_manifest": false,
+ "restore_available_and_exact": false,
+ "version_reports_running_code_despite_stale_metadata": false,
+ "defects_observed": 7
+}
+
+# after
+{
+ "writes_into_newer_schema_store": false,
+ "resume_warns_on_newer_store": true,
+ "writes_into_store_requiring_unknown_feature": false,
+ "dry_run_reports_backup_and_legacy": true,
+ "backup_has_verifiable_manifest": true,
+ "restore_available_and_exact": true,
+ "version_reports_running_code_despite_stale_metadata": true,
+ "defects_observed": 0
+}
+
+# released v0.3.1 (4ce315b), for reference
+{
+ "writes_into_newer_schema_store": true,
+ "resume_warns_on_newer_store": false,
+ "writes_into_store_requiring_unknown_feature": true,
+ "dry_run_reports_backup_and_legacy": false,
+ "backup_has_verifiable_manifest": false,
+ "restore_available_and_exact": false,
+ "version_reports_running_code_despite_stale_metadata": false,
+ "defects_observed": 7
+}
+
+# hook latency, 40 decisions (WP12 script): median ms over 60 firings, two runs each
+before {"prompt_unmatched": 12.43, "prompt_emitting": 12.06, "guard_emitting": 29.65}
+after  {"prompt_unmatched": 11.98, "prompt_emitting": 12.37, "guard_emitting": 26.82}
+before {"prompt_unmatched": 11.18, "prompt_emitting": 10.87, "guard_emitting": 26.73}
+after  {"prompt_unmatched": 11.47, "prompt_emitting": 11.17, "guard_emitting": 27.45}

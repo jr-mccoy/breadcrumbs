@@ -663,8 +663,9 @@ record survives. `crumb prune jots` deletes expired and dropped jots older than
 ### `crumb migrate` and `crumb usage`
 
 ```bash
-python crumb.py migrate --dry-run        # what would change
-python crumb.py migrate                  # apply; backs the store up first
+python crumb.py migrate --dry-run        # what would change, and what it leaves for you
+python crumb.py migrate                  # apply; a verified backup first
+python crumb.py migrate --restore        # back to that backup, exactly
 python crumb.py usage                    # most-surfaced records
 python crumb.py usage --never            # active records nothing has ever reached
 python crumb.py usage --sessions         # ordered by distinct sessions, not raw count
@@ -677,8 +678,12 @@ failure halts at the last version that actually completed, never at one whose
 step did not finish), and the whole committed store is copied to
 `private/migrations/<timestamp>/` first. `validate` names the remedy in each
 direction: an older store says `run crumb migrate`, a newer one says `upgrade
-crumb-kit` — a build must never write its own format into a store that is ahead
-of it. Schema 3 moves every trap and open question out of `known-traps.md` /
+crumb-kit`. A build never writes into a store that is ahead of it: writes are
+refused and reads carry a warning. The backup is verified before any step, an
+interrupted migration resumes where it stopped, and `migrate --restore` returns
+to the backup. [`docs/compatibility.md`](docs/compatibility.md) has the version
+policy (a schema change is always a minor release) and what an upgrade does
+with legacy values. Schema 3 moves every trap and open question out of `known-traps.md` /
 `open-questions.md` into a file of its own under `traps/` / `questions/`,
 keeping its id and every line, and turns the two files into generated indexes.
 Until a store migrates it keeps reading and writing the blocks. Schema 4 adds

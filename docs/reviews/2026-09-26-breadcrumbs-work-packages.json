@@ -1025,7 +1025,7 @@
       "title": "Enforce filesystem containment and safe rendering boundaries",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP00"
       ],
@@ -1062,6 +1062,10 @@
           "summary": "New breadcrumbs/path_policy.py: nothing inside .project-memory may be a symbolic link or junction and '..' is refused; on POSIX store paths are opened component by component with O_NOFOLLOW relative to directory descriptors and writes rename through the directory fd (no check/use window); elsewhere lstat checks first. Applied to all store reads, writes, mkdirs, enumeration (records_in/read_dir/read_files), the inputs hash (links hashed as a marker; normal-store hash unchanged), lock files, the hook log, the journal, SQLite, migration (refuses a store with links; backup never follows) and init --force; project files (CLAUDE.md, .mcp.json, settings) may be links only inside the project; validate reports path-link; refusals are PermissionError with a relative path only. New breadcrumbs/safetext.py renders record text as data (escaped controls/invisible chars, neutralized closing and envelope tags, one-line fields stay one line) in hook lines, packet, guard reason, MCP resources/tools (bounded 200k) and CLI human output; --json and files unchanged. tests/test_path_containment.py (6 incl. the 4 named). Before/after (behavior.txt): 10 defects -> 0, including init --force deleting a linked store's target. Full suite 1305 OK; evals identical to WP12; --release passes; probes 3 signals (symlink_read now a probe error: the resource refuses by raising, no external bytes in the traceback).",
           "compatibility": "A store containing links is refused through them and fails validate (path-link); migrate refuses until they are replaced; project-file links must stay inside the project; rendered text differs only for control/invisible characters and closing or envelope-named tags; MCP resources over 200k characters are cut with a note; new root= parameter on rewrite_managed_block/merge_json_file.",
           "limitations": "Windows path written but not qualified (lstat race; benign reparse points refused); hard links not detected; host-named paths (transcripts) read as given; rendering prevents framing impersonation, not hostile plain-language content; the envelope tag list is finite; symlink_read probe cannot clear without editing the byte-identical audit script."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP13 approved, start WP21\")."
         }
       ]
     },
@@ -1364,7 +1368,7 @@
       "title": "Approve and test the compatibility and migration policy",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP01",
         "WP06"
@@ -1397,7 +1401,17 @@
         "Documentation/version policy matches actual emitted manifests and package behavior."
       ],
       "done_when": "An operator can predict what an upgrade changes, recover safely, and distinguish compatible metadata additions from changes that old readers must not ignore.",
-      "evidence": [],
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "9064d2e",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp21/README.md",
+          "approvals": "Operator decisions in session on 2026-09-27: pre-1.0 policy 'Minor = breaking' (next release 0.4.0); newer store 'Refuse writes, warn reads'; 'Merge main in now' (v0.3.1).",
+          "summary": "Merged origin/main (v0.3.1) with a merge commit (751283f). docs/compatibility.md: version policy, machine-checked surface and release tables, two-versions-one-store rules, compatibility surfaces, legacy classification, upgrade guarantees. breadcrumbs/compat.py + lock.IncompatibleStore: a store with a newer schema_version or an unknown requires: feature is refused at the write lock (CLI exit 1, MCP ok:false, hooks skip, resume prints without publishing); reads warn (packet, guard, guard hook, stderr); migrate --restore is the one repair write. migrate: verified backup (backup-manifest.json), in-progress marker with resume against the original backup, --restore with verification, dry-run backup size and legacy report. get_version returns __version__ (stale metadata reported 0.3.0 from a 0.3.1 checkout). RELEASING.md: number policy, compatibility row at release, stray 0.1.13 tag recorded. tests/test_store_upgrade_contract.py (9 incl. the 3 named + documentation check). Before/after (behavior.txt): 7 defects -> 0 (same 7 on released v0.3.1). Full suite 1319 OK; evals identical to WP13; --release passes; probes unchanged.",
+          "compatibility": "Newer stores are read with a warning and never written (only migrate --restore); new manifest key requires:; new migrate --restore and backup/in-progress files; packet/guard gain compatibility only when relevant; pre-0.3.2 backups (no manifest) are not auto-restored; get_version reports __version__; releases add a row to docs/compatibility.md section 3; branch now at 0.3.1, next release 0.4.0.",
+          "limitations": "Released readers (<=0.3.1) run no check; protection for them is design guidance in compatibility.md section 4; compatibility surfaces other than the version tables are enforced by review; restore replaces the committed store wholesale; the interruption marker is machine-local; no migration step was needed so SCHEMA_VERSION stays 4."
+        }
+      ],
       "priority_note": "P1 prerequisite for semantic changes"
     },
     {

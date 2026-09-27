@@ -7,11 +7,11 @@ exposed as the ``crumb`` console script (see pyproject.toml).
 ``__version__`` is the **single source of truth** for the package version.
 ``pyproject.toml`` reads it at build time via dynamic metadata
 (``[tool.setuptools.dynamic] version = {attr = "breadcrumbs.__version__"}``)
-and ``breadcrumbs.cli`` uses it as the source-checkout fallback, so there is
-exactly one line to bump per release and nothing to hand-sync. The installed
-distribution's authoritative version still comes from package metadata
-(``breadcrumbs.cli.get_version``); this literal is what that metadata is built
-from.
+and ``breadcrumbs.cli.get_version`` returns it, so there is exactly one line
+to bump per release and nothing to hand-sync. The installed distribution's
+metadata is built from this literal; it is not consulted at run time, because
+stale metadata (an editable install, a leftover ``*.egg-info``) would report a
+version the running code is not.
 """
 
 # Plain literal, first statement in the module, so setuptools can read it

@@ -7359,6 +7359,14 @@ def _build_resume_packet_once(
     )
     # WM-34: memory that argues with itself, worded as a question.
     packet["warnings"] += _lifecycle.conflict_warnings(memory_dir)
+    # Its own field, never trimmed: a store written by a newer crumb-kit is
+    # read, but its records may mean something this build does not know
+    # (audit WP21).
+    from breadcrumbs import compat as _compat
+
+    compat_note = _compat.warning(memory_dir)
+    if compat_note:
+        packet["compatibility"] = compat_note
 
     # Likely files: handoff section + file-type evidence refs (deduped, order-stable).
     files = _section_lines(handoff_sections, "Likely Relevant Files")
@@ -7798,6 +7806,8 @@ def render_packet_markdown(packet: dict) -> str:
         "# Resume Packet",
         "",
     ]
+    if packet.get("compatibility"):
+        out += [f"> ⚠ {packet['compatibility']}", ""]
     if packet.get("requested_task"):
         out += [
             "## Requested Task",
@@ -9779,7 +9789,7 @@ def guard(
         handoff_path=handoff_path,
     )[:GUARD_MAX_WARNINGS]
 
-    return {
+    result = {
         "verdict": verdict,
         "action": action,
         "action_class": primary,
@@ -9810,6 +9820,14 @@ def guard(
             "max_warnings": GUARD_MAX_WARNINGS,
         },
     }
+    # A store this build does not fully understand (audit WP21): the verdict
+    # is still given, with the warning that it may misread the records.
+    from breadcrumbs import compat as _compat
+
+    note = _compat.warning(memory_dir)
+    if note:
+        result["compatibility"] = note
+    return result
 
 
 # ---- rendering ------------------------------------------------------------- #
@@ -9825,6 +9843,8 @@ def render_guard_human(result: dict) -> str:
 def _render_guard_human_raw(result: dict) -> str:
     """Render the §11 example shape (human format)."""
     out = [result["verdict"], "", f"Proposed action: {result['action']}"]
+    if result.get("compatibility"):
+        out += ["", f"⚠ {result['compatibility']}"]
     cls = result["action_class"]
     if cls != "routine_edit":
         out.append(f"Action class: {cls}")
@@ -11335,6 +11355,8 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         return 2
     from breadcrumbs import migrate as _migrate
 
+    if args.restore is not None:
+        return _cmd_migrate_restore(args, memory_dir)
     result = _migrate.migrate(memory_dir, root, dry_run=args.dry_run)
     if args.json:
         _print_json(args, {**result, "items": result.get("steps", [])}, ok=result["ok"])
@@ -11349,14 +11371,60 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         return 0
     verb = "would apply" if args.dry_run else "applied"
     print(f"migrate: {verb} {len(result['steps'])} step(s), {result['from']} -> {result['target']}")
+    if result.get("resumed"):
+        print(
+            f"  resuming a migration that stopped at schema_version {result['resumed'].get('at')}"
+        )
     for step in result["steps"]:
         print(f"  schema_version {step['version']}: {step['summary']}")
         for line in step["changed"]:
             print(f"      {line}")
     if args.dry_run:
+        if result.get("resumes"):
+            print(
+                f"\nA migration stopped part-way at schema_version {result['resumes'].get('at')}; "
+                f"this run resumes it against its backup ({result['resumes']['backup']})."
+            )
+        else:
+            print(
+                f"\nFirst, the committed store ({result.get('backup_files', 0)} files) is copied "
+                f"to {MEMORY_DIRNAME}/private/migrations/<timestamp>/ and verified."
+            )
+        legacy = result.get("legacy") or {}
+        if legacy:
+            print("Left as they are for you to fix (migration never rewrites them):")
+            for code, n in legacy.items():
+                print(f"  {code}: {n}")
         print("\nRe-run without --dry-run to apply.")
     else:
         print(f"\nBackup of the pre-migration store: {result['backup']}")
+        print("To undo: crumb migrate --restore")
+    return 0
+
+
+def _cmd_migrate_restore(args: argparse.Namespace, memory_dir: Path) -> int:
+    """`crumb migrate --restore [BACKUP]` (audit WP21)."""
+    from breadcrumbs import migrate as _migrate
+
+    backup = None if args.restore == "latest" else Path(args.restore)
+    result = _migrate.restore(memory_dir, backup, dry_run=args.dry_run)
+    if args.json:
+        _print_json(args, {**result, "items": result.get("changed", [])}, ok=result["ok"])
+        return 0 if result["ok"] else 1
+    if not result["ok"]:
+        _emit_error(args, result["error"] or "restore failed")
+        return 1
+    n = len(result["changed"])
+    if args.dry_run:
+        print(f"migrate --restore: would restore {result['backup']} ({n} file(s) differ)")
+        for rel in result["changed"]:
+            print(f"  {rel}")
+        print("\nRe-run without --dry-run to restore.")
+        return 0
+    print(
+        f"migrate --restore: restored {result['backup']} ({n} file(s) changed); "
+        f"the store is schema_version {result['schema_version']}."
+    )
     return 0
 
 
@@ -12737,6 +12805,8 @@ def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
         title = safetext.inline(m.get("title") or m.get("id") or "record", 200)
         why = safetext.inline(m.get("reason") or "", 200)
         lines.append(f"- {title}" + (f" ({why})" if why else ""))
+    if result.get("compatibility"):
+        lines.append(f"⚠ {result['compatibility']}")
     return "\n".join(lines)
 
 
@@ -13365,26 +13435,17 @@ def _dispatch_writing_hook(event: str, memory_dir: Path, root: Path, payload: di
 
 
 def get_version() -> str:
-    """Resolve the distribution version.
+    """The version of the code that is running: `breadcrumbs.__version__`.
 
-    Installed (pipx/pip): authoritative version from package metadata.
-    Source checkout (no metadata): the in-tree __version__ (single source).
+    A built distribution's metadata is generated from that same line, so the
+    two agree for every normal install. They disagree only when the metadata
+    is stale: an editable install after a version bump, or a leftover
+    `*.egg-info` in a source checkout. This used to prefer the metadata, and
+    then reported a version the running code was not (audit WP21).
     """
+    from breadcrumbs import __version__
 
-    def _fallback() -> str:
-        from breadcrumbs import __version__
-
-        return __version__
-
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-
-        try:
-            return version("crumb-kit")
-        except PackageNotFoundError:
-            return _fallback()
-    except Exception:  # pragma: no cover - importlib.metadata always present on 3.8+
-        return _fallback()
+    return __version__
 
 
 # Global flags live on a shared parent parser inherited by every subparser, so
@@ -14275,7 +14336,17 @@ def _add_migrate(sub, global_parser: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--dry-run",
         action="store_true",
-        help="list the steps that would run; change nothing",
+        help="list the steps that would run (or, with --restore, the files that would "
+        "change); change nothing",
+    )
+    p.add_argument(
+        "--restore",
+        nargs="?",
+        const="latest",
+        default=None,
+        metavar="BACKUP",
+        help="put the committed store back as a verified migration backup holds it "
+        "(default: the interrupted migration's backup, else the newest)",
     )
     p.set_defaults(func=cmd_migrate)
 
@@ -14642,17 +14713,42 @@ def _needs_lock(args: argparse.Namespace) -> bool:
     return True
 
 
+# Read commands that show the compatibility warning in their own output.
+_SHOWS_COMPATIBILITY = frozenset({"resume", "guard", "validate", "migrate", "hook", "mcp", "init"})
+
+
+def _warn_incompatible_store(args: argparse.Namespace) -> None:
+    """A read of a store this build does not fully understand says so, on
+    stderr, once (audit WP21). Writes are refused at the lock instead."""
+    if getattr(args, "command", None) in _SHOWS_COMPATIBILITY:
+        return
+    try:
+        memory_dir = resolve_root(getattr(args, "project", None)) / MEMORY_DIRNAME
+        if not memory_dir.is_dir():
+            return
+        from breadcrumbs import compat as _compat
+
+        note = _compat.warning(memory_dir)
+    except Exception:  # pragma: no cover - a warning never breaks a read
+        return
+    if note:
+        print(note, file=sys.stderr)
+
+
 def _run_command(args: argparse.Namespace) -> int:
     """Run the parsed command, under the store's write lock when it writes."""
     if not _needs_lock(args):
+        _warn_incompatible_store(args)
         return args.func(args)
     memory_dir = resolve_root(getattr(args, "project", None)) / MEMORY_DIRNAME
     if not memory_dir.is_dir():
         return args.func(args)  # the command reports the missing store itself
     from breadcrumbs import lock as _lock
 
+    # Restoring a backup is how a store this build cannot write gets repaired.
+    repairing = args.command == "migrate" and getattr(args, "restore", None) is not None
     try:
-        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT, compatible_only=not repairing):
             return args.func(args)
     except _lock.StoreLocked as exc:
         _emit_error(args, str(exc))

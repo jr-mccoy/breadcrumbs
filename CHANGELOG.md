@@ -436,6 +436,43 @@ Finding F17.
 - Record directories, index hits and the input hash are read one directory at
   a time, so the checks cost nothing measurable at 1,000 records.
 
+### Changed — a version policy, and a store this build does not understand is never written (audit WP21)
+
+Findings F05, F18 and F24. The policy is `docs/compatibility.md`, approved by
+the operator.
+
+- **Pre-1.0 version policy.**
+  - A `schema_version` change, a `requires` feature, or an incompatible change
+    to a compatibility surface (exit codes, `--json` keys, ids, managed blocks,
+    MCP names, hook I/O) ships as the next `0.MINOR`. Fixes and compatible
+    additions ship as `0.x.PATCH`.
+  - The next release from this branch is **0.4.0**.
+  - `tests/test_store_upgrade_contract.py` fails when `SCHEMA_VERSION` changes
+    without a minor bump, and when the release table and the CHANGELOG
+    disagree. The release workflow already runs the suite.
+- **A newer store is read, never written.** Before, 0.3.1 and this branch
+  wrote records into a `schema_version: 5` store; only `validate` objected.
+  - A store whose `schema_version` is above this build's, or whose new
+    `requires:` manifest key names a feature it lacks, is refused at the write
+    lock (`lock.IncompatibleStore`): CLI writers exit 1 ("Upgrade crumb-kit"),
+    MCP tools return `ok: false`, and hooks skip their captures.
+  - `resume` (and the `SessionStart` packet), `guard` (and the guard hook)
+    and other reads work with a warning.
+  - `migrate --restore` is the one write allowed, for repair.
+- **Migration you can predict and undo.**
+  - `--dry-run` reports the backup and the legacy values it leaves alone
+    (free scopes and invalid metadata are reported, never rewritten).
+  - The backup gets `backup-manifest.json` and is verified before any step.
+  - An interrupted migration resumes against its original backup.
+  - `crumb migrate --restore [BACKUP]` puts the committed store back exactly,
+    and verifies it.
+- **`crumb --version` reports the code that is running.** `get_version`
+  preferred installed package metadata, which is stale for an editable
+  install or a leftover `*.egg-info`, and so reported 0.3.0 from a 0.3.1
+  checkout. It now returns `__version__`.
+- **Merged 0.3.1** into this line of work. `RELEASING.md` records a stray,
+  never-published tag `0.1.13` (no `v`).
+
 ## [0.3.1] — 2026-09-27
 
 A hotfix: **an older `crumb` on PATH blocked every prompt.**
