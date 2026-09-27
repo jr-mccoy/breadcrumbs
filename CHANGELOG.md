@@ -499,6 +499,34 @@ memory authoritative. Details: `docs/security.md` §4.
   shell; for those, Git review of `.project-memory/` and the instruction files
   is the boundary. Old releases (0.3.1 and earlier) do not enforce profiles.
 
+### Changed — rebuild cost falls without dropping work (audit WP15)
+
+Finding F23. A 1,000-record reindex parsed 7,200 records and took about 16 s,
+and a machine-local jot paid for a full publication. "See also" was skipped
+above 2,000 items, and the audit's duplicate sweep skipped a type above 2,000
+items without saying so. Measurements: `docs/reviews/2026-09-27-breadcrumbs-wp15/`.
+
+- **One parse per record per operation.** Every command, hook, MCP call and
+  publication runs inside `cli.operation()`. A record's bytes are parsed once,
+  keyed by path, type and content digest, so a changed file always re-parses.
+  Derived results such as the conflict report are memoized under the exact
+  records they read. Nothing is cached across operations.
+- **Pairs come from shared features, with the same results.** `related.json`,
+  `conflicts.json` and the duplicate sweep score only pairs that could reach
+  their thresholds: pairs sharing a feature, and exact prefix filtering for the
+  Jaccard rules. The pairwise versions are kept as test oracles, and the
+  results are identical.
+- **No corpus cutoffs.**
+  - `related.json` is built at any size. `skipped` is now always `null`.
+  - Past 3,000,000 candidate pairs, the most widely shared features stop
+    generating pairs. The file then carries a `degraded` report, and `audit`
+    raises `related-degraded`.
+  - The duplicate sweep covers every type at any size.
+- **A machine-local jot publishes nothing.** No shared view reads
+  `private/inbox/`.
+- **`benchmarks/continuity_scale.py`** measures latency, parse count, input
+  hashes, peak memory and bytes written.
+
 ## [0.3.1] — 2026-09-27
 
 A hotfix: **an older `crumb` on PATH blocked every prompt.**
