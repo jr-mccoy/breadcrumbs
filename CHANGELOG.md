@@ -396,6 +396,46 @@ Findings F15 and F16.
     unreadable and evicted counts in `crumb usage`.
 - **New:** `lock.side_lock`.
 
+### Changed — nothing in the store is a link; record text is rendered as data (audit WP13)
+
+Finding F17.
+
+- **Nothing inside `.project-memory/` may be a symbolic link or junction.** A
+  link used to be followed. Before, on the same fixtures:
+  - `memory://current` and `memory://decisions/{id}` served a file outside the
+    project, and `crumb show` printed it;
+  - `remember` and the hooks wrote through a linked `decisions/` or `private/`;
+  - the store lock wrote its pid through a linked lock file;
+  - `init --with-adapter` wrote through a `CLAUDE.md` linked outside the project;
+  - a migration backup copied the linked file's bytes;
+  - `init --force` through a linked store deleted what it pointed at.
+
+  Each is now refused.
+- **How it is enforced** (`breadcrumbs/path_policy.py`).
+  - On POSIX every store path is opened one component at a time with
+    `O_NOFOLLOW`, and writes rename through the directory descriptor, so a
+    link swapped in mid-operation is refused too. Elsewhere, `lstat` checks
+    run first (with a documented residual race).
+  - `..` in a store path is refused.
+  - Project files the tool writes may be links that stay inside the project
+    (`AGENTS.md -> CLAUDE.md`); one resolving outside is refused.
+  - A refusal names the store-relative path and the rule, never the target or
+    a host path.
+  - `validate` reports each link as `path-link`. `migrate` refuses a store
+    containing one before backing anything up.
+- **Record text is rendered as data** (`breadcrumbs/safetext.py`). The hook
+  lines, the packet, the guard reason, MCP resources and tool results, and
+  `show`/`search`/`guard` output:
+  - escape control characters and invisible formatting;
+  - neutralize closing tags and envelope-named opening tags
+    (`&lt;/system-reminder>`);
+  - keep one-line fields to one line.
+
+  MCP text is bounded at 200,000 characters. Ordinary text is unchanged, and
+  `--json` and the files on disk keep exact values.
+- Record directories, index hits and the input hash are read one directory at
+  a time, so the checks cost nothing measurable at 1,000 records.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

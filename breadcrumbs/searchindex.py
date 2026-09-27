@@ -44,7 +44,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from breadcrumbs import cli
+from breadcrumbs import cli, path_policy
 
 try:  # sqlite3 is stdlib, but some minimal builds ship without it
     import sqlite3
@@ -190,7 +190,10 @@ def build_index(
             return {"built": False, "records": len(rows), "reason": "below threshold"}
 
         path = index_path(memory_dir)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path_policy.mkdirs(path.parent)
+        # SQLite opens by name and follows links; the directory is checked
+        # above, and a link at the published name is refused (audit F17).
+        path_policy.check(path)
         # A temp file of its own (audit F06): with one fixed `.tmp` name, two
         # builders would write into the same file and publish each other's work.
         fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".index.", suffix=".tmp")
@@ -271,6 +274,7 @@ def index_status(memory_dir: Path, project_root: Path) -> dict:
     if not path.is_file():
         return {"state": "absent", "records": 0}
     try:
+        path_policy.check(path)  # a linked index is unreadable, never followed
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
             meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
@@ -313,6 +317,7 @@ def candidate_items(
         explain["reason"] = "no search index"
         return None
     try:
+        path_policy.check(path)  # a linked index is unreadable, never followed
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     except Exception:
         explain["reason"] = "the search index is unreadable"
@@ -370,9 +375,12 @@ def candidate_items(
     cli.activate_store_aliases(memory_dir)
     items: list[dict] = []
     rtype_by_dir = _CORPUS_DIRS
+    # One directory walk per directory, not per hit, under the path policy.
+    blobs = path_policy.read_files(memory_dir / rel for rel in hit_paths)
     for rel in hit_paths:
         p = memory_dir / rel
-        rec = cli.Record.from_file(p, rtype_by_dir.get(Path(rel).parts[0], "decision"))
+        rtype = rtype_by_dir.get(Path(rel).parts[0], "decision")
+        rec = cli.Record.from_bytes(p, rtype, blobs[p])
         if not rec.error:
             items.append(cli._item_from_record(rec))
 
@@ -385,15 +393,13 @@ def candidate_items(
     for dirname, rtype in _CORPUS_DIRS.items():
         if dirname in indexed_dirs or rtype not in wanted:
             continue
-        for p in sorted((memory_dir / dirname).glob("*.md")):
-            rec = cli.Record.from_file(p, rtype)
+        for rec in cli.records_in(memory_dir / dirname, rtype):
             if not rec.error:
                 direct.append(cli._item_from_record(rec))
     for local_dir, rtype in cli.LOCAL_DIR_TYPES.items():
         if rtype not in wanted:
             continue
-        for p in sorted((memory_dir / local_dir).glob("*.md")):
-            rec = cli.Record.from_file(p, rtype)
+        for rec in cli.records_in(memory_dir / local_dir, rtype):
             if not rec.error:
                 direct.append(cli._item_from_record(rec))
     direct += [cli._item_from_trap(t) for t in cli.load_traps(memory_dir)]

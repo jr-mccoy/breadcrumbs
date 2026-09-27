@@ -47,6 +47,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from breadcrumbs import path_policy
 
 LOCK_RELPATH = ("private", ".store.lock")
 LEGACY_LOCK_RELPATH = ("private", ".write-lock")
@@ -113,7 +114,7 @@ def _host() -> str:
 def _read_owner(path: Path) -> tuple[int | None, float | None, str | None]:
     """`(pid, written_at, host)` from a lock file; any part None when unreadable."""
     try:
-        raw = path.read_text(encoding="utf-8").split()
+        raw = path_policy.read_text(path).split()
     except (OSError, UnicodeDecodeError):
         return None, None, None
     try:
@@ -191,10 +192,15 @@ def _os_unlock(fh) -> None:
 def _acquire_file(memory_dir: Path, deadline: float):
     """Take the OS lock (waiting until `deadline`); return the open handle."""
     path = lock_path(memory_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
     # "a+b" creates the file if needed and never truncates another holder's
     # owner line on open. The file is never unlinked (see the module docstring).
-    fh = open(path, "a+b")  # noqa: SIM115 - held for the lock's lifetime
+    # Opened under the store's path policy (audit F17): a lock file that is a
+    # link would have this process write its pid wherever the link points.
+    try:
+        path_policy.mkdirs(path.parent)
+        fh = _open_lock_file(path)
+    except path_policy.Refused as exc:
+        raise StoreLocked(None, message=str(exc)) from None
     try:
         while True:
             try:
@@ -222,6 +228,12 @@ def _acquire_file(memory_dir: Path, deadline: float):
     except BaseException:
         fh.close()
         raise
+
+
+def _open_lock_file(path: Path):
+    """`open(path, "a+b")`, never through a link (audit F17)."""
+    fd = path_policy.open_file(path, os.O_RDWR | os.O_CREAT | os.O_APPEND)
+    return os.fdopen(fd, "a+b")
 
 
 def _release_file(fh) -> None:
@@ -308,8 +320,8 @@ def side_lock(path: Path, timeout: float = SIDE_TIMEOUT):
     """
     try:
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fh = open(path, "a+b")  # noqa: SIM115 - held for the lock's lifetime
+        path_policy.mkdirs(path.parent)
+        fh = _open_lock_file(path)
     except OSError:
         yield UNSUPPORTED
         return

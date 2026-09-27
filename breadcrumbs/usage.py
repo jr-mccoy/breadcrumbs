@@ -53,6 +53,7 @@ from pathlib import Path
 from typing import Iterable
 
 from breadcrumbs import cli
+from breadcrumbs import path_policy
 
 USAGE_FILENAME = "usage.json"
 
@@ -106,7 +107,7 @@ def _lock_path(memory_dir: Path) -> Path:
 def _read_snapshot(memory_dir: Path) -> dict:
     """`usage.json` as written by the last fold, normalised. Never raises."""
     try:
-        data = json.loads(usage_path(memory_dir).read_text(encoding="utf-8"))
+        data = json.loads(path_policy.read_text(usage_path(memory_dir)))
     except Exception:
         data = None
     if not isinstance(data, dict) or not isinstance(data.get("records"), dict):
@@ -134,7 +135,7 @@ def _read_event(memory_dir: Path, name: str):
     """An event dict, `None` if the file is gone (folded meanwhile), or
     `False` if it cannot be used."""
     try:
-        data = json.loads((events_dir(memory_dir) / name).read_text(encoding="utf-8"))
+        data = json.loads(path_policy.read_text(events_dir(memory_dir) / name))
     except FileNotFoundError:
         return None
     except Exception:
@@ -286,7 +287,7 @@ def record_surfaced(
         if session_id:
             event["session"] = str(session_id)
         folder = events_dir(memory_dir)
-        folder.mkdir(parents=True, exist_ok=True)
+        path_policy.mkdirs(folder)
         stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
         name = (
             f"{stamp}-{time.monotonic_ns() % 10**9:09d}-{os.getpid()}-{secrets.token_hex(4)}.json"
@@ -372,7 +373,7 @@ def fold(memory_dir: Path, *, timeout: float = 0.0) -> bool:
                 "started_at": started,
             }
             path = usage_path(memory_dir)
-            path.parent.mkdir(parents=True, exist_ok=True)
+            path_policy.mkdirs(path.parent)
             cli.write_text_atomic(path, json.dumps(doc, indent=0, sort_keys=True) + "\n")
             for name in applied:
                 with contextlib.suppress(OSError):
@@ -505,7 +506,7 @@ def _trap_age_days(trap: dict) -> int | None:
     if not path:
         return None
     try:
-        meta, _ = cli.parse_frontmatter(Path(path).read_text(encoding="utf-8"))
+        meta, _ = cli.parse_frontmatter(path_policy.read_text(Path(path)))
     except Exception:
         return None
     return cli._age_days(meta.get("updated_at") or meta.get("created_at"))

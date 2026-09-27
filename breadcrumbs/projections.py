@@ -34,6 +34,7 @@ import hashlib
 import json
 import time
 from pathlib import Path
+from breadcrumbs import path_policy
 
 MANIFEST_RELPATH = ("index", "generation.json")
 MANIFEST_FORMAT = 1
@@ -72,13 +73,13 @@ def write_manifest(
         # "how big is the store" take it from here instead of walking it.
         doc["corpus"] = corpus
     path = manifest_path(memory_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(path.parent)
     cli.write_text_atomic(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
 
 
 def load_manifest(memory_dir: Path) -> dict | None:
     try:
-        doc = json.loads(manifest_path(memory_dir).read_text(encoding="utf-8"))
+        doc = json.loads(path_policy.read_text(manifest_path(memory_dir)))
     except (OSError, ValueError):
         return None
     return doc if isinstance(doc, dict) and doc.get("format") == MANIFEST_FORMAT else None
@@ -108,7 +109,7 @@ def verified(memory_dir: Path, root: Path, name: str) -> bytes | None:
         return None
     expected = (doc.get("files") or {}).get(name)
     try:
-        data = (Path(memory_dir) / "generated" / name).read_bytes()
+        data = path_policy.read_bytes(Path(memory_dir) / "generated" / name)
     except OSError:
         return None
     if expected != _sha(data):

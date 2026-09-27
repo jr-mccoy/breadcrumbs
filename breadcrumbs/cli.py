@@ -31,13 +31,15 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
 # The record contract. Stdlib-only and import-free, so importing it here costs
 # the hook pre-filter nothing (see StartupCostTests).
 from breadcrumbs import validation as _validation
+
+# What the store may read and write on disk (audit F17). Stdlib-only too.
+from breadcrumbs import path_policy
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -321,26 +323,24 @@ def write_text_atomic(path: Path, text: str, *, expected: str | None = None) -> 
     `mutations.RevisionConflict` is raised instead of discarding that edit
     (audit F20). Inside a `mutations.transaction`, the file's before-image is
     journaled first so the whole operation can be rolled back.
+
+    A store path is written under `path_policy` (audit F17): a link at the
+    leaf, or on any directory from the store down, refuses the write.
     """
     from breadcrumbs import mutations as _mutations
 
     path = Path(path)
     if expected is not None:
         try:
-            if path.read_text(encoding="utf-8") != expected:
+            if path_policy.read_text(path) != expected:
                 raise _mutations.RevisionConflict(path)
         except (FileNotFoundError, UnicodeDecodeError):
             raise _mutations.RevisionConflict(path) from None
     _mutations.before_write(path, text)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    # Under the store's path policy (audit F17): never through a link. Text
+    # mode translated "\n" to the platform's line separator; so does this.
+    data = (text.replace("\n", os.linesep) if os.linesep != "\n" else text).encode("utf-8")
+    path_policy.write_atomic(path, data)
 
 
 def read_text_lenient(path: Path) -> tuple[str, str | None]:
@@ -359,7 +359,7 @@ def read_text_lenient(path: Path) -> tuple[str, str | None]:
     """
     p = Path(path)
     try:
-        raw = p.read_bytes()
+        raw = path_policy.read_bytes(p)
     except OSError as exc:
         return "", f"unreadable file: {exc}"
     try:
@@ -478,7 +478,9 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
-def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -> bool:
+def rewrite_managed_block(
+    path: Path, begin: str, end: str, block: str | None, *, root: Path | None = None
+) -> bool:
     """Insert, replace, or remove a fenced managed block in a text file.
 
     Idempotent. `block` (when given) must contain the `begin` and `end` marker
@@ -490,8 +492,13 @@ def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -
     Returns True iff the file's content actually changed — an already-current
     block is a no-op (no write, no mtime churn), and callers report it as such
     instead of claiming an update they did not make (P2-12).
+
+    `root` is the project the file belongs to (default: its directory). A file
+    that is a link, or under one, resolving outside it is refused before it is
+    read or written (audit F17).
     """
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    path_policy.check_project_target(path, root if root is not None else path.parent)
+    existing = path_policy.read_text(path) if path.exists() else ""
 
     if begin in existing and end in existing:
         head, _, rest = existing.partition(begin)
@@ -532,19 +539,23 @@ def write_gitignore(root: Path, block: str) -> None:
     Idempotent: re-running init rewrites only the managed block and leaves any
     user content intact. Thin wrapper over `rewrite_managed_block`.
     """
-    rewrite_managed_block(root / ".gitignore", GITIGNORE_BEGIN, GITIGNORE_END, block)
+    rewrite_managed_block(root / ".gitignore", GITIGNORE_BEGIN, GITIGNORE_END, block, root=root)
 
 
-def merge_json_file(path: Path, mutate) -> None:
+def merge_json_file(path: Path, mutate, *, root: Path | None = None) -> None:
     """Load a JSON object (or {} if absent/empty), apply `mutate` in place, write back.
 
     Used for `.mcp.json` and `.claude/settings.json`, which cannot carry comment
     markers. Sibling keys are preserved; output is 2-space-indented with a trailing
     newline. Raises ValueError on unparseable or non-object JSON rather than
     clobbering a file we do not understand.
+
+    `root` is the project the file belongs to (default: its directory); a
+    target resolving outside it is refused (audit F17).
     """
+    path_policy.check_project_target(path, root if root is not None else path.parent)
     if path.exists():
-        text = path.read_text(encoding="utf-8")
+        text = path_policy.read_text(path)
         try:
             data = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError as exc:
@@ -560,7 +571,7 @@ def merge_json_file(path: Path, mutate) -> None:
     mutate(data)
     if path.exists() and json.dumps(data, sort_keys=True) == before:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(path.parent)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -580,18 +591,29 @@ def _replace_store_contents(memory_dir: Path, staging: Path) -> None:
     """
     from breadcrumbs import lock as _lock
 
+    # Never delete through a link: a store that is one is refused, not
+    # emptied of whatever it points at (audit F17).
+    path_policy.check(memory_dir)
     # Both lock files stay: this command's own (an OS lock lives on the file's
     # inode, so replacing the file would let a second writer lock a new one while
     # this one still runs), and an older version's, which is not ours to remove.
     keep = {_lock.lock_path(memory_dir), _lock.legacy_lock_path(memory_dir)}
     private = _lock.lock_path(memory_dir).parent
+
+    # A link is removed as a link, never followed (audit F17).
+    def remove(entry: Path) -> None:
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
     for entry in list(memory_dir.iterdir()):
-        if entry == private:
+        if entry == private and not entry.is_symlink():
             for sub in list(entry.iterdir()):
                 if sub not in keep:
-                    shutil.rmtree(sub) if sub.is_dir() else sub.unlink()
+                    remove(sub)
             continue
-        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+        remove(entry)
     for entry in list(staging.iterdir()):
         target = memory_dir / entry.name
         if entry.is_dir() and target.is_dir():
@@ -755,7 +777,9 @@ def cmd_init(args: argparse.Namespace) -> int:
     project = derive_project_name(root)
     created_at = now_iso()
     staging = root / (MEMORY_DIRNAME + ".new")
-    if staging.exists():
+    if staging.is_symlink():
+        staging.unlink()  # a leftover link is removed, never followed (audit F17)
+    elif staging.exists():
         shutil.rmtree(staging)
     try:
         copy_template_tree(staging)
@@ -1269,8 +1293,21 @@ class Record:
         # as a Record error — never raised — so a single bad file can't crash the
         # walk that load_records()/validate run over the whole store.
         try:
-            text = Path(path).read_text(encoding="utf-8-sig")
-        except (OSError, UnicodeDecodeError) as exc:
+            data = path_policy.read_bytes(Path(path))
+        except OSError as exc:
+            data = exc
+        return cls.from_bytes(path, rtype, data)
+
+    @classmethod
+    def from_bytes(cls, path: Path, rtype: str, data: "bytes | OSError") -> "Record":
+        """A record from bytes already read (or the error reading them)."""
+        if isinstance(data, path_policy.Refused):
+            return cls(path, rtype, meta=None, body="", error=str(data))
+        if isinstance(data, OSError):
+            return cls(path, rtype, meta=None, body="", error=f"unreadable file: {data}")
+        try:
+            text = path_policy.decode(data, "utf-8-sig")
+        except UnicodeDecodeError as exc:
             return cls(path, rtype, meta=None, body="", error=f"unreadable file: {exc}")
         try:
             meta, body = parse_frontmatter(text)
@@ -1314,12 +1351,21 @@ def load_records(memory_dir: Path, types: tuple[str, ...] | None = None) -> list
     for dirname, rtype in list(DIR_TYPES.items()) + list(LOCAL_DIR_TYPES.items()):
         if types and rtype not in types:
             continue
-        d = Path(memory_dir) / dirname
-        if not d.is_dir():
-            continue
-        for p in sorted(d.glob("*.md")):
-            records.append(Record.from_file(p, rtype))
+        records += records_in(Path(memory_dir) / dirname, rtype)
     return records
+
+
+def records_in(directory: Path, rtype: str) -> list[Record]:
+    """Every `*.md` record in one directory, read in one pass under the path
+    policy (audit F17). `[]` when the directory does not exist; one error
+    record, not a walk of whatever it points at, when it is a link."""
+    if not directory.is_dir():
+        return []
+    try:
+        entries = path_policy.read_dir(directory, ".md")
+    except path_policy.Refused as exc:
+        return [Record(directory, rtype, meta=None, body="", error=str(exc))]
+    return [Record.from_bytes(p, rtype, data) for p, data in entries]
 
 
 # --------------------------------------------------------------------------- #
@@ -1632,8 +1678,7 @@ def record_contract_warnings(memory_dir: Path) -> list[str]:
     records = [
         rec
         for dirname, rtype in DIR_TYPES.items()
-        if (memory_dir / dirname).is_dir()
-        for rec in (Record.from_file(p, rtype) for p in sorted((memory_dir / dirname).glob("*.md")))
+        for rec in records_in(memory_dir / dirname, rtype)
     ]
     entries = record_contract_entries(records, memory_dir)
     linked = _validation.store_issues(entries)
@@ -1680,6 +1725,21 @@ def run_validate(memory_dir: Path) -> list[dict]:
     """
     memory_dir = Path(memory_dir)
     findings: list[dict] = []
+
+    # Containment (audit F17): nothing in the store may be a link. Every reader
+    # already refuses one; this says where they are.
+    for rel in path_policy.find_links(memory_dir):
+        findings.append(
+            _finding(
+                "containment",
+                "fail",
+                rel,
+                "is a symbolic link or junction; memory files and directories must be the "
+                "real thing inside the store (readers refuse it; replace it with the file "
+                "or directory itself)",
+                code="path-link",
+            )
+        )
 
     # 16.1 — manifest exists + supported schema_version.
     manifest = load_manifest(memory_dir)
@@ -1970,7 +2030,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
     handoff = memory_dir / "handoff.md"
     if handoff.is_file():
         try:
-            htext = handoff.read_text(encoding="utf-8")
+            htext = path_policy.read_text(handoff)
         except (OSError, UnicodeDecodeError) as exc:
             # A finding, not a crash.
             findings.append(_finding("handoff", "fail", "handoff.md", f"unreadable file: {exc}"))
@@ -2002,7 +2062,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
                 continue
             rel = str(p.relative_to(memory_dir))
             try:
-                head = "\n".join(p.read_text(encoding="utf-8").splitlines()[:5])
+                head = "\n".join(path_policy.read_text(p).splitlines()[:5])
             except (OSError, UnicodeDecodeError) as exc:
                 # A finding, not a crash.
                 findings.append(_finding("generated", "fail", rel, f"unreadable file: {exc}"))
@@ -2648,7 +2708,7 @@ def write_record(
     # `private/inbox/` — and which one it lands in is the caller's privacy
     # decision, not a property of the type.
     directory = Path(memory_dir) / (subdir or TYPE_DIR[rtype])
-    directory.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(directory)
     path, slug = _unique_record_path(
         directory,
         date,
@@ -2722,7 +2782,7 @@ def _validate_new_file(memory_dir: Path, path: Path, original: str | None = None
     if not fails or original is None:
         return fails
     path = Path(path)
-    current = path.read_text(encoding="utf-8")
+    current = path_policy.read_text(path)
     write_text_atomic(path, original)
     try:
         already = {(f["code"], f["message"]) for f in fails_here()}
@@ -2823,7 +2883,7 @@ def find_item(memory_dir: Path, rid: str) -> dict | None:
     rec = find_record_by_id(memory_dir, rid)
     if rec is not None and not rec.error:
         try:
-            text = rec.path.read_text(encoding="utf-8")
+            text = path_policy.read_text(rec.path)
         except OSError:
             return None
         return {
@@ -2855,7 +2915,7 @@ def _block_item(memory_dir: Path, block: dict, kind: str, singleton: str, headin
     if record_path:
         path = Path(record_path)
         try:
-            text = path.read_text(encoding="utf-8")
+            text = path_policy.read_text(path)
         except OSError:
             text = heading + "\n" + (block.get("body") or "")
     else:
@@ -2973,7 +3033,7 @@ def _set_record_status(
             "error": f"invalid {what} {status!r}; valid: {', '.join(vocab)}",
         }
 
-    original = rec.path.read_text(encoding="utf-8")
+    original = path_policy.read_text(rec.path)
     meta, body = parse_frontmatter(original)
     prev = meta.get("status")
     meta["status"] = status
@@ -3048,7 +3108,7 @@ def set_record_title(memory_dir: Path, rid: str, title: str, *, agent: str | Non
     if not title:
         return {"ok": False, "id": rid, "error": "a title cannot be empty"}
 
-    original = rec.path.read_text(encoding="utf-8")
+    original = path_policy.read_text(rec.path)
     meta, body = parse_frontmatter(original)
     previous = meta.get("title")
     if previous == title:
@@ -3206,7 +3266,7 @@ def set_trap_confirmed(memory_dir: Path, rid: str, *, when: str | None = None) -
         return result
     path = memory_dir / "known-traps.md"
     try:
-        original = path.read_text(encoding="utf-8")
+        original = path_policy.read_text(path)
     except OSError as exc:
         return {"ok": False, "id": tid, "error": f"cannot read known-traps.md: {exc}"}
     span = next(
@@ -3288,7 +3348,7 @@ def set_trap_status(
 
     path = memory_dir / "known-traps.md"
     try:
-        original = path.read_text(encoding="utf-8")
+        original = path_policy.read_text(path)
     except OSError as exc:
         return {"ok": False, "id": tid, "error": f"cannot read known-traps.md: {exc}"}
 
@@ -3395,7 +3455,7 @@ def set_question_status(
 
     path = memory_dir / "open-questions.md"
     try:
-        original = path.read_text(encoding="utf-8")
+        original = path_policy.read_text(path)
     except OSError as exc:
         return {"ok": False, "id": qid, "error": f"cannot read open-questions.md: {exc}"}
 
@@ -3827,7 +3887,7 @@ def _append_md_block(path: Path, block: str) -> None:
     it, later blocks append after the existing content. Idempotency is the caller's
     concern (notes are additive by nature).
     """
-    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    text = path_policy.read_text(path) if path.exists() else ""
     kept = [ln for ln in text.splitlines() if ln.strip() not in _TEMPLATE_PLACEHOLDER_LINES]
     head = "\n".join(kept).rstrip()
     write_text_atomic(path, (head + "\n\n" if head else "") + block.rstrip() + "\n")
@@ -4027,7 +4087,7 @@ def _publish_projections(
         from breadcrumbs import snapshots as _snapshots
 
         gen = memory_dir / "generated"
-        gen.mkdir(parents=True, exist_ok=True)
+        path_policy.mkdirs(gen)
 
         # One snapshot for the whole generation (audit F07). Every output is
         # built and stamped with the digest taken before anything was read, and
@@ -4122,8 +4182,8 @@ def _publish_projections(
         # is recoverable (`crumb reindex`) but must not be invisible (audit F20).
         with contextlib.suppress(OSError):
             marker = memory_dir / PROJECTIONS_PENDING_RELPATH
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.write_text(f"{now_iso()} {reason}\n", encoding="utf-8")
+            path_policy.mkdirs(marker.parent)
+            write_text_atomic(marker, f"{now_iso()} {reason}\n")
         return False, reason
 
 
@@ -4395,7 +4455,7 @@ def _note_write(
                 "error": f"question already recorded: {text!r} (reopen it with "
                 "`crumb mark-status <id> open`)",
             }
-        before = path.read_text(encoding="utf-8") if path.exists() else ""
+        before = path_policy.read_text(path) if path.exists() else ""
         _append_md_block(
             path,
             _question_block(
@@ -4439,7 +4499,7 @@ def _note_write(
                 f"`crumb mark-status trap_{slug} active`, or pass a distinct "
                 "slug (--slug / fields.slug) to record a separate trap",
             }
-        before = path.read_text(encoding="utf-8") if path.exists() else ""
+        before = path_policy.read_text(path) if path.exists() else ""
         _append_md_block(
             path,
             _trap_block(
@@ -4978,7 +5038,11 @@ def cmd_show(args: argparse.Namespace) -> int:
             },
         )
         return 0
-    print(item["text"].rstrip())
+    from breadcrumbs import safetext
+
+    # As data (audit F17): an escape sequence in a record never reaches the
+    # terminal as one. `--json` carries the text exactly (JSON-escaped).
+    print(safetext.block(item["text"].rstrip()))
     if related:
         print()
         print("See also: " + ", ".join(f"`{r}`" for r in related))
@@ -5431,7 +5495,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
 
     title = args.title or _derive_session_title(sections, args.focus) or SESSION_TITLE_FALLBACK
     if coalesce is not None:
-        before = coalesce.path.read_text(encoding="utf-8")
+        before = path_policy.read_text(coalesce.path)
         path = _coalesce_into(coalesce, sections, root, args.agent, include_memory=include_memory)
         meta = dict(coalesce.meta)
         fails = _validate_new_file(memory_dir, path, before)
@@ -5749,7 +5813,7 @@ def update_handoff(
     from breadcrumbs import handoffs as _handoffs
 
     path = Path(path) if path is not None else Path(memory_dir) / "handoff.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(path.parent)
     existing = _handoffs.seed_text(memory_dir, path)
     preamble, ordered = split_md_ordered(existing)
     sec = split_md_sections(existing)
@@ -5788,7 +5852,7 @@ def update_handoff(
 
 def update_current(memory_dir: Path, focus: str, recently: str) -> None:
     path = Path(memory_dir) / "current.md"
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    existing = path_policy.read_text(path) if path.exists() else ""
     preamble, ordered = split_md_ordered(existing)
     sec = split_md_sections(existing)
     focus = "" if _is_placeholder(focus) else focus
@@ -6883,25 +6947,42 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     # The alias table changes what every stem means, so it is an input to every
     # projection built from stems (the guard prefilter most of all).
     paths.append(memory_dir / ALIASES_FILENAME)
-    for d in dirs:
-        dd = memory_dir / d
-        if dd.is_dir():
-            paths.extend(sorted(dd.glob("*.md")))
+    # Read once per directory under the path policy (audit F17). A link is
+    # hashed as a marker, never through; `validate` reports it.
+    refused = b"\0refused-link\0"
+    blobs: dict[Path, bytes] = {}
+    for p in paths:
+        if p.is_file() or p.is_symlink():
+            try:
+                blobs[p] = path_policy.read_bytes(p)
+            except path_policy.Refused:
+                blobs[p] = refused
+            except OSError:
+                continue
     # Branch handoffs (WM-50) are packet inputs like handoff.md.
-    handoffs_dir = memory_dir / "handoffs"
-    if handoffs_dir.is_dir():
-        paths.extend(sorted(handoffs_dir.glob("*.md")))
-    for p in sorted(set(paths)):
-        if p.is_file():
-            # Path *and* separators, not bare contents: record ids
-            # are filename-derived, so a rename changes every id in the packet
-            # while leaving a contents-only hash untouched — the freshness gate
-            # then certifies a projection full of ids that no longer exist.
-            rel = p.relative_to(memory_dir).as_posix()
-            h.update(rel.encode())
-            h.update(b"\0")
-            h.update(p.read_bytes())
-            h.update(b"\0")
+    for dd in [memory_dir / d for d in dirs] + [memory_dir / "handoffs"]:
+        if not dd.is_dir():
+            continue
+        try:
+            entries = path_policy.read_dir(dd, ".md")
+        except path_policy.Refused:
+            blobs[dd] = refused
+            continue
+        for p, data in entries:
+            if isinstance(data, path_policy.Refused):
+                blobs[p] = refused
+            elif not isinstance(data, OSError):
+                blobs[p] = data
+    for p in sorted(blobs):
+        # Path *and* separators, not bare contents: record ids
+        # are filename-derived, so a rename changes every id in the packet
+        # while leaving a contents-only hash untouched — the freshness gate
+        # then certifies a projection full of ids that no longer exist.
+        rel = p.relative_to(memory_dir).as_posix()
+        h.update(rel.encode())
+        h.update(b"\0")
+        h.update(blobs[p])
+        h.update(b"\0")
     return h.hexdigest()[:12]
 
 
@@ -7870,7 +7951,11 @@ def render_packet_markdown(packet: dict) -> str:
     out += _omitted_note(packet, "warnings")
     out.append("")
 
-    return "\n".join(out).rstrip() + "\n"
+    # Record text rendered as data (audit F17): control and invisible
+    # characters escaped, framing tags neutralized. Clean text is unchanged.
+    from breadcrumbs import safetext
+
+    return safetext.block("\n".join(out).rstrip() + "\n")
 
 
 # The publication reason `resume --json` reports is clipped to this many ASCII
@@ -9731,6 +9816,13 @@ def guard(
 
 
 def render_guard_human(result: dict) -> str:
+    """`_render_guard_human_raw`, with record text rendered as data (audit F17)."""
+    from breadcrumbs import safetext
+
+    return safetext.block(_render_guard_human_raw(result))
+
+
+def _render_guard_human_raw(result: dict) -> str:
     """Render the §11 example shape (human format)."""
     out = [result["verdict"], "", f"Proposed action: {result['action']}"]
     cls = result["action_class"]
@@ -9770,6 +9862,13 @@ def render_guard_human(result: dict) -> str:
 
 
 def render_search_human(matches: list[dict], query: str) -> str:
+    """`_render_search_human_raw`, with record text rendered as data (audit F17)."""
+    from breadcrumbs import safetext
+
+    return safetext.block(_render_search_human_raw(matches, query))
+
+
+def _render_search_human_raw(matches: list[dict], query: str) -> str:
     if not matches:
         return f"search: no records matched {query!r}.\n"
     out = [f"search: {len(matches)} record(s) matched {query!r}", ""]
@@ -10358,7 +10457,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
         if p.name == "README.md":
             continue
         try:
-            text = p.read_text(encoding="utf-8")
+            text = path_policy.read_text(p)
         except (OSError, UnicodeDecodeError):
             continue  # undecodable projection — validate 16.12 reports it
         stamped = _stamped_inputs_hash(text)
@@ -10374,7 +10473,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
     # like an unstamped markdown projection above.
     for p in sorted(gen.glob("*.json")):
         try:
-            doc = json.loads(p.read_text(encoding="utf-8"))
+            doc = json.loads(path_policy.read_text(p))
         except (OSError, UnicodeDecodeError, ValueError):
             continue
         stamped = doc.get("inputs_hash") if isinstance(doc, dict) else None
@@ -10973,9 +11072,10 @@ def register_mcp(root: Path) -> tuple[Path, bool]:
     """
     path = root / ".mcp.json"
     entry = mcp_server_entry()
+    path_policy.check_project_target(path, root)
 
     if path.exists():
-        text = path.read_text(encoding="utf-8")
+        text = path_policy.read_text(path)
         try:
             data = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError:
@@ -11001,7 +11101,7 @@ def register_mcp(root: Path) -> tuple[Path, bool]:
         servers = data.setdefault("mcpServers", {})
         servers[MCP_SERVER_NAME] = mcp_server_entry()
 
-    merge_json_file(path, _mut)
+    merge_json_file(path, _mut, root=root)
     return path, True
 
 
@@ -11020,7 +11120,7 @@ def unregister_mcp(root: Path) -> bool:
             if not servers:
                 data.pop("mcpServers", None)
 
-    merge_json_file(path, _mut)
+    merge_json_file(path, _mut, root=root)
     return state["present"]
 
 
@@ -11087,7 +11187,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         if mcp_path.is_file():
             try:
                 registered = MCP_SERVER_NAME in (
-                    json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {}
+                    json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
                 )
             except (json.JSONDecodeError, OSError):
                 registered = False
@@ -11207,8 +11307,8 @@ def write_adapter_block(root: Path, name: str) -> bool:
     the file changed (an already-current block is a no-op).
     """
     path = root / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, adapter_block())
+    path_policy.mkdirs(path.parent)
+    return rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, adapter_block(), root=root)
 
 
 def remove_adapter_block(root: Path, name: str) -> bool:
@@ -11216,8 +11316,9 @@ def remove_adapter_block(root: Path, name: str) -> bool:
     path = root / name
     if not path.exists():
         return False
-    had = ADAPTER_BEGIN in path.read_text(encoding="utf-8")
-    rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, None)
+    path_policy.check_project_target(path, root)
+    had = ADAPTER_BEGIN in path_policy.read_text(path)
+    rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, None, root=root)
     return had
 
 
@@ -11728,7 +11829,7 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
                 entry = {"matcher": matcher, **entry}
             arr.append(entry)
 
-    merge_json_file(path, _mut)
+    merge_json_file(path, _mut, root=root)
     return path
 
 
@@ -11789,7 +11890,7 @@ def remove_claude_hooks(root: Path) -> dict:
         if not hooks:
             data.pop("hooks", None)
 
-    merge_json_file(path, _mut)
+    merge_json_file(path, _mut, root=root)
     return out
 
 
@@ -12108,7 +12209,7 @@ def doctor_report(root: Path) -> dict:
     if mcp_path.is_file():
         try:
             registered = MCP_SERVER_NAME in (
-                json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {}
+                json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
             )
         except (json.JSONDecodeError, OSError):
             registered = False
@@ -12256,7 +12357,7 @@ def _installed_hook_commands(root: Path) -> list[str]:
     if not path.is_file():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path_policy.read_text(path))
     except (json.JSONDecodeError, OSError):
         return []
     cmds: list[str] = []
@@ -12275,7 +12376,7 @@ def _packet_is_stale(memory_dir: Path, root: Path) -> bool:
     try:
         packet = build_resume_packet(memory_dir, root)
         current = render_packet_markdown(packet)
-        on_disk = (memory_dir / "generated" / "resume-packet.md").read_text(encoding="utf-8")
+        on_disk = path_policy.read_text(memory_dir / "generated" / "resume-packet.md")
         return _strip_packet_volatile(current) != _strip_packet_volatile(on_disk)
     except Exception:  # pragma: no cover - defensive
         return False
@@ -12578,12 +12679,16 @@ _HOOK_GUARD_REASON_MATCHES = 3
 
 
 def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
+    from breadcrumbs import safetext
+
     lines = [f"breadcrumbs guard: {result['verdict']} for this action."]
     for m in (result.get("matches", []) if matches is None else matches)[
         :_HOOK_GUARD_REASON_MATCHES
     ]:
-        title = m.get("title") or m.get("id") or "record"
-        why = m.get("reason") or ""
+        # One line per record, as data: a title cannot start a line of its
+        # own or close the envelope the host wraps this in (audit F17).
+        title = safetext.inline(m.get("title") or m.get("id") or "record", 200)
+        why = safetext.inline(m.get("reason") or "", 200)
         lines.append(f"- {title}" + (f" ({why})" if why else ""))
     return "\n".join(lines)
 
@@ -12609,7 +12714,7 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
     Empty when there is no marker for this session, which is the normal case:
     every other `source` value means no compaction happened.
     """
-    from breadcrumbs import hooks_common
+    from breadcrumbs import hooks_common, safetext
 
     marker = hooks_common.compaction_marker(memory_dir, session_id)
     if not marker:
@@ -12626,7 +12731,10 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
     # task's hits are not passed off as this one's.
     task = state.get("task") if isinstance(state.get("task"), dict) else {}
     if state.get("last_prompt"):
-        lines.append(f"Latest task before compaction (the user's words): {state['last_prompt']}")
+        lines.append(
+            "Latest task before compaction (the user's words): "
+            + safetext.inline(state["last_prompt"], hooks_common.SESSION_PROMPT_CHARS + 40)
+        )
     elif task.get("withheld"):
         why = (
             "retain_prompt_text is false"
@@ -12653,7 +12761,10 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
             "Mined from this session so far (unconfirmed — promote with "
             "`crumb inbox promote <id> <type>`, or drop with `crumb inbox drop <id>`):",
         ]
-        lines += [f"- `{r['id']}` [{r.get('kind', 'note')}] {r['text']}" for r in shown]
+        lines += [
+            f"- `{r['id']}` [{r.get('kind', 'note')}] {safetext.inline(r['text'], 300)}"
+            for r in shown
+        ]
         if len(rows) > len(shown):
             lines.append(f"- … and {len(rows) - len(shown)} more in `crumb inbox`")
     else:

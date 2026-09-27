@@ -973,7 +973,7 @@
       "title": "Separate latest intent from retrieval state and correct telemetry",
       "priority": "P2",
       "relative_complexity": "M",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP07",
         "WP09",
@@ -1013,6 +1013,10 @@
           "summary": "Latest task is recorded for every substantive prompt before the lookup (acknowledgements and slash commands excluded), with the latest lookup kept apart (for_task digest, mode, selected, emitted); compaction preamble and packet follow the latest task; text capped at 300 chars, withheld on a credential, retain_prompt_text: false keeps only a digest. Usage counts emitted ids only: guard hook counts after its dedupe exit and only the 3 matches its reason names; prompt hook dedupes and counts the ids left after budget trimming; hook log notes candidates/matches/trimmed/emitted. Usage is one event file per emission folded exactly once under .usage.lock (folded_last); hook state updates take a per-file side lock (state_dropped on timeout); hook log rotates instead of rewriting; crumb usage prints the accounting model and pending/unreadable/evicted counts; usage_dropped noted in the hook log. tests/test_emission_accounting.py (9 incl. the 4 named). Before/after (behavior.txt): latest task A->B; deduped guard surfaced 2->1; trimmed prompt counted 5->2; parallel usage increments lost 110-130/180 -> 0. Full suite 1299 OK; evals and --release pass; probes unchanged at 4 signals, guard_usage_dedupe now a recorded false positive (usage.surfaced 1, was 2).",
           "compatibility": "Compaction restores the latest task, with new preamble labels; session-state.json gains task/retrieval (old entries still read); usage counts drop where they were inflated; usage.json gains folded_last/accounting and private/usage-events/ appears; record_surfaced returns an int; hook log rotates into hook-log.1.jsonl with new fields; new manifest key retain_prompt_text; new side lock files; prompt hook ~+1.5 ms median.",
           "limitations": "Slash commands are not recorded as tasks; forked sessions start without a task; emitted means printed to the host, not read; compaction preamble ids are not counted; state updates waiting >0.25 s are skipped and noted; record/session caps evict; exactly-once needs OS locks (uncoordinated where unsupported); guard_usage_dedupe probe condition cannot clear without editing the byte-identical audit script."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP12 approved, start WP13\")."
         }
       ]
     },
@@ -1021,7 +1025,7 @@
       "title": "Enforce filesystem containment and safe rendering boundaries",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP00"
       ],
@@ -1050,7 +1054,16 @@
         "`test_record_text_cannot_break_serialized_response_envelope`"
       ],
       "done_when": "All supported filesystem surfaces remain within authorized boundaries for the documented threat model; no production secret is needed to verify this.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "716e4a6",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp13/README.md",
+          "summary": "New breadcrumbs/path_policy.py: nothing inside .project-memory may be a symbolic link or junction and '..' is refused; on POSIX store paths are opened component by component with O_NOFOLLOW relative to directory descriptors and writes rename through the directory fd (no check/use window); elsewhere lstat checks first. Applied to all store reads, writes, mkdirs, enumeration (records_in/read_dir/read_files), the inputs hash (links hashed as a marker; normal-store hash unchanged), lock files, the hook log, the journal, SQLite, migration (refuses a store with links; backup never follows) and init --force; project files (CLAUDE.md, .mcp.json, settings) may be links only inside the project; validate reports path-link; refusals are PermissionError with a relative path only. New breadcrumbs/safetext.py renders record text as data (escaped controls/invisible chars, neutralized closing and envelope tags, one-line fields stay one line) in hook lines, packet, guard reason, MCP resources/tools (bounded 200k) and CLI human output; --json and files unchanged. tests/test_path_containment.py (6 incl. the 4 named). Before/after (behavior.txt): 10 defects -> 0, including init --force deleting a linked store's target. Full suite 1305 OK; evals identical to WP12; --release passes; probes 3 signals (symlink_read now a probe error: the resource refuses by raising, no external bytes in the traceback).",
+          "compatibility": "A store containing links is refused through them and fails validate (path-link); migrate refuses until they are replaced; project-file links must stay inside the project; rendered text differs only for control/invisible characters and closing or envelope-named tags; MCP resources over 200k characters are cut with a note; new root= parameter on rewrite_managed_block/merge_json_file.",
+          "limitations": "Windows path written but not qualified (lstat race; benign reparse points refused); hard links not detected; host-named paths (transcripts) read as given; rendering prevents framing impersonation, not hostile plain-language content; the envelope tag list is finite; symlink_read probe cannot clear without editing the byte-identical audit script."
+        }
+      ]
     },
     {
       "id": "WP14",

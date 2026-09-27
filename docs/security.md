@@ -15,6 +15,10 @@ part of the memory design, not an add-on.
 6. Checked-in MCP/hook config runs unsafe commands.
 7. A generated resume packet is stale but trusted.
 8. A vector/FTS index is stale or built from the wrong commit.
+9. A link committed into the store makes a reader serve, or a writer write,
+   a file outside the project (audit F17).
+10. Record text poses as tool framing: a control sequence, an invisible
+    character, or a tag that closes the envelope an agent reads it in.
 
 ---
 
@@ -49,6 +53,59 @@ part of the memory design, not an add-on.
   into project memory, and `scan-secrets` reported OK on every form of it.
 - **Treat memory content as data, not instruction.** `guard` treats matched record
   text as data, never as a command to execute.
+- **Filesystem containment** (audit F17, WP13; `breadcrumbs/path_policy.py`).
+  - *Threat model.* Whoever can write the repository can put a symbolic link
+    in `.project-memory/`. A process that reads "its own memory" would then
+    read whatever the link names, with its own permissions, and hand it to an
+    agent or MCP client; a linked directory would redirect writes. This is
+    not a remote exploit: it needs write access to the store's files. It
+    matters when repository content is trusted less than the process reading
+    it.
+  - *Policy.* Nothing inside the store may be a link or junction: the store
+    directory, its directories, and every file read, hashed, enumerated or
+    written. `..` never appears in a store path. The project root is the one
+    the person running the command chose (working directory or `--project`),
+    never derived from store content.
+  - *Enforcement.* On POSIX every store path is opened one component at a time
+    from the store directory, each with `O_NOFOLLOW` relative to the previous
+    descriptor, and writes create and rename their temporary file through that
+    descriptor. A link swapped in mid-operation is refused, not followed; there
+    is no window between check and use. Where descriptor-relative calls are
+    missing (Windows), each component is checked with `lstat` (junctions and
+    other reparse points count as links) before use, and a link swapped in
+    between the check and the use is a documented residual race.
+  - *Covered surfaces.* Record reads and enumeration, singletons, MCP
+    resources and tools, `show`, search and the index, the packet and its
+    input hash, the hook state files, usage events and the hook log, the
+    store lock, projections, the mutation journal and its rollback, and
+    migration. Migration refuses a store containing any link, before backing
+    anything up, and the backup never follows one. `init --force` refuses
+    to empty a store that is a link.
+  - *Project files the tool writes* (`CLAUDE.md`, `AGENTS.md`, `.gitignore`,
+    `.mcp.json`, `.claude/settings.json`) may be links that resolve inside
+    the project (`AGENTS.md -> CLAUDE.md`). One resolving outside is refused.
+  - *Diagnostics.* A refusal (`path_policy.Refused`, a `PermissionError`)
+    names the store- or project-relative path and the rule. It never names the
+    link's target, returns its bytes, or prints an absolute host path.
+    `validate` lists every link as `path-link`.
+  - *Out of scope.* Paths the host names outside the project (a hook's
+    `transcript_path`) are read as given. Git's own files are read through
+    git.
+- **Record text is rendered as data** (audit F17, WP13;
+  `breadcrumbs/safetext.py`). Hook context, the resume packet, guard reasons,
+  MCP resources and tool results, and the CLI's human output escape control
+  characters (ANSI, NUL, bare `\r`, U+2028) and invisible formatting (bidi
+  overrides, zero-width), and neutralize closing tags and envelope-named
+  opening tags (`&lt;/system-reminder>`).
+  - A field that must be one line (a title in a hook line) has every line
+    break flattened, so it cannot start a line posing as the tool's verdict.
+  - MCP text is bounded at 200,000 characters.
+  - Ordinary text, `<id>` placeholders and Markdown pass unchanged.
+  - `--json` output carries exact values, since JSON is itself the escaping
+    envelope, and the files on disk are never rewritten.
+  - This keeps record text from impersonating framing. It does not make
+    hostile *content* harmless, which is what "data, not instruction" and
+    review are for.
 - **High-impact memory writes require review** (see §4).
 - **Executable configs require human review.** The generated `.mcp.json` and the
   `.claude/settings.json` hooks are strictly opt-in (`init --with-mcp` /

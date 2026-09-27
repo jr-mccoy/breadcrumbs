@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from breadcrumbs import cli
+from breadcrumbs import path_policy
 
 # ---- acknowledgements (F10) ------------------------------------------------ #
 
@@ -86,7 +87,7 @@ def count_records(memory_dir: Path) -> int:
             total += sum(1 for p in d.glob("*.md") if p.name != "README.md")
     for name, marker in _BLOCK_FILES.items():
         try:
-            text = (memory_dir / name).read_text(encoding="utf-8", errors="replace")
+            text = path_policy.read_text(memory_dir / name, errors="replace")
         except OSError:
             continue
         total += sum(1 for line in text.splitlines() if line.startswith(marker))

@@ -33,6 +33,7 @@ import re
 from pathlib import Path
 
 from breadcrumbs import cli
+from breadcrumbs import path_policy
 
 FILES_SCHEMA = 3
 TRAP_DIR = "traps"
@@ -213,7 +214,7 @@ def _write(
     """
     memory_dir = Path(memory_dir)
     directory = memory_dir / cli.TYPE_DIR[rtype]
-    directory.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(directory)
     path = directory / f"{stem}.md"
     if path.exists():
         return {"ok": False, "error": f"{cli.UNDATED_ID_PREFIX[rtype]}{stem} already exists"}
@@ -379,7 +380,7 @@ def set_last_confirmed(memory_dir: Path, rid: str, stamp: str) -> dict:
     rec = cli.find_record_by_id(memory_dir, rid)
     if rec is None or rec.rtype != "trap" or rec.error:
         return {"ok": False, "error": f"no trap with id {rid!r}"}
-    original = rec.path.read_text(encoding="utf-8")
+    original = path_policy.read_text(rec.path)
     meta, body = cli.parse_frontmatter(original)
     meta["last_confirmed"] = stamp
     meta["updated_at"] = cli.now_iso()
@@ -493,7 +494,7 @@ def _write_index_files(
         ("open-questions.md", render_question_index(memory_dir, unadopted_questions)),
     ):
         path = memory_dir / name
-        current = path.read_text(encoding="utf-8") if path.is_file() else None
+        current = path_policy.read_text(path) if path.is_file() else None
         if current != text:
             cli.write_text_atomic(path, text)
 
@@ -723,11 +724,11 @@ def migrate_blocks_to_files(memory_dir: Path, project_root: Path) -> list[str]:
     for dirname in (TRAP_DIR, QUESTION_DIR):
         d = memory_dir / dirname
         if not d.is_dir():
-            d.mkdir(parents=True, exist_ok=True)
+            path_policy.mkdirs(d)
             changed.append(f"created {dirname}/")
         keep = d / ".gitkeep"
         if not keep.exists():
-            keep.write_text("", encoding="utf-8")
+            cli.write_text_atomic(keep, "")
     _write_index_files(memory_dir, result["unadopted_traps"], result["unadopted_questions"])
     changed.append("rewrote known-traps.md and open-questions.md as generated indexes")
     return changed

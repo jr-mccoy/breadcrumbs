@@ -44,6 +44,7 @@ import shutil
 import threading
 import time
 from pathlib import Path
+from breadcrumbs import path_policy
 
 OPERATIONS_RELPATH = ("private", "operations")
 RECOVERED_RELPATH = ("private", "recovered")
@@ -85,17 +86,16 @@ def _digest(data: bytes | None) -> str:
 
 def _read(path: Path) -> bytes | None:
     try:
-        return Path(path).read_bytes()
+        return path_policy.read_bytes(Path(path))
     except FileNotFoundError:
         return None
 
 
 def _raw_write(path: Path, data: bytes) -> None:
-    """An atomic write that bypasses tracking (the journal's own files)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
-    tmp.write_bytes(data)
-    os.replace(tmp, path)
+    """An atomic write that bypasses tracking (the journal's own files, and a
+    rollback's restores). Never through a link (audit F17)."""
+    path_policy.mkdirs(path.parent)
+    path_policy.write_atomic(path, data)
 
 
 class Transaction:
@@ -192,7 +192,7 @@ def _roll_back(root: Path, op_dir: Path, entries: list[dict], *, keep: bool):
                 with contextlib.suppress(FileNotFoundError):
                     path.unlink()
             else:
-                _raw_write(path, (op_dir / entry["before"]).read_bytes())
+                _raw_write(path, path_policy.read_bytes(op_dir / entry["before"]))
         except OSError:
             conflicts.append(entry["path"])
     return conflicts, kept
@@ -247,7 +247,7 @@ def transaction(memory_dir: Path, kind: str, *, lock_timeout: float | None = Non
     wait = _lock.CLI_TIMEOUT if lock_timeout is None else lock_timeout
     with _lock.store_lock(memory_dir, timeout=wait):
         tx = Transaction(memory_dir, kind)
-        tx.dir.mkdir(parents=True, exist_ok=True)
+        path_policy.mkdirs(tx.dir)
         tx._save()
         _current.tx = tx
         try:
@@ -295,7 +295,7 @@ def pending_operations(memory_dir: Path) -> list[dict]:
     out = []
     for manifest in sorted(base.glob("*/manifest.json")):
         try:
-            data = json.loads(manifest.read_text(encoding="utf-8"))
+            data = json.loads(path_policy.read_text(manifest))
         except (OSError, ValueError):
             data = {"id": manifest.parent.name, "kind": "?", "files": [], "corrupt": True}
         data["dir"] = str(manifest.parent)

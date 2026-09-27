@@ -32,6 +32,7 @@ import json
 from pathlib import Path
 
 from breadcrumbs import cli
+from breadcrumbs import path_policy
 
 RELATED_FILENAME = "related.json"
 
@@ -112,7 +113,7 @@ def render_related(memory_dir: Path, project_root: Path, *, inputs_hash: str | N
 def load_related(memory_dir: Path) -> dict[str, list[str]]:
     """The committed map, or `{}`. Never raises: "see also" is a convenience."""
     try:
-        doc = json.loads((Path(memory_dir) / "generated" / RELATED_FILENAME).read_text("utf-8"))
+        doc = json.loads(path_policy.read_text(Path(memory_dir) / "generated" / RELATED_FILENAME))
     except Exception:
         return {}
     related = doc.get("related") if isinstance(doc, dict) else None

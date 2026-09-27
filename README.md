@@ -191,7 +191,7 @@ python crumb.py validate --project /path/repo # validate elsewhere
 `validate` is **fully deterministic** — it checks structural invariants only
 (manifest version, core files, record frontmatter, filename-canonical identity,
 status/privacy vocabularies, evidence/handoff/session requirements, generated
-markers). It performs **no** heuristic content scanning; secret and
+markers, and that nothing in the store is a symbolic link: `path-link`). It performs **no** heuristic content scanning; secret and
 instruction-like-text detection live in `audit` / `scan-secrets`. Exit codes: `0`
 clean, `1` problems found, `2` no `.project-memory/` store present.
 
@@ -1132,3 +1132,10 @@ Current user instruction, source code, tests, build output, current authoritativ
 docs, and security policy **outrank** anything stored in `.project-memory/`.
 If memory conflicts with reality, mark it `disputed` or `stale` and link evidence —
 do not let it override the present.
+
+The store is also held to its own directory. Nothing inside `.project-memory/`
+may be a symbolic link or junction: the tool refuses to read or write through
+one rather than follow it outside the project. And record text reaches agents
+rendered as data, with control characters and invisible formatting escaped and
+envelope-like tags neutralized, so a record cannot pose as the tool's own
+output. See [`docs/security.md`](docs/security.md) §2.

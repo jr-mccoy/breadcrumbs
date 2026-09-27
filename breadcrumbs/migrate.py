@@ -31,7 +31,7 @@ import shutil
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from breadcrumbs import cli
+from breadcrumbs import cli, path_policy
 
 # Directories a backup skips: machine-local (`private/`) or disposable
 # (`index/`). Also where the backups themselves live, so a second migration
@@ -69,12 +69,12 @@ def _m2_inbox_directories(memory_dir: Path, project_root: Path) -> list[str]:
     changed: list[str] = []
     committed = memory_dir / "inbox"
     if not committed.is_dir():
-        committed.mkdir(parents=True, exist_ok=True)
-        (committed / ".gitkeep").write_text("", encoding="utf-8")
+        path_policy.mkdirs(committed)
+        cli.write_text_atomic(committed / ".gitkeep", "")
         changed.append("created inbox/ (committed jots)")
     private = memory_dir / "private" / "inbox"
     if not private.is_dir():
-        private.mkdir(parents=True, exist_ok=True)
+        path_policy.mkdirs(private)
         changed.append("created private/inbox/ (machine-local jots)")
     return changed
 
@@ -116,11 +116,11 @@ def _m4_branch_handoffs(memory_dir: Path, project_root: Path) -> list[str]:
     changed: list[str] = []
     directory = memory_dir / "handoffs"
     if not directory.is_dir():
-        directory.mkdir(parents=True, exist_ok=True)
+        path_policy.mkdirs(directory)
         changed.append("created handoffs/ (one handoff per non-default branch)")
     keep = directory / ".gitkeep"
     if not keep.exists():
-        keep.write_text("", encoding="utf-8")
+        cli.write_text_atomic(keep, "")
     return changed
 
 
@@ -203,15 +203,19 @@ def backup_store(memory_dir: Path) -> Path:
     memory_dir = Path(memory_dir)
     stamp = cli.now_iso().replace(":", "").replace("-", "")[:15]
     dest = memory_dir / "private" / "migrations" / stamp
-    dest.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(dest)
     for entry in sorted(memory_dir.iterdir()):
         if entry.name in _BACKUP_SKIP_DIRS:
             continue
         target = dest / entry.name
+        # Links are copied as links, never followed (audit F17); the driver
+        # refuses a store with any, so this is the second line.
+        if entry.is_symlink():
+            continue
         if entry.is_dir():
-            shutil.copytree(entry, target, dirs_exist_ok=True)
+            shutil.copytree(entry, target, symlinks=True, dirs_exist_ok=True)
         elif entry.is_file():
-            shutil.copy2(entry, target)
+            shutil.copy2(entry, target, follow_symlinks=False)
     return dest
 
 
@@ -274,6 +278,26 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
             "steps": [],
             "backup": None,
             "error": None,
+        }
+
+    # A migration reads and rewrites the whole store: with a link inside it,
+    # the backup would copy what the link points at and a step could write
+    # through it (audit F17). Refuse before anything is touched.
+    links = path_policy.find_links(memory_dir)
+    if links:
+        return {
+            "ok": False,
+            "from": current,
+            "to": current,
+            "target": target,
+            "steps": [],
+            "backup": None,
+            "error": (
+                "the store contains symbolic links or junctions, which it may not: "
+                + ", ".join(links[:10])
+                + (f" (and {len(links) - 10} more)" if len(links) > 10 else "")
+                + ". Replace each with the file or directory itself, then re-run."
+            ),
         }
 
     if dry_run:

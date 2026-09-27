@@ -34,7 +34,7 @@ import re
 from datetime import timedelta
 from pathlib import Path
 
-from breadcrumbs import cli
+from breadcrumbs import cli, path_policy
 
 JOT_TYPE = "jot"
 INBOX_DIRNAME = "inbox"
@@ -142,7 +142,7 @@ def write_jot(
         return {"ok": False, "error": "a jot needs some text"}
 
     target_dir = PRIVATE_INBOX_RELPATH if local else INBOX_DIRNAME
-    (memory_dir / target_dir).mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(memory_dir / target_dir)
 
     created = cli.now_iso()
     expires = _expiry_from(created, jot_ttl_days(memory_dir))

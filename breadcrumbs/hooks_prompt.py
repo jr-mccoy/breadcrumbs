@@ -112,12 +112,18 @@ def render_emitted(matches: list[dict]) -> tuple[str, list[str]]:
     ids returned are the ones that survive trimming: those, and only those, are
     emitted (audit F16). `("", [])` when not even one line fits.
     """
+    from breadcrumbs import safetext
+
     kept = list(matches)
     while kept:
+        # One line per record, as data (audit F17): a title cannot start a
+        # line of its own or close the envelope the host wraps this in.
         lines = [
-            f"- `{m['id']}` [{m['kind']}] {m.get('title') or ''} — {m.get('reason') or ''}".rstrip(
-                " —"
-            )
+            (
+                f"- `{safetext.inline(m['id'], 120)}` [{m['kind']}] "
+                f"{safetext.inline(m.get('title') or '', 200)} — "
+                f"{safetext.inline(m.get('reason') or '', 200)}"
+            ).rstrip(" —")
             for m in kept
         ]
         text = "\n".join([_HEADER, *lines, "", _FOOTER])

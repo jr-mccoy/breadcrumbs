@@ -35,6 +35,7 @@ import re
 from pathlib import Path
 
 from breadcrumbs import cli
+from breadcrumbs import path_policy
 
 PROMOTED_BEGIN = (
     "<!-- >>> breadcrumbs promoted rules (managed by `crumb promote`) "
@@ -206,7 +207,7 @@ def _set_fields(memory_dir: Path, item: dict, fields: dict) -> dict:
     trap block, the `- Promoted to:` bullet. Validate-gated; reverted on failure."""
     memory_dir = Path(memory_dir)
     path = Path(item["path"])
-    original = path.read_text(encoding="utf-8")
+    original = path_policy.read_text(path)
     if path.parent.name in cli.DIR_TYPES:
         meta, body = cli.parse_frontmatter(original)
         for key, value in fields.items():

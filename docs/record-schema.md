@@ -10,7 +10,11 @@ writes outside the store.
 
 ## 1. Installed directory layout
 
-`crumb init` creates this tree in a target project:
+`crumb init` creates this tree in a target project. **Nothing in it may be a
+symbolic link or junction** (audit WP13): not the store directory, not a
+directory under it, not a file. The tool never creates one, refuses to read or
+write through one, and `validate` reports each as `path-link`. See
+[`security.md`](security.md) §2 → *Filesystem containment*.
 
 ```text
 .project-memory/
@@ -369,6 +373,7 @@ pointer is still only a pointer.
 | `supersession-self` | a record is superseded by, or supersedes, itself |
 | `superseded-by-missing` | `superseded_by` names no record in this store |
 | `supersession-cycle` | following `superseded_by` returns to where it started, so no record on the loop is live |
+| `path-link` | something inside the store (the store itself, a directory, or a file) is a symbolic link or junction (audit WP13; reported by path, never followed) |
 
 The evidence-or-low-confidence rule (§16.9) counts only well-formed items, so an
 `evidence` list holding nothing usable no longer lets a claim stand at `medium`.

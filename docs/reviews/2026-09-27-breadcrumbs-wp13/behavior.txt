@@ -1,0 +1,45 @@
+# python behavior.py <tree>  (script: behavior.py; APIs present before and after)
+
+# before (716e4a6)
+{
+ "mcp_current_link_returns_external_bytes": true,
+ "mcp_record_link_returns_external_bytes": true,
+ "cli_show_record_link_prints_external_bytes": true,
+ "remember_writes_through_linked_decisions_dir": true,
+ "hooks_write_through_linked_private_dir": true,
+ "store_lock_writes_pid_through_link": true,
+ "adapter_writes_through_link_outside_project": true,
+ "migration_backup_copies_external_bytes": true,
+ "prompt_hook_emits_raw_escape_bidi_or_framing_tag": true,
+ "prompt_hook_still_names_the_record": true,
+ "init_force_deletes_through_linked_store": true,
+ "defects_observed": 10
+}
+
+# after
+{
+ "mcp_current_link_returns_external_bytes": false,
+ "mcp_record_link_returns_external_bytes": false,
+ "cli_show_record_link_prints_external_bytes": false,
+ "remember_writes_through_linked_decisions_dir": false,
+ "hooks_write_through_linked_private_dir": false,
+ "store_lock_writes_pid_through_link": false,
+ "adapter_writes_through_link_outside_project": false,
+ "migration_backup_copies_external_bytes": false,
+ "prompt_hook_emits_raw_escape_bidi_or_framing_tag": false,
+ "prompt_hook_still_names_the_record": true,
+ "init_force_deletes_through_linked_store": false,
+ "defects_observed": 0
+}
+
+# latency, 1,000 decisions: median ms (load_records x15, hooks x30, resume x5), two runs each
+before {"load_1000_records_ms": 56.2, "prompt_hook_ms": 174.6, "guard_hook_ms": 257.1, "resume_ms": 4019.0}
+after  {"load_1000_records_ms": 49.7, "prompt_hook_ms": 175.6, "guard_hook_ms": 250.6, "resume_ms": 3929.3}
+before {"load_1000_records_ms": 51.1, "prompt_hook_ms": 162.7, "guard_hook_ms": 262.9, "resume_ms": 3959.5}
+after  {"load_1000_records_ms": 50.8, "prompt_hook_ms": 169.9, "guard_hook_ms": 258.1, "resume_ms": 4039.6}
+
+# latency, 40 decisions (WP12 script): median ms over 60 firings
+before {"prompt_unmatched": 10.93, "prompt_emitting": 10.62, "guard_emitting": 26.58}
+after  {"prompt_unmatched": 10.85, "prompt_emitting": 11.15, "guard_emitting": 25.45}
+before {"prompt_unmatched": 11.09, "prompt_emitting": 11.08, "guard_emitting": 25.78}
+after  {"prompt_unmatched": 12.15, "prompt_emitting": 11.55, "guard_emitting": 27.5}

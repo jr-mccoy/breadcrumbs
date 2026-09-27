@@ -43,6 +43,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable
+from breadcrumbs import path_policy
 
 HOOK_LOG_FILENAME = "hook-log.jsonl"
 HOOK_LOG_ROTATED_FILENAME = "hook-log.1.jsonl"
@@ -107,7 +108,9 @@ def append(memory_dir: Path, entry: dict) -> None:
         line = json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n"
         # One write of the whole line to a file opened for appending, so the
         # line lands whole at the end whatever else is appending.
-        with open(path, "ab") as fh:
+        # Never through a link (audit F17): the log is store content.
+        fd = path_policy.open_file(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+        with os.fdopen(fd, "ab") as fh:
             fh.write(line.encode("utf-8"))
         if path.stat().st_size >= _rotate_at() * _MIN_LINE_BYTES:
             _rotate(memory_dir, path)
@@ -122,7 +125,7 @@ def _rotate(memory_dir: Path, path: Path) -> None:
         if state == _lock.BUSY:
             return  # another hook is rotating; the next append looks again
         # Re-checked under the lock: whoever rotated first left a short file.
-        if path.read_bytes().count(b"\n") < _rotate_at():
+        if path_policy.read_bytes(path).count(b"\n") < _rotate_at():
             return
         os.replace(path, rotated_path(memory_dir))
 
@@ -170,7 +173,7 @@ def read_log(memory_dir: Path) -> list[dict]:
     text = ""
     for path in (rotated_path(memory_dir), log_path(memory_dir)):
         try:
-            text += path.read_text(encoding="utf-8")
+            text += path_policy.read_text(path)
         except OSError:
             continue
         if text and not text.endswith("\n"):

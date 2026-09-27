@@ -38,6 +38,7 @@ import json
 from pathlib import Path
 
 from breadcrumbs import cli
+from breadcrumbs import path_policy
 
 # Per-session state files, all under `private/`.
 GUARD_SEEN_FILENAME = "hook-guard-seen.json"
@@ -64,7 +65,7 @@ def private_path(memory_dir: Path, filename: str) -> Path:
 def read_state(memory_dir: Path, filename: str) -> dict:
     """The `{session_id: entry}` map in `filename`, or `{}`. Never raises."""
     try:
-        data = json.loads(private_path(memory_dir, filename).read_text(encoding="utf-8"))
+        data = json.loads(path_policy.read_text(private_path(memory_dir, filename)))
     except Exception:
         return {}
     if not isinstance(data, dict):
@@ -95,7 +96,7 @@ def write_state(
         keep = ([current] if current in sessions else []) + others
         keep = keep[:MAX_SESSIONS]
         path = private_path(memory_dir, filename)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        path_policy.mkdirs(path.parent)
         cli.write_text_atomic(
             path,
             json.dumps({"sessions": {s: sessions[s] for s in keep}}, indent=0, sort_keys=True)
@@ -214,7 +215,7 @@ def load_miner_state(memory_dir: Path, session_id: str) -> dict:
     """This session's miner state, or a fresh one. Never raises."""
     fresh = {"version": MINER_STATE_VERSION, "session": session_id, "offset": 0}
     try:
-        data = json.loads(miner_state_path(memory_dir, session_id).read_text(encoding="utf-8"))
+        data = json.loads(path_policy.read_text(miner_state_path(memory_dir, session_id)))
     except Exception:
         return fresh
     if not isinstance(data, dict) or data.get("version") != MINER_STATE_VERSION:
@@ -226,7 +227,7 @@ def save_miner_state(memory_dir: Path, session_id: str, state: dict) -> None:
     """Write this session's state atomically. Raises on failure: the caller must
     know whether its progress is durable before it acts on it."""
     path = miner_state_path(memory_dir, session_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(path.parent)
     state = {**state, "version": MINER_STATE_VERSION, "session": session_id}
     state["updated_at"] = cli.now_iso()
     cli.write_text_atomic(path, json.dumps(state, sort_keys=True) + "\n")
@@ -254,7 +255,7 @@ def miner_states(memory_dir: Path) -> list[dict]:
         if p.name == MINER_ACKED_FILENAME:
             continue
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
+            data = json.loads(path_policy.read_text(p))
         except Exception:
             continue
         if isinstance(data, dict) and data.get("version") == MINER_STATE_VERSION:
@@ -264,7 +265,7 @@ def miner_states(memory_dir: Path) -> list[dict]:
 
 def load_acked(memory_dir: Path) -> list[str]:
     try:
-        data = json.loads((_miner_dir(memory_dir) / MINER_ACKED_FILENAME).read_text("utf-8"))
+        data = json.loads(path_policy.read_text(_miner_dir(memory_dir) / MINER_ACKED_FILENAME))
     except Exception:
         return []
     events = data.get("events") if isinstance(data, dict) else None
@@ -273,7 +274,7 @@ def load_acked(memory_dir: Path) -> list[str]:
 
 def save_acked(memory_dir: Path, events: list[str]) -> None:
     path = _miner_dir(memory_dir) / MINER_ACKED_FILENAME
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(path.parent)
     cli.write_text_atomic(
         path, json.dumps({"events": events[-MINER_MAX_ACKED:]}, sort_keys=True) + "\n"
     )

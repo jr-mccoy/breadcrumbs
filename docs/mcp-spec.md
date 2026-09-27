@@ -120,9 +120,24 @@ private half, which the committed resume packet deliberately excludes — this
 resource is read live by the agent working in this checkout, not written to a
 file somebody else will read.
 
-Reading the other `memory://*` returns the same bytes the CLI / plain files show. An
-unknown `{id}` raises (surfaced to the client as a resource error). A missing
-`.project-memory/` is a clear `FileNotFoundError`, not a crash.
+Reading the other `memory://*` returns the same text the CLI / plain files show,
+rendered as data (audit WP13):
+- control characters (ANSI escapes, NUL, a bare carriage return, U+2028) and
+  invisible formatting (bidirectional overrides, zero-width characters) are shown
+  as escapes such as `\x1b` and `\u202e`;
+- a closing tag, or an opening tag named like a response envelope
+  (`system-reminder`, `function_results`, …), loses its `<` (`&lt;/…>`);
+- text past 200,000 characters (`MCP_TEXT_LIMIT`) is left out with a note.
+
+Ordinary text is returned byte for byte. Every string in a tool result gets the
+same treatment; keys, ids and numbers are untouched. The files on disk never
+change.
+
+An unknown `{id}` raises (surfaced to the client as a resource error). A missing
+`.project-memory/` is a clear `FileNotFoundError`, not a crash. A store file that
+is a symbolic link or junction, or is under one, is refused with a
+`PermissionError` naming the store-relative path and the rule, never the link's
+target or what it holds (see *Safety posture*).
 
 ## Prompts (6) — flows mapping to CLI
 
@@ -439,6 +454,13 @@ name rather than silently written.
   can only take a promoted rule out, by retiring its record.
 - **Secret-scan before commit.** `memory_scan_secrets` is available so an agent
   can check before any "commit memory" step (§2.6, §15, Fixture 6).
+- **Nothing outside the store is read or written through it** (audit WP13).
+  Nothing inside `.project-memory/` may be a symbolic link or junction: the
+  store directory, its directories and every file read or written. A link is
+  refused, not followed, and on POSIX each path is opened one component at a
+  time with `O_NOFOLLOW`, so a link swapped in mid-read is refused too. The
+  refusal names the store-relative path, never the target. See
+  [`security.md`](security.md) §2 → *Filesystem containment*.
 - **No new identity scheme.** `find_record_by_id` and `find_item` use the same
   filename-canonical ids ([`record-schema.md`](record-schema.md) §5) the CLI,
   search, guard and resume already use; `find_item` is also what `crumb show`
