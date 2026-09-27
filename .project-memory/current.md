@@ -3,9 +3,9 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Stabilization per the 2026-09-26 audit roadmap (WP00-04 done; WP05 awaiting review)
+Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Recently Changed
-WP05: store lock rewritten on OS locks (flock/msvcrt) over permanent private/.store.lock, no heartbeat/staleness; projection publication locked (resume prints regardless, publishes within 0.5 s, reports publication); init --force keeps lock files; index builds in a unique temp file. 10 real-process tests; suite green; lock tests stable over 5 runs.
+WP06: new breadcrumbs/mutations.py (write-ahead before-image journal, rollback on failure, nested transactions doom the parent, crash recovery keeping copies, RevisionConflict). All multi-record writers are single operations; retire_all raises on failed retirement; crumb recover; doctor operations/projections rows. 10 tests incl. real crash-after-every-write loop; suite green.
 
 ## Watch Out For
