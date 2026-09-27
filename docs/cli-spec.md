@@ -44,7 +44,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | Command | Reads | Writes | Purpose | Phase |
 |---|---|---|---|---|
 | `init` | project root | `.project-memory/`, `manifest.yml`, `.gitignore` edits | Install memory layout; record session + generated-projection policy in `manifest.yml`. | **1 (built)** |
-| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash` such as `related.json` and `conflicts.json`) whose stamped `inputs_hash` no longer matches the live records. Also checks the record contract (`record-schema.md` §4): field vocabularies, evidence shape, timestamps, scope, and `superseded_by` links (a missing target, a self-link or a cycle). Every finding carries a stable `code`, and `--json` includes it. | **2 (built)** |
+| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash`: `related.json`, `conflicts.json` and, since audit WP07, `guard-prefilter.json`; the stamp `unstable` is always stale) whose stamped `inputs_hash` no longer matches the live records. Also checks the record contract (`record-schema.md` §4): field vocabularies, evidence shape, timestamps, scope, and `superseded_by` links (a missing target, a self-link or a cycle). Every finding carries a stable `code`, and `--json` includes it. | **2 (built)** |
 | `remember decision` | git state, user input | decision record | Capture a durable choice. Refuses a near-duplicate of a live decision (exit 3) unless `--supersedes ID` or `--allow-duplicate`. | **3 (built)** |
 | `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. Same near-duplicate gate as `remember decision`. | **3 (built)** |
 | `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--assert CMD` (repeatable) declares an assertion, the only kind of check a recheck may settle the claim with. `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns a verification's checks instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). `--scope branch` makes the result apply only while the current branch is checked out (default `project`; see [Branch scope](#branch-scope-built-wm-52)). Reindexes on write. | **built** |
@@ -373,9 +373,14 @@ Behavior:
   `generated/related.json` and `generated/conflicts.json`, each written
   atomically (see `reindex`). `--fast`
   and `--task` are **print-only** and never overwrite them.
-- **Never waits on the write lock.** `resume` only regenerates projections,
-  each replaced atomically, and a session must not fail to start because
-  another session is capturing.
+- **Waits at most 0.5 seconds for the write lock** (audit WP05). A session must
+  not fail to start because another session is capturing. If the lock is busy,
+  `resume` prints the packet it built but publishes nothing (see
+  [Store write lock](#store-write-lock-built-wm-51)).
+- **The stamp is the snapshot the packet was built from** (audit WP07). If the
+  store kept changing across three builds, the packet is stamped
+  `inputs_hash: unstable` and says so in its warnings (see
+  [Coherent projections](#coherent-projections-built-audit-wp07)).
 - Exit codes: `0` on success, `2` when no `.project-memory/` store is present.
 
 ---
@@ -461,6 +466,12 @@ Every mutation runs the same reindex; this command runs it on demand. In order:
    index only past the threshold, and the next ordinary reindex of a small store
    deletes it again. A build failure is swallowed: no index only means the full
    scan.
+
+All of these are one **generation**, built from one snapshot of the store and
+published together, with the manifest `index/generation.json` written last (see
+[Coherent projections](#coherent-projections-built-audit-wp07)). The packet,
+pre-filter, related map and conflict list all carry that snapshot's
+`inputs_hash`.
 
 `--json` adds a `search_index` object (`{built, records, reason}`) when
 `--search-index` is passed.
@@ -572,10 +583,15 @@ Behavior:
   document frequencies. Matches and scores are identical with and without it.
   Traps, questions, machine-local jots and any directory the freshness hash does
   not cover are always parsed directly. The index is machine-local, gitignored
-  and disposable, stamped with the inputs it was built from (a cheap stat
-  fingerprint first, `inputs_hash` when that differs); a stale, absent or
-  unreadable index — or a Python without `sqlite3` — is never used, and search
-  falls back to the full scan.
+  and disposable, stamped with the `inputs_hash` of the snapshot it was built
+  from. It is **fresh only when that content hash still matches** (audit WP07).
+  - There is no path/size/mtime shortcut: a same-size edit with a restored mtime
+    used to leave the index "fresh" and missing the new words.
+  - Hashing the store costs about 3.5 ms at 200 records and 17 ms at 1,000.
+  - An index from an older format (`index_format` below `2`) is stale.
+
+  A stale, absent or unreadable index — or a Python without `sqlite3` — is
+  never used, and search falls back to the full scan.
 - **Expired records are still found.** A record past its `expires_at` keeps
   its status and is searched like any other; the human line marks it
   (`[active, expired]`, or `[fixed, expired]` for a verification, whose
@@ -651,8 +667,21 @@ Behavior (deltas from `search` — everything there applies here too):
   The hook translator (`crumb hook guard`) always exits 0 — hook protocols
   treat nonzero as a hook failure.
 
-The `PreToolUse` hook path adds two behaviors of its own:
+The `PreToolUse` hook path adds three behaviors of its own:
 
+- **The pre-filter is trusted only when verified** (audit WP07). The hook reads
+  `generated/guard-prefilter.json` to decide whether a routine-looking call
+  needs the full guard at all. It relies on that file only when the current
+  generation manifest vouches for it (see
+  [Coherent projections](#coherent-projections-built-audit-wp07)).
+  - A missing, corrupt or replaced pre-filter, one from a publication that was
+    not stable, or one older than the records now on disk is **not** evidence
+    that no hazard exists. The hook runs the full guard against the records
+    instead, and the hook log notes `prefilter: "unverified"`.
+  - That costs time, not coverage: in the recorded run, 39 ms instead of
+    2.6 ms per call at 200 records, and 92 ms instead of 8.2 ms at 1,000.
+  - A verified pre-filter that finds nothing keeps the call silent as before
+    (`skipped: "prefilter"`).
 - **Edits carry content.** The guard action for an `Edit`/`Write`/`MultiEdit`
   is `edit <path>: <bounded snippet of the new content>`, so successive edits
   of one file stop producing byte-identical guard input and a content-shaped
@@ -1241,6 +1270,70 @@ holding the lock belongs to a writer that stopped.
 
 ---
 
+## Coherent projections (built, audit WP07)
+
+The `generated/` files and the search index are derived from the records. Each
+one carries `inputs_hash`, the digest `validate` and `audit` compare against the
+store to decide whether it is current. WP07 makes that stamp, and the set of
+files, trustworthy.
+
+**A stamp describes the snapshot that was actually read**
+(`breadcrumbs/snapshots.py`).
+
+- A build hashes the inputs, builds and stamps with that hash, then hashes
+  again. The two match only if nothing changed in between, so the stamp names
+  exactly what the build read.
+- If they differ, the build retries, up to three attempts. A store that keeps
+  changing gets the stamp `unstable` instead of a digest:
+  - the packet adds a warning saying it is not certified current;
+  - `validate` reports a `freshness` failure, because `unstable` never equals a
+    digest;
+  - `reindex` / `try_reindex_projections` return
+    `(False, "the store kept changing during publication; projections stamped unstable")`.
+
+  Before 0.3.x, the hash was taken after the records were read. A record
+  written in between was missing from the packet but covered by its stamp, so
+  `validate` called the packet current.
+- Publication runs under the store lock, so a cooperating writer cannot land
+  mid-build. The check covers everything else: a hand edit, a `git checkout`, an
+  older crumb-kit, and unlocked readers such as `resume --fast`.
+
+**One publication is one generation** (`breadcrumbs/projections.py`).
+
+- The packet, pre-filter, related map and conflict list are built from one
+  snapshot and carry the same stamp. The guard pre-filter is now stamped too.
+- The search index is built into a unique temp file (`index/.index.*.tmp`). It
+  is moved into place only if the snapshot proved stable, and staged files from
+  discarded attempts or a failed publication are removed.
+- The previous manifest is removed before the files are replaced. The new
+  **`index/generation.json`** is written last, only after every output is in
+  place. It records:
+  - `inputs_hash` and `stable`;
+  - the sha256 of each generated file;
+  - a stat fingerprint (paths, sizes, mtimes) of the canonical inputs at that
+    moment.
+- The manifest is machine-local (under the gitignored `index/`). It describes
+  this checkout's publication; a committed copy would churn and be wrong on
+  another machine.
+
+**Consumers trust a projection only when the generation vouches for it.**
+`projections.verified(name)` returns the file only when:
+
+- the manifest exists and says `stable`;
+- the file's sha256 matches its entry;
+- the canonical inputs have not moved since (the fingerprint still matches).
+
+The guard hook's pre-filter is the consumer that needs this (see `guard`).
+Otherwise, a missing, corrupt, replaced or out-of-date pre-filter reads as
+"nothing risky here" (audit F11). The stat fingerprint is a cheap "did anything
+move" test for that hot path, not proof of equal content. The strict checks, the
+search index's freshness and `validate`, compare content hashes.
+
+**The search index is fresh only by content hash** (audit F12). See `search`.
+The index format is `2`; an older index is rebuilt.
+
+---
+
 ## Store write lock (built, WM-51)
 
 Parallel sessions in one checkout write the same store: two Stop hooks capture
@@ -1279,7 +1372,8 @@ other.
   0.5 seconds; if another writer holds the lock, it still prints the packet it
   built but writes nothing, warns on stderr, and reports
   `publication: {published: false, reason}` in `--json`. The search index is
-  built in a temp file of its own.
+  built in a temp file of its own, and it is moved into place only as part of a
+  stable generation (audit WP07).
 - **Which invocations take it** is decided per invocation (`_needs_lock` over
   `LOCKED_COMMANDS` in `breadcrumbs/cli.py`): `init` (when a store exists),
   `remember`, `note`, `jot`, `inbox promote` and `inbox drop`, `verify`,

@@ -3959,38 +3959,93 @@ def _publish_projections(
 
         if blockfiles.uses_files(memory_dir):
             blockfiles.write_indexes(memory_dir, project_root)
-        packet = build_resume_packet(memory_dir, project_root, stale_days=STALE_AGE_DAYS)
+        from breadcrumbs import lifecycle as _lifecycle
+        from breadcrumbs import projections as _projections
+        from breadcrumbs import related as _related
+        from breadcrumbs import searchindex as _searchindex
+        from breadcrumbs import snapshots as _snapshots
+
         gen = memory_dir / "generated"
         gen.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(gen / "resume-packet.md", render_packet_markdown(packet))
-        # Guard pre-filter index: a token/path index over traps and
-        # do-not-retry attempts, so the PreToolUse hook can spot trap-shaped
-        # *routine* commands with one small-file read instead of walking records.
-        write_text_atomic(
-            gen / GUARD_PREFILTER_FILENAME,
-            json.dumps(_build_guard_prefilter(memory_dir), indent=0, sort_keys=True) + "\n",
-        )
-        # "See also" for every live item (WM-25). Stamped like the packet, so
-        # drift detection covers it.
-        from breadcrumbs import related as _related
 
-        write_text_atomic(
-            gen / _related.RELATED_FILENAME, _related.render_related(memory_dir, project_root)
-        )
-        # Records that may argue with each other (WM-34). Same stamp, same drift
-        # detection; the packet renders the first few as warnings.
-        from breadcrumbs import lifecycle as _lifecycle
+        # One snapshot for the whole generation (audit F07). Every output is
+        # built and stamped with the digest taken before anything was read, and
+        # the digest is re-checked after (`snapshots.stable_build`), so no
+        # output claims inputs it did not see. The search index is staged, not
+        # published, until the snapshot is known to be stable.
+        staged: list[str] = []
 
-        write_text_atomic(
-            gen / _lifecycle.CONFLICTS_FILENAME,
-            _lifecycle.render_conflicts(memory_dir, project_root),
-        )
-        # The disposable search index (WM-23). Built last, so it is stamped with
-        # the same inputs as everything above; its own failures are swallowed
-        # inside, because a missing index only means the full scan.
-        from breadcrumbs import searchindex as _searchindex
+        def build(digest: str, *, with_index: bool = True):
+            packet = _build_resume_packet_once(
+                memory_dir, project_root, stale_days=STALE_AGE_DAYS, inputs_hash=digest
+            )
+            if digest == _snapshots.UNSTABLE:
+                packet["warnings"].insert(0, _snapshots.UNSTABLE_WARNING)
+            # The guard pre-filter: a token/path index over traps and
+            # do-not-retry attempts, so the PreToolUse hook can spot trap-shaped
+            # *routine* commands with one small-file read instead of walking
+            # records. Stamped like every other projection.
+            prefilter = {**_build_guard_prefilter(memory_dir), "inputs_hash": digest}
+            outputs = {
+                "resume-packet.md": render_packet_markdown(packet),
+                GUARD_PREFILTER_FILENAME: json.dumps(prefilter, indent=0, sort_keys=True) + "\n",
+                # "See also" for every live item (WM-25).
+                _related.RELATED_FILENAME: _related.render_related(
+                    memory_dir, project_root, inputs_hash=digest
+                ),
+                # Records that may argue with each other (WM-34).
+                _lifecycle.CONFLICTS_FILENAME: _lifecycle.render_conflicts(
+                    memory_dir, project_root, inputs_hash=digest
+                ),
+            }
+            index = None
+            if with_index:
+                # The disposable search index (WM-23); its own failures are
+                # swallowed inside, because a missing index only means the full scan.
+                index = _searchindex.build_index(
+                    memory_dir, project_root, inputs_hash=digest, publish=False
+                )
+                if index.get("staged"):
+                    staged.append(index["staged"])
+            # Taken inside the verified window: the second digest check would
+            # catch a change that landed before this line.
+            fingerprint = _searchindex._stat_fingerprint(memory_dir, project_root)
+            return outputs, index, fingerprint
 
-        _searchindex.build_index(memory_dir, project_root)
+        published_index = None
+        try:
+            (outputs, index, fingerprint), digest = _snapshots.stable_build(
+                memory_dir, project_root, build
+            )
+            live_index = (index or {}).get("staged") if digest is not None else None
+            if digest is None:
+                # Never stamp a changing store as current: publish the views
+                # marked `unstable` (validate reports them stale), no index.
+                outputs, _index, fingerprint = build(_snapshots.UNSTABLE, with_index=False)
+            # The old manifest goes first. Until the new one is written, a
+            # half-replaced set has no manifest, so no reader trusts it.
+            with contextlib.suppress(FileNotFoundError):
+                _projections.manifest_path(memory_dir).unlink()
+            for name, text in outputs.items():
+                write_text_atomic(gen / name, text)
+            _searchindex.publish_index(memory_dir, live_index)
+            published_index = live_index
+        finally:
+            # Staged indexes from unstable attempts, or from a publication that
+            # failed, are unique temp files; none may be left behind.
+            for path in staged:
+                if path != published_index:
+                    _searchindex.discard_index(path)
+        # Last: the manifest that says these files are one generation.
+        _projections.write_manifest(
+            memory_dir,
+            digest or _snapshots.UNSTABLE,
+            stable=digest is not None,
+            files={name: text.encode("utf-8") for name, text in outputs.items()},
+            fingerprint=fingerprint,
+        )
+        if digest is None:
+            return False, "the store kept changing during publication; projections stamped unstable"
         with contextlib.suppress(OSError):
             (memory_dir / PROJECTIONS_PENDING_RELPATH).unlink()
         return True, None
@@ -6803,7 +6858,36 @@ def build_resume_packet(
     is scoped to it: `requested_task` is echoed and `likely_files` is derived from
     the records that actually match the task instead of the store-global default
     that misdirects on off-domain work. With no task, behavior is unchanged.
+
+    Its `inputs_hash` stamp is the snapshot it was built from, verified
+    unchanged across the build, or `unstable` with a warning (audit F07; see
+    `breadcrumbs/snapshots.py`).
     """
+    from breadcrumbs import snapshots as _snapshots
+
+    packet, digest = _snapshots.stable_build(
+        memory_dir,
+        root,
+        lambda h: _build_resume_packet_once(
+            memory_dir, root, stale_days=stale_days, fast=fast, task=task, inputs_hash=h
+        ),
+    )
+    if digest is None:
+        packet["source"]["inputs_hash"] = _snapshots.UNSTABLE
+        packet["warnings"].insert(0, _snapshots.UNSTABLE_WARNING)
+    return packet
+
+
+def _build_resume_packet_once(
+    memory_dir: Path,
+    root: Path,
+    *,
+    stale_days: int = STALE_AGE_DAYS,
+    fast: bool = False,
+    task: str | None = None,
+    inputs_hash: str,
+) -> dict:
+    """One build of the packet, stamped with the digest the caller verifies."""
     memory_dir = Path(memory_dir)
     manifest = load_manifest(memory_dir) or {}
 
@@ -6901,7 +6985,7 @@ def build_resume_packet(
     packet: dict = {
         "source": {
             "commit": git_commit(root),
-            "inputs_hash": _inputs_hash(memory_dir, root),
+            "inputs_hash": inputs_hash,
             "generated_at": now_iso(),
         },
         "fast": bool(fast),
@@ -9628,7 +9712,9 @@ def _stamped_inputs_hash(text: str) -> str | None:
     # Anchor to the generated source-header comment (written by render_packet_*
     # as `<!-- source_commit: … | inputs_hash: <hash> | … -->`) rather than the
     # whole file, so a stray `inputs_hash:` in copied body text isn't picked up.
-    m = re.search(r"<!--\s*source_commit:.*?\binputs_hash:\s*([0-9a-f]+)", text)
+    # `unstable` (audit F07) is a stamp too: it never equals a digest, so a
+    # projection built while the store was changing always reads as stale.
+    m = re.search(r"<!--\s*source_commit:.*?\binputs_hash:\s*([0-9a-f]+|unstable)", text)
     return m.group(1) if m else None
 
 
@@ -9660,9 +9746,10 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
             findings.append(
                 {"path": str(p.relative_to(memory_dir)), "stamped": stamped, "current": current}
             )
-    # JSON projections that carry a top-level `inputs_hash` (related.json).
-    # One without the key — guard-prefilter.json — is unstamped by design and
-    # skipped, exactly like an unstamped markdown projection above.
+    # JSON projections that carry a top-level `inputs_hash` (related.json,
+    # conflicts.json and, since audit WP07, guard-prefilter.json). One without
+    # the key — a pre-filter written by an older version — is skipped, exactly
+    # like an unstamped markdown projection above.
     for p in sorted(gen.glob("*.json")):
         try:
             doc = json.loads(p.read_text(encoding="utf-8"))
@@ -11649,17 +11736,27 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     One small generated-file read — no record walk — keeping the pre-filter's
     "cheap on the common path" promise while closing the near-miss class where a
     routine-looking command (`pytest -n auto`) matches a recorded trap that the
-    keyword classifier and the destructive-op regex are both blind to. Absent or
-    unreadable index ⇒ not risky (the index is rebuilt on every reindex).
+    keyword classifier and the destructive-op regex are both blind to.
+
+    The index is used only when the current generation vouches for it
+    (`projections.verified`). A missing, corrupt, replaced or out-of-date one —
+    or one written before the manifest existed — is not evidence that the store
+    holds no hazard (audit F11). Such an index counts as "possibly risky", so the
+    caller runs the full guard against the records and a real trap is still
+    found. Only a verified index can keep the hook quiet.
     """
+    from breadcrumbs import hooklog as _hooklog
+    from breadcrumbs import projections as _projections
+
     activate_store_aliases(memory_dir)
-    p = memory_dir / "generated" / GUARD_PREFILTER_FILENAME
+    raw = _projections.verified(memory_dir, Path(memory_dir).parent, GUARD_PREFILTER_FILENAME)
     try:
-        idx = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
+        idx = json.loads(raw.decode("utf-8")) if raw is not None else None
+    except ValueError:
+        idx = None
     if not isinstance(idx, dict):
-        return False
+        _hooklog.note(prefilter="unverified")
+        return True
     # Two specific shared tokens, mirroring the guard anti-noise floor — a single
     # generic word never escalates (§19b.8). Index tokens are re-stemmed at read
     # time: a prefilter written by an older version holds raw tokens, and _stem

@@ -47,6 +47,8 @@ fixtures/**/.project-memory/generated/conflicts.json
 # root). The test suite runs `resume` and `audit` against these stores, which
 # writes `private/usage.json`; nothing there belongs in the history.
 fixtures/**/.project-memory/private/**
+# The generation manifest (audit WP07) is machine-local like the rest of index/.
+fixtures/**/.project-memory/index/**
 
 # >>> breadcrumbs managed block (managed by `crumb init`) >>>
 .project-memory/private/**

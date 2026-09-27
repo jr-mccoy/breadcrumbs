@@ -55,6 +55,7 @@ writes outside the store.
     README.md
     # search.sqlite           — disposable search index, built at reindex once
     #                           the store has 200+ indexable records (§12)
+    # generation.json         — manifest of the last publication, written last (§12, audit WP07)
 ```
 
 **Two local telemetry files under `private/`.** Neither is a record, and
@@ -749,10 +750,11 @@ Rebuilt by every reindex; never a source of truth.
 | File | Committed | Contents |
 |---|---|---|
 | `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header. |
-| `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads. Unstamped. |
+| `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads, with a top-level `inputs_hash` since audit WP07 (one written by an older version has none and is not drift-checked). The hook uses it only while `index/generation.json` vouches for it. |
 | `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null \| reason}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
 | `generated/conflicts.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "conflicts": [{"rule", "ids", "similarity", "message"}]}` — pairs of live records that may contradict each other (WM-34). |
 | `index/search.sqlite` | never (gitignored) | The disposable search index. |
+| `index/generation.json` | never (gitignored) | The generation manifest (audit WP07): `{format, inputs_hash, stable, published_at, files: {name: sha256}, stat_fingerprint}`, written last by every publication. |
 
 **`related.json`** relates live items (status `active`; for questions, `open`)
 by pure overlap — shared declared files ×6, shared tag stems ×4, shared
@@ -780,10 +782,22 @@ clock, so every clone computes the same file; `validate` and `audit` check its
 stems, tag stems and files per record) over decisions, attempts, verifications,
 ideas and committed jots. It is built only once those number at least 200
 (`crumb reindex --search-index` builds it regardless), stamped with the
-`inputs_hash` it was built from, and consulted only while that still matches;
+`inputs_hash` of the snapshot it was built from, and consulted only while that
+still matches the store's content (index format `2`, audit WP07: there is no
+size/mtime shortcut);
 `search` returns exactly the same results with or without it. It needs the
 standard-library `sqlite3` module and is skipped where that is missing.
 Deleting `index/` is always safe.
+
+**`index/generation.json`** names the files of the last publication and the
+snapshot they were built from. It is written after every other output, and the
+previous one is removed before any output is replaced, so a set that was only
+partly replaced has no manifest. `stable` is `false` when the store kept
+changing across three builds; the outputs are then stamped `inputs_hash:
+unstable` and `validate` reports them stale. A reader trusts a generated file
+only when the manifest is `stable`, the file's sha256 matches, and the stat
+fingerprint of the canonical inputs is unchanged. Deleting it costs nothing but
+the guard hook's shortcut, until the next reindex.
 
 ---
 

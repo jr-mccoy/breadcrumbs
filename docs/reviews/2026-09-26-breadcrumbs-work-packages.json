@@ -665,7 +665,7 @@
       "title": "Make replacement and lifecycle mutations recoverable",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP01",
         "WP05"
@@ -703,6 +703,10 @@
           "summary": "New breadcrumbs/mutations.py: transaction() with write-ahead before-image journal under private/operations/, rollback on any failure (nested failures doom the parent), recover() for crashed writers (restores only known states, keeps copies of removed files), RevisionConflict via write_text_atomic(expected=). remember/MCP record/note/verify/inbox promote/consolidate/rollup/mark-status+auto-demote/promote/demote are single operations; retire_all raises on any failed retirement. crumb recover; doctor operations/projections rows; projections-pending marker. tests/test_mutation_recovery.py: 10 tests incl. a real-subprocess crash after every write (12 journaled crashes restored byte-for-byte, 4 post-commit). Full suite 1234 OK; partial_supersession probe no longer observed.",
           "compatibility": "Failed replacements exit 1 and write nothing; inbox promote no longer returns ok+warning; mark-status of a promoted record fails if its rule cannot be removed; rewrites may refuse on a revision conflict; new private/ paths and `crumb recover`.",
           "limitations": "Rollback-only recovery (no roll-forward); revision check is not atomic CAS against non-cooperating writers; capture session handoff not journaled with its record; projections after a post-commit crash are stale until reindex (WP07)."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP06 approved, start WP07\")."
         }
       ]
     },
@@ -711,7 +715,7 @@
       "title": "Build and publish coherent snapshots and projections",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP05",
         "WP06"
@@ -746,7 +750,16 @@
         "`test_same_size_restored_mtime_edit_invalidates_strict_index`"
       ],
       "done_when": "Every emitted source stamp describes the actual input snapshot, and disposable artifacts cannot be trusted across an unverified generation boundary.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "5687d16",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp07/README.md",
+          "summary": "New breadcrumbs/snapshots.py: stable_build hashes inputs before and after each build, stamps with the verified digest, retries up to 3 times, else stamps 'unstable' (packet warning, validate stale). New breadcrumbs/projections.py: machine-local index/generation.json manifest (stamp, stable, per-file sha256, stat fingerprint) written last, old one removed first; verified() gates the guard hook's pre-filter, which on a missing/corrupt/replaced/out-of-date file escalates to the full guard (hooklog prefilter=unverified). _publish_projections builds packet, stamped pre-filter, related, conflicts and a staged index from one snapshot; staged indexes are unique temp files discarded unless published. Search-index freshness is content hash only (INDEX_FORMAT 2). tests/test_snapshot_consistency.py: 11 tests incl. the 4 named; the original 10 all fail on WP06 code (8 behaviorally). Full suite 1245 OK; snapshot_stamp_race and index_metadata_collision probes no longer observed (10 signals, 2 recorded instrument errors).",
+          "compatibility": "Committed guard-prefilter.json gains inputs_hash (drift-checked by validate; older readers ignore it); a projection may be stamped 'unstable'; reindex may return not-ok when the store keeps changing; guard hook runs the full guard (~39 ms vs 2.6 ms at 200 records) until a local publication exists; search index format 2 rebuilt on next reindex; new machine-local index/generation.json; build_index gains inputs_hash=/publish=.",
+          "limitations": "Snapshot verified by re-hashing, not an immutable copy (an undone change is invisible); the hook's generation check is a stat fingerprint, so a same-size restored-mtime edit after publication can pass it (strict paths use content hashes); no separate view-identity field yet (WP08); resume under contention prints a fresh verified-or-unstable view rather than the last published generation; a failed publication leaves outputs partly replaced with no manifest until reindex."
+        }
+      ]
     },
     {
       "id": "WP08",

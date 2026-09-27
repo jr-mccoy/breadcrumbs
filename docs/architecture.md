@@ -76,6 +76,7 @@ taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual
 | Possible contradictions | Pairs of live records that may argue with each other | `generated/conflicts.json` | regenerated | no |
 | Trap / question index | One line per trap or question, for a reader without the CLI | `known-traps.md`, `open-questions.md` (schema 3) | regenerated | no |
 | Search index | Inverted index that narrows `search`'s candidate set | `index/search.sqlite` | regenerated; machine-local | no |
+| Generation manifest | Which generated files belong to one publication, their digests and its snapshot | `index/generation.json` | written last by every publication; machine-local | no |
 | Store aliases | The project's synonyms for the stemmer | `aliases.txt` | hand-maintained | yes (configuration) |
 | Promoted rule | A decision, attempt or trap made a standing instruction, one line naming its source | the promoted-rules block in `CLAUDE.md` / `AGENTS.md` (outside the store) | until demoted or its record is retired | no — the record is |
 
@@ -94,7 +95,8 @@ so it costs a user nothing — the difference from `refs.yml`, which shipped
 committed, with example entries to clean up — and what it holds is disposable
 in the strict sense: `index/search.sqlite` is built at reindex only once the
 store has 200 indexable records, is used only while the `inputs_hash` it was
-stamped with still matches, and only narrows which records `search` parses.
+stamped with still matches the store's content (no size/mtime shortcut, since
+audit WP07), and only narrows which records `search` parses.
 Matches and scores are identical with and without it, and deleting it costs
 nothing but speed.
 
@@ -282,6 +284,8 @@ Everything is in the `breadcrumbs` package, standard library only.
 | `promote.py` | The bridge to long-term memory (Phase 4): `promote` / `demote` and their CLI surface, the promoted-rules block in `CLAUDE.md` / `AGENTS.md` (rendering, reading, rewriting), the `promoted_*` fields and the trap-block bullet, auto-demote on retire (called from `set_record_status`), the "is it promoted" predicates the packet uses, and the `promoted-bloat` / `demote-candidate` / `promoted-drift` / `promote-candidate` audit checks and the doctor summary. |
 | `handoffs.py` | One handoff per branch (schema 4): the default-branch rule, the handoff file name (slug, plus a hash when the slug is not the branch name), which file a capture writes and a resume or `memory://handoff` reads (and the label it reports), seeding a new branch handoff with `handoff.md`'s Current Focus, and `prune handoffs`. |
 | `mutations.py` | Multi-record operations (audit WP06): `transaction(memory_dir, kind)` journals each touched record or instruction file's before-image to `private/operations/<id>/` before the first write; a failure rolls every one back, a crash leaves the journal for `recover()` (`crumb recover`), and a nested transaction joins its parent. `write_text_atomic(…, expected=)` raises `RevisionConflict` on a lost update. |
+| `snapshots.py` | A projection's stamp is the snapshot it was built from (audit WP07): `stable_build()` hashes the inputs, builds with that stamp, and re-hashes; a store that keeps changing across three attempts is stamped `unstable`, never a digest. |
+| `projections.py` | The generation manifest `index/generation.json` (audit WP07), written after every output of a publication: stamp, stability, each file's sha256, a stat fingerprint. `verified(name)` returns a generated file only when that manifest still vouches for it; the guard hook reads its pre-filter through it. |
 | `lock.py` | The store write lock: `store_lock(memory_dir, timeout)`, an OS lock (`flock` / `msvcrt.locking`) on the permanent file `private/.store.lock`, which carries the holder's pid, time and host for messages only. Also an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts; waiting on a live 0.3.0-era `.write-lock`; `LockUnsupported` when the filesystem refuses. Which CLI invocations take it is `cli._needs_lock`; projection publication takes it in `cli.try_reindex_projections`. |
 | `transcript.py` | Deterministic transcript mining into jot candidates. |
 | `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook (retrieval keeps current records only), the `PreCompact` / `SubagentStop` hooks. |

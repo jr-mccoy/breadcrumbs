@@ -154,6 +154,39 @@ and exited 0. The same shape existed in `inbox promote`, `consolidate --merge`,
 - **A failed projection rebuild is recorded** in `private/projections-pending`
   until the next rebuild succeeds.
 
+### Changed — projections describe the snapshot they came from (audit WP07)
+
+Findings F07, F11, F12 and the rest of F06.
+
+- **F07.** A projection's `inputs_hash` was computed after its records were
+  read. A record written in between was left out of the packet but covered by
+  its stamp, so `validate` called it current.
+- **F11.** The guard hook treated a missing or unreadable pre-filter as "no
+  risk".
+- **F12.** The search index called itself fresh on a path/size/mtime match, so
+  a same-size edit with a restored mtime made indexed search miss what the full
+  scan found.
+
+What changed:
+
+- **Stamps come from a verified snapshot (new `breadcrumbs/snapshots.py`).**
+  The inputs are hashed before a build and again after it. A store that keeps
+  changing across three attempts is stamped `inputs_hash: unstable`: the packet
+  warns, `validate` reports it stale, and `reindex` reports it was not
+  published cleanly.
+- **One publication, one generation (new `breadcrumbs/projections.py`).** The
+  packet, the guard pre-filter (now stamped too), `related.json`,
+  `conflicts.json` and the search index come from one snapshot. The index is
+  staged in a unique temp file and moved into place only if the snapshot proved
+  stable. The machine-local manifest `index/generation.json` (each file's
+  sha256, the stamp, a stat fingerprint) is written last.
+- **The guard hook trusts only a verified pre-filter.** If the pre-filter is
+  missing, corrupt, replaced or older than the records, the hook checks the
+  records directly (39 ms instead of 2.6 ms at 200 records), and the hook log
+  notes `prefilter: "unverified"`.
+- **Search-index freshness is the content hash alone.** The index format is now
+  `2`, so an older index is rebuilt.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

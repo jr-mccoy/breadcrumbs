@@ -306,16 +306,18 @@ class UndecodableFileTests(unittest.TestCase):
         """`crumb reindex` printed 'Reindex failed' with no cause."""
         with tempfile.TemporaryDirectory() as tmp:
             mem = fresh_store(tmp)
-            real = _cli.build_resume_packet
+            # Publication builds each packet through `_build_resume_packet_once`,
+            # stamped with a verified snapshot (audit WP07).
+            real = _cli._build_resume_packet_once
 
             def boom(*a, **kw):
                 raise RuntimeError("packet exploded")
 
-            _cli.build_resume_packet = boom
+            _cli._build_resume_packet_once = boom
             try:
                 code, out = run(["reindex", "--project", tmp])
             finally:
-                _cli.build_resume_packet = real
+                _cli._build_resume_packet_once = real
             self.assertEqual(code, 1, out)
             self.assertIn("packet exploded", out)
             self.assertTrue(mem.is_dir())

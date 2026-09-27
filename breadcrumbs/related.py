@@ -93,12 +93,17 @@ def compute_related(memory_dir: Path) -> dict:
     return {"related": dict(sorted(related.items())), "skipped": None}
 
 
-def render_related(memory_dir: Path, project_root: Path) -> str:
-    """The projection file's contents, stamped with the inputs it was built from."""
+def render_related(memory_dir: Path, project_root: Path, *, inputs_hash: str | None = None) -> str:
+    """The projection file's contents, stamped with the inputs it was built from.
+
+    `inputs_hash` is the snapshot digest a publication verified (audit F07);
+    computing it here, after the records were read, could stamp content the map
+    never saw.
+    """
     doc = compute_related(memory_dir)
     doc = {
         "_generated": "GENERATED PROJECTION — do not edit. Rebuilt by `crumb reindex`.",
-        "inputs_hash": cli._inputs_hash(Path(memory_dir), Path(project_root)),
+        "inputs_hash": inputs_hash or cli._inputs_hash(Path(memory_dir), Path(project_root)),
         **doc,
     }
     return json.dumps(doc, indent=1, sort_keys=True) + "\n"

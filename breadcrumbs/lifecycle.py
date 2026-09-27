@@ -1056,13 +1056,13 @@ def find_contradictions(memory_dir: Path) -> list[dict]:
     return out
 
 
-def render_conflicts(memory_dir: Path, root: Path) -> str:
-    """`generated/conflicts.json`, stamped like `related.json`."""
+def render_conflicts(memory_dir: Path, root: Path, *, inputs_hash: str | None = None) -> str:
+    """`generated/conflicts.json`, stamped like `related.json` (see `render_related`)."""
     import json
 
     doc = {
         "_generated": "GENERATED PROJECTION — do not edit. Rebuilt by `crumb reindex`.",
-        "inputs_hash": cli._inputs_hash(Path(memory_dir), Path(root)),
+        "inputs_hash": inputs_hash or cli._inputs_hash(Path(memory_dir), Path(root)),
         "conflicts": find_contradictions(memory_dir),
     }
     return json.dumps(doc, indent=1, sort_keys=True) + "\n"

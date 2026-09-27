@@ -474,6 +474,15 @@ atomically — and
 `crumb validate` **fails** on a stale projection with a `Run \`crumb reindex\``
 hint, so the trust primitive no longer certifies drift.
 
+Every projection of one reindex is built from **one snapshot** of the store and
+stamped with its digest. The digest is taken before the build and checked again
+after it, so a stamp never claims a record the build did not read. A store that
+kept changing through three attempts is stamped `unstable` and reads as stale.
+A manifest, `index/generation.json` (machine-local), is written last. The guard
+hook relies on its pre-filter only while that manifest vouches for it; a
+missing, corrupt or out-of-date pre-filter makes the hook check the records
+directly, which is slower but never silent.
+
 The committed packet is **machine-independent by construction**: the project path
 is recorded as `.` rather than an absolute host path, and the `inputs_hash` covers
 only what the store's own policy shares — under `session_tracking: distillate` it
@@ -505,7 +514,8 @@ there; `crumb audit` flags a line it had to ignore.
 Past 200 records, reindex also builds `index/search.sqlite`, a machine-local,
 gitignored index that lets `search` parse only the records that could match. It
 narrows and never ranks: results are identical with and without it, and a stale
-or missing index just means the full scan. `crumb doctor` reports its state.
+or missing index just means the full scan. Freshness is decided by the content
+hash alone, so even a same-size edit with its mtime restored makes it stale. `crumb doctor` reports its state.
 
 ### `crumb guard`
 

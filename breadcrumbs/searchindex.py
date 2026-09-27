@@ -60,7 +60,9 @@ INDEX_MIN_CORPUS = 200
 
 # Bumped when the table layout or what goes into it changes, so an index built
 # by an older version is rebuilt rather than misread.
-INDEX_FORMAT = "1"
+# 2: stamped with the verified snapshot digest, fresh only by content hash
+# (audit F07, F12).
+INDEX_FORMAT = "2"
 
 # The directories whose records the index may cover, by record type. Sessions
 # are never in the search corpus. Traps and questions are few (tens, not
@@ -122,10 +124,16 @@ def _stat_fingerprint(memory_dir: Path, project_root: Path) -> str:
 
 
 def _is_fresh(meta: dict, memory_dir: Path, project_root: Path) -> bool:
+    """Strict freshness: the index was built from exactly the current inputs.
+
+    A path/size/mtime match used to return "fresh" before any content was
+    compared, so a same-size edit with a restored mtime left indexed search
+    missing a word the full scan found (audit F12). Indexed search promises the
+    full scan's results, so only the content hash decides. It costs ~17 ms at
+    1000 records.
+    """
     if meta.get("format") != INDEX_FORMAT:
         return False
-    if meta.get("stat_fingerprint") == _stat_fingerprint(memory_dir, project_root):
-        return True
     return meta.get("inputs_hash") == cli._inputs_hash(memory_dir, project_root)
 
 
@@ -137,12 +145,30 @@ def _tokens_of(item: dict) -> list[tuple[str, str]]:
     return out
 
 
-def build_index(memory_dir: Path, project_root: Path, *, force: bool = False) -> dict:
-    """(Re)build the index. Returns `{built, records, reason}`. Never raises."""
+def build_index(
+    memory_dir: Path,
+    project_root: Path,
+    *,
+    force: bool = False,
+    inputs_hash: str | None = None,
+    publish: bool = True,
+) -> dict:
+    """(Re)build the index. Returns `{built, records, reason}`. Never raises.
+
+    The index is stamped with the snapshot it was built from (audit F07).
+    `inputs_hash` is that digest when a publication verifies the snapshot
+    itself. Otherwise this build verifies its own: it hashes before reading and
+    again after, and publishes nothing if they differ. `publish=False` leaves
+    the built file in place for the caller (`"staged"`): `publish_index()` puts
+    it live, and `discard_index()` removes it.
+    """
     memory_dir = Path(memory_dir)
     project_root = Path(project_root)
     if not available():
         return {"built": False, "records": 0, "reason": "sqlite3 unavailable"}
+    own_snapshot = inputs_hash is None
+    if own_snapshot:
+        inputs_hash = cli._inputs_hash(memory_dir, project_root)
     try:
         cli.activate_store_aliases(memory_dir)
         dirs = _indexable_dirs(memory_dir, project_root)
@@ -199,8 +225,7 @@ def build_index(memory_dir: Path, project_root: Path, *, force: bool = False) ->
             conn.executemany(
                 "INSERT INTO meta VALUES (?, ?)",
                 [
-                    ("inputs_hash", cli._inputs_hash(memory_dir, project_root)),
-                    ("stat_fingerprint", _stat_fingerprint(memory_dir, project_root)),
+                    ("inputs_hash", inputs_hash),
                     ("format", INDEX_FORMAT),
                     ("dirs", ",".join(dirs)),
                 ],
@@ -211,10 +236,30 @@ def build_index(memory_dir: Path, project_root: Path, *, force: bool = False) ->
             tmp.unlink(missing_ok=True)
             raise
         conn.close()
+        if own_snapshot and cli._inputs_hash(memory_dir, project_root) != inputs_hash:
+            tmp.unlink(missing_ok=True)
+            return {
+                "built": False,
+                "records": len(rows),
+                "reason": "the store changed during the build",
+            }
+        if not publish:
+            return {"built": True, "records": len(rows), "reason": None, "staged": str(tmp)}
         tmp.replace(path)
         return {"built": True, "records": len(rows), "reason": None}
     except Exception as exc:  # pragma: no cover - the index is a convenience
         return {"built": False, "records": 0, "reason": f"{type(exc).__name__}: {exc}"}
+
+
+def publish_index(memory_dir: Path, staged: str | None) -> None:
+    """Put a staged index (from `build_index(publish=False)`) live."""
+    if staged:
+        Path(staged).replace(index_path(memory_dir))
+
+
+def discard_index(staged: str | None) -> None:
+    if staged:
+        Path(staged).unlink(missing_ok=True)
 
 
 def index_status(memory_dir: Path, project_root: Path) -> dict:
