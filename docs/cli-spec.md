@@ -91,9 +91,32 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript, tagged `subagent` and `agent:<type>`. Does not hold the subagent. |
 
 **What the miner writes.** Four deterministic rules over the transcript — a
-command that failed and passed after an edit (`attempt`), a test command that
+command that failed, then passed after an edit (`attempt`), a test command that
 passed (`verification`), a file edited four or more times (`trap`), and a user
-message that opens like a correction. Candidates become jots in
+message that opens like a correction.
+
+Each tool call is classified before any rule runs:
+- **`success`** — the result arrived, was not flagged as an error, and printed
+  no failure.
+- **`failure`** — the harness flagged the result (Claude Code does this for a
+  non-zero exit), or a test, lint or build command prints an unambiguous
+  failure anywhere in its output. A zero count such as `0 failed` or
+  `errors: 0` is not a failure. The output is read because a pipeline such as
+  `pytest | tail` exits with `tail`'s status.
+- **`interrupted`** — the user or harness stopped the call.
+- **`not_run`** — the call was refused before it ran: a `<tool_use_error>`, or
+  a rejected tool use.
+- **`unknown`** — no result is in the transcript, or an unflagged result from
+  any other command reads like a failure. A `grep` that found the word
+  "error:" has not failed, and `python x.py | tail` printing a traceback has
+  not passed.
+
+Only `success` is worded as "passed", and only `failure` opens an attempt. An
+edit counts only when it succeeded. The attempt names the sequence ("failed,
+then passed after N file(s) changed"), not a cause. The 400-character excerpt
+in a candidate is cut after classification, around the failure when it comes
+late. A call and a result that arrive in different firings are not joined yet
+(audit WP09). Candidates become jots in
 `private/inbox/`, never the committed store, after a secret scan that drops
 rather than masks. Bounded at 10 per firing and deduped by fingerprint within a
 session. A cursor in `private/miner-cursor.json` stops a later firing re-mining

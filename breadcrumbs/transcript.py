@@ -50,9 +50,19 @@ DEFAULT_MAX_BYTES = 8_000_000
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 BASH_TOOL = "Bash"
 
-# How much of a tool result is kept. The first lines of a failure carry the
-# error; the rest is a wall.
+# How much of a tool result is kept for display. The outcome is classified from
+# the whole result first: a failure printed after the cutoff is still a failure.
 RESULT_SNIPPET_CHARS = 400
+
+# What happened to a tool call, as far as the transcript can show (audit F01).
+# Only SUCCESS may be worded as "passed". A call whose result never arrived is
+# UNKNOWN, not a success that happened to print nothing.
+SUCCESS = "success"
+FAILURE = "failure"
+INTERRUPTED = "interrupted"  # started, then stopped by the user or the harness
+NOT_RUN = "not_run"  # refused before it ran: blocked by a hook, rejected by the user
+UNKNOWN = "unknown"  # no result in the transcript (yet), or one that settles nothing
+OUTCOMES = (SUCCESS, FAILURE, INTERRUPTED, NOT_RUN, UNKNOWN)
 
 
 def read_transcript(path: str | Path, *, max_bytes: int = DEFAULT_MAX_BYTES) -> list[dict]:
@@ -94,14 +104,25 @@ def read_transcript(path: str | Path, *, max_bytes: int = DEFAULT_MAX_BYTES) -> 
 
 @dataclass
 class ToolCall:
-    """One tool invocation and the result that came back for it."""
+    """One tool invocation, and what the transcript shows came back for it.
+
+    `result_received` says whether a `tool_result` answered the call at all;
+    `outcome` is one of `OUTCOMES`. `result_text` is a bounded display excerpt,
+    cut after the outcome was decided from the full result.
+    """
 
     name: str
     input: dict
     result_text: str
-    is_error: bool
     index: int
     timestamp: str | None = None
+    result_received: bool = False
+    outcome: str = UNKNOWN
+
+    @property
+    def is_error(self) -> bool:
+        """The call ran and failed. Interrupted, refused and unanswered calls did not."""
+        return self.outcome == FAILURE
 
 
 def _content_blocks(entry: dict) -> list:
@@ -142,9 +163,97 @@ _BASH_FAILURE_RE = re.compile(
     r"FAIL(ED)?\b|AssertionError|npm ERR!)"
 )
 
+# A count of zero is a success report, not a failure: "15 passed, 0 failed",
+# "test result: ok. 3 passed; 0 failed", "failures: 0", "no errors". These are
+# removed before the failure test, so the words in them cannot trip it.
+_ZERO_FAILURE_RE = re.compile(
+    r"(?i)(\b(0|no|zero)\s+(tests?\s+)?(failed|failures?|errors?)\b"
+    r"|\b(failed|failures?|errors?)\s*[:=]\s*0\b)"
+)
+
+
+def _failure_match(text: str) -> re.Match | None:
+    """The first unambiguous failure in the *whole* output, zero counts excepted."""
+    return _BASH_FAILURE_RE.search(_ZERO_FAILURE_RE.sub(" ", text or ""))
+
 
 def _looks_failed(text: str) -> bool:
-    return bool(_BASH_FAILURE_RE.search(text or ""))
+    return _failure_match(text) is not None
+
+
+# How the harness says a call never ran or was stopped. `<tool_use_error>` is
+# the harness refusing the call (a hook blocked it, the input was invalid); the
+# two phrases are what Claude Code writes when the user rejects or interrupts a
+# tool. None of these is the command failing, and none may read as it passing.
+# Anchored: each is the whole result when the harness writes it, and a `cat` of
+# a file that merely quotes one (this module's tests do) must not match.
+_NOT_RUN_RE = re.compile(
+    r"^\s*(<tool_use_error>|The user doesn't want to proceed with this tool use)", re.I
+)
+_INTERRUPTED_RE = re.compile(r"^\s*\[Request interrupted by user")
+
+# Commands whose *output* is a verdict: test runners, linters, type checkers and
+# builds. A failure in their output is a failure. Any other command's output
+# may be data — a `cat` or `grep` of source that contains "error:" has not
+# failed — so failure words there make the outcome UNKNOWN, not FAILURE.
+_BUILD_CMD_RE = re.compile(
+    r"(?i)^((npm|yarn|pnpm) (run )?(build|test|lint|check|typecheck)\b|make\b|"
+    r"cargo (build|check|clippy|test)\b|go (build|vet|test)\b|python -m (build|mypy|ruff)\b)"
+)
+
+
+def _output_is_a_verdict(command: str) -> bool:
+    cmd = normalize_command(command)
+    return bool(_TEST_CMD_RE.match(cmd) or _BUILD_CMD_RE.match(cmd))
+
+
+def _excerpt(flat: str, at: int | None) -> str:
+    """A bounded display excerpt, keeping the failure in view when it is late."""
+    if len(flat) <= RESULT_SNIPPET_CHARS:
+        return flat
+    if at is None or at < RESULT_SNIPPET_CHARS - 80:
+        return flat[:RESULT_SNIPPET_CHARS]
+    start = max(0, at - 80)
+    return "… " + flat[start : start + RESULT_SNIPPET_CHARS - 2]
+
+
+def classify_result(
+    name: str,
+    text: str,
+    flagged: bool,
+    structured: dict | None = None,
+    command: str = "",
+) -> tuple[str, str]:
+    """(outcome, excerpt) for a call whose result arrived.
+
+    Structured signals first: the harness's interrupt flag and `is_error` (which
+    Claude Code sets for a non-zero exit, writing `Exit code N` first). Then the
+    full Bash output, because a pipeline such as `pytest | tail` exits with
+    `tail`'s status and a clean exit proves nothing about what it piped:
+
+    - a test, lint or build run whose output reports a failure *failed*;
+    - any other command whose output reads like a failure is UNKNOWN — a `grep`
+      that found the word "error:" has not failed, but `python x.py | tail`
+      printing a traceback has not passed either;
+    - otherwise it succeeded.
+
+    An edit whose new content says "failed" has not failed, so no other tool
+    gets the textual test. The excerpt is cut last, around the failure when
+    there is one.
+    """
+    flat = " ".join(str(text or "").split())
+    structured = structured if isinstance(structured, dict) else {}
+    if _NOT_RUN_RE.search(flat):
+        return NOT_RUN, _excerpt(flat, None)
+    if structured.get("interrupted") is True or _INTERRUPTED_RE.search(flat):
+        return INTERRUPTED, _excerpt(flat, None)
+    match = _failure_match(flat) if name == BASH_TOOL else None
+    at = match.start() if match else None
+    if flagged:
+        return FAILURE, _excerpt(flat, at)
+    if match:
+        return (FAILURE if _output_is_a_verdict(command) else UNKNOWN), _excerpt(flat, at)
+    return SUCCESS, _excerpt(flat, None)
 
 
 def pair_tool_calls(entries: list[dict]) -> list[ToolCall]:
@@ -152,21 +261,24 @@ def pair_tool_calls(entries: list[dict]) -> list[ToolCall]:
 
     Results arrive in a later entry and reference the call by `tool_use_id`, so
     a single forward pass collects the calls and a second resolves them. A call
-    with no result (the session ended mid-tool) is kept with empty text: that it
-    was *attempted* is still a fact, and dropping it would silently lose the
-    last action of every interrupted session.
+    with no result (the session ended mid-tool, or the result lands in a later
+    firing) is kept with `result_received=False` and outcome UNKNOWN: that it
+    was *attempted* is still a fact, but nothing about how it ended is.
     """
     calls: dict[str, ToolCall] = {}
     order: list[str] = []
-    results: dict[str, tuple[str, bool]] = {}
+    results: dict[str, tuple[str, bool, dict | None]] = {}
 
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
         ts = entry.get("timestamp") if isinstance(entry.get("timestamp"), str) else None
-        for block in _content_blocks(entry):
-            if not isinstance(block, dict):
-                continue
+        blocks = [b for b in _content_blocks(entry) if isinstance(b, dict)]
+        # `toolUseResult` sits on the entry, not the block, so it can only be
+        # attributed when the entry answers exactly one call.
+        n_results = sum(1 for b in blocks if b.get("type") == "tool_result")
+        structured = entry.get("toolUseResult") if n_results == 1 else None
+        for block in blocks:
             btype = block.get("type")
             if btype == "tool_use":
                 call_id = str(block.get("id") or f"_pos{index}")
@@ -176,7 +288,6 @@ def pair_tool_calls(entries: list[dict]) -> list[ToolCall]:
                     name=name,
                     input=payload if isinstance(payload, dict) else {},
                     result_text="",
-                    is_error=False,
                     index=index,
                     timestamp=ts,
                 )
@@ -185,18 +296,21 @@ def pair_tool_calls(entries: list[dict]) -> list[ToolCall]:
                 call_id = str(block.get("tool_use_id") or "")
                 if not call_id:
                     continue
-                text = " ".join(_result_text(block).split())[:RESULT_SNIPPET_CHARS]
-                results[call_id] = (text, bool(block.get("is_error")))
+                results[call_id] = (
+                    _result_text(block),
+                    bool(block.get("is_error")),
+                    structured if isinstance(structured, dict) else None,
+                )
 
     out: list[ToolCall] = []
     for call_id in order:
         call = calls[call_id]
-        text, flagged = results.get(call_id, ("", False))
-        call.result_text = text
-        # A Bash command reports failure two ways: the harness flags it, or the
-        # output says so. Only Bash gets the textual test — an edit whose new
-        # content happens to contain the word "failed" has not failed.
-        call.is_error = flagged or (call.name == BASH_TOOL and _looks_failed(text))
+        if call_id in results:
+            text, flagged, structured = results[call_id]
+            call.result_received = True
+            call.outcome, call.result_text = classify_result(
+                call.name, text, flagged, structured, str(call.input.get("command") or "")
+            )
         out.append(call)
     return out
 
@@ -235,7 +349,12 @@ def normalize_command(command: str) -> str:
 
 
 def _edited_path(call: ToolCall) -> str | None:
-    if call.name not in EDIT_TOOLS:
+    """The file a call edited — only when the edit is known to have happened.
+
+    A refused, interrupted or failed edit ("string not found") changed nothing,
+    and one with no result may not have either.
+    """
+    if call.name not in EDIT_TOOLS or call.outcome != SUCCESS:
         return None
     value = call.input.get("file_path") or call.input.get("path") or call.input.get("notebook_path")
     return str(value) if value else None
@@ -330,13 +449,18 @@ def _mine_attempts(calls: list[ToolCall]) -> list[Candidate]:
     """Rule 1 — a command failed, files changed, the same command passed.
 
     This is the shape of nearly every real debugging loop, and the resulting
-    attempt record ("X failed until Y changed") is the single most useful thing
-    a future session can be told about this one.
+    attempt record is the single most useful thing a future session can be told
+    about this one. It is worded as the sequence the transcript shows, not as a
+    cause: the edits came between the failure and the pass, and whether they
+    were the fix is for whoever promotes the candidate to say.
+
+    Both ends must be observed outcomes. An interrupted or refused run did not
+    fail, and a run whose result never arrived did not pass.
     """
     out: list[Candidate] = []
     seen: set[str] = set()
     for i, failure in enumerate(calls):
-        if failure.name != BASH_TOOL or not failure.is_error:
+        if failure.name != BASH_TOOL or failure.outcome != FAILURE:
             continue
         command = normalize_command(failure.input.get("command", ""))
         if not command or command in seen:
@@ -347,7 +471,7 @@ def _mine_attempts(calls: list[ToolCall]) -> list[Candidate]:
             if path and path not in edited:
                 edited.append(path)
                 continue
-            if later.name != BASH_TOOL or later.is_error:
+            if later.name != BASH_TOOL or later.outcome != SUCCESS:
                 continue
             if normalize_command(later.input.get("command", "")) != command:
                 continue
@@ -356,13 +480,16 @@ def _mine_attempts(calls: list[ToolCall]) -> list[Candidate]:
             seen.add(command)
             shown = edited[:3]
             note = _clip(
-                f"{failure.result_text} Fixed after editing: {', '.join(shown)}", NOTE_MAX_CHARS
+                f"{failure.result_text} Passed on a later run, after edits to: "
+                f"{', '.join(shown)} (not shown to be the fix).",
+                NOTE_MAX_CHARS,
             )
             out.append(
                 Candidate(
                     kind="attempt",
                     title=_clip(
-                        f"{command} failed until {len(edited)} file(s) changed", TITLE_MAX_CHARS
+                        f"{command} failed, then passed after {len(edited)} file(s) changed",
+                        TITLE_MAX_CHARS,
                     ),
                     note=note,
                     files=list(edited),
@@ -387,7 +514,10 @@ def _mine_verifications(calls: list[ToolCall]) -> list[Candidate]:
     out: list[Candidate] = []
     seen: set[str] = set()
     for call in calls:
-        if call.name != BASH_TOOL or call.is_error:
+        # "Passed" needs a result that arrived, was not flagged, and printed no
+        # failure. Anything short of that — no result, interrupted, refused —
+        # is not evidence the command passes.
+        if call.name != BASH_TOOL or call.outcome != SUCCESS:
             continue
         command = normalize_command(call.input.get("command", ""))
         if not command or command in seen or not _TEST_CMD_RE.match(command):
@@ -397,7 +527,11 @@ def _mine_verifications(calls: list[ToolCall]) -> list[Candidate]:
             Candidate(
                 kind="verification",
                 title=_clip(f"{command} passed", TITLE_MAX_CHARS),
-                note=_clip(f"Ran clean in this session. {call.result_text}", NOTE_MAX_CHARS),
+                note=_clip(
+                    "Exited without a reported error and printed no failure in this "
+                    f"session. {call.result_text}",
+                    NOTE_MAX_CHARS,
+                ),
                 command=command,
                 evidence=[{"type": "command", "ref": command}],
             )
