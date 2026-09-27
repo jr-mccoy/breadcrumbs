@@ -184,6 +184,12 @@ extracted code matches it. Nine lines changed, all of them the branch name and
 values derived from the commit hash. No output of the code under test
 changed. I had not checked CI after pushing WP16; WP17 onwards does.
 
+That fix was incomplete: CI run 242 still differed, because a record's
+`created_by` is `$USER` (unset in this container, `runner` on GitHub). The
+scenario now pins `USER`. The golden was regenerated from `fa2df0e` the same
+way, and it passes with `USER` unset, set to `alice` and set to `runner`, with
+other timezones and locales, and with no global git config.
+
 ## Limits
 
 - **F21 is not finished.**

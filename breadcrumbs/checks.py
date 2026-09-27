@@ -206,9 +206,9 @@ def _windows_job(proc: subprocess.Popen):
         return None, f"{type(exc).__name__}: {exc}"
 
 
-def _windows_sweep(root_pid: int, started_filetime: int) -> int:
+def _windows_sweep(root_pid: int, started_filetime: int) -> tuple[int, int]:
     """End every process descended from `root_pid` that started after the run
-    did; return how many. Windows only, best effort.
+    did; return `(descendants found, ended)`. Windows only, best effort.
 
     Windows keeps a process's parent id after the parent exits, so an orphan
     is still found through a dead intermediate. A process that started before
@@ -239,7 +239,7 @@ def _windows_sweep(root_pid: int, started_filetime: int) -> int:
         kernel32.OpenProcess.restype = wintypes.HANDLE
         snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
         if not snap or snap == wintypes.HANDLE(-1).value:
-            return 0
+            return 0, 0
         parents: dict[int, int] = {}
         try:
             entry = _Entry()
@@ -257,6 +257,14 @@ def _windows_sweep(root_pid: int, started_filetime: int) -> int:
             )
             tree |= frontier
         ended = 0
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [
+            ctypes.POINTER(wintypes.FILETIME)
+        ] * 4
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+        kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
         for pid in tree:
             handle = kernel32.OpenProcess(0x1000 | 0x0001, False, pid)  # QUERY_LIMITED | TERMINATE
             if not handle:
@@ -271,9 +279,9 @@ def _windows_sweep(root_pid: int, started_filetime: int) -> int:
                         ended += 1
             finally:
                 kernel32.CloseHandle(handle)
-        return ended
+        return len(tree), ended
     except Exception:  # pragma: no cover
-        return 0
+        return -1, 0
 
 
 def _filetime_now() -> int:
@@ -281,19 +289,26 @@ def _filetime_now() -> int:
     return int((time.time() + 11644473600) * 10_000_000)
 
 
-def _end_windows_job(job) -> None:
+def _end_windows_job(job) -> str:
+    """Terminate and close the job; say how that went (for `containment`)."""
     try:
         import ctypes
+        from ctypes import wintypes
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.TerminateJobObject(job, 1)
+        kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        ok = kernel32.TerminateJobObject(job, 1)
+        note = "job terminated" if ok else f"TerminateJobObject failed ({ctypes.get_last_error()})"
         kernel32.CloseHandle(job)
-    except Exception:  # pragma: no cover
-        pass
+        return note
+    except Exception as exc:  # pragma: no cover
+        return f"job not terminated: {type(exc).__name__}: {exc}"
 
 
-def _kill_tree(proc: subprocess.Popen, job=None, started_filetime: int | None = None) -> int:
-    """End the run's whole process group; best effort, never raises."""
+def _kill_tree(proc: subprocess.Popen, job=None, started_filetime: int | None = None) -> str:
+    """End the run's whole process group; best effort, never raises. Returns a
+    note on what ended it, for the run's `containment` (empty on POSIX)."""
     if os.name == "posix":
         # SIGTERM first, so the leader can clean up; then SIGKILL for whatever
         # is left. The group itself cannot be polled for "done": an exited
@@ -303,7 +318,7 @@ def _kill_tree(proc: subprocess.Popen, job=None, started_filetime: int | None = 
         try:
             os.killpg(proc.pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError, OSError):
-            return 0  # the group is gone
+            return ""  # the group is gone
         deadline = time.monotonic() + KILL_GRACE_SECONDS
         while proc.poll() is None and time.monotonic() < deadline:
             time.sleep(0.02)
@@ -313,9 +328,10 @@ def _kill_tree(proc: subprocess.Popen, job=None, started_filetime: int | None = 
         except (ProcessLookupError, PermissionError, OSError):
             pass
     else:  # pragma: no cover - exercised on Windows only (the native CI job)
+        notes = []
         if job is not None:
             # Ends every process the run started that is in the job.
-            _end_windows_job(job)
+            notes.append(_end_windows_job(job))
         else:
             try:
                 subprocess.run(
@@ -329,8 +345,10 @@ def _kill_tree(proc: subprocess.Popen, job=None, started_filetime: int | None = 
         # job can allow that silently), and taskkill cannot find an orphan
         # whose parent has exited. The sweep finds both by parent id.
         if started_filetime is not None:
-            return _windows_sweep(proc.pid, started_filetime)
-    return 0
+            found, ended = _windows_sweep(proc.pid, started_filetime)
+            notes.append(f"sweep: {found} descendant(s) found, {ended} ended")
+        return "; ".join(notes)
+    return ""
 
 
 def run_check(
@@ -379,7 +397,7 @@ def run_check(
 
     kept = bytearray()
     seen = [0]
-    swept = 0
+    kill_notes: list[str] = []
 
     def read() -> None:
         stream = proc.stdout
@@ -406,7 +424,9 @@ def run_check(
     finally:
         # After a timeout this ends the command; after a normal return it ends
         # whatever the command left running in the background.
-        swept += _kill_tree(proc, job, started_filetime)
+        note = _kill_tree(proc, job, started_filetime)
+        if note:
+            kill_notes.append(note)
     try:
         proc.wait(timeout=KILL_GRACE_SECONDS + 1)
     except subprocess.TimeoutExpired:  # pragma: no cover - SIGKILL did not land
@@ -441,8 +461,8 @@ def run_check(
             result.detail = f"exit {code}: the shell could not find or run the command"
         else:
             result.status = PASSED if code == 0 else FAILED
-    if swept:
-        result.containment += f"; {swept} descendant(s) outside it ended by the sweep"
+    if kill_notes:
+        result.containment += "; " + "; ".join(kill_notes)
     if escaped:
         note = "a process that left the group kept the output open and was not ended"
         result.detail = f"{result.detail}; {note}" if result.detail else note

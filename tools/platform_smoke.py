@@ -360,6 +360,17 @@ def _checks(crumb, args, tmp, env, check, observations) -> None:
     child = int(pidfile.read_text()) if pidfile.exists() else None
     time.sleep(1)
     alive = pid_alive(child) if child else None
+    child_info = None
+    if alive and os.name == "nt":
+        # Which process survived, and whose child it was: the evidence a fix needs.
+        query = (
+            f"Get-CimInstance Win32_Process -Filter 'ProcessId={child}' | "
+            "Select-Object ProcessId,ParentProcessId,Name,CommandLine,CreationDate | ConvertTo-Json"
+        )
+        info = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", query], capture_output=True, text=True
+        )
+        child_info = info.stdout.strip()[:800] or info.stderr.strip()[:300]
     if alive:  # record it, then end it so it cannot hold the directory
         kill = (
             ["taskkill", "/F", "/T", "/PID", str(child)]
@@ -381,6 +392,7 @@ def _checks(crumb, args, tmp, env, check, observations) -> None:
         child_alive=alive,
         report_chars=len(text),
         containment=containment,
+        child_info=child_info,
         stderr=err.decode(errors="replace")[-300:],
     )
 
