@@ -433,6 +433,39 @@ name rather than silently written.
 
 ---
 
+## Versioned contract (audit WP17)
+
+`mcp_core.contract()` states what a client can rely on:
+- each tool's name and parameters, and whether it writes;
+- advisory annotations;
+- the resources and prompts;
+- the error envelope.
+
+`MCP_CONTRACT_VERSION` is `1`. `tests/test_adapter_contracts.py` pins it to
+`tests/fixtures/mcp_contract_v1.json` and holds the live server to it on both
+SDK majors (the CI `mcp` job). A change is a version bump, never a drift.
+
+- **Envelope.** Every tool answers a JSON object with `ok`.
+  - On failure it carries `error` (a string).
+  - A policy refusal adds `refused_by: "policy"`.
+  - A near-duplicate refusal is `error: "near-duplicate"`, with
+    `duplicates` and `message`.
+  - With no store, every tool returns `{ok: false, error}`.
+  - A resource template that names no record is an error, never an empty
+    success.
+- **Annotations.** `readOnlyHint`, `destructiveHint`, `idempotentHint` and
+  `openWorldHint` are advisory, for a client's approval UI. **They are not
+  access control**: the store's policy (`security.md` §4) decides what a call
+  may do.
+  - Read-only: `memory_search`, `memory_guard_before_action`,
+    `memory_build_resume_packet`, `memory_validate`, `memory_show` and
+    `memory_scan_secrets`. "Read-only" means no record changes; the guard and
+    the packet still update machine-local usage counts.
+  - `memory_mark_status` is marked destructive, because it changes what memory
+    authorizes. `memory_reindex` and `memory_mark_status` are idempotent.
+  - An SDK whose `tool()` takes no `annotations` (early 1.x) serves the tools
+    without them.
+
 ## Safety posture
 
 - **Data, not instruction.** Memory content returned over MCP is context about

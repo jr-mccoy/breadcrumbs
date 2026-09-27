@@ -557,6 +557,40 @@ with another store's aliases when two were in use at once.
   captured before the extraction: ids, scores, verdicts, packets, envelopes,
   exit codes and generated files all match.
 
+### Changed — adapters, the MCP contract and native platforms are qualified (audit WP17)
+
+Finding F22. The guard hook's matcher named six tools and translated them by
+hand. A `PowerShell` call became an empty action, and `NotebookEdit` was not
+guarded. The MCP surface had no versioned contract. Every CI job ran on
+Ubuntu.
+
+- **`breadcrumbs/adapters/claude.py`.**
+  - It declares every guarded tool: `Bash`, `PowerShell`, `Edit`, `Write`,
+    `MultiEdit`, `NotebookEdit`, `Task` and `Agent`.
+  - It declares the ignored ones (reads, searches, web fetches).
+  - It normalizes each guarded tool's documented input into an action.
+  - An unknown tool is reported as unsupported, never guessed at.
+  - The installed `PreToolUse` matcher is built from the declaration.
+    Re-running `crumb init --with-hooks` updates an existing install.
+- **A versioned MCP contract.** `mcp_core.contract()` (version 1) states the
+  tools, parameters, advisory annotations, resources, prompts and error
+  envelope, pinned by a test fixture.
+  - The server now attaches the annotations (`readOnlyHint`,
+    `destructiveHint`, …) on SDKs that accept them.
+  - They are hints for a client's UI, not access control.
+- **Native platforms.**
+  - A `native` CI job on Windows and macOS (Python 3.9 and 3.13) builds the
+    wheel, installs it into a fresh venv, and runs `tools/platform_smoke.py`
+    against the installed `crumb`.
+  - The smoke test covers quoting and Unicode paths, guard exit codes, a
+    PowerShell hook payload, lock contention, atomic replacement, and replay
+    containment.
+- **`docs/compatibility-matrix.md`.** Which host gets which capability, and
+  the evidence for each. Hooks are Claude Code only; other agents get files,
+  the CLI and MCP.
+- **Cross-harness resume is tested.** Claude Code's packet and a hookless MCP
+  client's packet show the same record ids and the same rules in effect.
+
 ## [0.3.1] — 2026-09-27
 
 A hotfix: **an older `crumb` on PATH blocked every prompt.**

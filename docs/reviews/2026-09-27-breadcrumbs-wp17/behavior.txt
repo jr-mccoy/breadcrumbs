@@ -1,0 +1,26 @@
+## before (e2b769c, worktree)
+{
+ "powershell_action": "",
+ "powershell_has_no_action": true,
+ "notebook_action": "",
+ "notebook_edit_has_no_action": true,
+ "guard_matcher": "Bash|Edit|Write|MultiEdit|Task|Agent",
+ "installed_matcher_misses_powershell_or_notebookedit": true,
+ "no_versioned_mcp_contract": true,
+ "mcp_tools_have_no_annotations": true,
+ "no_native_windows_or_macos_job": true,
+ "defects_observed": 6
+}
+## after (this change)
+{
+ "powershell_action": "Remove-Item ./cache -Recurse -Force",
+ "powershell_has_no_action": false,
+ "notebook_action": "edit nb/a.ipynb: x = 1",
+ "notebook_edit_has_no_action": false,
+ "guard_matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Task|Agent",
+ "installed_matcher_misses_powershell_or_notebookedit": false,
+ "no_versioned_mcp_contract": false,
+ "mcp_tools_have_no_annotations": false,
+ "no_native_windows_or_macos_job": false,
+ "defects_observed": 0
+}
