@@ -240,6 +240,8 @@ expires_at: null
 # promoted_to: CLAUDE.md       # decisions, attempts, traps — set by `crumb promote` (§13)
 # promoted_at: 2026-09-22T20:17:34+00:00
 # promoted_rule: <one line>    # only when `crumb promote --rule` overrode the rendered rule
+# promoted_from: jot_20260926_cache-note-1a2b   # set by `crumb inbox promote`
+# promoted_from_digest: sha256:0123456789abcdef  # the jot note it was made from
 tags:
   - memory
   - architecture
@@ -279,6 +281,12 @@ linked by `supersedes` as settled, not as a conflict.
 — a match is shown under `history` instead of driving the verdict. `crumb
 expired` lists such records. Expiry is not a status and nothing rewrites the
 file: record the claim again if it still holds, or `mark-status` it `stale`.
+
+**`promoted_from` / `promoted_from_digest`** name the jot a record was
+promoted from (`crumb inbox promote`), and a digest of that jot's note (the
+first 16 hex digits of its sha256). The note itself is in the record's body, so
+a reader of a committed record does not need the jot, which may be private or
+pruned. Nothing reads these keys to decide anything.
 
 **`promoted_to` / `promoted_at` / `promoted_rule`** (WM-40) say that a
 decision, attempt or trap has been made a standing rule in the long-term tier:

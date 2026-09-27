@@ -362,8 +362,16 @@ def build_server():  # -> FastMCP
         evidence: list[dict] | None = None,
         tags: list[str] | None = None,
         confidence: str | None = None,
+        scope: str | None = None,
+        allow_duplicate: bool = False,
+        supersedes: str | None = None,
     ) -> dict:
-        """Turn a jot into a durable record (wraps `crumb inbox promote`)."""
+        """Turn a jot into a durable record (wraps `crumb inbox promote`).
+
+        The record keeps the jot's note, scope and confidence; `scope="project"`
+        widens a branch jot and `confidence` raises it. Refused as a
+        near-duplicate unless `allow_duplicate` or `supersedes`.
+        """
         return mcp_core.tool_inbox_promote(
             id,
             target,
@@ -373,6 +381,9 @@ def build_server():  # -> FastMCP
             tags=tags,
             confidence=confidence,
             root=_root(),
+            scope=scope,
+            allow_duplicate=allow_duplicate,
+            supersedes=supersedes,
         )
 
     @mcp.tool()

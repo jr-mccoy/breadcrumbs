@@ -55,7 +55,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `show <id>` | one record, trap, question or jot | the full text (read-only) | Print the body behind a one-line mention. Takes any id the tool prints — `dec_`/`att_`/`ver_`/`idea_`/`ses_`/`jot_`, `trap_…`, `q_…` (legacy `q:…` accepted) — and adds a `See also:` line from `generated/related.json`. Exit 1 with `CRUMB-ERROR` on an unknown id. See `show` below. | **built (WM-21)** |
 | `jot "<text>"` | user input, git state | a jot under `inbox/` or `private/inbox/` | The short-term tier: one observation, a TTL (`ttl_jot_days`, or the older `jot_ttl_days`; default 14), and **no evidence rule**. `--file PATH` becomes file evidence so the note can be found again; `--local` writes to `private/inbox/`, which is never committed and is where every automatic writer must put things. A jot is searchable and never reaches a `guard` verdict. A near-verbatim repeat of a live jot (similarity ≥ 0.9) is refused with exit 3 unless `--allow-duplicate` (no `--supersedes` on a jot). `--scope branch` makes it apply only while the current branch is checked out (default `project`; jots the hooks write default to `branch`). | **built (WM-03)** |
 | `inbox [--all] [--expired]` | `inbox/`, `private/inbox/` | listing (read-only) | Triage queue: live jots newest first, with id, age and source. `--json` rows also carry `scope` and `branch`. | **built (WM-03)** |
-| `inbox promote <id> <type>` | one jot | a decision / attempt / verification / trap / question / idea, + the jot | Turn a jot into a durable record **through that type's normal writer**, so the evidence rule and the validate gate apply exactly as they would to a record written by hand. The jot's file evidence and tags carry over; the jot is marked `superseded` with `superseded_by`, never deleted. | **built (WM-03)** |
+| `inbox promote <id> <type>` | one jot | a decision / attempt / verification / trap / question / idea, + the jot | Turn a jot into a durable record **through that type's normal writer**, so the evidence rule, the near-duplicate gate (`--allow-duplicate`, `--supersedes ID`, exit 3) and the validate gate apply exactly as they would to a record written by hand. The promotion preserves meaning (audit F03). The jot's note becomes the body (a decision's `Decision`, an attempt's `Result`, an idea's `Idea`, a verification's, trap's or question's `Notes`); when `--set` or the trap flags supply other text, the note is kept as a `From jot <id>: …` paragraph. The record also takes the jot's scope and confidence, `promoted_from` and `promoted_from_digest`, and its file evidence and tags. `--scope project` widens a branch jot and `--confidence` raises it. The output names the scope and confidence written, and says when a private jot's text is now committed; a private jot carrying a credential-shaped string is refused. The jot is marked `superseded` with `superseded_by` only after the record is written, and never deleted. | **built (WM-03)** |
 | `inbox drop <id>` | one jot | status change | Retire a jot as noise (`rejected`). Kept as history; `prune jots` deletes. | **built (WM-03)** |
 | `migrate [--dry-run]` | `manifest.yml`, the store | store format + `manifest.yml` | Bring the store's on-disk format up to this build's `schema_version`. Steps are ordered and idempotent, the manifest is written after each one (so a failure halts at the last completed version), and the whole store is copied to `private/migrations/<timestamp>/` first. `validate` fails with `run \`crumb migrate\`` on an older store and `upgrade crumb-kit` on a newer one. See `migrate` below for the steps. | **built (WM-01)** |
 | `usage [--never \| --sessions \| --decay [DAYS]] [--top N]` | `private/usage.json` | report (read-only) | Which records actually get **shown** — a packet printed or injected, a guard verdict, a hook advisory. Counts are local to the machine and never committed. `--never` lists active records nothing has ever reached; `--sessions` orders by distinct sessions instead of raw count; `--decay` lists old records nothing has surfaced lately, with the `mark-status … stale` command for each (it never runs them). The three are mutually exclusive. See [`usage`](#usage-built-wm-02-wm-60). | **built (WM-02, WM-60)** |
@@ -806,8 +806,8 @@ similar first. Under `--json` the refusal is `{ok: false, command, error:
 - **`--allow-duplicate`** writes the record anyway.
 - An **exact repeat** — the same question text, the same trap slug — keeps its
   existing exit-1 error (`… reopen it with \`crumb mark-status <id> open\``).
-- Internal writers (`inbox promote`, migrations, the transcript miner) are not
-  gated. The MCP writers are: see [`mcp-spec.md`](mcp-spec.md).
+- `inbox promote` is gated like `remember` (audit F03). Other internal writers
+  (migrations, the transcript miner) are not gated. The MCP writers are: see [`mcp-spec.md`](mcp-spec.md).
 
 Records that predate the gate are found by `audit` (`near-duplicates`) and
 grouped by `consolidate`.
@@ -1135,7 +1135,8 @@ existing `branch` field, derived from git at write time.
 - **Still visible:** the record stays on disk and in `search` (the `--json`
   match carries `scope`), `show`, `crumb inbox` (`--json` rows carry `scope`
   and `branch`) and `expired`. `jot --json` echoes the `scope` written.
-- `inbox promote` writes the durable record with the default `project` scope.
+- `inbox promote` keeps the jot's scope; `--scope project` widens a branch jot,
+  and the output says it did.
 
 ---
 

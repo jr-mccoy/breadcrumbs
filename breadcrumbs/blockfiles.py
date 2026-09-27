@@ -304,7 +304,10 @@ def write_trap(
     promoted_to: str | None = None,
     superseded_by: str | None = None,
     validate: bool = True,
+    meta_extra: dict | None = None,
 ) -> dict:
+    """Write one trap file. `meta_extra` sets further frontmatter (scope,
+    confidence, promotion provenance); a None value leaves the default."""
     sections = {
         "Area / files": area or "",
         "Symptom": symptom or "",
@@ -324,6 +327,7 @@ def write_trap(
         agent=agent,
         created_at=created_at,
         extra={
+            **(meta_extra or {}),
             "last_confirmed": last_confirmed,
             "superseded_by": superseded_by,
             "promoted_to": promoted_to,
@@ -345,7 +349,9 @@ def write_question(
     created_at: str | None = None,
     superseded_by: str | None = None,
     validate: bool = True,
+    meta_extra: dict | None = None,
 ) -> dict:
+    """Write one question file. `meta_extra` as on `write_trap`."""
     sections = {
         "Question": text,
         "Why it matters": why or "",
@@ -362,7 +368,7 @@ def write_question(
         status=status or "open",
         agent=agent,
         created_at=created_at,
-        extra={"superseded_by": superseded_by},
+        extra={**(meta_extra or {}), "superseded_by": superseded_by},
         validate=validate,
     )
 

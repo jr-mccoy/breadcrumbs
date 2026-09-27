@@ -3960,8 +3960,10 @@ def _note_as_file(
             text,
             why=fields.get("why"),
             needs=fields.get("needs"),
+            notes=fields.get("notes"),
             status=qstatus,
             agent=agent,
+            meta_extra=fields.get("meta"),
         )
         if not written.get("ok"):
             return written
@@ -3995,7 +3997,9 @@ def _note_as_file(
             why=fields.get("why"),
             safe=fields.get("safe"),
             verify=fields.get("verify"),
+            notes=fields.get("notes"),
             agent=agent,
+            meta_extra=fields.get("meta"),
         )
         if not written.get("ok"):
             return written
@@ -4398,6 +4402,7 @@ def verify(
     dedupe: bool = False,
     supersedes: str | None = None,
     scope: str | None = None,
+    extra: dict | None = None,
 ) -> dict:
     """Record a verification result — a finding about reality.
 
@@ -4477,6 +4482,7 @@ def verify(
             agent=agent,
             scope=scope,
             extra={
+                **(extra or {}),
                 "subject": subject,
                 "outcome": status,
                 "method": method,
@@ -10588,7 +10594,12 @@ def cmd_inbox(args: argparse.Namespace) -> int:
             method=args.method,
             fields={"why": args.why, "area": args.area, "safe": args.safe},
             agent=args.agent,
+            scope=args.scope,
+            allow_duplicate=args.allow_duplicate,
+            supersedes=args.supersedes,
         )
+        if result.get("error") == "near-duplicate":
+            return _emit_duplicate(args, result)
         if not result.get("ok"):
             _emit_error(args, result.get("error", "promote failed"))
             return 1
@@ -10598,6 +10609,10 @@ def cmd_inbox(args: argparse.Namespace) -> int:
             print(f"Promoted {result['jot']} -> {result['promoted_to']} ({result['type']})")
             if result.get("path"):
                 print(f"  file: {result['path']}")
+            widened = " (widened from branch)" if result.get("scope_widened") else ""
+            print(f"  scope: {result['scope']}{widened} · confidence: {result['confidence']}")
+            if result.get("from_private"):
+                print("  note: the jot was private; its text is now in committed memory")
             if result.get("warning"):
                 print(f"  warning: {result['warning']}")
         return 0
@@ -13130,7 +13145,19 @@ def _add_inbox(sub, global_parser: argparse.ArgumentParser) -> None:
         help="evidence on the new record (repeatable); the jot's own file evidence carries over",
     )
     pp.add_argument("--tags", help="comma-separated tags to add")
-    pp.add_argument("--confidence", choices=("low", "medium", "high"), default=None)
+    pp.add_argument(
+        "--confidence",
+        choices=("low", "medium", "high"),
+        default=None,
+        help="raise the record's confidence (default: the jot's, which is low)",
+    )
+    pp.add_argument(
+        "--scope",
+        choices=RECORD_SCOPES,
+        default=None,
+        help="the record's scope (default: the jot's; `project` widens a branch jot)",
+    )
+    _add_duplicate_flags(pp)
     pp.add_argument(
         "--status",
         default=None,

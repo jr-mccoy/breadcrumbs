@@ -725,12 +725,17 @@ def tool_inbox_promote(
     tags: list[str] | None = None,
     confidence: str | None = None,
     root: str | Path | None = None,
+    scope: str | None = None,
+    allow_duplicate: bool = False,
+    supersedes: str | None = None,
 ) -> dict:
     """`memory_inbox_promote` — wraps `breadcrumbs.inbox.promote_jot`.
 
     Turns a jot into a durable record through the normal writer for that type,
-    so the evidence rule and the validate gate apply exactly as they would to a
-    record written directly. The jot is marked superseded, not deleted.
+    so the evidence rule, the near-duplicate gate and the validate gate apply
+    exactly as they would to a record written directly. The record keeps the
+    jot's note, scope and confidence unless `scope` / `confidence` say otherwise.
+    The jot is marked superseded, not deleted.
     """
     from breadcrumbs import inbox as _inbox
 
@@ -749,6 +754,9 @@ def tool_inbox_promote(
             tags=tags or [],
             confidence=confidence,
             agent=_agent_label(),
+            scope=scope,
+            allow_duplicate=allow_duplicate,
+            supersedes=supersedes,
         ),
         mem,
     )

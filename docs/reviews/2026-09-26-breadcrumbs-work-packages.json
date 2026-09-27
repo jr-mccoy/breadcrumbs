@@ -472,7 +472,7 @@
       "title": "Make transcript outcome detection truthful",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP00"
       ],
@@ -506,6 +506,10 @@
           "summary": "ToolCall gains result_received and outcome (success|failure|interrupted|not_run|unknown); classification uses harness signals first, then the full output (failure for test/lint/build commands, unknown for others), zero counts excepted, excerpt cut after. Attempts need an observed failure and later success and are worded as a sequence, not a cause; only successful edits count. tests/test_transcript_outcomes.py: 22 tests. Full suite 1187 OK; transcript/hook tests OK on 3.9; transcript_results and split_pair probes no longer observed; on this session's real transcript the only candidate change is removing one false 'passed'.",
           "compatibility": "No schema/store/CLI change. Attempt titles change (fingerprints of in-flight sessions may write one duplicate private jot). Fewer, more accurate candidates.",
           "limitations": "Cross-firing call/result join remains WP09 (split_pair is only partly fixed). Verdict-command allowlist; English-only failure vocabulary; Claude Code transcript shape only."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP02 approved, start WP03\")."
         }
       ]
     },
@@ -514,7 +518,7 @@
       "title": "Make jot promotion lossless and scope-preserving",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP01"
       ],
@@ -541,7 +545,16 @@
         "`test_failed_target_leaves_source_live`"
       ],
       "done_when": "A reader of the new durable record can recover the original substantive information, its uncertainty, and its scope without access to an omitted private body.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "7fc3b50",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp03/README.md",
+          "summary": "promote_jot carries the jot note into every target (primary section, or a 'From jot <id>' provenance paragraph beside caller sections), records promoted_from/promoted_from_digest, inherits scope and confidence unless explicitly widened/raised (reported), applies the near-duplicate gate with allow_duplicate/supersedes on all targets, refuses publishing a private jot with a structured credential, and retires the jot only after the target is valid. CLI and MCP gain scope/allow-duplicate/supersedes. tests/test_promotion_contract.py: 13 tests. Full suite 1200 OK; MCP tests OK with SDK 2.2.0; jot_promotion_loss probe no longer observed.",
+          "compatibility": "Additive frontmatter keys; promoted records keep low confidence and branch scope by default; a no-evidence jot now promotes at low instead of being refused; promotion can be refused as a near-duplicate (exit 3).",
+          "limitations": "Private-to-shared is authorized by the promote act itself (disclosed, secrets refused); a stricter --share flag is a WP14 policy decision. Not atomic (WP06). Schema-2 block traps/questions do not carry inherited metadata."
+        }
+      ]
     },
     {
       "id": "WP04",

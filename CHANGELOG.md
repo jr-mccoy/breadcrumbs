@@ -46,6 +46,44 @@ fixture already met the contract. A store that does not will see `crumb
 validate`, and any CI step that runs it, fail until those records are corrected
 by hand.
 
+### Changed — truthful transcript outcomes (audit WP02)
+
+Finding F01. The transcript miner turned uncertain tool calls into claims. A
+call with no result counted as a pass; a failure printed after the first 400
+characters of output was missed; `0 failed` read as a failure; and attempt
+candidates claimed a cause.
+
+- **Every tool call gets an outcome:** `success`, `failure`, `interrupted`,
+  `not_run` (a `<tool_use_error>` refusal or a rejected tool use) or `unknown`.
+  The harness's own signals decide first, then the whole output.
+- **Failure words in the output mean `failure` only for a test, lint or build
+  command.** Elsewhere they mean `unknown`: a `grep` that found "error:" has not
+  failed. Zero counts such as `0 failed` are not failures.
+- **Only `success` is "passed".** An attempt needs an observed failure and a
+  later observed success, and is worded "failed, then passed after N file(s)
+  changed" (not shown to be the fix). Only edits that succeeded count.
+
+### Changed — jot promotion preserves meaning (audit WP03)
+
+Finding F03. `crumb inbox promote` without `--set` wrote an empty stub, so the
+jot's note was not in the record. The record also came out `scope: project`
+and `confidence: medium` whatever the jot was, and skipped the near-duplicate
+gate.
+
+- **The note is carried into every target:** a decision's `Decision`, an
+  attempt's `Result`, an idea's `Idea`, or `Notes` for a verification, trap or
+  question. When `--set` or the trap flags supply other text, the note is kept
+  as a `From jot <id>: …` paragraph. New frontmatter keys `promoted_from` and
+  `promoted_from_digest` name the source.
+- **Scope and confidence are inherited.** `--scope project` widens a branch jot
+  and `--confidence` raises it; both are reported. So a jot with no evidence now
+  promotes as a `low`-confidence record, where it used to be refused for
+  lacking evidence at the implied `medium`.
+- **The near-duplicate gate applies**, with `--allow-duplicate` and
+  `--supersedes ID` (exit 3), and the MCP tool takes the same parameters.
+- **Private jots are guarded.** The output says when a private jot's text is now
+  committed, and a private jot carrying a credential-shaped string is refused.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

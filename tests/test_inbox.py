@@ -342,7 +342,12 @@ class PromoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             rid = jot(tmp, "a claim with nothing behind it")
-            code, _ = run(["inbox", "promote", rid, "decision", "--project", tmp])
+            # A jot is `low` and a promotion keeps that (audit F03), which the
+            # evidence rule allows. Claiming more than that without evidence is
+            # still refused.
+            code, _ = run(
+                ["inbox", "promote", rid, "decision", "--project", tmp, "--confidence", "medium"]
+            )
             self.assertEqual(code, 1)
             # Nothing was left behind, and the jot is still promotable.
             self.assertEqual(crumb.load_records(mem, types=("decision",)), [])

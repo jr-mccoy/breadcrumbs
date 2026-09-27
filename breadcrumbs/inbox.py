@@ -29,6 +29,7 @@ through `crumb inbox`, and through the hooks that wrote them.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -338,6 +339,49 @@ def packet_jots(memory_dir: Path) -> list[dict]:
 # --------------------------------------------------------------------------- #
 
 
+# Where a jot's text lands in the record it becomes (audit F03). With no
+# sections given, the note *is* the body, in the section the resume packet
+# reads for that type (a decision's `Decision`) or, where the only packet
+# section would claim a cause the note never stated (an attempt's `Why It
+# Failed`), in the neutral one. With sections given, the note is kept as a
+# provenance paragraph in `_SOURCE_SECTION` unless a section already quotes it.
+_PRIMARY_SECTION = {"decision": "Decision", "attempt": "Result", "idea": "Idea"}
+_SOURCE_SECTION = {"decision": "Context", "attempt": "Problem", "idea": "Motivation"}
+
+
+def _source_line(jot_id: str, text: str) -> str:
+    return f"From jot {jot_id}: {text}"
+
+
+def _carry_text(rtype: str, sections: dict, jot_id: str, text: str) -> dict:
+    """`sections` with the jot's text guaranteed to be in them."""
+    sections, _notes = cli.normalize_sections(rtype, sections or {})
+    filled = {k: v for k, v in sections.items() if str(v or "").strip()}
+    if not filled:
+        return {_PRIMARY_SECTION[rtype]: text}
+    if any(text in str(v) for v in filled.values()):
+        return filled
+    key = _SOURCE_SECTION[rtype]
+    line = _source_line(jot_id, text)
+    filled[key] = f"{filled[key].rstrip()}\n\n{line}" if filled.get(key) else line
+    return filled
+
+
+def _carry_into(existing: str | None, jot_id: str, text: str) -> str:
+    """A single notes field that keeps the jot's text (verification, trap, question)."""
+    existing = (existing or "").strip()
+    if not existing:
+        return text
+    if text in existing:
+        return existing
+    return f"{existing} {_source_line(jot_id, text)}"
+
+
+def jot_digest(text: str) -> str:
+    """The revision of a jot's note a promoted record was made from."""
+    return "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
 def promote_jot(
     memory_dir: Path,
     project_root: Path,
@@ -353,19 +397,36 @@ def promote_jot(
     status: str | None = None,
     method: str | None = None,
     agent: str | None = None,
+    scope: str | None = None,
+    allow_duplicate: bool = False,
+    supersedes: str | None = None,
 ) -> dict:
     """Turn a jot into a durable record, then supersede the jot.
 
     Promotion goes through the *existing* writer for the target type, so the
-    evidence rule, the body vocabulary and the validate gate all apply exactly as
-    they would to a record written by hand. A jot is a shortcut into memory, not
-    a shortcut around its contract.
+    evidence rule, the body vocabulary, the near-duplicate gate and the validate
+    gate all apply exactly as they would to a record written by hand. A jot is a
+    shortcut into memory, not a shortcut around its contract.
+
+    **It preserves meaning (audit F03).** The new record carries:
+
+    - the jot's full note, as its body or as a provenance paragraph beside the
+      sections the caller wrote;
+    - its source, as `promoted_from` and `promoted_from_digest`;
+    - its scope and confidence.
+
+    Widening `branch` to `project`, or raising confidence, happens only when the
+    caller asks for it (`scope=`, `confidence=`), and the result reports it.
 
     The jot is marked `superseded` with `superseded_by` pointing at the new
-    record rather than deleted: that is how every other retirement in this store
-    works, and it leaves the trail from the one-line observation to the record it
-    became. Promoting a *private* jot is what moves its content into committed
-    memory; the jot file itself stays private.
+    record, and only after the new record is written and valid. It is never
+    deleted: that is how every other retirement in this store works, and it
+    leaves the trail from the one-line observation to the record it became.
+
+    Promoting a *private* jot is what moves its content into committed memory.
+    The result says so (`from_private`), and a note carrying a structured
+    credential is refused rather than published. The jot file itself stays
+    private.
     """
     memory_dir = Path(memory_dir)
     project_root = Path(project_root)
@@ -383,11 +444,29 @@ def promote_jot(
             "error": f"{jot_id} is already {rec.meta.get('status')}; only an active jot promotes",
         }
 
+    source_id = rec.meta.get("id") or rec.stem
+    text = jot_text(rec)
     new_title = (title or jot_title(rec)).strip()
+    private = is_private(memory_dir, rec)
+    if private and cli.secret_pattern_hits(f"{text}\n{new_title}"):
+        return {
+            "ok": False,
+            "error": f"{source_id} carries a credential-shaped string; promoting it would "
+            "publish that into committed memory, so it stays private. Promote with "
+            "--title and --set text that leaves the secret out, or drop the jot.",
+        }
+    jot_scope = str(rec.meta.get("scope") or "project")
+    new_scope = scope or jot_scope
+    new_confidence = confidence or str(rec.meta.get("confidence") or "low")
+    provenance = {"promoted_from": source_id, "promoted_from_digest": jot_digest(text)}
+
     # The jot's own file evidence and tags carry over: they are what made it
     # findable, and a promotion that dropped them would produce a record the
     # guard can reach less well than the note it replaced.
-    merged_evidence = list(rec.meta.get("evidence") or []) + list(evidence or [])
+    merged_evidence = list(rec.meta.get("evidence") or [])
+    for ref in evidence or []:
+        if ref not in merged_evidence:
+            merged_evidence.append(ref)
     merged_tags = sorted({*(rec.meta.get("tags") or []), *(tags or [])})
 
     if target in ("decision", "attempt", "idea"):
@@ -396,11 +475,15 @@ def promote_jot(
             project_root,
             target,
             new_title,
-            sections or {},
+            _carry_text(target, sections or {}, source_id, text),
             evidence=merged_evidence,
             tags=merged_tags,
-            confidence=confidence,
+            confidence=new_confidence,
+            scope=new_scope,
             agent=agent,
+            extra=provenance,
+            allow_duplicate=allow_duplicate,
+            supersedes=supersedes,
         )
     elif target == "verification":
         result = cli.verify(
@@ -409,29 +492,40 @@ def promote_jot(
             new_title,
             status=status or "open",
             method=method,
-            note=(sections or {}).get("Notes"),
+            note=_carry_into((sections or {}).get("Notes"), source_id, text),
             evidence=merged_evidence,
             tags=merged_tags,
-            confidence=confidence,
+            confidence=new_confidence,
             agent=agent,
+            scope=new_scope,
+            extra=provenance,
+            dedupe=not allow_duplicate,
+            supersedes=supersedes,
         )
     else:  # trap | question
+        fields = {k: v for k, v in (fields or {}).items() if v not in (None, "")}
+        quoted = text == new_title or any(text in str(v) for v in fields.values())
+        if not quoted:
+            fields["notes"] = _carry_into(fields.get("notes"), source_id, text)
+        fields["meta"] = {"scope": new_scope, "confidence": new_confidence, **provenance}
         result = cli.note(
             memory_dir,
             project_root,
             target,
             new_title,
-            fields=fields or {},
+            fields=fields,
             tags=merged_tags,
             agent=agent,
+            dedupe=not allow_duplicate,
+            supersedes=supersedes,
         )
     if not result.get("ok"):
-        return result
+        return result  # the jot stays live: nothing was promoted
 
     new_id = result.get("id") or result.get("ref")
     marked = cli.set_record_status(
         memory_dir,
-        rec.meta.get("id") or rec.stem,
+        source_id,
         "superseded",
         reason=f"promoted to {new_id}",
         superseded_by=new_id,
@@ -439,11 +533,18 @@ def promote_jot(
     )
     out = {
         "ok": True,
-        "jot": rec.meta.get("id") or rec.stem,
+        "jot": source_id,
         "promoted_to": new_id,
         "type": target,
         "path": result.get("path"),
+        "scope": new_scope,
+        "confidence": new_confidence,
+        "from_private": private,
+        "scope_widened": jot_scope == "branch" and new_scope == "project",
     }
+    for key in ("supersedes", "demoted"):
+        if result.get(key):
+            out[key] = result[key]
     if not marked.get("ok"):
         # The record exists and is valid; only the back-reference failed. Say so
         # rather than claiming a clean promotion — a jot left active will be
@@ -466,9 +567,38 @@ def _promote_to_record(
     evidence: list[dict],
     tags: list[str],
     confidence: str | None,
+    scope: str | None,
     agent: str | None,
+    extra: dict,
+    allow_duplicate: bool,
+    supersedes: str | None,
 ) -> dict:
-    """`remember`'s write path, reused: write, validate, revert on failure."""
+    """`remember`'s write path, reused: duplicate gate, write, validate, revert on failure."""
+    from breadcrumbs import lifecycle as _lifecycle
+
+    problem = _lifecycle.check_supersedes(memory_dir, rtype, supersedes)
+    if problem:
+        return {"ok": False, "error": problem}
+    if not supersedes and not allow_duplicate:
+        dups = _lifecycle.find_near_duplicates(
+            memory_dir,
+            rtype,
+            title,
+            "\n".join(str(v) for v in sections.values()),
+            files=[
+                e["ref"]
+                for e in evidence
+                if isinstance(e, dict) and e.get("type") in ("file", "path")
+            ],
+            tags=tags or (),
+        )
+        if dups:
+            return {
+                "ok": False,
+                "error": "near-duplicate",
+                "duplicates": dups,
+                "message": _lifecycle.duplicate_message(dups),
+            }
     try:
         path, meta = cli.write_record(
             memory_dir,
@@ -479,7 +609,9 @@ def _promote_to_record(
             tags=tags,
             evidence=evidence,
             confidence=confidence,
+            scope=scope,
             agent=agent,
+            extra={**extra, "supersedes": [supersedes] if supersedes else None},
         )
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
@@ -494,7 +626,13 @@ def _promote_to_record(
                 + " — pass --evidence or --confidence low"
             ),
         }
-    return {"ok": True, "id": meta["id"], "path": str(path), "type": rtype}
+    out = {"ok": True, "id": meta["id"], "path": str(path), "type": rtype}
+    if supersedes:
+        results = _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=agent)
+        out["supersedes"] = [supersedes]
+        if _lifecycle.demoted_ids(results):
+            out["demoted"] = _lifecycle.demoted_ids(results)
+    return out
 
 
 def drop_jot(

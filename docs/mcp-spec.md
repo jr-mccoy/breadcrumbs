@@ -147,7 +147,7 @@ current instruction, the code, the tests, or authoritative docs.
 | `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?, allow_duplicate?, supersedes?, scope?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, expires_at, path, supersedes?}` or `{ok:false, error}` |
 | `memory_note` | `(kind, text, fields?, tags?, allow_duplicate?, supersedes?)` | `cli.note` | `{ok, kind, ref|id, path, supersedes?}` or `{ok:false, error}` |
 | `memory_jot` | `(text, tags?, files?, local?, allow_duplicate?, scope?)` | `inbox.write_jot` + validate gate, reindex | `{ok, kind, id, path, local, expires_at, source, scope}` or `{ok:false, error}` |
-| `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path}` or `{ok:false, error}` |
+| `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?, scope?, allow_duplicate?, supersedes?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path, scope, confidence, from_private, scope_widened, supersedes?}` or `{ok:false, error}` (a near-duplicate carries `duplicates` and `message`) |
 | `memory_reindex` | `()` | `cli.reindex_projections` | `{ok, path}` |
 | `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
 | `memory_build_resume_packet` | `(task?)` | `cli.build_resume_packet` | `{ok, …packet}` (`task` is passed to the engine: scoped `likely_files`, echoed `requested_task`, `starting cold` label, list sections ordered by relevance with `ordering: "relevance"` — identical to `crumb resume --task`) |
@@ -244,8 +244,9 @@ carries `supersedes: [id]` (trap and question files do not carry the key), the
 old one is marked `superseded` with `superseded_by` (a question: `closed`), and
 the result echoes `supersedes`. An exact repeat of a question's text or a
 trap's slug keeps its own error (reopen the existing one with
-`memory_mark_status`). `memory_inbox_promote` is not gated: it goes through the
-internal writers, which write what they are given.
+`memory_mark_status`). `memory_inbox_promote` is gated the same way. The record
+it writes keeps the jot's note, scope and confidence unless `scope` or
+`confidence` says otherwise (`cli-spec.md` → `inbox promote`).
 
 **No lifecycle-command tools.** `crumb verify --recheck` has no MCP
 equivalent, on purpose: it runs shell commands taken from the store, which is a
