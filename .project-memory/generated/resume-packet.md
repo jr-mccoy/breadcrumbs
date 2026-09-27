@@ -1,12 +1,12 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 22907a1 | inputs_hash: 01091254b3c7 | generated_at: 2026-09-27T20:41:09+00:00 -->
-<!-- view: markdown | budget: 3498/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: af135ab | inputs_hash: 7a7148336d17 | generated_at: 2026-09-27T21:08:26+00:00 -->
+<!-- view: markdown | budget: 3545/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `22907a1` · 8 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `af135ab` · 1 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
@@ -14,7 +14,13 @@ Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting revi
 ## Next Action
 WP21 is at review_required (commit 22907a1; 0.3.1 merged in 751283f). Wait for operator approval; then mark WP21 completed in the tracker and start WP14 (next in the roadmap's single-agent order: WP14 -> WP15 -> WP16 ...). WP14 must follow docs/compatibility.md section 4: review profiles ship as a schema bump plus a requires: feature, and bump the minor (0.4.0).
 
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- af135ab WP14: review profiles decide who may make memory authoritative
+- 5f5566c Project memory: WP21 decision and session capture
+
 ## Active Decisions
+- `dec_20260927_review-profiles-solo-by-default-team-makes-agent-written` — Proportional: ordinary capture never waits for a person; only the writes that make memory authoritative are gated. Opt-in semantics use requires: instead of a store-wide schema bump.
 - `dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer` — The lock is the one place every committed write already passes, and every caller already handles StoreLocked, so the refusal needs no per-writer code. Released readers (<=0.3.1) cannot be changed, so semantic changes must also be designed to fail safe for them (schema bump, meaning kept out of field… [excerpt: 300 of 456 chars; full text: crumb show dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer]
 - `dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches` — No links at all is the simplest rule to audit and nothing in the tool creates one. Descriptor-relative no-follow opens close the check/use race on POSIX. Raising a sanitized PermissionError, rather than returning placeholder text, keeps a refusal from being mistaken for content. Batching reads per d… [excerpt: 300 of 356 chars; full text: crumb show dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches]
 - `dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest` — A count must mean the host received the record; anything else inflates decay/promotion signals. Event files make acknowledged increments durable without a shared read-modify-write, and the fold's folded_last makes a crash between write and delete harmless. Telemetry never takes the store lock, so it… [excerpt: 300 of 322 chars; full text: crumb show dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest]
@@ -29,8 +35,7 @@ WP21 is at review_required (commit 22907a1; 0.3.1 merged in 751283f). Wait for o
 - `dec_20260924_phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per` — No per-phase release was ever cut. The next minor after 0.2.0 is the honest number for a schema 1->4 jump, and cli.py already said the guard matcher changed in 0.3.0. Numbering it 0.9.0 would imply six releases that never existed.
 - `dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against` — A ranking regression is invisible to unit tests. Building stores through the CLI keeps the eval honest to the current writers.
 - `dec_20260922_the-user-pre-approves-store-migrations-of-this-repo-s-own` — The user said (2026-09-22): 'I approve any migration.' A crumb migrate of this repo's own store may proceed without asking again; still run guard, back up (migrate does), validate after, and commit the result.
-- `dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store` — Every writer reindexes, so per-writer locking would take the lock many times per command and still not cover multi-writer sequences like capture. Hooks must never block the host. A feature branch's next action must not be what a session on main reads first.
-_(… 28 more omitted to stay within the per-section cap)_
+_(… 29 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -52,6 +57,9 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (5d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/admission.py
+- tests/test_admission_policy.py
+- docs/reviews/2026-09-27-breadcrumbs-wp14/README.md
 - docs/compatibility.md
 - breadcrumbs/compat.py
 - tests/test_store_upgrade_contract.py
@@ -69,10 +77,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - docs/reviews/2026-09-27-breadcrumbs-wp11/README.md
 - breadcrumbs/retrieval.py
 - docs/reviews/2026-09-27-breadcrumbs-wp10/README.md
-- evals/run.py
-- evals/critical/cases.yml
-- docs/reviews/2026-09-27-breadcrumbs-wp18/README.md
-_(… 29 more omitted to stay within the per-section cap)_
+_(… 32 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -106,7 +111,7 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 2 commit(s) behind current HEAD.
 - active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 22 days old with no update — is this still true?
 - active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 22 days old with no update — is this still true?
 - active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 22 days old with no update — is this still true?
