@@ -206,82 +206,149 @@ def _windows_job(proc: subprocess.Popen):
         return None, f"{type(exc).__name__}: {exc}"
 
 
-def _windows_sweep(root_pid: int, started_filetime: int) -> tuple[int, int]:
-    """End every process descended from `root_pid` that started after the run
-    did; return `(descendants found, ended)`. Windows only, best effort.
+class _WindowsTree:
+    """The processes a run started, tracked while it runs (Windows only).
 
-    Windows keeps a process's parent id after the parent exits, so an orphan
-    is still found through a dead intermediate. A process that started before
-    the run cannot be a descendant (its id could have been reused), so it is
-    never touched.
+    A Job Object does not hold a process that breaks away from it: Python
+    3.13's venv launcher is one, and it outlived its check inside a job on the
+    native CI job. Nor can the tree be recovered afterwards, because once an
+    intermediate process exits, nothing links its orphaned child to the run.
+    So the tree is walked while it is alive: `update()` takes a process
+    snapshot and adds every process whose parent is already tracked and which
+    started after the run did, with its creation time; `end()` terminates each
+    one still alive whose creation time still matches (a reused process id is
+    never touched). `run_check` calls `update()` every `POLL_SECONDS` while
+    the command runs.
+
+    One race remains: a process that starts a child and exits between two
+    polls hides that child. Best effort, never raises.
     """
-    try:
-        import ctypes
-        from ctypes import wintypes
 
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    POLL_SECONDS = 0.1
 
-        class _Entry(ctypes.Structure):
-            _fields_ = [
-                ("dwSize", wintypes.DWORD),
-                ("cntUsage", wintypes.DWORD),
-                ("th32ProcessID", wintypes.DWORD),
-                ("th32DefaultHeapID", ctypes.c_size_t),
-                ("th32ModuleID", wintypes.DWORD),
-                ("cntThreads", wintypes.DWORD),
-                ("th32ParentProcessID", wintypes.DWORD),
-                ("pcPriClassBase", ctypes.c_long),
-                ("dwFlags", wintypes.DWORD),
-                ("szExeFile", ctypes.c_wchar * 260),
-            ]
-
-        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        snap = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
-        if not snap or snap == wintypes.HANDLE(-1).value:
-            return 0, 0
-        parents: dict[int, int] = {}
+    def __init__(self, root_pid: int, started_filetime: int):
+        self.root = root_pid
+        self.started = started_filetime
+        self.known = {root_pid}
+        self.tracked: dict[int, int] = {}  # pid -> creation FILETIME
         try:
-            entry = _Entry()
-            entry.dwSize = ctypes.sizeof(_Entry)
-            ok = kernel32.Process32FirstW(snap, ctypes.byref(entry))
-            while ok:
-                parents[entry.th32ProcessID] = entry.th32ParentProcessID
-                ok = kernel32.Process32NextW(snap, ctypes.byref(entry))
-        finally:
-            kernel32.CloseHandle(snap)
-        tree, frontier = set(), {root_pid}
-        while frontier:
-            frontier = (
-                {pid for pid, ppid in parents.items() if ppid in frontier} - tree - {root_pid}
-            )
-            tree |= frontier
-        ended = 0
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-        kernel32.GetProcessTimes.argtypes = [wintypes.HANDLE] + [
-            ctypes.POINTER(wintypes.FILETIME)
-        ] * 4
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
-        kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
-        for pid in tree:
-            handle = kernel32.OpenProcess(0x1000 | 0x0001, False, pid)  # QUERY_LIMITED | TERMINATE
-            if not handle:
-                continue
+            import ctypes
+            from ctypes import wintypes
+
+            k = ctypes.WinDLL("kernel32", use_last_error=True)
+            k.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+            k.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+            k.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+            k.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+            k.OpenProcess.restype = wintypes.HANDLE
+            k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            k.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+            k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            k.CloseHandle.argtypes = [wintypes.HANDLE]
+            self._k, self._ct, self._wt = k, ctypes, wintypes
+        except Exception:  # pragma: no cover
+            self._k = None
+
+    def _created(self, handle) -> int | None:
+        wt, ct = self._wt, self._ct
+        times = [wt.FILETIME() for _ in range(4)]
+        if not self._k.GetProcessTimes(handle, *(ct.byref(t) for t in times)):
+            return None
+        return (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+
+    def update(self) -> None:
+        if self._k is None:
+            return
+        try:
+            ct, wt, k = self._ct, self._wt, self._k
+
+            class _Entry(ct.Structure):
+                _fields_ = [
+                    ("dwSize", wt.DWORD),
+                    ("cntUsage", wt.DWORD),
+                    ("th32ProcessID", wt.DWORD),
+                    ("th32DefaultHeapID", ct.c_size_t),
+                    ("th32ModuleID", wt.DWORD),
+                    ("cntThreads", wt.DWORD),
+                    ("th32ParentProcessID", wt.DWORD),
+                    ("pcPriClassBase", ct.c_long),
+                    ("dwFlags", wt.DWORD),
+                    ("szExeFile", ct.c_wchar * 260),
+                ]
+
+            snap = k.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+            if not snap or snap == wt.HANDLE(-1).value:
+                return
+            parents: dict[int, int] = {}
             try:
-                created, t1, t2, t3 = (wintypes.FILETIME() for _ in range(4))
-                if kernel32.GetProcessTimes(
-                    handle, *(ctypes.byref(t) for t in (created, t1, t2, t3))
-                ):
-                    when = (created.dwHighDateTime << 32) | created.dwLowDateTime
-                    if when >= started_filetime and kernel32.TerminateProcess(handle, 1):
-                        ended += 1
+                entry = _Entry()
+                entry.dwSize = ct.sizeof(_Entry)
+                ok = k.Process32FirstW(snap, ct.byref(entry))
+                while ok:
+                    parents[entry.th32ProcessID] = entry.th32ParentProcessID
+                    ok = k.Process32NextW(snap, ct.byref(entry))
             finally:
-                kernel32.CloseHandle(handle)
-        return len(tree), ended
-    except Exception:  # pragma: no cover
-        return -1, 0
+                k.CloseHandle(snap)
+            grew = True
+            while grew:
+                grew = False
+                for pid, ppid in parents.items():
+                    if ppid not in self.known or pid in self.known:
+                        continue
+                    handle = k.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+                    if not handle:
+                        continue
+                    try:
+                        created = self._created(handle)
+                    finally:
+                        k.CloseHandle(handle)
+                    # A parent id can be a reused one: only a process that
+                    # started after the run can be the run's.
+                    if created is not None and created >= self.started:
+                        self.known.add(pid)
+                        self.tracked[pid] = created
+                        grew = True
+        except Exception:  # pragma: no cover
+            return
+
+    def end(self) -> tuple[int, int]:
+        """Terminate every tracked process still alive: `(tracked, ended)`."""
+        if self._k is None:
+            return 0, 0
+        ended = 0
+        for pid, created in self.tracked.items():
+            try:
+                handle = self._k.OpenProcess(0x1000 | 0x0001, False, pid)  # + TERMINATE
+                if not handle:
+                    continue
+                try:
+                    # The same process, not a later one with a reused id.
+                    if self._created(handle) == created and self._k.TerminateProcess(handle, 1):
+                        ended += 1
+                finally:
+                    self._k.CloseHandle(handle)
+            except Exception:  # pragma: no cover
+                continue
+        return len(self.tracked), ended
+
+
+def _wait(proc: subprocess.Popen, timeout: float, tree: _WindowsTree | None) -> None:
+    """`proc.wait(timeout)`, updating `tree` while the command runs."""
+    if tree is None:
+        proc.wait(timeout=timeout)
+        return
+    deadline = time.monotonic() + timeout
+    while True:
+        tree.update()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout)
+        try:
+            proc.wait(timeout=min(_WindowsTree.POLL_SECONDS, remaining))
+            tree.update()  # children whose parent is still alive
+            return
+        except subprocess.TimeoutExpired:
+            continue
 
 
 def _filetime_now() -> int:
@@ -306,7 +373,7 @@ def _end_windows_job(job) -> str:
         return f"job not terminated: {type(exc).__name__}: {exc}"
 
 
-def _kill_tree(proc: subprocess.Popen, job=None, started_filetime: int | None = None) -> str:
+def _kill_tree(proc: subprocess.Popen, job=None, tree: _WindowsTree | None = None) -> str:
     """End the run's whole process group; best effort, never raises. Returns a
     note on what ended it, for the run's `containment` (empty on POSIX)."""
     if os.name == "posix":
@@ -341,12 +408,12 @@ def _kill_tree(proc: subprocess.Popen, job=None, started_filetime: int | None = 
                 )
             except (OSError, subprocess.SubprocessError):
                 pass
-        # A job does not hold a child that broke away from it (a CI runner's
-        # job can allow that silently), and taskkill cannot find an orphan
-        # whose parent has exited. The sweep finds both by parent id.
-        if started_filetime is not None:
-            found, ended = _windows_sweep(proc.pid, started_filetime)
-            notes.append(f"sweep: {found} descendant(s) found, {ended} ended")
+        # A job does not hold a process that broke away from it, and taskkill
+        # cannot find an orphan whose parent has exited; the tree tracked
+        # while the command ran has both.
+        if tree is not None:
+            tracked, ended = tree.end()
+            notes.append(f"tracked {tracked} descendant(s), {ended} still running and ended")
         return "; ".join(notes)
     return ""
 
@@ -388,10 +455,11 @@ def run_check(
     except (OSError, ValueError) as exc:
         result.detail = f"could not start: {exc}"
         return result
-    job = None
+    job = tree = None
     if os.name == "nt":  # pragma: no cover - exercised on Windows only
         job, why_not = _windows_job(proc)
         result.containment = "job-object" if job is not None else f"taskkill ({why_not})"
+        tree = _WindowsTree(proc.pid, started_filetime)
     else:
         result.containment = "process-group"
 
@@ -416,7 +484,7 @@ def run_check(
     reader = threading.Thread(target=read, daemon=True)
     reader.start()
     try:
-        proc.wait(timeout=timeout)
+        _wait(proc, timeout, tree)
     except subprocess.TimeoutExpired:
         result.timed_out = True
     except KeyboardInterrupt:
@@ -424,7 +492,7 @@ def run_check(
     finally:
         # After a timeout this ends the command; after a normal return it ends
         # whatever the command left running in the background.
-        note = _kill_tree(proc, job, started_filetime)
+        note = _kill_tree(proc, job, tree)
         if note:
             kill_notes.append(note)
     try:
