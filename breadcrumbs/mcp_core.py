@@ -152,17 +152,27 @@ def _data_tree(fn):
     return wrapper
 
 
+def _context(root: str | Path | None = None):
+    """The application context for an MCP call (audit WP16): channel `mcp`,
+    and the connection's agent label as the author it vouches for."""
+    from breadcrumbs import service
+
+    return service.open_context(root, channel="mcp", agent=_agent_label())
+
+
+def _refusal(exc) -> dict:
+    return {"ok": False, "error": exc.message, "refused_by": "policy"}
+
+
 def _admit(mem: Path, payload: dict | None = None, *, supersedes=None) -> dict | None:
     """`{ok: false, error}` when the store's policy refuses this MCP write."""
-    from breadcrumbs import admission
+    from breadcrumbs import service
 
-    ctx = admission.context(mem, "mcp")
+    ctx = service.Context(mem.parent, mem, "mcp", None, _agent_label())
     try:
-        admission.check_write(ctx, payload)
-        if supersedes:
-            admission.check_status_change(ctx, "active", "superseded")
-    except admission.Refused as exc:
-        return {"ok": False, "error": str(exc), "refused_by": "policy"}
+        service.admit(ctx, payload, supersedes=supersedes)
+    except service.ServiceError as exc:
+        return _refusal(exc)
     return None
 
 
@@ -391,8 +401,10 @@ def tool_search(
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    matches, _by_id = cli.search(
-        mem, project_root, query, files=files, filters=filters or {}, include_ideas=True
+    from breadcrumbs import service
+
+    matches, _by_id = service.search(
+        _context(root), query, files=files, filters=filters or {}, include_ideas=True
     )
     # `ok: True` on success so every tool shares one envelope.
     return {
@@ -414,7 +426,9 @@ def tool_guard_before_action(
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    return {"ok": True, **cli.guard(mem, project_root, action, files=files)}
+    from breadcrumbs import service
+
+    return {"ok": True, **service.guard(_context(root), action, files=files)}
 
 
 @_data_tree
@@ -435,9 +449,10 @@ def tool_build_resume_packet(
         return missing
     # The JSON view, bounded on its own serialization (audit F14), and portable:
     # an MCP client may be any harness, so promoted records keep their rules.
-    packet = cli.build_resume_packet(
-        mem,
-        project_root,
+    from breadcrumbs import service
+
+    packet = service.resume_packet(
+        _context(root),
         task=task or None,
         view="json",
         render=lambda p: cli.packet_json_text({"ok": True, **p}),
@@ -515,7 +530,7 @@ def tool_record(
     payload: dict,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_record` — wraps `cli.write_record` + the same post-write `validate` gate.
+    """`memory_record` — `service.record`, the same write `crumb remember` makes.
 
     `payload` mirrors the `remember` CLI surface:
       title (required), sections{heading:text}, evidence[{type,ref}], tags[],
@@ -525,124 +540,50 @@ def tool_record(
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    if type not in ("decision", "attempt"):
-        return {"ok": False, "error": "type must be 'decision' or 'attempt'"}
-    refused = _admit(mem, payload, supersedes=(payload or {}).get("supersedes"))
-    if refused:
-        return refused
+    # The write is the application layer's (audit WP16), shared with `crumb
+    # remember`; this adapter keeps the MCP wording and envelope, and one
+    # documented difference: an unstated confidence without evidence is
+    # recorded as `low` (a tool call has no prompt to answer), where the CLI
+    # asks for the flag. It is in `docs/mcp-spec.md`.
+    from breadcrumbs import service
 
-    title = (payload or {}).get("title")
-    if not title:
-        return {"ok": False, "error": "payload.title is required"}
-
-    sections = dict(payload.get("sections") or {})
-    evidence = payload.get("evidence") or []
-    tags = payload.get("tags") or []
-    confidence = payload.get("confidence")
-
-    # Evidence-or-low-confidence rule (validate §16.9). An explicit medium/high
-    # without evidence is an error, exactly as in the CLI: silently
-    # downgrading it would misrepresent the caller's stated confidence.
-    #
-    # An *unstated* confidence deliberately differs from the CLI, which exits 2
-    # (the comment here used to claim exact parity, which was false). The CLI's error tells a human which flag they forgot and lets them
-    # retry; a tool call has no such conversation, and "the caller stated no
-    # confidence" is precisely what `low` records. Documented in
-    # `docs/mcp-spec.md` so the divergence is a stated choice, not a surprise.
-    if not evidence and confidence != "low":
-        if confidence is None:
-            confidence = "low"
-        else:
+    payload = dict(payload or {})
+    if not payload.get("evidence") and payload.get("confidence") is None:
+        payload["confidence"] = "low"
+    try:
+        written = service.record(_context(root), type, payload, operation="memory_record")
+    except service.ServiceError as exc:
+        if exc.kind == "refused":
+            return _refusal(exc)
+        if exc.kind == "usage" and exc.data.get("field") == "title":
+            return {"ok": False, "error": "payload.title is required"}
+        if exc.kind == "needs-evidence":
             return {
                 "ok": False,
                 "error": f"a {type} needs evidence or low confidence (validate §16.9): "
                 "add payload.evidence or set payload.confidence to 'low'",
             }
-
-    # WM-32: the same near-duplicate gate as `crumb remember`.
-    from breadcrumbs import lifecycle as _lifecycle
-
-    supersedes = payload.get("supersedes")
-    problem = _lifecycle.check_supersedes(mem, type, supersedes)
-    if problem:
-        return {"ok": False, "error": problem}
-    if not supersedes and not payload.get("allow_duplicate"):
-        dups = _lifecycle.find_near_duplicates(
-            mem,
-            type,
-            title,
-            "\n".join(str(v) for v in sections.values()),
-            files=[
-                e.get("ref")
-                for e in evidence
-                if isinstance(e, dict) and e.get("type") in ("file", "path")
-            ],
-            tags=tags,
-        )
-        if dups:
+        if exc.kind == "duplicate":
             return {
                 "ok": False,
                 "error": "near-duplicate",
-                "duplicates": dups,
-                "message": _lifecycle.duplicate_message(dups),
+                "duplicates": exc.data["duplicates"],
+                "message": exc.message,
             }
-
-    # One change with the retirement it implies (audit F20); see `crumb remember`.
-    from breadcrumbs import mutations as _mutations
-
-    try:
-        with _mutations.transaction(mem, "memory_record"):
-            try:
-                path, meta = cli.write_record(
-                    mem,
-                    project_root,
-                    type,
-                    title,
-                    sections,
-                    tags=tags,
-                    evidence=evidence,
-                    confidence=confidence,
-                    privacy=payload.get("privacy"),
-                    scope=payload.get("scope"),
-                    status=payload.get("status"),
-                    agent=payload.get("agent") or _agent_label(),
-                    extra={"supersedes": [supersedes]} if supersedes else None,
-                )
-            except ValueError as exc:
-                # Same envelope every other writer uses. Bare, any value the
-                # writer refuses — a newline in `title`, a tag, an evidence ref —
-                # escaped as a raw ToolError instead of the `{ok: false, error}`
-                # mcp-spec promises.
-                return {"ok": False, "error": str(exc)}
-            fails = cli._validate_new_file(mem, path)
-            if fails:
-                path.unlink()
-                return {
-                    "ok": False,
-                    "error": "record rejected by validate: "
-                    + "; ".join(f["message"] for f in fails),
-                }
-            demoted: list[str] = []
-            if supersedes:
-                demoted = _lifecycle.demoted_ids(
-                    _lifecycle.retire_all(mem, [supersedes], meta["id"], agent=_agent_label())
-                )
-    except _mutations.MutationFailed as exc:
-        return {"ok": False, "error": _mutations.describe(exc)}
-    # Reindex-on-write: an MCP write must refresh the projections too —
-    # an agent will not remember to `crumb reindex` after each `memory_record`.
-    cli.reindex_projections(mem, project_root)
+        if exc.kind == "rejected":
+            return {"ok": False, "error": "record rejected by validate: " + exc.message}
+        return {"ok": False, "error": exc.message}
     out = {
         "ok": True,
-        "id": meta["id"],
+        "id": written["id"],
         "type": type,
-        "path": _rel(path, mem),
-        "confidence": meta["confidence"],
+        "path": _rel(written["path"], mem),
+        "confidence": written["confidence"],
     }
-    if supersedes:
-        out["supersedes"] = [supersedes]
-    if demoted:
-        out["demoted"] = demoted
+    if written.get("supersedes"):
+        out["supersedes"] = written["supersedes"]
+    if written.get("demoted"):
+        out["demoted"] = written["demoted"]
     return out
 
 
@@ -899,21 +840,16 @@ def tool_mark_status(
     if (missing := _memory_missing(mem)) is not None:
         return missing
     # What memory authorizes changes here; the policy may keep that for a
-    # person (audit F18).
-    from breadcrumbs import admission
+    # person (audit F18). Decided by the application layer (audit WP16).
+    from breadcrumbs import service
 
-    item = cli.find_item(mem, id)
-    old = (item or {}).get("status")
     try:
-        admission.check_status_change(admission.context(mem, "mcp"), old, status)
-    except admission.Refused as exc:
-        return {"ok": False, "error": str(exc), "refused_by": "policy"}
-    return _relativize(
-        cli.set_record_status(
-            mem, id, status, reason, agent=agent or _agent_label(), superseded_by=superseded_by
-        ),
-        mem,
-    )
+        result = service.mark_status(
+            _context(root), id, status, reason, superseded_by=superseded_by, agent=agent
+        )
+    except service.ServiceError as exc:
+        return _refusal(exc)
+    return _relativize(result, mem)
 
 
 # --------------------------------------------------------------------------- #

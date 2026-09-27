@@ -383,7 +383,24 @@ def _now() -> datetime:
     `breadcrumbs.lifecycle` — reads the time through here, so a test can move
     the clock by patching one function.
     """
-    return datetime.now().astimezone()
+    fn = getattr(_CLOCK, "fn", None)
+    return fn() if fn is not None else datetime.now().astimezone()
+
+
+# A clock set for one operation (audit WP16), per thread; `service.Context`
+# carries it. Patching `_now` itself still works for tests.
+_CLOCK = threading.local()
+
+
+@contextlib.contextmanager
+def clock(fn):
+    """Read the time from `fn` in this thread for the block (None: the real clock)."""
+    saved = getattr(_CLOCK, "fn", None)
+    _CLOCK.fn = fn
+    try:
+        yield
+    finally:
+        _CLOCK.fn = saved
 
 
 def now_iso() -> str:
@@ -429,6 +446,22 @@ def derive_project_name(root: Path) -> str:
 def resolve_root(project_arg: str | None) -> Path:
     """Resolve the project root: --project overrides cwd."""
     return (Path(project_arg) if project_arg else Path.cwd()).resolve()
+
+
+def _service_context(args, root: Path | None = None):
+    """`(service module, Context)` for a CLI command (audit WP16).
+
+    The channel is whatever transport is running the command (`cli`, or `hook`
+    when a hook drives a CLI command), and the author is `--agent` when given.
+    """
+    from breadcrumbs import admission, service
+
+    ctx = service.open_context(
+        root if root is not None else getattr(args, "project", None),
+        channel=admission.current_channel(),
+        agent=getattr(args, "agent", None),
+    )
+    return service, ctx
 
 
 # --------------------------------------------------------------------------- #
@@ -3701,78 +3734,39 @@ def cmd_remember(args: argparse.Namespace) -> int:
             )
             return 2
 
-    # WM-32: refuse a near-duplicate of a live record of the same type, unless
-    # the author said which one this replaces or that they want both.
-    from breadcrumbs import lifecycle as _lifecycle
-
+    # The write itself — admission, the supersede check, the near-duplicate
+    # gate (WM-32), the validate gate, retirement as one change (audit F20) and
+    # the reindex — is the application layer's (audit WP16); this adapter keeps
+    # the prompts above, the wording and the exit codes.
+    svc, ctx = _service_context(args, root)
     supersedes = getattr(args, "supersedes", None)
-    problem = _lifecycle.check_supersedes(memory_dir, rtype, supersedes)
-    if problem:
-        _emit_error(args, problem)
-        return 2
-    if not supersedes and not getattr(args, "allow_duplicate", False):
-        dups = _lifecycle.find_near_duplicates(
-            memory_dir,
-            rtype,
-            title,
-            "\n".join(str(v) for v in sections.values()),
-            files=[e["ref"] for e in evidence if e.get("type") in ("file", "path")],
-            tags=tags or (),
-        )
-        if dups:
-            return _emit_duplicate(
-                args,
-                {"duplicates": dups, "message": _lifecycle.duplicate_message(dups)},
-            )
-
-    # The new record and the retirement of the one it replaces are one change
-    # (audit F20): if the retirement fails, the new record is rolled back and the
-    # command fails, rather than leaving two live records and exiting 0.
-    from breadcrumbs import mutations as _mutations
-
+    payload = {
+        "title": title,
+        "sections": sections,
+        "evidence": evidence,
+        "tags": tags,
+        "confidence": confidence,
+        "privacy": args.privacy,
+        "scope": args.scope,
+        "status": args.status,
+        "agent": args.agent,
+        "supersedes": supersedes,
+        "allow_duplicate": getattr(args, "allow_duplicate", False),
+    }
     try:
-        with _mutations.transaction(memory_dir, "remember"):
-            try:
-                path, meta = write_record(
-                    memory_dir,
-                    root,
-                    rtype,
-                    title,
-                    sections,
-                    tags=tags,
-                    evidence=evidence,
-                    confidence=confidence,
-                    privacy=args.privacy,
-                    scope=args.scope,
-                    status=args.status,
-                    agent=args.agent,
-                    extra={"supersedes": [supersedes]} if supersedes else None,
-                )
-            except ValueError as exc:
-                # e.g. a newline in a frontmatter field — rendering refuses to corrupt.
-                _emit_error(args, str(exc))
-                return 2
-
-            # Post-write validate gate (defense in depth — fail fast, don't leave a bad file).
-            fails = _validate_new_file(memory_dir, path)
-            if fails:
-                path.unlink()
-                _emit_error(
-                    args, "new record failed validation: " + "; ".join(f["message"] for f in fails)
-                )
-                return 1
-
-            demoted: list[str] = []
-            if supersedes:
-                demoted = _lifecycle.demoted_ids(
-                    _lifecycle.retire_all(memory_dir, [supersedes], meta["id"], agent=args.agent)
-                )
-    except _mutations.MutationFailed as exc:
-        _emit_error(args, _mutations.describe(exc))
-        return 1
-
-    # Reindex-on-write: keep generated/ in step with the new record.
-    reindex_projections(memory_dir, root)
+        written = svc.record(ctx, rtype, payload, operation="remember")
+    except svc.ServiceError as exc:
+        if exc.kind == "duplicate":
+            return _emit_duplicate(
+                args, {"duplicates": exc.data["duplicates"], "message": exc.message}
+            )
+        if exc.kind == "rejected":
+            _emit_error(args, "new record failed validation: " + exc.message)
+            return 1
+        _emit_error(args, exc.message)
+        return 1 if exc.kind in ("failed", "refused") else 2
+    path, meta = written["path"], written["meta"]
+    demoted = written.get("demoted") or []
 
     summary = {
         "created": str(path),
@@ -5167,14 +5161,18 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
         )
         return 2
 
-    result = set_record_status(
-        memory_dir,
-        args.record_id,
-        status,
-        args.reason or "",
-        agent=getattr(args, "agent", None),
-        superseded_by=args.superseded_by,
-    )
+    svc, ctx = _service_context(args, root)
+    try:
+        result = svc.mark_status(
+            ctx,
+            args.record_id,
+            status,
+            args.reason or "",
+            agent=getattr(args, "agent", None),
+            superseded_by=args.superseded_by,
+        )
+    except svc.ServiceError as exc:
+        result = {"ok": False, "error": exc.message}
     if not result.get("ok"):
         _emit_error(args, result.get("error", "status change failed"))
         return 1
@@ -8101,9 +8099,9 @@ def cmd_resume(args: argparse.Namespace) -> int:
         wide = {**p, "approx_tokens": p["budget"]["limit"], "publication": placeholder}
         return json.dumps(_json_document(args, wide), indent=2)
 
-    packet = build_resume_packet(
-        memory_dir,
-        root,
+    svc, ctx = _service_context(args, root)
+    packet = svc.resume_packet(
+        ctx,
         stale_days=stale_days,
         fast=args.fast,
         task=task,
@@ -8644,14 +8642,22 @@ GUARD_STEM_ALIASES = {
 # (it changes what the guard prefilter contains).
 #
 # `_stem` is a pure function called from everywhere, with no store in scope, so
-# the table is module state that the store-scoped entry points *activate*
+# the table is state that the store-scoped entry points *activate*
 # (`_candidate_items`, the prefilter builder and reader). Activation is keyed on
 # the file's path, mtime and size, so it is one `stat` when nothing changed — and
-# a store with no file resets the table, so one store's aliases never leak into
-# another's results in a process that touches both.
+# a store with no file resets the table.
+#
+# The table is per thread (audit WP16): an MCP server answering two stores from
+# worker threads, or two service contexts, never sees the other's aliases.
+# `store_aliases(memory_dir)` scopes an activation and restores the previous
+# table afterwards.
 ALIASES_FILENAME = "aliases.txt"
-_STORE_ALIASES: dict[str, str] = {}
-_STORE_ALIASES_KEY: tuple | None = None
+_ALIASES = threading.local()
+
+
+def active_store_aliases() -> dict[str, str]:
+    """The alias table `_stem` applies in this thread (empty when none)."""
+    return getattr(_ALIASES, "table", None) or {}
 
 
 def parse_store_aliases(text: str) -> tuple[dict[str, str], list[dict]]:
@@ -8696,30 +8702,41 @@ def parse_store_aliases(text: str) -> tuple[dict[str, str], list[dict]]:
 
 
 def activate_store_aliases(memory_dir: Path) -> None:
-    """Make `_stem` use this store's aliases. Cheap when nothing changed."""
-    global _STORE_ALIASES, _STORE_ALIASES_KEY
+    """Make `_stem` use this store's aliases in this thread. Cheap when nothing changed."""
     path = Path(memory_dir) / ALIASES_FILENAME
     try:
         st = path.stat()
         key = (str(path), st.st_mtime_ns, st.st_size)
     except OSError:
         key = None
-    if key == _STORE_ALIASES_KEY:
+    if key == getattr(_ALIASES, "key", None) and hasattr(_ALIASES, "table"):
         return
-    _STORE_ALIASES_KEY = key
+    _ALIASES.key = key
     if key is None:
-        _STORE_ALIASES = {}
+        _ALIASES.table = {}
         return
     try:
-        _STORE_ALIASES = parse_store_aliases(read_text_lenient(path)[0])[0]
+        _ALIASES.table = parse_store_aliases(read_text_lenient(path)[0])[0]
     except Exception:  # pragma: no cover - aliases must never break a search
-        _STORE_ALIASES = {}
+        _ALIASES.table = {}
+
+
+@contextlib.contextmanager
+def store_aliases(memory_dir: Path):
+    """Activate `memory_dir`'s aliases for the block, then restore the previous table."""
+    saved = (getattr(_ALIASES, "table", None), getattr(_ALIASES, "key", None))
+    activate_store_aliases(memory_dir)
+    try:
+        yield
+    finally:
+        _ALIASES.table, _ALIASES.key = saved
 
 
 def _stem(token: str) -> str:
     """Fold a token to its stem, then apply the active store's aliases."""
     stem = _base_stem(token)
-    return _STORE_ALIASES.get(stem, stem) if _STORE_ALIASES else stem
+    table = getattr(_ALIASES, "table", None)
+    return table.get(stem, stem) if table else stem
 
 
 @functools.lru_cache(maxsize=65536)
@@ -10023,9 +10040,9 @@ def cmd_search(args: argparse.Namespace) -> int:
     # ("version") is not a match.
     min_kw = max(1, min(GUARD_MIN_KEYWORD_OVERLAP, len(_specific(query)))) if query else 1
     lookup: dict = {}
-    matches, _ = search(
-        memory_dir,
-        root,
+    svc, ctx = _service_context(args, root)
+    matches, _ = svc.search(
+        ctx,
         query,
         filters=filters,
         stale_days=stale_days,
@@ -10049,8 +10066,8 @@ def cmd_search(args: argparse.Namespace) -> int:
         # aliases.txt; this is how you find out you need one.
         stems = sorted(_specific(query))
         print(f"query stems: {', '.join(stems) if stems else '(none — every word was a stopword)'}")
-        if _STORE_ALIASES:
-            print(f"store aliases active: {len(_STORE_ALIASES)} ({ALIASES_FILENAME})")
+        if active_store_aliases():
+            print(f"store aliases active: {len(active_store_aliases())} ({ALIASES_FILENAME})")
         why = f" ({lookup['reason']})" if lookup.get("reason") else ""
         print(f"lookup: {lookup.get('mode')}{why}, {lookup.get('candidates', 0)} record(s) scored")
         print()
@@ -10087,7 +10104,8 @@ def cmd_guard(args: argparse.Namespace) -> int:
         return 2
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
-    result = guard(memory_dir, root, action, files=args.files, stale_days=stale_days)
+    svc, ctx = _service_context(args, root)
+    result = svc.guard(ctx, action, files=args.files, stale_days=stale_days)
     # Counted at the call sites rather than inside `guard()`: the hook path runs
     # the same function but shows a filtered subset, and counting in both places
     # would double-count every hook advisory.
@@ -13073,7 +13091,9 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         _hooklog.note(skipped="prefilter")
         print(json.dumps({}))
         return 0
-    result = guard(memory_dir, root, action, files=files)
+    from breadcrumbs import service as _service
+
+    result = _service.guard(_service.Context(root, memory_dir, "hook"), action, files=files)
     verdict = result["verdict"]
     # Launching a subagent is not itself irreversible — the subagent's own tool
     # calls hit this same guard, where the blast radius actually is. So a launch
@@ -13479,12 +13499,13 @@ def cmd_hook(args: argparse.Namespace) -> int:
     # WM-62: one line per firing in private/hook-log.jsonl — what the hook did,
     # never what it read. The handler's output reaches the host unchanged.
     from breadcrumbs import hooklog as _hooklog
-
-    from breadcrumbs import admission as _admission
+    from breadcrumbs import service as _service
 
     def handler() -> int:
-        # Everything a hook writes arrives through the hook channel (audit F18).
-        with _admission.channel("hook"):
+        # Everything a hook does runs in one application context on the hook
+        # channel (audit F18, WP16): admission, the store's aliases, one parse
+        # cache for the firing.
+        with _service.active(_service.Context(root, memory_dir, "hook")):
             return _run_hook(event, memory_dir, root, payload)
 
     return _hooklog.run_logged(event, memory_dir, payload, handler, now_iso)

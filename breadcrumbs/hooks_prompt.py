@@ -71,6 +71,14 @@ def _store_has_content(memory_dir: Path) -> bool:
     return retrieval.corpus_summary(memory_dir, Path(memory_dir).parent)["records"] > 0
 
 
+def _lookup(memory_dir: Path, root: Path, prompt: str):
+    """The application layer's prompt lookup, in a hook context (audit WP16)."""
+    from breadcrumbs import service
+
+    ctx = service.Context(Path(root), Path(memory_dir), "hook")
+    return service.prompt_lookup(ctx, prompt, limit=PROMPT_HOOK_MAX_MATCHES)
+
+
 def retrieve(memory_dir: Path, root: Path, prompt: str) -> list[dict]:
     """The matches worth spending the turn's context on, best first.
 
@@ -82,9 +90,7 @@ def retrieve(memory_dir: Path, root: Path, prompt: str) -> list[dict]:
     high enough on its own to have reached `READ_FIRST`. See
     `retrieval.prompt_lookup`, which also says how the lookup ran.
     """
-    from breadcrumbs import retrieval
-
-    return retrieval.prompt_lookup(memory_dir, root, prompt, limit=PROMPT_HOOK_MAX_MATCHES).matches
+    return _lookup(memory_dir, root, prompt).matches
 
 
 def _is_current(match: dict) -> bool:
@@ -211,7 +217,7 @@ def hook_prompt(memory_dir: Path, root: Path, payload: dict) -> dict:
         memory_dir, session_id, prompt, retain_text=_retain_prompt_text(memory_dir)
     )
     try:
-        lookup = retrieval.prompt_lookup(memory_dir, root, prompt, limit=PROMPT_HOOK_MAX_MATCHES)
+        lookup = _lookup(memory_dir, root, prompt)
     except Exception:  # pragma: no cover - retrieval never breaks the prompt
         return {}
     matches = lookup.matches
