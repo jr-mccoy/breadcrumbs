@@ -322,6 +322,23 @@ class CompactHookTests(unittest.TestCase):
             run_hook("compact", payload)
             self.assertEqual(len(ibx.load_jots(mem)), before)
 
+    def test_a_growing_transcript_is_mined_across_stop_and_compact(self):
+        """Audit WP09: each firing picks up exactly what the last one left."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            path = write_transcript(root, [user_text("No, keep the retry budget.")])
+            payload = {"cwd": str(root), "session_id": "s1", "transcript_path": str(path)}
+            run_hook("capture", payload)
+            with path.open("a", encoding="utf-8") as fh:
+                for entry in bash("c1", "ruff check .", "All checks passed!"):
+                    fh.write(json.dumps(entry) + "\n")
+            run_hook("compact", {**payload, "trigger": "auto"})
+            titles = sorted(ibx.jot_title(j) for j in ibx.load_jots(mem))
+            self.assertEqual(titles, ["No, keep the retry budget.", "ruff check . passed"])
+            self.assertEqual(len(hooks_common.compaction_marker(mem, "s1")["jots"]), 1)
+            self.assertEqual(hooks_common.miner_cursor(mem, "s1"), path.stat().st_size)
+
     def test_a_marker_is_written_even_when_nothing_was_mined(self):
         """ "Compacted and nothing survived" is a different fact from "no compaction"."""
         with tempfile.TemporaryDirectory() as tmp:

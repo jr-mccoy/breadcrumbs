@@ -11998,6 +11998,24 @@ def doctor_report(root: Path) -> dict:
             if problem is None
             else f"the last projection rebuild failed ({problem}) — run `crumb reindex`",
         )
+        # Audit WP09: what the transcript miner has not written yet, and what
+        # it gave up on, so a backlog or a drop is never invisible.
+        from breadcrumbs import hooks_common as _hooks_common
+
+        miners = _hooks_common.miner_states(memory_dir)
+        if miners:
+            waiting = sum(len(m.get("backlog") or []) for m in miners)
+            unread = sum(int(m.get("unread_bytes") or 0) for m in miners)
+            stats = [m.get("stats") or {} for m in miners]
+            dropped = sum(int(s.get("dropped_backlog") or 0) for s in stats)
+            capped = sum(int(s.get("policy_capped") or 0) for s in stats)
+            add(
+                "miner",
+                dropped == 0,
+                f"{len(miners)} session(s): {waiting} candidate(s) waiting to be written, "
+                f"{unread} transcript byte(s) not yet read, {capped} held back by the rule "
+                f"caps, {dropped} dropped",
+            )
 
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))
     return {"checks": checks, "integrated": integrated, "store": store}
@@ -12803,7 +12821,7 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
         session_id=session_key,
         use_cursor=True,
     )
-    _hooklog.note(mined=len(mined.get("written") or []))
+    _transcript.note_report(mined)
     try:
         redundant = _hook_capture_is_redundant(memory_dir, root)
     except Exception:  # pragma: no cover - a dedupe failure must not block Stop

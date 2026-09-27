@@ -13,7 +13,8 @@ limit:
 | File | Written by | Read by | Holds |
 |---|---|---|---|
 | `hook-guard-seen.json` | `PreToolUse` guard, `UserPromptSubmit` | themselves | advisory keys already shown, so a repeat says nothing |
-| `miner-cursor.json` | `PreCompact`, `Stop` | themselves | how much of the transcript has already been mined |
+| `miner/<session>.json` | `PreCompact`, `Stop`, `SubagentStop` | themselves | the transcript byte cursor, calls awaiting results, the candidate backlog (audit WP09) |
+| `miner/acked.json` | the same | the same | transcript events already turned into jots, across sessions |
 | `session-state.json` | `UserPromptSubmit` | `SessionStart` after a compaction | the last prompt and what memory was surfaced for it |
 | `compaction-marker.json` | `PreCompact` | `SessionStart` after a compaction | when the context was destroyed and what was salvaged |
 | `extraction-asked.json` | `Stop` | itself | jot ids already offered for promotion |
@@ -26,6 +27,7 @@ user's tool call or turn with it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -33,6 +35,7 @@ from breadcrumbs import cli
 
 # Per-session state files, all under `private/`.
 GUARD_SEEN_FILENAME = "hook-guard-seen.json"
+# The entry-count cursor before audit WP09. Never read now; left on disk.
 MINER_CURSOR_FILENAME = "miner-cursor.json"
 SESSION_STATE_FILENAME = "session-state.json"
 COMPACTION_MARKER_FILENAME = "compaction-marker.json"
@@ -124,35 +127,111 @@ def advisory_seen(
 
 
 # --------------------------------------------------------------------------- #
-# The miner cursor
+# The miner's state (audit F02, WP09)
 # --------------------------------------------------------------------------- #
+#
+# The old cursor counted *entries* of an 8 MB tail and stored the count as if it
+# were a position in the file. Once the file outgrew the tail, the count stopped
+# moving and new entries were never mined. `miner-cursor.json` is no longer
+# read; its successor is one file per session, so two sessions' hooks never
+# rewrite each other's state, written under the store lock by
+# `transcript.ingest`.
+
+MINER_DIRNAME = "miner"
+MINER_ACKED_FILENAME = "acked.json"
+MINER_STATE_VERSION = 2
+# Session files kept (most recently updated first). A session pruned from here
+# starts again at byte 0; the acknowledged-event ledger keeps that from
+# writing anything twice.
+MINER_MAX_SESSIONS = 32
+# Event ids remembered as acknowledged, newest kept.
+MINER_MAX_ACKED = 5000
+
+
+def _miner_dir(memory_dir: Path) -> Path:
+    return Path(memory_dir) / "private" / MINER_DIRNAME
+
+
+def miner_state_path(memory_dir: Path, session_id: str) -> Path:
+    digest = hashlib.sha1(str(session_id).encode("utf-8")).hexdigest()[:16]
+    return _miner_dir(memory_dir) / f"{digest}.json"
+
+
+def load_miner_state(memory_dir: Path, session_id: str) -> dict:
+    """This session's miner state, or a fresh one. Never raises."""
+    fresh = {"version": MINER_STATE_VERSION, "session": session_id, "offset": 0}
+    try:
+        data = json.loads(miner_state_path(memory_dir, session_id).read_text(encoding="utf-8"))
+    except Exception:
+        return fresh
+    if not isinstance(data, dict) or data.get("version") != MINER_STATE_VERSION:
+        return fresh
+    return data
+
+
+def save_miner_state(memory_dir: Path, session_id: str, state: dict) -> None:
+    """Write this session's state atomically. Raises on failure: the caller must
+    know whether its progress is durable before it acts on it."""
+    path = miner_state_path(memory_dir, session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    state = {**state, "version": MINER_STATE_VERSION, "session": session_id}
+    state["updated_at"] = cli.now_iso()
+    cli.write_text_atomic(path, json.dumps(state, sort_keys=True) + "\n")
+    _prune_miner_states(memory_dir)
+
+
+def _prune_miner_states(memory_dir: Path) -> None:
+    try:
+        files = [p for p in _miner_dir(memory_dir).glob("*.json") if p.name != MINER_ACKED_FILENAME]
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        for old in files[MINER_MAX_SESSIONS:]:
+            old.unlink()
+    except OSError:  # pragma: no cover - pruning is housekeeping
+        pass
+
+
+def miner_states(memory_dir: Path) -> list[dict]:
+    """Every session's miner state, for `doctor`. Never raises."""
+    out = []
+    try:
+        paths = sorted(_miner_dir(memory_dir).glob("*.json"))
+    except OSError:
+        return out
+    for p in paths:
+        if p.name == MINER_ACKED_FILENAME:
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("version") == MINER_STATE_VERSION:
+            out.append(data)
+    return out
+
+
+def load_acked(memory_dir: Path) -> list[str]:
+    try:
+        data = json.loads((_miner_dir(memory_dir) / MINER_ACKED_FILENAME).read_text("utf-8"))
+    except Exception:
+        return []
+    events = data.get("events") if isinstance(data, dict) else None
+    return [str(e) for e in events] if isinstance(events, list) else []
+
+
+def save_acked(memory_dir: Path, events: list[str]) -> None:
+    path = _miner_dir(memory_dir) / MINER_ACKED_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cli.write_text_atomic(
+        path, json.dumps({"events": events[-MINER_MAX_ACKED:]}, sort_keys=True) + "\n"
+    )
 
 
 def miner_cursor(memory_dir: Path, session_id: str) -> int:
-    """How many transcript entries of this session have already been mined."""
-    entry = read_state(memory_dir, MINER_CURSOR_FILENAME).get(session_id)
-    if not isinstance(entry, dict):
-        return 0
+    """How many bytes of this session's transcript have been consumed."""
     try:
-        return max(0, int(entry.get("index", 0)))
+        return max(0, int(load_miner_state(memory_dir, session_id).get("offset") or 0))
     except (TypeError, ValueError):
         return 0
-
-
-def set_miner_cursor(memory_dir: Path, session_id: str, index: int) -> None:
-    """Advance the cursor past the entries actually read.
-
-    Never moves backwards: the transcript is append-only, and a shorter read
-    (the tail-only path for a very large file) must not cause the next firing to
-    re-mine everything it already saw.
-    """
-    sessions = read_state(memory_dir, MINER_CURSOR_FILENAME)
-    current = miner_cursor(memory_dir, session_id)
-    sessions[session_id] = {
-        "index": max(current, int(index)),
-        "updated_at": cli.now_iso(),
-    }
-    write_state(memory_dir, MINER_CURSOR_FILENAME, sessions)
 
 
 # --------------------------------------------------------------------------- #

@@ -224,6 +224,37 @@ What changed:
 - `approx_tokens` in `resume --json` is now the JSON view's own size. The
   relevance-ordering note no longer repeats the task.
 
+### Changed — transcript mining is incremental and durable (audit WP09)
+
+Finding F02. The hooks' transcript cursor counted the entries of an 8 MB tail
+and stored the count as a file position. Once a transcript outgrew 8 MB the
+tail slid, the count stopped moving, and new entries were never mined again:
+- a result arriving a firing after its call was never joined to it;
+- whatever the per-firing cap held back was lost when the cursor moved.
+
+- **A byte cursor with file identity** (`private/miner/<session>.json`,
+  replacing `miner-cursor.json`).
+  - Each firing reads only complete lines past the cursor, at most 8 MB, and
+    reports what it left.
+  - A partial last line waits for its end, and an over-long line is skipped and
+    counted.
+  - A truncated, replaced or rewritten transcript is read again from the start
+    without writing anything twice.
+- **Calls carry over between firings.** Results join their calls, and a
+  failure, edits and a pass in different firings still make one attempt.
+  Carried commands and outputs never keep a credential.
+- **A durable backlog.**
+  - Candidates are saved, with the cursor, before any jot is written.
+  - The 10-per-firing cap now defers instead of dropping.
+  - Refusals, rule caps and repeated write failures are counted, and
+    `crumb doctor` has a `miner` row.
+- **Idempotent.** Stable candidate fingerprints and a cross-session ledger of
+  acknowledged events (`private/miner/acked.json`) mean that a crash between a
+  jot and the state write, a replayed transcript, or a forked session never
+  writes the same jot twice.
+- Mining runs under the store lock. On contention nothing is consumed, and the
+  next firing reads the same bytes.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

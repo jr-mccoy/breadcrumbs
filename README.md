@@ -927,6 +927,12 @@ piece is independent:
     and not a decision: even a firing that stays silent should salvage what the
     transcript shows, because nothing reads it again.
 
+    Mining is incremental. Each firing reads only what was appended since the
+    last one, joins a result to a call made a firing earlier, and keeps any
+    candidate it could not write yet in a backlog for the next firing. So a
+    long session stays mineable, and nothing is written twice. `crumb doctor`
+    shows the backlog.
+
     When the ending turn produced **new commits** — or the miner found a
     failed-then-fixed command, or three candidates of any kind — the hook does
     more than snapshot: it holds the stop once (**the extraction turn**) and

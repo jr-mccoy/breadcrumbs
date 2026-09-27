@@ -770,7 +770,7 @@
       "title": "Make packets genuinely bounded and portable",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP07"
       ],
@@ -807,6 +807,10 @@
           "summary": "_bound_packet bounds the final serialized view (markdown, markdown-fast, json, json-fast; resume --json measured on the exact printed envelope, MCP on its returned document): per-entry/warning excerpts (300 chars) and protected-field excerpts (2000) with marked pointers, caps, TRIM_ORDER (now incl. commits_since_handoff), then protected fields shrink to pointers; PACKET_MIN_BUDGET floors >=30% above measured worst case; budget/excerpted metadata and a view header line; named estimator approx-tokens/2 (ASCII/4 + 1 per non-ASCII); crumb resume --budget. Promoted records stay in portable packets with their effective rule (promoted_to/rule/rule_in_file; bullet in file wins, else rendered from record); only the Claude Code SessionStart hook elides records whose rule is in the CLAUDE.md it loads (promote.loaded_rules). tests/test_packet_delivery.py: 7 tests incl. the 4 named; all fail on 344fd88 (4 behaviorally). Full suite 1252 OK; packet_bound and promoted_adapter_missing probes no longer observed (8 signals, 2 recorded instrument errors); evals identical.",
           "compatibility": "Promoted records appear in portable packets (promoted counts only elisions); new budget/rules/excerpted fields and rule fields on promoted entries; approx_tokens in resume --json is the JSON view's size; estimator counts non-ASCII higher; long fields appear as marked excerpts in views; JSON views may carry fewer entries than Markdown; third Markdown header line; new --budget flag.",
           "limitations": "Heuristic estimator, no model tokenizer; loaded rules = project CLAUDE.md read at hook time (parent/user CLAUDE.md and @imports not counted; mid-session edits unseen); no loaded-rules view for other harnesses; compaction hook bounded as packet + 1000-token preamble; excerpts cut by code point; no single view-identity digest."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP08 approved, start WP09\")."
         }
       ]
     },
@@ -815,7 +819,7 @@
       "title": "Replace the relative transcript cursor with durable incremental ingestion",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP02",
         "WP03",
@@ -846,7 +850,16 @@
         "`test_crash_between_jot_and_cursor_is_idempotent`"
       ],
       "done_when": "Long sessions remain mineable and no acknowledged event is silently lost, replayed into duplicate authority, or reclassified as success without a result.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "22a1bff",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp09/README.md",
+          "summary": "transcript.ingest (under the store lock): byte cursor at line boundaries with file identity (head + anchor digests; truncation/replacement reset to 0), <=8 MB per firing with unread bytes reported, partial last line left, over-long lines skipped and counted; Bash/edit calls carried between firings (pending + newest resolved, 200, secrets blanked) so late results and cross-firing fail/edit/pass join; candidates with stable keys and event ids queued into a durable backlog saved before any jot is written, flushed 10 per firing, removed only when written, found already written, or refused (counted), dropped after 5 failed writes (counted); cross-session acked-event ledger for replay/fork idempotency; rule caps counted; per-session state files private/miner/<session>.json; doctor miner row; hook-log miner fields. tests/test_transcript_recovery.py (13, incl. the 4 named) + 1 hook test; the 13 original all fail on 22a1bff (4 behaviorally). Full suite 1266 OK; sliding_cursor probe no longer observed (7 signals, 2 recorded instrument errors); evals identical; one firing on a 20 MB transcript 34 ms -> 6 ms.",
+          "compatibility": "miner-cursor.json no longer read (sessions restart at byte 0; old jots recognised by old title fingerprints, only a grown churn count re-offered once); new private/miner/ state; forward catch-up instead of tail reads; subagent one-shot reads the last 32 MB; report gains accounting fields and skipped no longer counts cap overflow; pair_tool_calls(carried=), ToolCall.call_id, Candidate.key/events; hooks_common.set_miner_cursor removed.",
+          "limitations": "Catch-up lags when >8 MB is appended between firings (reported); carried history bounded to 200 calls; fork detection relies on copied tool_use ids/uuids; acked ledger keeps 5,000 newest events; secret blanking is pattern-based; a candidate failing 5 writes is dropped (counted)."
+        }
+      ]
     },
     {
       "id": "WP10",

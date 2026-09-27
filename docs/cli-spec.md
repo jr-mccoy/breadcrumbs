@@ -116,12 +116,48 @@ Only `success` is worded as "passed", and only `failure` opens an attempt. An
 edit counts only when it succeeded. The attempt names the sequence ("failed,
 then passed after N file(s) changed"), not a cause. The 400-character excerpt
 in a candidate is cut after classification, around the failure when it comes
-late. A call and a result that arrive in different firings are not joined yet
-(audit WP09). Candidates become jots in
-`private/inbox/`, never the committed store, after a secret scan that drops
-rather than masks. Bounded at 10 per firing and deduped by fingerprint within a
-session. A cursor in `private/miner-cursor.json` stops a later firing re-mining
-what an earlier one already read.
+late. Candidates become jots in `private/inbox/`, never the committed store,
+after a secret scan that drops rather than masks.
+
+**Mining is incremental and durable** (audit WP09). Each session has its state
+in `private/miner/<session>.json`, written under the store lock.
+
+- **A byte cursor.** Each firing reads only the complete lines past the cursor,
+  at most 8 MB. Whatever is beyond waits for the next firing and is reported
+  (`unread_bytes`). Before WP09 the cursor counted entries of a moving 8 MB
+  tail: once a transcript outgrew it, nothing new was ever mined.
+  - A trailing partial line is left until it is finished.
+  - A single line longer than a whole read is skipped once it ends, and
+    counted (`oversize_lines`).
+  - The file is recognised by digests of its first bytes and of the bytes just
+    before the cursor. A transcript that was truncated, replaced or rewritten
+    is read again from the start (`reset`); what was already written is not
+    written twice.
+- **Calls carry over.** A Bash or edit call still waiting for its result, and
+  the 200 most recent resolved ones, are kept between firings. A result that
+  arrives later joins its call, and a failure, edits and a pass in different
+  firings still make one attempt. A carried command or output that holds a
+  credential is blanked before it is saved.
+- **Nothing is dropped silently.**
+  - Candidates go to a backlog, and the cursor and backlog are saved, before
+    any jot is written.
+  - At most 10 jots are written per firing. The rest wait in the backlog
+    (at most 50; beyond that, new ones are dropped and counted).
+  - A candidate leaves the backlog only once its jot is written, refused (a
+    duplicate, a validation failure, a secret: counted), or dropped after five
+    failed writes (counted).
+  - What a rule's own cap holds back is counted too (`policy_capped`).
+  - The hook log and `crumb doctor`'s `miner` row show the backlog, the unread
+    bytes, the capped and the dropped.
+- **Nothing is written twice.** A candidate's fingerprint is stable (the
+  command, the file, the failing call, the user entry), and the transcript
+  events behind every acknowledged candidate are remembered across sessions
+  in `private/miner/acked.json`. So none of these writes a jot twice:
+  - a crash between a jot and the state write;
+  - a replayed transcript;
+  - a forked session that copies its parent's history.
+
+  `private/miner-cursor.json` from older versions is no longer read.
 
 **The writing events share the store.** `capture`, `compact` and `subagent`
 run under the store's write lock (see

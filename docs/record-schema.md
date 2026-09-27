@@ -49,6 +49,8 @@ writes outside the store.
     # operations/<id>/        — journal of a multi-record operation; present only while one runs, or after a crash (`crumb recover`)
     # recovered/<id>/         — copies of files a recovery rolled back
     # projections-pending     — present when the last projection rebuild failed
+    # miner/<session>.json    — transcript miner state: byte cursor, carried calls, candidate backlog (audit WP09)
+    # miner/acked.json        — transcript events already turned into jots, across sessions (audit WP09)
     # .store.lock             — the write lock's file: an OS lock, permanent (WM-51, audit WP05)
 
   index/
