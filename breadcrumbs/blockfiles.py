@@ -387,7 +387,12 @@ def set_last_confirmed(memory_dir: Path, rid: str, stamp: str) -> dict:
         rendered = cli.render_frontmatter(meta)
     except ValueError as exc:
         return {"ok": False, "id": rid, "error": f"cannot re-render frontmatter: {exc}"}
-    cli.write_text_atomic(rec.path, rendered + "\n" + body.lstrip("\n"))
+    from breadcrumbs import mutations as _mutations
+
+    try:
+        cli.write_text_atomic(rec.path, rendered + "\n" + body.lstrip("\n"), expected=original)
+    except _mutations.RevisionConflict as exc:
+        return {"ok": False, "id": rid, "error": str(exc)}
     fails = cli._validate_new_file(memory_dir, rec.path, original)
     if fails:
         cli.write_text_atomic(rec.path, original)

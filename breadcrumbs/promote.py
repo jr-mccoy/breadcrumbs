@@ -241,7 +241,7 @@ def _set_fields(memory_dir: Path, item: dict, fields: dict) -> dict:
                 if not _BLOCK_PROMOTED_LINE_RE.match(ln)
             )
         new_text = original[:start] + block + original[end:]
-    cli.write_text_atomic(path, new_text)
+    cli.write_text_atomic(path, new_text, expected=original)
     fails = cli._validate_new_file(memory_dir, path, original)
     if fails:
         cli.write_text_atomic(path, original)
@@ -273,7 +273,7 @@ def _resolve_target(root: Path, to: str | None) -> tuple[Path | None, str | None
 # --------------------------------------------------------------------------- #
 
 
-def promote(
+def _promote(
     memory_dir: Path,
     root: Path,
     rid: str,
@@ -348,7 +348,7 @@ def promote(
     return {"ok": True, "id": item["id"], "kind": item["kind"], "to": target.name, "rule": bullet}
 
 
-def demote(memory_dir: Path, root: Path, rid: str, *, reason: str | None = None) -> dict:
+def _demote(memory_dir: Path, root: Path, rid: str, *, reason: str | None = None) -> dict:
     """Remove `rid`'s rule from the long-term file and clear its promotion fields."""
     memory_dir, root = Path(memory_dir), Path(root)
     item = cli.find_item(memory_dir, rid)
@@ -375,6 +375,62 @@ def demote(memory_dir: Path, root: Path, rid: str, *, reason: str | None = None)
             }
     cli.reindex_projections(memory_dir, root)
     return {"ok": True, "id": rid, "removed_from": removed_from, "reason": reason}
+
+
+class _Abort(Exception):
+    """A promote/demote step refused: roll back what was written, return its result."""
+
+    def __init__(self, result: dict):
+        self.result = result
+        super().__init__(result.get("error") or "refused")
+
+
+def _as_operation(kind: str, memory_dir: Path, run) -> dict:
+    """Run `run()` as one store operation (audit F20).
+
+    Promotion edits two files, the record and CLAUDE.md or AGENTS.md; demotion
+    edits them the other way round. A refusal or failure after the first write
+    rolls both back, so a rule is never left in the file every session loads
+    while its record says it is not promoted, or the other way round.
+    """
+    from breadcrumbs import mutations as _mutations
+
+    try:
+        with _mutations.transaction(memory_dir, kind):
+            result = run()
+            if not result.get("ok"):
+                raise _Abort(result)
+            return result
+    except _Abort as refused:
+        return refused.result
+    except _mutations.RevisionConflict as exc:
+        return {"ok": False, "code": 1, "error": str(exc)}
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "code": 1, "error": _mutations.describe(exc)}
+
+
+def promote(
+    memory_dir: Path,
+    root: Path,
+    rid: str,
+    *,
+    to: str | None = None,
+    rule: str | None = None,
+    default_rule: bool = False,
+) -> dict:
+    """Write `rid` into the long-term file as one rule. See `_promote`."""
+    return _as_operation(
+        "promote",
+        Path(memory_dir),
+        lambda: _promote(memory_dir, root, rid, to=to, rule=rule, default_rule=default_rule),
+    )
+
+
+def demote(memory_dir: Path, root: Path, rid: str, *, reason: str | None = None) -> dict:
+    """Remove `rid`'s rule from the long-term file and clear its fields. See `_demote`."""
+    return _as_operation(
+        "demote", Path(memory_dir), lambda: _demote(memory_dir, root, rid, reason=reason)
+    )
 
 
 def auto_demote(memory_dir: Path, rid: str, status: str) -> dict | None:

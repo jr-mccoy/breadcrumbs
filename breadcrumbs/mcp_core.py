@@ -490,39 +490,48 @@ def tool_record(
                 "message": _lifecycle.duplicate_message(dups),
             }
 
+    # One change with the retirement it implies (audit F20); see `crumb remember`.
+    from breadcrumbs import mutations as _mutations
+
     try:
-        path, meta = cli.write_record(
-            mem,
-            project_root,
-            type,
-            title,
-            sections,
-            tags=tags,
-            evidence=evidence,
-            confidence=confidence,
-            privacy=payload.get("privacy"),
-            scope=payload.get("scope"),
-            status=payload.get("status"),
-            agent=payload.get("agent") or _agent_label(),
-            extra={"supersedes": [supersedes]} if supersedes else None,
-        )
-    except ValueError as exc:
-        # Same envelope every other writer uses. Bare, any value the
-        # writer refuses — a newline in `title`, a tag, an evidence ref — escaped as
-        # a raw ToolError instead of the `{ok: false, error}` mcp-spec promises.
-        return {"ok": False, "error": str(exc)}
-    fails = cli._validate_new_file(mem, path)
-    if fails:
-        path.unlink()
-        return {
-            "ok": False,
-            "error": "record rejected by validate: " + "; ".join(f["message"] for f in fails),
-        }
-    demoted: list[str] = []
-    if supersedes:
-        demoted = _lifecycle.demoted_ids(
-            _lifecycle.mark_superseded(mem, [supersedes], meta["id"], agent=_agent_label())
-        )
+        with _mutations.transaction(mem, "memory_record"):
+            try:
+                path, meta = cli.write_record(
+                    mem,
+                    project_root,
+                    type,
+                    title,
+                    sections,
+                    tags=tags,
+                    evidence=evidence,
+                    confidence=confidence,
+                    privacy=payload.get("privacy"),
+                    scope=payload.get("scope"),
+                    status=payload.get("status"),
+                    agent=payload.get("agent") or _agent_label(),
+                    extra={"supersedes": [supersedes]} if supersedes else None,
+                )
+            except ValueError as exc:
+                # Same envelope every other writer uses. Bare, any value the
+                # writer refuses — a newline in `title`, a tag, an evidence ref —
+                # escaped as a raw ToolError instead of the `{ok: false, error}`
+                # mcp-spec promises.
+                return {"ok": False, "error": str(exc)}
+            fails = cli._validate_new_file(mem, path)
+            if fails:
+                path.unlink()
+                return {
+                    "ok": False,
+                    "error": "record rejected by validate: "
+                    + "; ".join(f["message"] for f in fails),
+                }
+            demoted: list[str] = []
+            if supersedes:
+                demoted = _lifecycle.demoted_ids(
+                    _lifecycle.retire_all(mem, [supersedes], meta["id"], agent=_agent_label())
+                )
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "error": _mutations.describe(exc)}
     # Reindex-on-write: an MCP write must refresh the projections too —
     # an agent will not remember to `crumb reindex` after each `memory_record`.
     cli.reindex_projections(mem, project_root)

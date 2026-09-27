@@ -469,68 +469,84 @@ def promote_jot(
             merged_evidence.append(ref)
     merged_tags = sorted({*(rec.meta.get("tags") or []), *(tags or [])})
 
-    if target in ("decision", "attempt", "idea"):
-        result = _promote_to_record(
-            memory_dir,
-            project_root,
-            target,
-            new_title,
-            _carry_text(target, sections or {}, source_id, text),
-            evidence=merged_evidence,
-            tags=merged_tags,
-            confidence=new_confidence,
-            scope=new_scope,
-            agent=agent,
-            extra=provenance,
-            allow_duplicate=allow_duplicate,
-            supersedes=supersedes,
-        )
-    elif target == "verification":
-        result = cli.verify(
-            memory_dir,
-            project_root,
-            new_title,
-            status=status or "open",
-            method=method,
-            note=_carry_into((sections or {}).get("Notes"), source_id, text),
-            evidence=merged_evidence,
-            tags=merged_tags,
-            confidence=new_confidence,
-            agent=agent,
-            scope=new_scope,
-            extra=provenance,
-            dedupe=not allow_duplicate,
-            supersedes=supersedes,
-        )
-    else:  # trap | question
-        fields = {k: v for k, v in (fields or {}).items() if v not in (None, "")}
-        quoted = text == new_title or any(text in str(v) for v in fields.values())
-        if not quoted:
-            fields["notes"] = _carry_into(fields.get("notes"), source_id, text)
-        fields["meta"] = {"scope": new_scope, "confidence": new_confidence, **provenance}
-        result = cli.note(
-            memory_dir,
-            project_root,
-            target,
-            new_title,
-            fields=fields,
-            tags=merged_tags,
-            agent=agent,
-            dedupe=not allow_duplicate,
-            supersedes=supersedes,
-        )
-    if not result.get("ok"):
-        return result  # the jot stays live: nothing was promoted
+    from breadcrumbs import mutations as _mutations
 
-    new_id = result.get("id") or result.get("ref")
-    marked = cli.set_record_status(
-        memory_dir,
-        source_id,
-        "superseded",
-        reason=f"promoted to {new_id}",
-        superseded_by=new_id,
-        agent=agent,
-    )
+    # The target record, anything it supersedes, and the jot's retirement are
+    # one change (audit F20): the jot is retired only if the rest held, and a
+    # failure anywhere leaves the store as it was.
+    try:
+        with _mutations.transaction(memory_dir, "inbox-promote"):
+            if target in ("decision", "attempt", "idea"):
+                result = _promote_to_record(
+                    memory_dir,
+                    project_root,
+                    target,
+                    new_title,
+                    _carry_text(target, sections or {}, source_id, text),
+                    evidence=merged_evidence,
+                    tags=merged_tags,
+                    confidence=new_confidence,
+                    scope=new_scope,
+                    agent=agent,
+                    extra=provenance,
+                    allow_duplicate=allow_duplicate,
+                    supersedes=supersedes,
+                )
+            elif target == "verification":
+                result = cli.verify(
+                    memory_dir,
+                    project_root,
+                    new_title,
+                    status=status or "open",
+                    method=method,
+                    note=_carry_into((sections or {}).get("Notes"), source_id, text),
+                    evidence=merged_evidence,
+                    tags=merged_tags,
+                    confidence=new_confidence,
+                    agent=agent,
+                    scope=new_scope,
+                    extra=provenance,
+                    dedupe=not allow_duplicate,
+                    supersedes=supersedes,
+                )
+            else:  # trap | question
+                fields = {k: v for k, v in (fields or {}).items() if v not in (None, "")}
+                quoted = text == new_title or any(text in str(v) for v in fields.values())
+                if not quoted:
+                    fields["notes"] = _carry_into(fields.get("notes"), source_id, text)
+                fields["meta"] = {"scope": new_scope, "confidence": new_confidence, **provenance}
+                result = cli.note(
+                    memory_dir,
+                    project_root,
+                    target,
+                    new_title,
+                    fields=fields,
+                    tags=merged_tags,
+                    agent=agent,
+                    dedupe=not allow_duplicate,
+                    supersedes=supersedes,
+                )
+            if not result.get("ok"):
+                return result  # the jot stays live: nothing was promoted
+
+            new_id = result.get("id") or result.get("ref")
+            marked = cli.set_record_status(
+                memory_dir,
+                source_id,
+                "superseded",
+                reason=f"promoted to {new_id}",
+                superseded_by=new_id,
+                agent=agent,
+            )
+            if not marked.get("ok"):
+                # A record written while its jot stays live would be offered for
+                # promotion again and promoted twice: the whole promotion is undone.
+                raise _mutations.MutationFailed(
+                    f"{new_id} was written, but {source_id} could not be marked superseded: "
+                    f"{marked.get('error')}"
+                )
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "jot": source_id, "error": _mutations.describe(exc)}
     out = {
         "ok": True,
         "jot": source_id,
@@ -545,14 +561,6 @@ def promote_jot(
     for key in ("supersedes", "demoted"):
         if result.get(key):
             out[key] = result[key]
-    if not marked.get("ok"):
-        # The record exists and is valid; only the back-reference failed. Say so
-        # rather than claiming a clean promotion — a jot left active will be
-        # offered for promotion again.
-        out["warning"] = (
-            f"{new_id} was written, but the jot could not be marked superseded: "
-            f"{marked.get('error')}"
-        )
     cli.reindex_projections(memory_dir, project_root)
     return out
 
@@ -628,7 +636,7 @@ def _promote_to_record(
         }
     out = {"ok": True, "id": meta["id"], "path": str(path), "type": rtype}
     if supersedes:
-        results = _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=agent)
+        results = _lifecycle.retire_all(memory_dir, [supersedes], meta["id"], agent=agent)
         out["supersedes"] = [supersedes]
         if _lifecycle.demoted_ids(results):
             out["demoted"] = _lifecycle.demoted_ids(results)

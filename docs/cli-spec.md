@@ -48,6 +48,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `remember decision` | git state, user input | decision record | Capture a durable choice. Refuses a near-duplicate of a live decision (exit 3) unless `--supersedes ID` or `--allow-duplicate`. | **3 (built)** |
 | `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. Same near-duplicate gate as `remember decision`. | **3 (built)** |
 | `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--assert CMD` (repeatable) declares an assertion, the only kind of check a recheck may settle the claim with. `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns a verification's checks instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). `--scope branch` makes the result apply only while the current branch is checked out (default `project`; see [Branch scope](#branch-scope-built-wm-52)). Reindexes on write. | **built** |
+| `recover [--apply]` | `private/operations/` | the files an unfinished operation touched | List, or with `--apply` roll back, the multi-record operations a writer that stopped midway left unfinished. Exit 1 while any remain unfinished. See [Multi-record operations](#multi-record-operations-and-recover-built-audit-wp06). | **built (audit WP06)** |
 | `reindex` | all canonical files | `generated/` projections, the trap/question indexes (schema 3), `index/search.sqlite` | Rebuild the generated projections from the records (mutations reindex automatically). `--search-index` builds the search index even below its size threshold — see `reindex` below. | **built** |
 | `capture session` | git state (log, status, diff --shortstat) | session record, handoff, current | Record session end; git-prefill body sections (Files Touched is a counts-only summary) over a bounded window (`since..HEAD`, capped at 20 commits) that the record names. `--fast` = git-only snapshot + one-line next action; `--next` + `--set` runs unattended without dropping narrative. At schema 4, on a branch that is not the default branch, the handoff written is `handoffs/<branch-slug>.md` instead of `handoff.md` — see [Branch handoffs](#branch-handoffs-built-wm-50). | **3 (built)** |
 | `schema [<type>]` | (none) | record contract | Print body sections / vocab / rules from source constants. `--template <type>` emits a `remember` skeleton (a `verify` one for `verification`, a `crumb note …` one for `trap` and `question`). | **built** |
@@ -75,7 +76,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `consolidate --merge ID ID… --title "…"` | the named records | one merged record + status changes + reindex | Write one decision / attempt / verification / idea from the sources and mark every source `superseded`. See `consolidate` below. | **built (WM-33)** |
 | `promote <id> [--to CLAUDE.md\|AGENTS.md] [--rule "…"]` | one decision, attempt or trap | one rule line in the instruction file's promoted-rules block + `promoted_to`/`promoted_at` on the record + reindex | Make an active record a standing rule in the long-term tier. Never creates the instruction file. See `promote` and `demote` below. | **built (WM-40)** |
 | `demote <id> [--reason "…"]` | `CLAUDE.md`, `AGENTS.md`, the record | the rule line removed + promotion fields cleared + reindex | Take a promoted rule back out; the record is otherwise unchanged. | **built (WM-41)** |
-| `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` (`--hook-log`: `private/hook-log.jsonl`) | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. A `promoted_rules` row (`CLAUDE.md: 3 rule(s), 612 chars`), present only when a promoted-rules block has rules, says what the long-term tier costs every session; it does not change the exit code either. `--hook-log` instead summarises `private/hook-log.jsonl` per hook (exit 0; 2 with no store) — see [Hook log](#hook-log-built-wm-62). | **built** |
+| `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` (`--hook-log`: `private/hook-log.jsonl`) | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. An `operations` row fails while a multi-record operation is unfinished (`crumb recover`), and a `projections` row fails when the last projection rebuild raised (`crumb reindex`); neither changes the exit code. A `promoted_rules` row (`CLAUDE.md: 3 rule(s), 612 chars`), present only when a promoted-rules block has rules, says what the long-term tier costs every session; it does not change the exit code either. `--hook-log` instead summarises `private/hook-log.jsonl` per hook (exit 0; 2 with no store) — see [Hook log](#hook-log-built-wm-62). | **built** |
 | `mcp serve\|register\|doctor` | `.mcp.json` | running server / registration / health | Run the MCP server, merge its `.mcp.json` entry, or report MCP wiring (`[mcp]` extra + registration). | **built** |
 | `hook session\|guard\|capture\|prompt\|compact\|subagent` | hook stdin payload | hook JSON on stdout (+ mined jots, one `private/hook-log.jsonl` line) | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve). Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). Re-running `init --with-hooks` also brings an entry **we own** up to the current matcher, which is how an existing install picked up `Task\|Agent` on the guard. The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. **Every event exits 0 and prints JSON**, whatever the payload. See the per-event table below. | **built** |
 
@@ -1183,6 +1184,60 @@ existing `branch` field, derived from git at write time.
   and `branch`) and `expired`. `jot --json` echoes the `scope` written.
 - `inbox promote` keeps the jot's scope; `--scope project` widens a branch jot,
   and the output says it did.
+
+---
+
+## Multi-record operations and `recover` (built, audit WP06)
+
+Some changes are several writes. Each is one **operation**: it either happens
+completely, or it has not happened at all.
+
+- `remember`, `note`, `verify` and MCP `memory_record` with `--supersedes`: the
+  new record and the old one's retirement.
+- `inbox promote`: the target, anything it supersedes, and the jot's
+  retirement.
+- `consolidate --merge`: the merged record and every source's retirement.
+- `rollup sessions`: the rollup and the deletion of the snapshots it folds.
+- `mark-status` of a promoted record: the retirement and the rule's removal
+  from `CLAUDE.md` / `AGENTS.md`.
+- `promote` and `demote`: the record and the instruction file.
+
+**How it works** (`breadcrumbs/mutations.py`):
+
+- **Journal first.** Before an operation first writes or deletes a record, a
+  singleton or an instruction file, it saves the file's prior bytes (or its
+  absence), and a digest of what it is about to write, to
+  `private/operations/<id>/`. `generated/`, `index/` and `private/` are derived
+  or local and are rebuilt instead. A clean finish removes the journal.
+- **A failed step undoes the whole operation.** For example, a retirement the
+  writer checked and found refused, or a rule that could not be removed. Every
+  touched file is restored, the projections are rebuilt, and the command fails
+  with the reason and `nothing was changed` (exit 1; MCP `{ok: false}`). Before
+  0.3.x, a failed retirement was ignored: the replacement was written, both
+  records stayed live, and the command exited 0.
+- **A writer killed midway leaves its journal.** `crumb doctor` reports it (an
+  `operations` row), and `resume` warns on stderr.
+  - `crumb recover` lists unfinished operations and what rolling each back
+    would do to every file (`restore`, `remove`, `unchanged`, or `conflict`).
+  - `crumb recover --apply` rolls them back. A file is restored only if it
+    still holds its before-image or a state the operation wrote. One changed by
+    anybody since is a `conflict`: it is left alone, and the journal stays.
+  - A file the operation created and the rollback removes is copied to
+    `private/recovered/<id>/` first, so rolling back never erases what was
+    written.
+  - `--json` returns `{operations: [{id, kind, files: [{path, action}],
+    rolled_back?, conflicts?, kept?}], applied}`. Exit 1 while any operation
+    remains unfinished.
+- **A rewrite checks its revision.** A rewrite of a record (a status change, a
+  retitle, a trap confirmation, a promotion's fields) refuses when the file no
+  longer holds the text the writer read. The error says the file "changed since
+  it was read"; nothing is written, and the other edit survives.
+- **A failed projection rebuild is visible.** After a committed write, a
+  rebuild that raises leaves `private/projections-pending`. It is reported by
+  `doctor` (a `projections` row) and cleared by the next rebuild that works.
+
+Operations run under the store write lock, which is why a journal found while
+holding the lock belongs to a writer that stopped.
 
 ---
 

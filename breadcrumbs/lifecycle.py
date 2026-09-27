@@ -660,6 +660,28 @@ def mark_superseded(
     return results
 
 
+def retire_all(
+    memory_dir: Path, old_ids: list[str], new_id: str, *, agent: str | None = None
+) -> list[dict]:
+    """`mark_superseded`, where every retirement must succeed (audit F20).
+
+    Callers used to read only the demotion information out of the results, so a
+    failed retirement left the old record live next to its replacement while
+    the writer reported success. This raises instead; inside a
+    `mutations.transaction` that rolls the whole replacement back.
+    """
+    from breadcrumbs import mutations as _mutations
+
+    results = mark_superseded(memory_dir, old_ids, new_id, agent=agent)
+    failed = [r for r in results if not r.get("ok")]
+    if failed:
+        raise _mutations.MutationFailed(
+            "could not retire "
+            + "; ".join(f"{r.get('id')}: {r.get('error') or 'unknown error'}" for r in failed)
+        )
+    return results
+
+
 def demoted_ids(results: list[dict]) -> list[str]:
     """Ids among `mark_superseded` results whose promoted rule was also removed."""
     return [r["id"] for r in results if r.get("ok") and r.get("demoted")]
@@ -879,31 +901,42 @@ def merge_records(
                 "method": newest.meta.get("method"),
             }
         )
+    from breadcrumbs import mutations as _mutations
+
+    # The merged record and every source's retirement are one change (audit
+    # F20): a source that could not be retired would stay live beside the
+    # record that claims to replace it.
     try:
-        path, meta = cli.write_record(
-            memory_dir,
-            root,
-            rtype,
-            title.strip(),
-            merged,
-            tags=tags,
-            evidence=evidence,
-            confidence=confidence,
-            agent=agent,
-            extra=extra,
-        )
-    except ValueError as exc:
-        return {"ok": False, "code": 1, "error": str(exc)}
-    fails = cli._validate_new_file(memory_dir, path)
-    if fails:
-        path.unlink()
-        return {
-            "ok": False,
-            "code": 1,
-            "error": "merged record rejected by validate: "
-            + "; ".join(f["message"] for f in fails),
-        }
-    results = mark_superseded(memory_dir, [r.meta.get("id") for r in recs], meta["id"], agent=agent)
+        with _mutations.transaction(memory_dir, "consolidate"):
+            try:
+                path, meta = cli.write_record(
+                    memory_dir,
+                    root,
+                    rtype,
+                    title.strip(),
+                    merged,
+                    tags=tags,
+                    evidence=evidence,
+                    confidence=confidence,
+                    agent=agent,
+                    extra=extra,
+                )
+            except ValueError as exc:
+                return {"ok": False, "code": 1, "error": str(exc)}
+            fails = cli._validate_new_file(memory_dir, path)
+            if fails:
+                path.unlink()
+                return {
+                    "ok": False,
+                    "code": 1,
+                    "error": "merged record rejected by validate: "
+                    + "; ".join(f["message"] for f in fails),
+                }
+            results = retire_all(
+                memory_dir, [r.meta.get("id") for r in recs], meta["id"], agent=agent
+            )
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "code": 1, "error": _mutations.describe(exc)}
     cli.reindex_projections(memory_dir, root)
     return {
         "ok": True,
@@ -1109,31 +1142,41 @@ def rollup_sessions(
     newest = recs[-1].meta
     pinned = {k: newest.get(k) for k in ("created_at", "updated_at", "branch", "commit")}
     pinned["dirty_files"] = []
+    from breadcrumbs import mutations as _mutations
+
+    # The rollup and the deletion of what it folds are one change (audit F20):
+    # a crash between them is rolled back by `crumb recover`, never left as a
+    # rollup beside the snapshots it replaced — or snapshots deleted with no
+    # rollup to show for them.
     try:
-        path, meta = cli.write_record(
-            memory_dir,
-            root,
-            "session",
-            title,
-            sections,
-            agent=agent,
-            extra={"supersedes": ids, **{k: v for k, v in pinned.items() if v is not None}},
-        )
-    except ValueError as exc:
-        # The rollup is pinned to its newest source's timestamps; a legacy
-        # snapshot with one the record contract refuses stops here, sources intact.
-        return {"ok": False, "code": 1, "error": f"rollup record refused: {exc}"}
-    fails = cli._validate_new_file(memory_dir, path)
-    if fails:
-        path.unlink()
-        return {
-            "ok": False,
-            "code": 1,
-            "error": "rollup record rejected by validate: "
-            + "; ".join(f["message"] for f in fails),
-        }
-    for rec in recs:
-        rec.path.unlink()
+        with _mutations.transaction(memory_dir, "rollup"):
+            try:
+                path, meta = cli.write_record(
+                    memory_dir,
+                    root,
+                    "session",
+                    title,
+                    sections,
+                    agent=agent,
+                    extra={"supersedes": ids, **{k: v for k, v in pinned.items() if v is not None}},
+                )
+            except ValueError as exc:
+                # The rollup is pinned to its newest source's timestamps; a legacy
+                # snapshot with one the record contract refuses stops here, sources intact.
+                return {"ok": False, "code": 1, "error": f"rollup record refused: {exc}"}
+            fails = cli._validate_new_file(memory_dir, path)
+            if fails:
+                path.unlink()
+                return {
+                    "ok": False,
+                    "code": 1,
+                    "error": "rollup record rejected by validate: "
+                    + "; ".join(f["message"] for f in fails),
+                }
+            for rec in recs:
+                _mutations.delete(rec.path)
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "code": 1, "error": _mutations.describe(exc)}
     cli.reindex_projections(memory_dir, root)
     return {
         "ok": True,

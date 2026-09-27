@@ -309,14 +309,29 @@ SESSION_DONE_MARKERS = ("converged", "session complete", "no next action", "done
 # --------------------------------------------------------------------------- #
 
 
-def write_text_atomic(path: Path, text: str) -> None:
+def write_text_atomic(path: Path, text: str, *, expected: str | None = None) -> None:
     """Write text via tmp-file + rename in the destination directory.
 
     A plain `write_text` interrupted mid-write leaves a truncated record that
     validate then reports as corrupt; `os.replace` is atomic on
     the same filesystem, so readers see either the old file or the new one.
+
+    `expected` is the text the caller read before computing this rewrite. If
+    the file no longer holds it, another editor changed it in between, and
+    `mutations.RevisionConflict` is raised instead of discarding that edit
+    (audit F20). Inside a `mutations.transaction`, the file's before-image is
+    journaled first so the whole operation can be rolled back.
     """
+    from breadcrumbs import mutations as _mutations
+
     path = Path(path)
+    if expected is not None:
+        try:
+            if path.read_text(encoding="utf-8") != expected:
+                raise _mutations.RevisionConflict(path)
+        except (FileNotFoundError, UnicodeDecodeError):
+            raise _mutations.RevisionConflict(path) from None
+    _mutations.before_write(path, text)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -504,6 +519,9 @@ def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -
 
     if path.exists() and new_content == existing:
         return False
+    from breadcrumbs import mutations as _mutations
+
+    _mutations.before_write(path, new_content)  # an adapter file is part of the operation
     path.write_text(new_content, encoding="utf-8")
     return True
 
@@ -2858,16 +2876,32 @@ def set_record_status(
     session loads, and "retire it here, then remember to delete the line there"
     is the two-step nobody completes.
     """
-    result = _set_record_status(
-        memory_dir, rid, status, reason, agent=agent, superseded_by=superseded_by
-    )
-    if result.get("ok"):
-        from breadcrumbs import promote as _promote
+    from breadcrumbs import mutations as _mutations
+    from breadcrumbs import promote as _promote
 
-        demoted = _promote.auto_demote(Path(memory_dir), result.get("id") or rid, status)
-        if demoted and demoted.get("ok"):
-            result["demoted"] = demoted
-    return result
+    # One operation (audit F20): a retirement whose promoted rule could not be
+    # removed is not a retirement — the rule would stay in the file every
+    # session loads — so both happen or neither does.
+    try:
+        with _mutations.transaction(memory_dir, "mark-status"):
+            result = _set_record_status(
+                memory_dir, rid, status, reason, agent=agent, superseded_by=superseded_by
+            )
+            if not result.get("ok"):
+                return result
+            demoted = _promote.auto_demote(Path(memory_dir), result.get("id") or rid, status)
+            if demoted is not None and not demoted.get("ok"):
+                raise _mutations.MutationFailed(
+                    f"{result.get('id') or rid} is promoted, and its rule could not be "
+                    f"removed: {demoted.get('error')}"
+                )
+            if demoted:
+                result["demoted"] = demoted
+            return result
+    except _mutations.RevisionConflict as exc:
+        return {"ok": False, "id": rid, "error": str(exc)}
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "id": rid, "error": _mutations.describe(exc)}
 
 
 def _set_record_status(
@@ -2960,7 +2994,7 @@ def _set_record_status(
             "fix the record by hand or simplify the offending value",
         }
     new_text = rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n"
-    write_text_atomic(rec.path, new_text)
+    write_text_atomic(rec.path, new_text, expected=original)
 
     fails = _validate_new_file(memory_dir, rec.path, original)
     if fails:
@@ -3024,7 +3058,16 @@ def set_record_title(memory_dir: Path, rid: str, title: str, *, agent: str | Non
             "error": "retitle refused: frontmatter would not survive a re-render "
             "round-trip; simplify the title",
         }
-    write_text_atomic(rec.path, rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n")
+    from breadcrumbs import mutations as _mutations
+
+    try:
+        write_text_atomic(
+            rec.path,
+            rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n",
+            expected=original,
+        )
+    except _mutations.RevisionConflict as exc:
+        return {"ok": False, "id": rid, "error": str(exc)}
 
     fails = _validate_new_file(memory_dir, rec.path, original)
     if fails:
@@ -3172,7 +3215,7 @@ def set_trap_confirmed(memory_dir: Path, rid: str, *, when: str | None = None) -
         + _set_block_bullet(original[start:end], TRAP_CONFIRMED_KEY, stamp)
         + original[end:]
     )
-    write_text_atomic(path, new_text)
+    write_text_atomic(path, new_text, expected=original)
     fails = _validate_new_file(memory_dir, path, original)
     if fails:
         write_text_atomic(path, original)  # revert
@@ -3260,7 +3303,7 @@ def set_trap_status(
         + _apply_block_status(original[start:end], status, superseded_by, note_line)
         + original[end:]
     )
-    write_text_atomic(path, new_text)
+    write_text_atomic(path, new_text, expected=original)
 
     after = find_trap_by_id(memory_dir, tid)
     if after is None or after["status"] != status:
@@ -3368,7 +3411,7 @@ def set_question_status(
         + _apply_block_status(original[start:end], status, superseded_by, note_line)
         + original[end:]
     )
-    write_text_atomic(path, new_text)
+    write_text_atomic(path, new_text, expected=original)
 
     after = find_questions_by_id(memory_dir, qid)
     if len(after) != 1 or after[0]["status"] != status:
@@ -3530,39 +3573,51 @@ def cmd_remember(args: argparse.Namespace) -> int:
                 {"duplicates": dups, "message": _lifecycle.duplicate_message(dups)},
             )
 
+    # The new record and the retirement of the one it replaces are one change
+    # (audit F20): if the retirement fails, the new record is rolled back and the
+    # command fails, rather than leaving two live records and exiting 0.
+    from breadcrumbs import mutations as _mutations
+
     try:
-        path, meta = write_record(
-            memory_dir,
-            root,
-            rtype,
-            title,
-            sections,
-            tags=tags,
-            evidence=evidence,
-            confidence=confidence,
-            privacy=args.privacy,
-            scope=args.scope,
-            status=args.status,
-            agent=args.agent,
-            extra={"supersedes": [supersedes]} if supersedes else None,
-        )
-    except ValueError as exc:
-        # e.g. a newline in a frontmatter field — rendering refuses to corrupt.
-        _emit_error(args, str(exc))
-        return 2
+        with _mutations.transaction(memory_dir, "remember"):
+            try:
+                path, meta = write_record(
+                    memory_dir,
+                    root,
+                    rtype,
+                    title,
+                    sections,
+                    tags=tags,
+                    evidence=evidence,
+                    confidence=confidence,
+                    privacy=args.privacy,
+                    scope=args.scope,
+                    status=args.status,
+                    agent=args.agent,
+                    extra={"supersedes": [supersedes]} if supersedes else None,
+                )
+            except ValueError as exc:
+                # e.g. a newline in a frontmatter field — rendering refuses to corrupt.
+                _emit_error(args, str(exc))
+                return 2
 
-    # Post-write validate gate (defense in depth — fail fast, don't leave a bad file).
-    fails = _validate_new_file(memory_dir, path)
-    if fails:
-        path.unlink()
-        _emit_error(args, "new record failed validation: " + "; ".join(f["message"] for f in fails))
+            # Post-write validate gate (defense in depth — fail fast, don't leave a bad file).
+            fails = _validate_new_file(memory_dir, path)
+            if fails:
+                path.unlink()
+                _emit_error(
+                    args, "new record failed validation: " + "; ".join(f["message"] for f in fails)
+                )
+                return 1
+
+            demoted: list[str] = []
+            if supersedes:
+                demoted = _lifecycle.demoted_ids(
+                    _lifecycle.retire_all(memory_dir, [supersedes], meta["id"], agent=args.agent)
+                )
+    except _mutations.MutationFailed as exc:
+        _emit_error(args, _mutations.describe(exc))
         return 1
-
-    demoted: list[str] = []
-    if supersedes:
-        demoted = _lifecycle.demoted_ids(
-            _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=args.agent)
-        )
 
     # Reindex-on-write: keep generated/ in step with the new record.
     reindex_projections(memory_dir, root)
@@ -3857,6 +3912,11 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     return {"tokens": sorted(tokens), "paths": sorted(paths)}
 
 
+# Written when a projection rebuild raised, removed by the next one that works.
+# Machine-local (private/), so it can never make a committed file differ.
+PROJECTIONS_PENDING_RELPATH = Path("private") / "projections-pending"
+
+
 def try_reindex_projections(
     memory_dir: Path, project_root: Path | None = None, *, lock_timeout: float | None = None
 ) -> tuple[bool, str | None]:
@@ -3931,9 +3991,18 @@ def _publish_projections(
         from breadcrumbs import searchindex as _searchindex
 
         _searchindex.build_index(memory_dir, project_root)
+        with contextlib.suppress(OSError):
+            (memory_dir / PROJECTIONS_PENDING_RELPATH).unlink()
         return True, None
-    except Exception as exc:  # pragma: no cover - defensive; never block a write
-        return False, f"{type(exc).__name__}: {exc}"
+    except Exception as exc:  # never block a write; say so where doctor looks
+        reason = f"{type(exc).__name__}: {exc}"
+        # The canonical write stands; the derived views did not follow it. That
+        # is recoverable (`crumb reindex`) but must not be invisible (audit F20).
+        with contextlib.suppress(OSError):
+            marker = memory_dir / PROJECTIONS_PENDING_RELPATH
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(f"{now_iso()} {reason}\n", encoding="utf-8")
+        return False, reason
 
 
 def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> bool:
@@ -4123,21 +4192,27 @@ def note(
                 "duplicates": dups,
                 "message": _lifecycle.duplicate_message(dups),
             }
-    result = _note_write(
-        memory_dir,
-        project_root,
-        kind,
-        text,
-        fields=fields,
-        tags=tags,
-        agent=agent,
-        supersedes=supersedes,
-    )
-    if result.get("ok") and supersedes:
-        results = _lifecycle.mark_superseded(memory_dir, [supersedes], result["id"], agent=agent)
-        result["supersedes"] = [supersedes]
-        if _lifecycle.demoted_ids(results):
-            result["demoted"] = _lifecycle.demoted_ids(results)
+    from breadcrumbs import mutations as _mutations
+
+    try:
+        with _mutations.transaction(memory_dir, f"note-{kind}"):
+            result = _note_write(
+                memory_dir,
+                project_root,
+                kind,
+                text,
+                fields=fields,
+                tags=tags,
+                agent=agent,
+                supersedes=supersedes,
+            )
+            if result.get("ok") and supersedes:
+                results = _lifecycle.retire_all(memory_dir, [supersedes], result["id"], agent=agent)
+                result["supersedes"] = [supersedes]
+                if _lifecycle.demoted_ids(results):
+                    result["demoted"] = _lifecycle.demoted_ids(results)
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "error": _mutations.describe(exc)}
     return result
 
 
@@ -4497,43 +4572,52 @@ def verify(
     if note:
         sections["Notes"] = note
 
+    from breadcrumbs import mutations as _mutations
+
+    # The new result and the retirement of the one it replaces are one change
+    # (audit F20).
     try:
-        path, meta = write_record(
-            memory_dir,
-            project_root,
-            "verification",
-            f"{subject} — {status}",
-            sections,
-            tags=tags,
-            evidence=evidence,
-            confidence=confidence,
-            agent=agent,
-            scope=scope,
-            extra={
-                **(extra or {}),
-                "subject": subject,
-                "outcome": status,
-                "method": method,
-                "expires_at": expires_at,
-                "supersedes": [supersedes] if supersedes else None,
-            },
-        )
-    except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        with _mutations.transaction(memory_dir, "verify"):
+            try:
+                path, meta = write_record(
+                    memory_dir,
+                    project_root,
+                    "verification",
+                    f"{subject} — {status}",
+                    sections,
+                    tags=tags,
+                    evidence=evidence,
+                    confidence=confidence,
+                    agent=agent,
+                    scope=scope,
+                    extra={
+                        **(extra or {}),
+                        "subject": subject,
+                        "outcome": status,
+                        "method": method,
+                        "expires_at": expires_at,
+                        "supersedes": [supersedes] if supersedes else None,
+                    },
+                )
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
 
-    fails = _validate_new_file(memory_dir, path)
-    if fails:
-        path.unlink()  # revert
-        return {
-            "ok": False,
-            "error": "verification rejected by validate: " + "; ".join(f["message"] for f in fails),
-        }
+            fails = _validate_new_file(memory_dir, path)
+            if fails:
+                path.unlink()  # revert
+                return {
+                    "ok": False,
+                    "error": "verification rejected by validate: "
+                    + "; ".join(f["message"] for f in fails),
+                }
 
-    demoted: list[str] = []
-    if supersedes:
-        demoted = _lifecycle.demoted_ids(
-            _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=agent)
-        )
+            demoted: list[str] = []
+            if supersedes:
+                demoted = _lifecycle.demoted_ids(
+                    _lifecycle.retire_all(memory_dir, [supersedes], meta["id"], agent=agent)
+                )
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "error": _mutations.describe(exc)}
     reindex_projections(memory_dir, project_root)
     out = {
         "ok": True,
@@ -7325,6 +7409,17 @@ def cmd_resume(args: argparse.Namespace) -> int:
                 f"warning: generated projections not refreshed: {problem}",
                 file=sys.stderr,
             )
+
+    from breadcrumbs import mutations as _mutations
+
+    unfinished = len(_mutations.pending_operations(memory_dir))
+    if unfinished:
+        print(
+            f"warning: {unfinished} unfinished operation(s) from a writer that stopped "
+            "midway — run `crumb recover`",
+            file=sys.stderr,
+        )
+    publication["unfinished_operations"] = unfinished
 
     if args.json:
         _print_json(args, {**packet, "publication": publication})
@@ -11375,6 +11470,32 @@ def doctor_report(root: Path) -> dict:
                 where,
             )
 
+    if store:
+        # Audit WP06: a writer killed midway leaves its journal; a projection
+        # rebuild that raised leaves a marker. Neither is visible anywhere else.
+        from breadcrumbs import mutations as _mutations
+
+        pending = _mutations.pending_operations(memory_dir)
+        add(
+            "operations",
+            not pending,
+            "no unfinished multi-record operations"
+            if not pending
+            else f"{len(pending)} unfinished operation(s) ({', '.join(o['id'] for o in pending[:3])}) "
+            "— run `crumb recover`",
+        )
+        marker = memory_dir / PROJECTIONS_PENDING_RELPATH
+        problem = None
+        if marker.is_file():
+            problem = read_text_lenient(marker)[0].strip() or "unknown failure"
+        add(
+            "projections",
+            problem is None,
+            "the last projection rebuild succeeded"
+            if problem is None
+            else f"the last projection rebuild failed ({problem}) — run `crumb reindex`",
+        )
+
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))
     return {"checks": checks, "integrated": integrated, "store": store}
 
@@ -12889,6 +13010,71 @@ def _add_reindex(sub, global_parser: argparse.ArgumentParser) -> None:
     p_reindex.set_defaults(func=cmd_reindex)
 
 
+# recover — roll back unfinished multi-record operations (audit WP06)
+def _add_recover(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "recover",
+        parents=[global_parser],
+        help="list, or --apply to roll back, operations a crash left unfinished",
+    )
+    p.add_argument(
+        "--apply",
+        action="store_true",
+        help="roll each unfinished operation back to its before-image",
+    )
+    p.set_defaults(func=cmd_recover)
+
+
+def cmd_recover(args: argparse.Namespace) -> int:
+    """`crumb recover [--apply]`: finish what a killed writer left half done.
+
+    A multi-record change (a replacement, a merge, a promotion) journals every
+    file it touches under `private/operations/` before touching it; a clean
+    finish removes the journal. One still there means the writer died midway.
+    Recovery rolls it back, restoring each file that still holds the before- or
+    an in-operation state and leaving anything changed since for a person
+    (`breadcrumbs/mutations.py`). Without `--apply` it only lists them.
+    """
+    from breadcrumbs import mutations as _mutations
+
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    report = _mutations.recover(memory_dir, apply=args.apply)
+    ops = report["operations"]
+    # Listing: every operation shown is unfinished. Applying: those it could not
+    # roll back (a file changed since, an unreadable journal) still are.
+    unresolved = [o for o in ops if o.get("error") or o.get("conflicts") or not args.apply]
+    if args.json:
+        _print_json(
+            args,
+            {**report, "items": ops},
+            ok=not unresolved,
+            summary={"operations": len(ops), "unresolved": len(unresolved)},
+        )
+        return 1 if unresolved else 0
+    if not ops:
+        print("recover: no unfinished operations.")
+        return 0
+    verb = "rolled back" if args.apply else "unfinished"
+    print(f"recover: {len(ops)} {verb} operation(s)\n")
+    for op in ops:
+        print(f"  {op['id']} ({op['kind']})")
+        for f in op["files"]:
+            print(f"    {f['action']:9} {f['path']}")
+        for kept in op.get("kept", []):
+            print(f"    kept a copy of a removed file: {kept}")
+        if op.get("conflicts"):
+            print(f"    NOT restored (changed since): {', '.join(op['conflicts'])}")
+        if op.get("error"):
+            print(f"    {op['error']}")
+    if not args.apply:
+        print("\nRun `crumb recover --apply` to roll them back.")
+    return 1 if unresolved else 0
+
+
 # capture session
 def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
     p_capture = sub.add_parser(
@@ -13313,6 +13499,7 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "migrate": _add_migrate,
     "usage": _add_usage,
     "reindex": _add_reindex,
+    "recover": _add_recover,
     "capture": _add_capture,
     "resume": _add_resume,
     "search": _add_search,
@@ -13436,6 +13623,7 @@ LOCKED_COMMANDS = frozenset(
         "prune",
         "migrate",
         "reindex",
+        "recover",
         "capture",
         "promote",
         "demote",

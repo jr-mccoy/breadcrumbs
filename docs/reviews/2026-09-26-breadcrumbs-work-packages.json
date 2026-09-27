@@ -616,7 +616,7 @@
       "title": "Repair writer coordination and lock ownership",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP00"
       ],
@@ -653,6 +653,10 @@
           "summary": "lock.py rewritten on OS locks (flock / msvcrt.locking) over a permanent private/.store.lock: no heartbeat, staleness or breaking; LockUnsupported on filesystems that refuse; live legacy .write-lock waited on, never removed. Projection publication (try_reindex_projections) takes the lock; resume prints its packet regardless and publishes only within 0.5 s, reporting publication in --json. init --force keeps both lock files; the search index builds in a unique temp file. tests/test_lock_processes.py: 10 real-process tests (death, clock gap, SIGSTOP, parallel writers and reindexes, force init, legacy, unsupported FS). Full suite 1224 OK; 5x repeat clean.",
           "compatibility": "New lock file; older versions do not see it (one version per checkout); resume may skip publishing under contention; deleting the lock file no longer releases a lock; non-local filesystems without OS locks refuse writes.",
           "limitations": "Windows path untested (WP17); local filesystems only; private telemetry/hook state writes still unlocked (WP09/WP12); no snapshot coherence (WP07). live_lock_stale probe errors (API removed) and resume_ignores_lock reports a false positive (its fake file-content holder is not a lock); both covered by real-process tests."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP05 approved, start WP06\")."
         }
       ]
     },
@@ -661,7 +665,7 @@
       "title": "Make replacement and lifecycle mutations recoverable",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP01",
         "WP05"
@@ -691,7 +695,16 @@
         "`test_retry_does_not_duplicate_or_orphan_records`"
       ],
       "done_when": "Replacement, consolidation, promotion, and automatic demotion cannot acknowledge an unresolved partial operation as a fully successful transition.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "c2544bb",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp06/README.md",
+          "summary": "New breadcrumbs/mutations.py: transaction() with write-ahead before-image journal under private/operations/, rollback on any failure (nested failures doom the parent), recover() for crashed writers (restores only known states, keeps copies of removed files), RevisionConflict via write_text_atomic(expected=). remember/MCP record/note/verify/inbox promote/consolidate/rollup/mark-status+auto-demote/promote/demote are single operations; retire_all raises on any failed retirement. crumb recover; doctor operations/projections rows; projections-pending marker. tests/test_mutation_recovery.py: 10 tests incl. a real-subprocess crash after every write (12 journaled crashes restored byte-for-byte, 4 post-commit). Full suite 1234 OK; partial_supersession probe no longer observed.",
+          "compatibility": "Failed replacements exit 1 and write nothing; inbox promote no longer returns ok+warning; mark-status of a promoted record fails if its rule cannot be removed; rewrites may refuse on a revision conflict; new private/ paths and `crumb recover`.",
+          "limitations": "Rollback-only recovery (no roll-forward); revision check is not atomic CAS against non-cooperating writers; capture session handoff not journaled with its record; projections after a post-commit crash are stale until reindex (WP07)."
+        }
+      ]
     },
     {
       "id": "WP07",

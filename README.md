@@ -702,6 +702,13 @@ repository. Three things keep them apart:
   0.5 seconds (`--json` reports `publication`). Listings (`inbox`, `traps`,
   `consolidate` without `--merge`), `search`, `guard`, `show`, `validate` and
   `audit` never wait. The store should live on a local filesystem.
+- **All or nothing.** A change that touches several files is one operation. A
+  replacement (`--supersedes`), a promotion from the inbox, a merge, a rollup,
+  retiring a promoted rule, and `promote`/`demote` all work this way. If a step
+  fails, every file is put back and the command says `nothing was changed`.
+  If a writer is killed midway, `crumb doctor` reports it and
+  `crumb recover --apply` rolls it back; it keeps a copy of anything it
+  removes and never overwrites an edit made since.
 
 ### `crumb scan-secrets` and `crumb traps`
 

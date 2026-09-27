@@ -130,6 +130,30 @@ example after a suspension or a clock jump. And `crumb resume` rebuilt
 - **The lock error now reads "try again shortly".** Deleting the file no longer
   releases a lock; ending the holding process does.
 
+### Changed — multi-record changes are all or nothing (audit WP06)
+
+Finding F20. `remember --supersedes` wrote the replacement, then ignored whether
+retiring the old record worked, so a failed retirement left two live decisions
+and exited 0. The same shape existed in `inbox promote`, `consolidate --merge`,
+`rollup sessions`, retiring a promoted rule, and `promote`/`demote`.
+
+- **Each of these is one operation (new `breadcrumbs/mutations.py`).** Before
+  its first write, every touched record, singleton and instruction file is
+  journaled under `private/operations/<id>/`. A failed step restores all of
+  them, and the command fails with `nothing was changed`.
+- **New `crumb recover [--apply]`** rolls back an operation a killed writer left
+  unfinished. It restores only files that still hold a state the operation
+  knew, and keeps a copy of anything it removes under `private/recovered/`.
+  `crumb doctor` gains `operations` and `projections` rows, and `resume` warns
+  about unfinished operations.
+- **Retirement failures are errors.** A jot whose retirement fails now undoes
+  its promotion (it used to return `ok` with a warning). A promoted record whose
+  rule cannot be removed is not retired.
+- **Rewrites refuse lost updates.** A rewrite of a record refuses when another
+  editor changed the file after it was read, instead of discarding that edit.
+- **A failed projection rebuild is recorded** in `private/projections-pending`
+  until the next rebuild succeeds.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of
