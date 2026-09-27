@@ -6,6 +6,32 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
+## [0.3.1] — 2026-09-27
+
+A hotfix: **an older `crumb` on PATH blocked every prompt.**
+
+### Fixed
+
+- **The installed hooks can no longer block the host by failing.** The
+  launcher `init --with-hooks` writes `exec`'d the first `crumb` it found, so
+  that binary's exit status became the hook's. 0.3.0 added a
+  `UserPromptSubmit` hook (`crumb hook prompt`); a crumb-kit 0.2.0 still on
+  PATH (a global `pip`/`pipx` install, say) rejected the unknown event with an
+  argparse usage error and exit 2, which Claude Code reads as "block this
+  prompt" — no session in the repo could get a single prompt through. The
+  launcher now runs each candidate, passes its output on only if it
+  succeeded, and otherwise moves to the next (`./.venv`, then
+  `python -m breadcrumbs`), replaying the hook payload to each. Whatever
+  happens, it exits 0; a real veto is JSON on stdout.
+- **`crumb hook <event>` with an event this version does not know** prints
+  `{}` and exits 0 (with a warning on stderr) instead of a usage error, so the
+  next skew in the other direction degrades the same way.
+
+**Upgrading.** Existing installs keep the old launcher in
+`.claude/settings.json` until you re-run `crumb init --with-hooks`, which
+recognises the 0.3.0 launcher and rewrites it in place. Until then, make sure
+the first `crumb` on PATH is 0.3.x (`which -a crumb`, `crumb --version`).
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of
