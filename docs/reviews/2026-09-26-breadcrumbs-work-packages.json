@@ -870,7 +870,7 @@
       "title": "Unify indexed retrieval eligibility and short-prompt handling",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP01",
         "WP07"
@@ -903,7 +903,16 @@
         "`test_index_missing_stale_or_corrupt_has_honest_fallback`"
       ],
       "done_when": "Memory does not disappear at a size boundary and the consumer can tell whether a lookup completed normally or used a limited fallback.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "293a90b",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp10/README.md",
+          "summary": "New breadcrumbs/retrieval.py: acknowledgement vocabulary replaces the 12-char gate; prompt_lookup searches via the index with no corpus pre-count (full scan up to 2,000 records, else a reported `skipped` with a once-per-session notice), eligibility before the cap, corpus_summary from the verified manifest (new `corpus`) instead of pre-filter existence; Lookup reports mode/reason. Guard: a live trap naming the exact command (>=2 leading tokens, whole action or up to a flag; remedy spans excluded) gets the `command` signal and a READ_FIRST floor; pre-filter format 2 lists named commands and never filters them out; PROCEED explained as no applicable memory warning. crumb search reports lookup mode. tests/test_retrieval_boundaries.py (9 incl. the 4 named). Before/after script: 5/10 fail on 293a90b, 10/10 pass. Full suite 1284 OK; probes prompt_cliff, guard_prefilter, short_prompt_and_stale_task cleared (4 signals left); 3 known F10 critical cases pass, markers removed; baseline rewritten via reviewed path (3 improvements, 0 regressions); prompt hook 463 -> 147 ms at 5,000 records. Release workflow now runs evals --release (operator-approved).",
+          "compatibility": "Short non-acknowledgement prompts and stores >500 records now get injections; a trap naming the command makes guard READ_FIRST (exit 10) and the hook deliver context; PROCEED advice text changed; new command signal, pre-filter format/commands (older pre-filters unverified), manifest corpus, search --json lookup, hook-log retrieval; search(allow_full_scan=, info=), candidate_items(explain=); releases require every critical eval case to pass.",
+          "limitations": "Command rule is narrow (>=2 tokens, non-flag args break it, unnamed commands not covered); English fixed acknowledgement vocabulary; PROMPT_FULL_SCAN_MAX is a latency bound (skipped above it without an index); corpus count is files, not eligible records; guard's own lookup still scans unbounded."
+        }
+      ]
     },
     {
       "id": "WP11",
@@ -1189,7 +1198,7 @@
       "title": "Add delivered-context evaluation and non-negotiable critical gates",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP00"
       ],
@@ -1228,6 +1237,10 @@
           "summary": "evals/run.py keeps the ranking diagnostics unchanged and adds delivery systems (prompt_delivered: the real prompt hook incl. length gate, dedupe repeat and rendering; packet_delivered: `crumb resume --task` as printed, reading order, token cost, declared budget; hook_guard_accuracy: the real guard hook), METRIC_DEFINITIONS with denominators (n) serialized in --json and baseline.json, evals/critical/cases.yml (19 cases, 6 checks; unmarked failures fail regardless of baseline, `known:` visible but fails --release, stale markers fail, waivers reported), reviewed baseline writes (--reason, task-level deltas, --accept-regressions, change log, per-task snapshot), and a fixed holdout suite reported apart from overall. Delivery evals found and fixed a hooks_common.write_state tie-break that evicted the just-written session. 3 critical cases known F10; 16 pass. Full suite 1275 OK; old ranking baseline values identical.",
           "compatibility": "--write-baseline needs --reason and refuses regressions without --accept-regressions or while a critical case fails; evals exit 1 on critical failures; baseline.json gains definitions/tasks/changes and delivery/holdout scopes; JSON output gains definitions, critical, task_deltas; --critical defaults only with default suites; hooks_common.write_state(current=).",
           "limitations": "Release gate (--release) built but not wired into release.yml: crumb guard returned ASK_HUMAN and release.yml is outside the package's files — awaiting operator decision (wiring now would block releases until F10/WP10); delivery runs in-process with a mocked clock; delivered ids are printed entries only; holdout is small and same-author; token cost is approx_tokens and ungated."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP18 approved, wire the release gate after WP10, start WP10\"). The release gate was wired in the WP10 round, once the known F10 cases passed."
         }
       ]
     },

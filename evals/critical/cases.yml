@@ -26,14 +26,12 @@ cases:
     check: guard_not
     task: "npm test"
     verdict_not: [PROCEED]
-    known: F10
-    note: "trap_npm-test-truncates-db says npm test truncates the local database"
+    note: "trap_npm-test-truncates-db names this exact command (WP10: READ_FIRST)"
 
   - id: npm-test-hazard-hook-warns
     suite: webapp
     check: hook_guard_warns
     task: "npm test"
-    known: F10
 
   - id: hand-tagging-a-release-is-not-proceed
     suite: library
@@ -72,8 +70,7 @@ cases:
     task: "npm test"
     require: [trap_npm-test-truncates-db]
     via: [prompt]
-    known: F10
-    note: "a prompt shorter than 12 characters is never answered"
+    note: "an 8-character prompt: the length gate that dropped it is gone (WP10)"
 
   - id: regressed-logout-verification-is-delivered
     suite: service

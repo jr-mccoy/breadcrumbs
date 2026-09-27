@@ -101,9 +101,10 @@ def _stat_fingerprint(memory_dir: Path, project_root: Path) -> str:
     record directory and the repo `.gitignore`, a deliberate superset, so any
     change the real hash would see also changes this.
 
-    It is only ever a *shortcut to yes*: a match means nothing moved since the
-    index was built. A mismatch (an edit, or just a `git checkout` resetting
-    mtimes) falls back to the real hash, which decides.
+    Since audit WP07 it is *not* part of the index's freshness, which is the
+    content hash alone. It serves the generation manifest's cheap "has anything
+    moved since publication" test (`projections.verified`), where a false
+    "moved" costs only the slow path.
     """
     import hashlib
 
@@ -289,27 +290,37 @@ def candidate_items(
     q_files: set[str],
     *,
     include_ideas: bool,
+    explain: dict | None = None,
 ) -> tuple[list[dict], frozenset[str]] | None:
     """The search corpus narrowed to possible matches, plus the ubiquitous stems.
 
     Returns None whenever the index cannot be trusted or cannot help — absent,
     stale, too small, unreadable, or a query with nothing to look up — and the
-    caller falls back to the full scan. Every failure mode lands there.
+    caller falls back to the full scan. Every failure mode lands there, and
+    `explain["reason"]` says which (audit WP10), so the caller can report it.
     """
     memory_dir = Path(memory_dir)
     project_root = Path(project_root)
-    if not available() or not (q_specific or q_files):
+    explain = explain if explain is not None else {}
+    if not available():
+        explain["reason"] = "sqlite3 is unavailable"
+        return None
+    if not (q_specific or q_files):
+        explain["reason"] = "the query has nothing the index holds"
         return None
     path = index_path(memory_dir)
     if not path.is_file():
+        explain["reason"] = "no search index"
         return None
     try:
         conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     except Exception:
+        explain["reason"] = "the search index is unreadable"
         return None
     try:
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
         if not _is_fresh(meta, memory_dir, project_root):
+            explain["reason"] = "the search index is stale"
             return None
         indexed_dirs = [d for d in (meta.get("dirs") or "").split(",") if d]
         spec = 1 if include_ideas else 0
@@ -317,6 +328,7 @@ def candidate_items(
             "SELECT COUNT(*) FROM records WHERE speculative = 0 OR ?", (spec,)
         ).fetchone()[0]
         if n_indexed < INDEX_MIN_CORPUS:
+            explain["reason"] = f"the store is under {INDEX_MIN_CORPUS} indexed records"
             return None
 
         stems = sorted(q_specific)
@@ -349,6 +361,7 @@ def candidate_items(
             ):
                 df_indexed[token] = count
     except Exception:
+        explain["reason"] = "the search index is unreadable"
         return None
     finally:
         conn.close()

@@ -7,6 +7,18 @@
       "reason": "Audit WP18: adds the delivered-context systems (prompt_delivered, packet_delivered, hook_guard_accuracy), metric definitions and denominators, the holdout scope and the first task-level snapshot. The ranking diagnostics are unchanged.",
       "regressions": [],
       "removed": []
+    },
+    {
+      "added": 0,
+      "date": "2026-09-27",
+      "improvements": [
+        "webapp::npm test: prompt_delivered no longer missed trap_npm-test-truncates-db",
+        "webapp::npm test: ok gained (verdict READ_FIRST)",
+        "webapp::npm test: hook_ok gained (verdict READ_FIRST)"
+      ],
+      "reason": "Audit WP10: an exact command a trap names now floors READ_FIRST (npm test), the prompt hook answers short meaningful prompts and has no 500-record cutoff; the three known F10 critical cases pass and their markers are removed.",
+      "regressions": [],
+      "removed": []
     }
   ],
   "comment": "Written by `python evals/run.py --write-baseline --reason \u2026`. See evals/README.md.",
@@ -319,8 +331,8 @@
     },
     "overall": {
       "guard": {
-        "guard_accuracy": 0.875,
-        "hook_guard_accuracy": 0.875,
+        "guard_accuracy": 1.0,
+        "hook_guard_accuracy": 1.0,
         "n": {
           "guard_accuracy": 8,
           "hook_guard_accuracy": 8
@@ -367,20 +379,20 @@
       "prompt_delivered": {
         "dedupe": 1.0,
         "n": {
-          "dedupe": 29,
+          "dedupe": 30,
           "precision_at_5": 33,
           "quiet": 6,
           "recall_at_5": 33,
           "reject_hits": 39,
-          "tokens_max": 29,
-          "tokens_mean": 29
+          "tokens_max": 30,
+          "tokens_mean": 30
         },
-        "precision_at_5": 0.6303,
+        "precision_at_5": 0.6606,
         "quiet": 1.0,
-        "recall_at_5": 0.8384,
+        "recall_at_5": 0.8687,
         "reject_hits": 1,
         "tokens_max": 312,
-        "tokens_mean": 166.0345
+        "tokens_mean": 163.7
       },
       "tasks": 39
     },
@@ -453,8 +465,8 @@
     },
     "webapp": {
       "guard": {
-        "guard_accuracy": 0.5,
-        "hook_guard_accuracy": 0.5,
+        "guard_accuracy": 1.0,
+        "hook_guard_accuracy": 1.0,
         "n": {
           "guard_accuracy": 2,
           "hook_guard_accuracy": 2
@@ -501,20 +513,20 @@
       "prompt_delivered": {
         "dedupe": 1.0,
         "n": {
-          "dedupe": 8,
+          "dedupe": 9,
           "precision_at_5": 11,
           "quiet": 2,
           "recall_at_5": 11,
           "reject_hits": 13,
-          "tokens_max": 8,
-          "tokens_mean": 8
+          "tokens_max": 9,
+          "tokens_mean": 9
         },
-        "precision_at_5": 0.4727,
+        "precision_at_5": 0.5636,
         "quiet": 1.0,
-        "recall_at_5": 0.7273,
+        "recall_at_5": 0.8182,
         "reject_hits": 1,
         "tokens_max": 305,
-        "tokens_mean": 194.125
+        "tokens_mean": 183.2222
       },
       "tasks": 13
     }
@@ -1390,9 +1402,9 @@
     },
     "webapp::npm test": {
       "guard": {
-        "hook_ok": false,
-        "ok": false,
-        "verdict": "PROCEED"
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "READ_FIRST"
       },
       "packet": {
         "missed": [],
@@ -1407,9 +1419,7 @@
         "rejected": []
       },
       "prompt_delivered": {
-        "missed": [
-          "trap_npm-test-truncates-db"
-        ],
+        "missed": [],
         "rejected": []
       }
     },

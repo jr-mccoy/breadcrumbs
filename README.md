@@ -542,6 +542,12 @@ proposed, and it is never empty. It is **not** the resume packet's `next_action`
 which is recorded state (the `## Next Action` from a session handoff, `""` when
 nobody set one). Two commands, two meanings, so two names.
 
+`PROCEED` means **no applicable memory warning was found**. It is not an
+authorization and not a safety check of the action. A trap that names the exact
+command being run (`npm test` against "npm test truncates the database") makes
+it at least `READ_FIRST`, and the guard hook always sees such a command, however
+routine it looks. The trap's own remedy (`npm run test:unit`) never counts.
+
 **Relevance decides what is surfaced; *stance* decides how far it can escalate.**
 Overlap (same file, same tag, shared keywords) answers "is this record about the
 same thing" — it has never answered "does this record object to what I am about
@@ -900,7 +906,10 @@ piece is independent:
     `crumb show <id>` (or `memory://records/{id}`) for the full text. It
     injects current records only: a superseded, stale or expired record, or
     an answered question, stays out, because the injected line does not show
-    status. It **never
+    status. Any prompt that is not a plain acknowledgement ("ok", "go on") is
+    looked up, however short (`npm test`, `ruff`), and there is no store-size
+    cutoff. Without a current search index on a very large store, it says the
+    lookup was skipped rather than staying silent. It **never
     blocks**: that decision is available on this event and it erases the
     prompt, which is the worst thing a memory tool could do.
 

@@ -752,11 +752,11 @@ Rebuilt by every reindex; never a source of truth.
 | File | Committed | Contents |
 |---|---|---|
 | `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header and, since audit WP08, a `view` / `budget` / `rules` header. It is the portable `markdown` view: within 5,000 `approx_tokens`, and promoted records are kept with their rules. |
-| `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads, with a top-level `inputs_hash` since audit WP07 (one written by an older version has none and is not drift-checked). The hook uses it only while `index/generation.json` vouches for it. |
+| `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads, with a top-level `inputs_hash` since audit WP07 (one written by an older version has none and is not drift-checked). The hook uses it only while `index/generation.json` vouches for it. Since audit WP10 it has `format: 2` and `commands`, the command heads live traps name; one without them is not trusted. |
 | `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null \| reason}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
 | `generated/conflicts.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "conflicts": [{"rule", "ids", "similarity", "message"}]}` — pairs of live records that may contradict each other (WM-34). |
 | `index/search.sqlite` | never (gitignored) | The disposable search index. |
-| `index/generation.json` | never (gitignored) | The generation manifest (audit WP07): `{format, inputs_hash, stable, published_at, files: {name: sha256}, stat_fingerprint}`, written last by every publication. |
+| `index/generation.json` | never (gitignored) | The generation manifest (audit WP07): `{format, inputs_hash, stable, published_at, files: {name: sha256}, stat_fingerprint, corpus: {records}}`, written last by every publication. `corpus` (audit WP10) is the prompt corpus's record count, read by the prompt hook instead of walking the store. |
 
 **`related.json`** relates live items (status `active`; for questions, `open`)
 by pure overlap — shared declared files ×6, shared tag stems ×4, shared

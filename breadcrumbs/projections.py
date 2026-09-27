@@ -48,7 +48,13 @@ def _sha(data: bytes) -> str:
 
 
 def write_manifest(
-    memory_dir: Path, digest: str, *, stable: bool, files: dict[str, bytes], fingerprint: str
+    memory_dir: Path,
+    digest: str,
+    *,
+    stable: bool,
+    files: dict[str, bytes],
+    fingerprint: str,
+    corpus: dict | None = None,
 ) -> None:
     """Record one completed publication. Call after every output is in place."""
     from breadcrumbs import cli
@@ -61,6 +67,10 @@ def write_manifest(
         "files": {name: _sha(data) for name, data in sorted(files.items())},
         "stat_fingerprint": fingerprint,
     }
+    if corpus is not None:
+        # A cheap summary of the snapshot (audit WP10): readers that only need
+        # "how big is the store" take it from here instead of walking it.
+        doc["corpus"] = corpus
     path = manifest_path(memory_dir)
     path.parent.mkdir(parents=True, exist_ok=True)
     cli.write_text_atomic(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
@@ -72,6 +82,16 @@ def load_manifest(memory_dir: Path) -> dict | None:
     except (OSError, ValueError):
         return None
     return doc if isinstance(doc, dict) and doc.get("format") == MANIFEST_FORMAT else None
+
+
+def generation_current(memory_dir: Path, root: Path) -> bool:
+    """The last publication was stable and nothing canonical has moved since."""
+    from breadcrumbs import searchindex
+
+    doc = load_manifest(memory_dir)
+    if doc is None or not doc.get("stable"):
+        return False
+    return doc.get("stat_fingerprint") == searchindex._stat_fingerprint(memory_dir, root)
 
 
 def verified(memory_dir: Path, root: Path, name: str) -> bytes | None:

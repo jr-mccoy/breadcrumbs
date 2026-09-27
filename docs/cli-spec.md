@@ -87,9 +87,29 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `session` | `SessionStart` | — | Emits the resume packet as `additionalContext`. With `source: compact` it prepends what was in flight before the compaction: the last prompt, the records surfaced for it, and the mined candidates waiting in the inbox — and builds the packet with that last prompt as its task, so the sections are ordered by relevance to it (see `resume --task`). |
 | `guard` | `PreToolUse` | `Bash\|Edit\|Write\|MultiEdit\|Task\|Agent` | Cost-aware guard verdict. A subagent launch (`Task`/`Agent`) is scored on its launch prompt and **capped at `READ_FIRST`**: the launch is not itself irreversible, and the subagent's own calls hit this same hook. |
 | `capture` | `Stop` | — | Mines the transcript (always, as a side effect), then snapshots a session record or holds the stop once for the extraction turn. The extraction instruction includes one line saying a write refused with exit 3 is a near-duplicate, answered with `--supersedes <id>` or `--allow-duplicate`. |
-| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Injects **current records only**: superseded, rejected, stale, disputed and quarantined records, answered and closed questions, records past their `expires_at`, and branch-scoped records written on another branch stay out. A verification stays in while its own lifecycle status is `active`, whatever its outcome. Captures a correction to `private/inbox/`. **Never blocks** — that would erase the prompt. |
+| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, looked up for **any prompt that is not an acknowledgement** (audit WP10: a vocabulary such as "ok", "yes please", "go on", "thanks" or emoji alone, not a length — `npm test` and `quasar` are looked up) with **no record-count cutoff** (it used to return nothing above 500 records), with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Injects **current records only**: superseded, rejected, stale, disputed and quarantined records, answered and closed questions, records past their `expires_at`, and branch-scoped records written on another branch stay out. A verification stays in while its own lifecycle status is `active`, whatever its outcome. Captures a correction to `private/inbox/`. **Never blocks** — that would erase the prompt. |
 | `compact` | `PreCompact` | — | Mines the transcript and writes a marker for the next `SessionStart`. Emits nothing: this event's stdout never reaches the model. |
 | `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript, tagged `subagent` and `agent:<type>`. Does not hold the subagent. |
+
+**How the prompt hook looks up** (audit WP10, `breadcrumbs/retrieval.py`).
+
+- **Acknowledgements.** A prompt made only of acknowledgement words (at most
+  four), or only of punctuation and emoji, is not looked up. Every other
+  prompt is, however short. Before, anything under 12 characters was skipped.
+- **No pre-count.** It uses the search index when that is current. Otherwise
+  it scans the store in full, up to `PROMPT_FULL_SCAN_MAX` (2,000) records.
+  Before, it loaded every record to count them and returned nothing above 500,
+  retired ones included.
+- **Past that bound it says so.** With no usable index, it injects a one-line
+  notice once per session ("memory was not searched for this prompt — … Run
+  `crumb reindex`"), rather than staying silent as if nothing were relevant.
+- **Current records only, chosen before the five-match cap**, so history never
+  takes a slot.
+- **The hook log records how it looked:** `retrieval` is `indexed`,
+  `full_scan`, `skipped` or `acknowledgment`.
+- **Whether the store has anything** comes from the verified generation
+  manifest's record count, or a file count. It used to be the guard
+  pre-filter file's existence.
 
 **What the miner writes.** Four deterministic rules over the transcript — a
 command that failed, then passed after an edit (`attempt`), a test command that
@@ -692,6 +712,11 @@ Behavior:
 
   A stale, absent or unreadable index — or a Python without `sqlite3` — is
   never used, and search falls back to the full scan.
+- **A lookup says how it ran** (audit WP10). `--json` carries
+  `lookup: {mode, reason, candidates}` and `--explain` prints it: `indexed`, or
+  `full_scan` with the reason the index could not serve (`no search index`,
+  `the search index is stale`, `the search index is unreadable`, `the store is
+  under 200 indexed records`, …). `crumb search` always completes.
 - **Expired records are still found.** A record past its `expires_at` keeps
   its status and is searched like any other; the human line marks it
   (`[active, expired]`, or `[fixed, expired]` for a verification, whose
@@ -740,6 +765,24 @@ Behavior (deltas from `search` — everything there applies here too):
   record that mentions npm. The match is keyword-only, so it escalates only
   through the score bands. The prompt hook uses the same gate. Found by the
   relevance evals (`evals/`, WM-61).
+- **A trap that names the exact command is READ_FIRST** (audit WP10, F10).
+  Before, `npm test` against a trap titled "npm test truncates the database"
+  matched on the title alone, scored 3 and came out `PROCEED`. The rule is
+  narrow:
+  - **A trap names a command** with the leading words of its summary, or with
+    a backticked span in its hazard text. A backticked command in the trap's
+    remedy, such as "use `npm run test:unit`", is what to run *instead*, and
+    never counts.
+  - **The action matches** when their common leading tokens number at least
+    two and cover the whole action, or stop at a flag: `npm test` and
+    `npm test --watch` match; `npm run test:unit`, `npm install`, `pytest -q`
+    and `make` do not.
+  - **A match carries the `command` signal**, scores at least
+    `GUARD_READ_FIRST_SCORE`, and floors a live trap at `READ_FIRST`, the
+    advisory ceiling. The reader is told; the permission flow is untouched.
+- **`PROCEED` means "no applicable memory warning found".** It is not an
+  authorization and not a safety check of the action. The recommended action
+  says so.
 - **Staleness on the guard path is risks-only.** Only abnormal states — cold
   handoff (`⚠`), detached HEAD, handoff branch mismatch — ride along with a
   verdict. The routine store facts (fresh handoff age, aged records, low
@@ -782,6 +825,10 @@ The `PreToolUse` hook path adds three behaviors of its own:
     2.6 ms per call at 200 records, and 92 ms instead of 8.2 ms at 1,000.
   - A verified pre-filter that finds nothing keeps the call silent as before
     (`skipped: "prefilter"`).
+  - **It never filters out a named command** (audit WP10). The pre-filter
+    (format `2`) lists the commands live traps name, and an action that names
+    one goes to the full guard, however routine it looks. A pre-filter without
+    `format: 2` is treated as unverified.
 - **Edits carry content.** The guard action for an `Edit`/`Write`/`MultiEdit`
   is `edit <path>: <bounded snippet of the new content>`, so successive edits
   of one file stop producing byte-identical guard input and a content-shaped

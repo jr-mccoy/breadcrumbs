@@ -3902,10 +3902,16 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     activate_store_aliases(memory_dir)
     tokens: set[str] = set()
     paths: set[str] = set()
+    commands: list[list[str]] = []
     for trap in active_traps(memory_dir):
         text = trap["heading"] + "\n" + trap["content"]
         tokens |= _specific(text)
         paths |= _paths_from_text(text)
+        # The commands a trap names (audit F10): a routine-looking command the
+        # full guard would warn about must never be filtered out here.
+        for head in _trap_command_heads(trap["heading"], trap["content"]):
+            if len(head) >= _COMMAND_MIN_TOKENS and head not in commands:
+                commands.append(head[:8])
     for rec in active_attempts(memory_dir):
         if _attempt_has_do_not_retry(rec):
             text = (
@@ -3920,7 +3926,17 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
             # said PAUSE. Full scoring already reads these (see _item_from_record);
             # the pre-filter must see the same files or it gates them out.
             paths |= set(_evidence_refs(rec, ("file", "path")))
-    return {"tokens": sorted(tokens), "paths": sorted(paths)}
+    return {
+        "format": GUARD_PREFILTER_FORMAT,
+        "tokens": sorted(tokens),
+        "paths": sorted(paths),
+        "commands": sorted(commands),
+    }
+
+
+# 2: `commands` added (audit F10). A pre-filter without it cannot know the
+# commands traps name, so it is treated as unverified and the full guard runs.
+GUARD_PREFILTER_FORMAT = 2
 
 
 # Written when a projection rebuild raised, removed by the next one that works.
@@ -4051,12 +4067,15 @@ def _publish_projections(
                 if path != published_index:
                     _searchindex.discard_index(path)
         # Last: the manifest that says these files are one generation.
+        from breadcrumbs import retrieval as _retrieval
+
         _projections.write_manifest(
             memory_dir,
             digest or _snapshots.UNSTABLE,
             stable=digest is not None,
             files={name: text.encode("utf-8") for name, text in outputs.items()},
             fingerprint=fingerprint,
+            corpus={"records": _retrieval.count_records(memory_dir)},
         )
         if digest is None:
             return False, "the store kept changing during publication; projections stamped unstable"
@@ -8043,7 +8062,7 @@ GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
 # specificity that lets a match raise a verdict ({file, tag}) — being worth
 # showing and being worth escalating are different bars.
 GUARD_SURFACING_SIGNALS = frozenset(
-    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker"}
+    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker", "command"}
 )
 
 # recency / branch de-weighting (reuses the staleness signals above)
@@ -8759,6 +8778,70 @@ def _item_from_record(rec: Record) -> dict:
     }
 
 
+# ---- exact command hazards (audit F10) ------------------------------------- #
+#
+# A trap that names the very command about to run is the strongest evidence
+# memory can give, and it used to score like one shared word: `npm test`
+# against "npm test truncates the database" matched on the title alone (3 points)
+# and came out PROCEED, while the pre-filter's two-specific-token rule let the
+# hook skip the check entirely. The rule here is deliberately narrow:
+#
+# - a *head* is the command a trap names: the leading words of its summary, or
+#   a backticked span anywhere in it;
+# - the action names it when their longest common token prefix is at least two
+#   tokens and covers the whole action, or stops at a flag (`npm test --watch`);
+# - a match gets the `command` signal and, for a live trap, a READ_FIRST floor
+#   (advisory: the reader is told, the permission flow is untouched).
+#
+# One shared word ("make sure …" against `make`) is never enough, and a hazard's
+# documented remedy (`npm run test:unit`) does not share the prefix.
+
+_BACKTICK_SPAN_RE = re.compile(r"`([^`\n]{2,160})`")
+_COMMAND_MIN_TOKENS = 2
+
+
+def _command_tokens(text: str) -> list[str]:
+    """A command as lowercase tokens: `cd x &&` prefixes, pipes and quotes folded."""
+    from breadcrumbs import transcript as _transcript
+
+    flat = _transcript.normalize_command(str(text or ""))
+    return [t.strip("\"'`.,;:").lower() for t in flat.split() if t.strip("\"'`.,;:")]
+
+
+def _trap_command_heads(heading: str, body: str) -> list[list[str]]:
+    """The commands a trap names: its summary's head, then each backticked span."""
+    summary = heading
+    if heading.startswith("trap_") and ":" in heading:
+        summary = heading.split(":", 1)[1]
+    heads = [_command_tokens(summary)]
+    # The hazard half only: a backticked command in the remedy ("use
+    # `npm run test:unit`") is what to run instead, never the hazard.
+    for span in _BACKTICK_SPAN_RE.findall(heading + "\n" + _trap_hazard_text(body or "")):
+        tokens = _command_tokens(span)
+        if len(tokens) >= _COMMAND_MIN_TOKENS:
+            heads.append(tokens)
+    return heads
+
+
+def _names_command(action_tokens: list[str], heads) -> bool:
+    """Does the action run a command one of these heads names? See above."""
+    if len(action_tokens) < _COMMAND_MIN_TOKENS:
+        return False
+    for i, head in enumerate(heads or ()):
+        n = 0
+        for a, b in zip(action_tokens, head):
+            if a != b:
+                break
+            n += 1
+        if n < _COMMAND_MIN_TOKENS:
+            continue
+        if i > 0 and n < len(head):
+            continue  # a backticked command must be named whole
+        if n == len(action_tokens) or action_tokens[n].startswith("-"):
+            return True
+    return False
+
+
 def _item_from_trap(trap: dict) -> dict:
     heading, body = trap["heading"], trap.get("content", trap.get("body", ""))
     text = heading + "\n" + body
@@ -8777,6 +8860,7 @@ def _item_from_trap(trap: dict) -> dict:
         ),
         "specific": _specific(text),
         "title_specific": _specific(heading),
+        "command_heads": _trap_command_heads(heading, body),
         "branch": None,
         "record": None,
         "do_not_retry": False,
@@ -9146,6 +9230,8 @@ def search(
     min_keyword: int = 1,
     noise_floor: int = 1,
     include_ideas: bool = False,
+    allow_full_scan: bool = True,
+    info: dict | None = None,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Deterministic search over the canonical records (§20.10).
 
@@ -9156,6 +9242,12 @@ def search(
     `include_ideas` selects the wider, lookup-only corpus — see `_candidate_items`.
     It defaults to False so a caller that forgets it gets guard's corpus, which is
     the safe side of the mistake.
+
+    `info`, when given, is filled with how the lookup ran (audit WP10): `mode`
+    (`indexed`, or `full_scan` with the index's `reason`), and `candidates`, the
+    records scored. With `allow_full_scan=False` a lookup the index cannot
+    serve returns nothing with `mode: "skipped"` instead of scanning, which is
+    a bounded caller's choice; plain search always completes.
     """
     # Aliases before the query is stemmed: both sides of every comparison must
     # fold through the same table (WM-24).
@@ -9164,19 +9256,28 @@ def search(
     q_specific = _specific(query)
     q_words = frozenset(_stem(t) for t in _tokenize(query) if t not in _FUNCTION_WORDS)
     q_files = _norm_files(_paths_from_text(query) | set(files or []))
+    q_command = _command_tokens(query)
     # The search index narrows the corpus to records that could possibly match
     # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
     # the full scan below is then exactly what it always was.
     from breadcrumbs import searchindex as _searchindex
 
+    explain: dict = {}
     narrowed = _searchindex.candidate_items(
-        memory_dir, root, q_specific, q_files, include_ideas=include_ideas
+        memory_dir, root, q_specific, q_files, include_ideas=include_ideas, explain=explain
     )
+    info = info if info is not None else {}
     if narrowed is not None:
         items, ubiquitous = narrowed
+        info.update(mode="indexed", reason=None)
     else:
+        info.update(mode="full_scan", reason=explain.get("reason"))
+        if not allow_full_scan:
+            info.update(mode="skipped", candidates=0)
+            return [], {}
         items = _candidate_items(memory_dir, include_ideas=include_ideas)
         ubiquitous = _ubiquitous_stems(items)
+    info["candidates"] = len(items)
     by_id = {it["id"]: it for it in items}
     cur_branch = git_branch(root)
     # One commit-distance index for the whole pass — see the class.
@@ -9198,6 +9299,8 @@ def search(
             ubiquitous=ubiquitous,
             q_words=q_words,
         )
+        if it.get("command_heads") and _names_command(q_command, it["command_heads"]):
+            m = _with_command_signal(m, it)
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.
             if filters and not q_specific and not q_files:
@@ -9238,6 +9341,36 @@ def search(
 
     matches.sort(key=lambda m: (-m["score"], m["id"]))
     return matches, by_id
+
+
+def _with_command_signal(m: dict | None, item: dict) -> dict:
+    """Mark a match (or make one) for a trap that names the action's command."""
+    if m is None:
+        m = {
+            "id": item["id"],
+            "kind": item["kind"],
+            "status": item["status"],
+            "lifecycle": item.get("lifecycle", item["status"]),
+            "expired": bool(item.get("expired")),
+            "promoted": bool(item.get("promoted")),
+            "title": item["title"],
+            "score": 0.0,
+            "raw_score": 0.0,
+            "suppressed": False,
+            "signals": [],
+            "matched_files": [],
+            "matched_tags": [],
+            "keyword_overlap": [],
+            "branch_mismatch": False,
+            "reason": "",
+        }
+    if "command" not in m["signals"]:
+        m["signals"].append("command")
+        m["reason"] = (m["reason"] + "; " if m["reason"] else "") + "names this exact command"
+    # As strong as READ_FIRST evidence: it ranks and surfaces like it.
+    m["score"] = max(float(m["score"]), float(GUARD_READ_FIRST_SCORE))
+    m["raw_score"] = max(float(m["raw_score"]), float(GUARD_READ_FIRST_SCORE))
+    return m
 
 
 def _passes_filters(item: dict, filters: dict) -> bool:
@@ -9316,6 +9449,9 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
             floor = "PAUSE"  # a failed attempt on these files/component
         elif m["kind"] == "decision" and specific:
             floor = "READ_FIRST"  # an active decision constrains this area
+        elif m["kind"] == "trap" and "command" in sig:
+            # The trap names the exact command (audit F10): advisory, READ_FIRST.
+            floor = "READ_FIRST"
         elif m["kind"] == "trap" and specific:
             # Keyword-only trap matches used to floor READ_FIRST here, bypassing
             # the score bands — in a store whose vocabulary overlaps the codebase
@@ -9397,14 +9533,17 @@ def _recommended_action(verdict: str, top: list[dict], by_id: dict, root: Path) 
         return (
             f"Read {ids} first — they constrain this area — then make a surgical change." + verify
         )
+    # PROCEED says only that memory holds no applicable warning (audit F10). It
+    # is not an authorization and not a safety check of the action itself.
     if top:
         return (
-            "Low-severity overlap only; likely unrelated. Proceed, but skim "
-            f"{ids} if unsure." + verify
+            "No applicable memory warning found (PROCEED is not an authorization or a "
+            f"safety check). Weak overlap only; skim {ids} if unsure." + verify
         )
     return (
-        "No conflicting memory found. Proceed. Capture a new decision or attempt "
-        "record if this turns into one worth remembering."
+        "No applicable memory warning found (PROCEED is not an authorization or a "
+        "safety check). Capture a new decision or attempt record if this turns into "
+        "one worth remembering."
     )
 
 
@@ -9617,6 +9756,7 @@ def cmd_search(args: argparse.Namespace) -> int:
     # works. Search can and should return zero — one generic shared token
     # ("version") is not a match.
     min_kw = max(1, min(GUARD_MIN_KEYWORD_OVERLAP, len(_specific(query)))) if query else 1
+    lookup: dict = {}
     matches, _ = search(
         memory_dir,
         root,
@@ -9625,10 +9765,13 @@ def cmd_search(args: argparse.Namespace) -> int:
         stale_days=stale_days,
         min_keyword=min_kw,
         include_ideas=True,
+        info=lookup,
     )
 
     if args.json:
-        payload = {"query": query, "filters": filters, "matches": matches}
+        # How the lookup ran (audit WP10): `indexed`, or `full_scan` and why the
+        # index could not serve it. `crumb search` is always complete.
+        payload = {"query": query, "filters": filters, "matches": matches, "lookup": lookup}
         if getattr(args, "explain", False):
             payload["query_stems"] = sorted(_specific(query))
         _print_json(args, payload)
@@ -9642,6 +9785,8 @@ def cmd_search(args: argparse.Namespace) -> int:
         print(f"query stems: {', '.join(stems) if stems else '(none — every word was a stopword)'}")
         if _STORE_ALIASES:
             print(f"store aliases active: {len(_STORE_ALIASES)} ({ALIASES_FILENAME})")
+        why = f" ({lookup['reason']})" if lookup.get("reason") else ""
+        print(f"lookup: {lookup.get('mode')}{why}, {lookup.get('candidates', 0)} record(s) scored")
         print()
     print(render_search_human(matches, query or "(filters only)"))
     return 0
@@ -12188,8 +12333,10 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
         idx = json.loads(raw.decode("utf-8")) if raw is not None else None
     except ValueError:
         idx = None
-    if not isinstance(idx, dict):
+    if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
         _hooklog.note(prefilter="unverified")
+        return True
+    if _names_command(_command_tokens(action), idx.get("commands") or ()):
         return True
     # Two specific shared tokens, mirroring the guard anti-noise floor — a single
     # generic word never escalates (§19b.8). Index tokens are re-stemmed at read

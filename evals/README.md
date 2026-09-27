@@ -73,8 +73,10 @@ aggregates compare, and `--write-baseline` refuses to write while one fails.
   reported, never gated.
 
 Adding either marker is a reviewed change to `cases.yml`, never a baseline
-rewrite. Today three cases are `known: F10` (`npm test` gets `PROCEED`, the
-guard hook is silent, and the 8-character prompt is never answered).
+rewrite. The three cases once marked `known: F10` (`npm test` got `PROCEED`,
+the guard hook was silent, and the 8-character prompt was never answered)
+pass since audit WP10, and their markers were removed. `.github/workflows/release.yml`
+runs `--release`, so a release needs every critical case to pass.
 
 ## Metrics: definitions and denominators
 

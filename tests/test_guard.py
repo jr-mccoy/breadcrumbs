@@ -437,7 +437,10 @@ class SpeculativeIdeaTests(unittest.TestCase):
         idea must not be able to escalate a routine command either."""
         mem = FIXTURES / "fixture-12-speculative-idea" / ".project-memory"
         pre = crumb._build_guard_prefilter(mem)
-        self.assertEqual(pre, {"tokens": [], "paths": []})
+        self.assertEqual(
+            {k: pre[k] for k in ("tokens", "paths", "commands")},
+            {"tokens": [], "paths": [], "commands": []},
+        )
 
 
 # --------------------------------------------------------------------------- #

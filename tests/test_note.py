@@ -340,7 +340,11 @@ class TrapLifecycleTests(unittest.TestCase):
 
             # Gone from the packet and the hook pre-filter...
             self.assertEqual(crumb.build_resume_packet(mem, root)["known_traps"], [])
-            self.assertEqual(crumb._build_guard_prefilter(mem), {"tokens": [], "paths": []})
+            pre = crumb._build_guard_prefilter(mem)
+            self.assertEqual(
+                {k: pre[k] for k in ("tokens", "paths", "commands")},
+                {"tokens": [], "paths": [], "commands": []},
+            )
             # ...and demoted out of the set that drives a guard verdict.
             result = crumb.guard(
                 mem, root, "tune the WorkManager flex window", files=["app/work/Sync.kt"]

@@ -366,8 +366,18 @@ class DeliveryTests(unittest.TestCase):
             (suite / "store.crumb").write_text(HAZARD_STORE, encoding="utf-8")
             res = run.run_suite(suite)
             row = res["tasks"][0]
-            # Retrieval finds the trap; the hook's length gate (a prompt under
-            # 12 characters) never delivers it.
+            # An 8-character prompt is answered by the real hook (audit WP10
+            # removed the length gate)...
+            self.assertIn("trap_npm-test-db", row["prompt"]["top"])
+            self.assertTrue(row["prompt_delivered"]["spoke"])
+            self.assertEqual(row["prompt_delivered"]["recall_at_5"], 1.0)
+            # ...and the gate is what the delivered view measures: if the hook
+            # took it for an acknowledgement, retrieval would still find the
+            # trap while nothing reached the reader.
+            from breadcrumbs import retrieval
+
+            with mock.patch.object(retrieval, "is_acknowledgment", return_value=True):
+                row = run.run_suite(suite)["tasks"][0]
             self.assertIn("trap_npm-test-db", row["prompt"]["top"])
             self.assertFalse(row["prompt_delivered"]["spoke"])
             self.assertEqual(row["prompt_delivered"]["recall_at_5"], 0.0)

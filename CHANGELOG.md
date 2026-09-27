@@ -293,6 +293,42 @@ accepted baseline, and CI was green.
   session it had just written when eight others shared its one-second
   timestamp, so a repeated prompt was injected again.
 
+### Changed — retrieval does not vanish at a boundary; named commands warn (audit WP10)
+
+Findings F09 and F10, and the rest of F11 and F12.
+
+- **F09.** The prompt hook loaded every record to count them and returned
+  nothing above 500, retired ones included.
+- **F10.** Any prompt under 12 characters was skipped, so `npm test` or `quasar`
+  was never answered. `npm test` got `PROCEED` from a trap titled "npm test
+  truncates the database", and the guard pre-filter let the hook skip it.
+
+What changed:
+
+- **New `breadcrumbs/retrieval.py`.**
+  - An acknowledgement vocabulary replaces the length gate.
+  - `prompt_lookup` searches through the index with no pre-count. It scans in
+    full up to 2,000 records without a current index, and past that says the
+    lookup was skipped, once per session.
+  - Eligibility (current records only) is applied before the five-match cap.
+  - Corpus size comes from the verified generation manifest (`corpus`), not
+    the pre-filter file's existence.
+  - The prompt hook is also faster: 154 ms instead of 494 ms at 5,000 records,
+    because nothing is pre-counted.
+- **A trap that names the exact command floors `READ_FIRST`** (the `command`
+  signal). The match needs at least two leading tokens, covering the whole
+  action or stopping at a flag. A command in the trap's remedy never counts.
+- **The guard pre-filter lists named commands** (format 2) and never filters
+  one out. An older pre-filter is not trusted.
+- **`PROCEED` is explained** as "no applicable memory warning found", not an
+  authorization or a safety check.
+- **Lookups say how they ran.** `crumb search --json` has `lookup` (`indexed`,
+  or `full_scan` and why), `--explain` prints it, and the prompt hook logs
+  `retrieval`.
+- **The release workflow runs `evals/run.py --release`** (the WP18 critical
+  gate). The three `known: F10` critical cases pass and their markers are
+  removed.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of
