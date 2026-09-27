@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "92e787eaca2d",
+ "inputs_hash": "1cdc97bab4b8",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -220,6 +220,11 @@
   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls": [
    "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
    "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
+   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches"
+  ],
+  "dec_20260927_transports-reach-the-store-through-breadcrumbs-service": [
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches"
   ],
   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest": [

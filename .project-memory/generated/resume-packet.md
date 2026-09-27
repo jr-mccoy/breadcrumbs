@@ -1,12 +1,12 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 4a370ce | inputs_hash: 92e787eaca2d | generated_at: 2026-09-27T22:10:56+00:00 -->
-<!-- view: markdown | budget: 3686/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: c08c6be | inputs_hash: 1cdc97bab4b8 | generated_at: 2026-09-27T22:30:28+00:00 -->
+<!-- view: markdown | budget: 3793/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `4a370ce` · 1 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `c08c6be` · 1 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
@@ -16,16 +16,19 @@ WP21 is at review_required (commit 22907a1; 0.3.1 merged in 751283f). Wait for o
 
 ## Landed Since The Handoff Was Written
 _(check Current Focus / Next Action against these before redoing work)_
+- c08c6be WP16: an application layer the CLI, MCP and hooks share
+- 374c556 WP16 (in progress): structural tests, behavior evidence, docs
+- a505cec WP16 (in progress): breadcrumbs.service, and every transport uses it
+- bbe2588 WP16 (in progress): the argument parser moves to cli_parser
+- 83628b3 WP16 (in progress): parity golden captured before the extraction
+- fa2df0e Project memory: WP15 decision
 - 4a370ce WP15: rebuild cost falls without dropping work
 - 22036b2 WP15 (in progress): see-also keeps a bounded top 3 per item
 - 992a619 WP15 (in progress): benchmark times untraced runs, fails on non-zero exits
 - 2cb6f62 WP15 (in progress): changelog entry
-- a9192ac WP15 (in progress): exact postings-based pairing, operation parse cache
-- 9a28ed4 Project memory: WP14 decision
-- af135ab WP14: review profiles decide who may make memory authoritative
-- 5f5566c Project memory: WP21 decision and session capture
 
 ## Active Decisions
+- `dec_20260927_transports-reach-the-store-through-breadcrumbs-service` — CLI, MCP and hooks call service functions (record, mark_status, search, guard, resume_packet, prompt_lookup, admit) inside service.active(ctx); wording, exit codes and envelopes stay in the adapters. Parser lives in cli_parser.py. Aliases and clock are per-thread scoped state. Any further move out o… [excerpt: 300 of 379 chars; full text: crumb show dec_20260927_transports-reach-the-store-through-breadcrumbs-service]
 - `dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering` — related, conflicts and the near-duplicate sweep score only pairs that can reach their thresholds; pairwise versions stay as test oracles. Past RELATED_PAIR_BUDGET the related map reports degraded (audit: related-degraded) instead of skipping. Parses are shared per operation via cli.operation() keyed… [excerpt: 300 of 332 chars; full text: crumb show dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering]
 - `dec_20260927_review-profiles-solo-by-default-team-makes-agent-written` — Proportional: ordinary capture never waits for a person; only the writes that make memory authoritative are gated. Opt-in semantics use requires: instead of a store-wide schema bump.
 - `dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer` — The lock is the one place every committed write already passes, and every caller already handles StoreLocked, so the refusal needs no per-writer code. Released readers (<=0.3.1) cannot be changed, so semantic changes must also be designed to fail safe for them (schema bump, meaning kept out of field… [excerpt: 300 of 456 chars; full text: crumb show dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer]
@@ -40,8 +43,7 @@ _(check Current Focus / Next Action against these before redoing work)_
 - `dec_20260927_installed-hook-launchers-never-pass-a-failure-through` — A hook we install must never be able to veto the host by failing; a real veto is JSON on stdout. Version skew between an installed hook config and a CLI on PATH is normal (global pipx vs project venv).
 - `dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record` — The audit evidence is only useful if it stays exactly what was reviewed. Reformatting the scripts would break the checksums. Each package's regressions belong in ordinary tests when that package lands, not in the probe script.
 - `dec_20260924_phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per` — No per-phase release was ever cut. The next minor after 0.2.0 is the honest number for a schema 1->4 jump, and cli.py already said the guard matcher changed in 0.3.0. Numbering it 0.9.0 would imply six releases that never existed.
-- `dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against` — A ranking regression is invisible to unit tests. Building stores through the CLI keeps the eval honest to the current writers.
-_(… 30 more omitted to stay within the per-section cap)_
+_(… 31 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -63,6 +65,8 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (5d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/service.py
+- tests/test_application_parity.py
 - breadcrumbs/related.py
 - breadcrumbs/lifecycle.py
 - breadcrumbs/admission.py
@@ -81,9 +85,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - tests/test_emission_accounting.py
 - docs/reviews/2026-09-27-breadcrumbs-wp12/README.md
 - breadcrumbs/cli.py
-- tests/test_guard_delivery.py
-- docs/reviews/2026-09-27-breadcrumbs-wp11/README.md
-_(… 32 more omitted to stay within the per-section cap)_
+_(… 34 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -117,7 +119,7 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 8 commit(s) behind current HEAD.
+- ⚠ handoff is 0 day(s) old, written 14 commit(s) behind current HEAD.
 - active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 22 days old with no update — is this still true?
 - active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 22 days old with no update — is this still true?
 - active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 22 days old with no update — is this still true?
