@@ -1,20 +1,21 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: b7f37ce | inputs_hash: 9a5c287fddf2 | generated_at: 2026-09-27T04:30:56+00:00 -->
-<!-- view: markdown | budget: 3421/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 5210aa8 | inputs_hash: 023cf80b2792 | generated_at: 2026-09-27T04:58:56+00:00 -->
+<!-- view: markdown | budget: 3303/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `b7f37ce` · 10 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `5210aa8` · 10 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Next Action
-WP18 is at review_required (commit b7f37ce). Operator decision pending: wire 'python evals/run.py --release' into release.yml (guard said ASK_HUMAN; it would block releases until F10/WP10). After approval, mark WP18 completed in the tracker and start the next package in the roadmap's single-agent order (WP10).
+WP10 is at review_required (commits 725eb76, 5210aa8 release gate). Wait for operator approval; then mark WP10 completed in the tracker and start the next package in the roadmap's single-agent order (WP11).
 
 ## Active Decisions
+- `dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts` — Audit F09/F10: memory vanished above 500 records and for prompts under 12 characters, and npm test got PROCEED from a trap about npm test.
 - `dec_20260927_evals-score-delivered-context-and-critical-cases` — Audit F19: a known false-safe (npm test -> PROCEED) sat inside an accepted baseline with CI green, and ranking metrics did not describe what readers receive.
 - `dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls` — Audit F02: an entry count over a sliding 8 MB tail froze once transcripts outgrew it, lost cross-firing call/result pairs, and discarded capped or failed candidates silently.
 - `dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted` — Audit F14: the bound covered lists only (7,333 tokens under a 5,000 ceiling). F13: a promoted decision vanished from every packet when CLAUDE.md was gone or unread by the consumer. Promotion is an extra delivery channel, not a reason for memory to disappear.
@@ -29,8 +30,7 @@ WP18 is at review_required (commit b7f37ce). Operator decision pending: wire 'py
 - `dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim` — Deciding that a claim is wrong is the author's job, not a heuristic's. A status written on a clock needs a writer running on a clock and churns committed files; a computed flag does neither.
 - `dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our` — Equivalence is the one rule: indexed search must return exactly the full scan's matches and scores. Our own stems make that true by construction. Computing ubiquity over only the narrowed set changed scores. _inputs_hash reads every file, which cost as much as the scan the index saves.
 - `dec_20260922_related-records-use-a-pure-overlap-score-so-the-committed` — A committed projection that differs per machine churns on every reindex and every commit.
-- `dec_20260922_traps-and-questions-are-one-file-each-the-singletons` — Ids are cited in records and commit messages, so they must not change and a dated filename would change them. Pure projections would silently delete blocks that humans, older tool versions or unmigrated branches still append; merging two versions of a trap is a judgement call the tool must not make.… [excerpt: 300 of 457 chars; full text: crumb show dec_20260922_traps-and-questions-are-one-file-each-the-singletons]
-_(… 22 more omitted to stay within the per-section cap)_
+_(… 23 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -45,7 +45,6 @@ _(none recorded)_
 - trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
 
 ## Open Questions / Blockers
-- Should release.yml run python evals/run.py --release (blocking publishes while known critical cases such as F10 remain)?
 - Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
 
 ## Inbox (unsorted, expires)
@@ -53,13 +52,15 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (4d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/retrieval.py
+- breadcrumbs/cli.py
+- docs/reviews/2026-09-27-breadcrumbs-wp10/README.md
 - evals/run.py
 - evals/critical/cases.yml
 - docs/reviews/2026-09-27-breadcrumbs-wp18/README.md
 - breadcrumbs/transcript.py
 - breadcrumbs/hooks_common.py
 - docs/reviews/2026-09-27-breadcrumbs-wp09/README.md
-- breadcrumbs/cli.py
 - breadcrumbs/promote.py
 - docs/reviews/2026-09-27-breadcrumbs-wp08/README.md
 - breadcrumbs/snapshots.py
@@ -71,9 +72,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - docs/roadmap-working-memory.md
 - breadcrumbs/__init__.py
 - evals/baseline.json
-- breadcrumbs/handoffs.py
-- breadcrumbs/lock.py
-_(… 13 more omitted to stay within the per-section cap)_
+_(… 15 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -120,7 +119,7 @@ _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 42 days old with no update — is this still true?
 - active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 42 days old with no update — is this still true?
 - active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 42 days old with no update — is this still true?
-- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 42 days old with no update — is this still true?
+- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 43 days old with no update — is this still true?
 - active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 43 days old with no update — is this still true?
 - active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 43 days old with no update — is this still true?
 - active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 43 days old with no update — is this still true?

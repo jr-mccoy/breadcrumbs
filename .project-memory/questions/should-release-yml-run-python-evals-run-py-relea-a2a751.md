@@ -3,9 +3,9 @@ id: q_should-release-yml-run-python-evals-run-py-relea-a2a751
 type: question
 slug: should-release-yml-run-python-evals-run-py-relea-a2a751
 title: Should release.yml run python evals/run.py --release (blocking publishes while known critical cases such as F10 remain)?
-status: open
+status: answered
 created_at: 2026-09-27T04:30:55+00:00
-updated_at: 2026-09-27T04:30:55+00:00
+updated_at: 2026-09-27T04:58:55+00:00
 created_by: unknown
 agent: claude-code
 project: breadcrumbs
@@ -26,3 +26,5 @@ evidence: []
 
 ## Question
 Should release.yml run python evals/run.py --release (blocking publishes while known critical cases such as F10 remain)?
+
+<!-- status: open -> answered (Operator: wire it after WP10. Done in 5210aa8 once the known F10 cases passed; release.yml runs evals/run.py --release.) by claude-code at 2026-09-27T04:58:55+00:00 -->

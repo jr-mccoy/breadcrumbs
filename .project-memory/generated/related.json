@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "9a5c287fddf2",
+ "inputs_hash": "023cf80b2792",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -167,30 +167,30 @@
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
   ],
+  "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts": [
+   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
+   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+  ],
   "dec_20260927_evals-score-delivered-context-and-critical-cases": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
    "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
    "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record"
   ],
   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted": [
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
    "dec_20260922_promotion-to-claude-md-or-agents-md-is-cli-only-and-writes",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
   ],
   "dec_20260927_projections-are-stamped-from-a-verified-snapshot": [
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
-   "dec_20260927_evals-score-delivered-context-and-critical-cases",
-   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted"
+   "dec_20260927_evals-score-delivered-context-and-critical-cases"
   ],
   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls": [
    "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
-  ],
-  "q_should-release-yml-run-python-evals-run-py-relea-a2a751": [
-   "dec_20260927_evals-score-delivered-context-and-critical-cases",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "ver_20260816_release-0-1-10-blocked-by-pypi-invalid-publisher-fixed"
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
@@ -235,7 +235,7 @@
   "ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence": [
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
    "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts"
   ],
   "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed": [
    "trap_guard-exit-code-in-ci",
@@ -275,7 +275,7 @@
   "ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
    "trap_a-hand-written-version-literal-in-prose-drifts-silently",
-   "dec_20260927_evals-score-delivered-context-and-critical-cases"
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts"
   ],
   "ver_20260818_remember-set-validates-section-headings-exactly-as-capture": [
    "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",

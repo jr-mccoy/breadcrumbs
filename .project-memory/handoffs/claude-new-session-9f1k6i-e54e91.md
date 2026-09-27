@@ -1,14 +1,14 @@
 # Project Handoff
 
-_Last updated: 2026-09-27T04:30:56+00:00_
+_Last updated: 2026-09-27T04:58:55+00:00_
 _Branch: claude/new-session-9f1k6i_
-_Commit: b7f37ce_
+_Commit: 5210aa8_
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Next Action
-WP18 is at review_required (commit b7f37ce). Operator decision pending: wire 'python evals/run.py --release' into release.yml (guard said ASK_HUMAN; it would block releases until F10/WP10). After approval, mark WP18 completed in the tracker and start the next package in the roadmap's single-agent order (WP10).
+WP10 is at review_required (commits 725eb76, 5210aa8 release gate). Wait for operator approval; then mark WP10 completed in the tracker and start the next package in the roadmap's single-agent order (WP11).
 
 ## Blockers / Open Questions
 
