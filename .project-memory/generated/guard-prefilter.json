@@ -1,4 +1,5 @@
 {
+"inputs_hash": "2d3e1eb1aee1",
 "paths": [
 "./gradlew",
 ".github/workflows/ci.yml",

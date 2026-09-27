@@ -6,6 +6,9 @@ _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Recently Changed
-WP06: new breadcrumbs/mutations.py (write-ahead before-image journal, rollback on failure, nested transactions doom the parent, crash recovery keeping copies, RevisionConflict). All multi-record writers are single operations; retire_all raises on failed retirement; crumb recover; doctor operations/projections rows. 10 tests incl. real crash-after-every-write loop; suite green.
+- 89f5967 WP07: build and publish coherent snapshots and projections
+- 5687d16 memory: capture the audit WP06 session
+
+_Prefill window: `e986922`..HEAD — 2 commit(s) since the last session record._
 
 ## Watch Out For

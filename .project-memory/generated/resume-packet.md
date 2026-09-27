@@ -1,19 +1,20 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: e986922 | inputs_hash: d00478c2a0a9 | generated_at: 2026-09-27T01:51:23+00:00 -->
+<!-- source_commit: 89f5967 | inputs_hash: 2d3e1eb1aee1 | generated_at: 2026-09-27T02:17:01+00:00 -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `e986922` · 3 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `89f5967` · 8 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Next Action
-Review WP06 (docs/reviews/2026-09-27-breadcrumbs-wp06/README.md); once approved mark it completed in the tracker. Next in the report's single-agent order is WP07 (coherent snapshots and projections; depends on WP05+WP06); WP13 and WP18 are also ready.
+WP07 is at review_required (commit 89f5967). Wait for operator approval; then mark WP07 completed in docs/reviews/2026-09-26-breadcrumbs-work-packages.json and start the next package in the roadmap's single-agent order (WP08: bounded, portable packets).
 
 ## Active Decisions
+- `dec_20260927_projections-are-stamped-from-a-verified-snapshot` — Audit F07/F11/F12: a stamp taken after the read certified omitted records; an unusable pre-filter silenced real hazards; a size/mtime shortcut made indexed search diverge from the full scan. Re-hashing costs ~17 ms at 1000 records; the unverified hook path costs ~40-90 ms, never silence.
 - `dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record` — The audit evidence is only useful if it stays exactly what was reviewed. Reformatting the scripts would break the checksums. Each package's regressions belong in ordinary tests when that package lands, not in the probe script.
 - `dec_20260924_phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per` — No per-phase release was ever cut. The next minor after 0.2.0 is the honest number for a schema 1->4 jump, and cli.py already said the guard matcher changed in 0.3.0. Numbering it 0.9.0 would imply six releases that never existed.
 - `dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against` — A ranking regression is invisible to unit tests. Building stores through the CLI keeps the eval honest to the current writers.
@@ -28,8 +29,7 @@ Review WP06 (docs/reviews/2026-09-27-breadcrumbs-wp06/README.md); once approved 
 - `dec_20260922_the-transcript-miner-is-deterministic-and-writes-only` — A model-driven miner would be unreproducible, would cost a round trip exactly when a session is ending, and could not run in PreCompact at all — that hook's output never reaches the model. Four narrow rules that are usually right beat one broad rule that cannot be tested. And what a regex noticed is not a finding: the miner cannot tell whether a file was edited four times because it is fragile or because a feature landed in it.
 - `dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first` — Launching a subagent is not itself irreversible; the subagent's own tool calls hit the same guard, which is where the blast radius actually is. Asking twice for one piece of work is how a gate becomes noise. Both tool names are matched because the tool has carried both across harness versions and a name that never fires costs nothing.
 - `dec_20260922_usage-telemetry-counts-surfacings-at-the-call-sites` — Every mutation reindexes and every reindex builds a packet, so counting inside build_resume_packet would have measured writes rather than surfacings. Splitting guard between the command and the hook avoids double-counting every hook advisory, since the hook shows a filtered subset of the same result. Counters in frontmatter would churn every record on every guard call and break 'records are authored facts'; a committed counter file would conflict on every merge.
-- `dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn` — A machine-local jot in a committed projection makes that file differ between two checkouts of one store while _inputs_hash calls both fresh, since the hash cannot read gitignored input without the same problem. That is the cross-machine ping-pong _hashed_input_dirs already exists to prevent. Excluding private jots from the packet keeps the projection machine-independent by construction.
-_(… 18 more omitted to stay within the per-section cap)_
+_(… 19 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -51,6 +51,9 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (4d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/snapshots.py
+- breadcrumbs/projections.py
+- docs/reviews/2026-09-27-breadcrumbs-wp07/README.md
 - docs/reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md
 - docs/reviews/2026-09-26-breadcrumbs-wp00-baseline/baseline.json
 - CHANGELOG.md
@@ -68,10 +71,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/transcript.py
 - breadcrumbs/cli.py
 - breadcrumbs/usage.py
-- breadcrumbs/inbox.py
-- README.md
-- pyproject.toml
-_(… 5 more omitted to stay within the per-section cap)_
+_(… 8 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
