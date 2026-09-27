@@ -381,6 +381,139 @@ TEMPLATE_RESOURCES = {
 
 
 # --------------------------------------------------------------------------- #
+# The versioned contract (audit WP17)
+# --------------------------------------------------------------------------- #
+#
+# What an MCP client can rely on: each tool's name, parameters, whether it
+# writes, and advisory annotations; the resources and prompts; and the error
+# envelope. `tests/test_adapter_contracts.py` holds the server to it on every
+# supported SDK, and pins it to `tests/fixtures/mcp_contract_v1.json`, so a
+# change is a deliberate version bump, never a drift.
+#
+# The annotations are hints for a client's approval UI, not access control:
+# the store's policy (`admission.py`) decides what a call may do. "Read-only"
+# means the tool changes no record; `memory_guard_before_action` and
+# `memory_build_resume_packet` still update machine-local usage counts.
+MCP_CONTRACT_VERSION = 1
+
+_READ = {
+    "readOnlyHint": True,
+    "destructiveHint": False,
+    "idempotentHint": True,
+    "openWorldHint": False,
+}
+
+
+def _write(*, destructive: bool = False, idempotent: bool = False) -> dict:
+    return {
+        "readOnlyHint": False,
+        "destructiveHint": destructive,
+        "idempotentHint": idempotent,
+        "openWorldHint": False,
+    }
+
+
+TOOL_CONTRACT: dict[str, dict] = {
+    "memory_search": {
+        "params": ["files", "filters", "query"],
+        "required": ["query"],
+        "annotations": _READ,
+    },
+    "memory_record": {
+        "params": ["payload", "type"],
+        "required": ["payload", "type"],
+        "annotations": _write(),
+    },
+    "memory_guard_before_action": {
+        "params": ["action", "files"],
+        "required": ["action"],
+        "annotations": _READ,
+    },
+    "memory_build_resume_packet": {"params": ["task"], "required": [], "annotations": _READ},
+    "memory_validate": {"params": [], "required": [], "annotations": _READ},
+    "memory_show": {"params": ["id"], "required": ["id"], "annotations": _READ},
+    "memory_jot": {
+        "params": ["allow_duplicate", "files", "local", "scope", "tags", "text"],
+        "required": ["text"],
+        "annotations": _write(),
+    },
+    "memory_inbox_promote": {
+        "params": [
+            "allow_duplicate",
+            "confidence",
+            "evidence",
+            "id",
+            "scope",
+            "sections",
+            "supersedes",
+            "tags",
+            "target",
+            "title",
+        ],
+        "required": ["id", "target"],
+        "annotations": _write(),
+    },
+    "memory_note": {
+        "params": ["allow_duplicate", "fields", "kind", "supersedes", "tags", "text"],
+        "required": ["kind", "text"],
+        "annotations": _write(),
+    },
+    "memory_mark_status": {
+        "params": ["id", "reason", "status", "superseded_by"],
+        "required": ["id", "reason", "status"],
+        # It changes what memory authorizes: a client should ask.
+        "annotations": _write(destructive=True, idempotent=True),
+    },
+    "memory_verify": {
+        "params": [
+            "allow_duplicate",
+            "confidence",
+            "evidence",
+            "method",
+            "note",
+            "scope",
+            "status",
+            "subject",
+            "supersedes",
+            "tags",
+        ],
+        "required": ["status", "subject"],
+        "annotations": _write(),
+    },
+    "memory_reindex": {"params": [], "required": [], "annotations": _write(idempotent=True)},
+    "memory_scan_secrets": {"params": [], "required": [], "annotations": _READ},
+}
+WRITE_TOOLS = frozenset(n for n, c in TOOL_CONTRACT.items() if not c["annotations"]["readOnlyHint"])
+PROMPTS = (
+    "resume_project",
+    "capture_session",
+    "remember_decision",
+    "remember_attempt",
+    "guard_before_action",
+    "audit_project_memory",
+)
+# Every tool answers with a JSON object carrying `ok`. On failure it carries
+# `error` (a string); a policy refusal adds `refused_by: "policy"`; a
+# near-duplicate refusal is `error: "near-duplicate"` with `duplicates` and
+# `message`. A resource that names no record is an error from the resource.
+ERROR_ENVELOPE = {"ok": False, "error": "<message>"}
+REFUSAL_ENVELOPE = {"ok": False, "error": "<message>", "refused_by": "policy"}
+
+
+def contract() -> dict:
+    """The versioned MCP contract, as data."""
+    return {
+        "version": MCP_CONTRACT_VERSION,
+        "tools": TOOL_CONTRACT,
+        "resources": sorted(STATIC_RESOURCES),
+        "resource_templates": sorted(TEMPLATE_RESOURCES),
+        "prompts": list(PROMPTS),
+        "error_envelope": ERROR_ENVELOPE,
+        "refusal_envelope": REFUSAL_ENVELOPE,
+    }
+
+
+# --------------------------------------------------------------------------- #
 # Tools — thin wrappers over the exact CLI core functions
 # --------------------------------------------------------------------------- #
 

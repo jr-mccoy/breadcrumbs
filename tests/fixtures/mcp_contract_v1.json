@@ -1,0 +1,249 @@
+{
+ "error_envelope": {
+  "error": "<message>",
+  "ok": false
+ },
+ "prompts": [
+  "resume_project",
+  "capture_session",
+  "remember_decision",
+  "remember_attempt",
+  "guard_before_action",
+  "audit_project_memory"
+ ],
+ "refusal_envelope": {
+  "error": "<message>",
+  "ok": false,
+  "refused_by": "policy"
+ },
+ "resource_templates": [
+  "memory://attempts/{id}",
+  "memory://decisions/{id}",
+  "memory://inbox/{id}",
+  "memory://questions/{id}",
+  "memory://records/{id}",
+  "memory://traps/{id}",
+  "memory://verifications/{id}"
+ ],
+ "resources": [
+  "memory://current",
+  "memory://decisions",
+  "memory://handoff",
+  "memory://inbox",
+  "memory://known-traps",
+  "memory://open-questions",
+  "memory://resume-packet"
+ ],
+ "tools": {
+  "memory_build_resume_packet": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "params": [
+    "task"
+   ],
+   "required": []
+  },
+  "memory_guard_before_action": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "params": [
+    "action",
+    "files"
+   ],
+   "required": [
+    "action"
+   ]
+  },
+  "memory_inbox_promote": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "params": [
+    "allow_duplicate",
+    "confidence",
+    "evidence",
+    "id",
+    "scope",
+    "sections",
+    "supersedes",
+    "tags",
+    "target",
+    "title"
+   ],
+   "required": [
+    "id",
+    "target"
+   ]
+  },
+  "memory_jot": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "params": [
+    "allow_duplicate",
+    "files",
+    "local",
+    "scope",
+    "tags",
+    "text"
+   ],
+   "required": [
+    "text"
+   ]
+  },
+  "memory_mark_status": {
+   "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "params": [
+    "id",
+    "reason",
+    "status",
+    "superseded_by"
+   ],
+   "required": [
+    "id",
+    "reason",
+    "status"
+   ]
+  },
+  "memory_note": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "params": [
+    "allow_duplicate",
+    "fields",
+    "kind",
+    "supersedes",
+    "tags",
+    "text"
+   ],
+   "required": [
+    "kind",
+    "text"
+   ]
+  },
+  "memory_record": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "params": [
+    "payload",
+    "type"
+   ],
+   "required": [
+    "payload",
+    "type"
+   ]
+  },
+  "memory_reindex": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "params": [],
+   "required": []
+  },
+  "memory_scan_secrets": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "params": [],
+   "required": []
+  },
+  "memory_search": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "params": [
+    "files",
+    "filters",
+    "query"
+   ],
+   "required": [
+    "query"
+   ]
+  },
+  "memory_show": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "params": [
+    "id"
+   ],
+   "required": [
+    "id"
+   ]
+  },
+  "memory_validate": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": true,
+    "openWorldHint": false,
+    "readOnlyHint": true
+   },
+   "params": [],
+   "required": []
+  },
+  "memory_verify": {
+   "annotations": {
+    "destructiveHint": false,
+    "idempotentHint": false,
+    "openWorldHint": false,
+    "readOnlyHint": false
+   },
+   "params": [
+    "allow_duplicate",
+    "confidence",
+    "evidence",
+    "method",
+    "note",
+    "scope",
+    "status",
+    "subject",
+    "supersedes",
+    "tags"
+   ],
+   "required": [
+    "status",
+    "subject"
+   ]
+  }
+ },
+ "version": 1
+}

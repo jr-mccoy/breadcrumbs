@@ -45,6 +45,7 @@ from breadcrumbs import validation as _validation
 
 # What the store may read and write on disk (audit F17). Stdlib-only too.
 from breadcrumbs import path_policy
+from breadcrumbs.adapters import claude as _claude
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -11815,13 +11816,13 @@ def cmd_inbox(args: argparse.Namespace) -> int:
 HOOK_EVENTS = ("session", "guard", "capture", "prompt", "compact", "subagent")
 # breadcrumbs event -> (Claude Code event name, matcher or None)
 #
-# `Task|Agent` is on the guard matcher because a subagent launch is the best
-# description of an action a session produces and the guard never saw it. Both
-# names are listed because the subagent tool has carried both across harness
-# versions; matching a name that does not exist costs nothing.
+# The guard's matcher is every tool the Claude Code adapter guards
+# (`adapters.claude.GUARDED_TOOLS`): shells (Bash, PowerShell), edits (Edit,
+# Write, MultiEdit, NotebookEdit) and subagent launches (Task, Agent). A
+# reinstall brings an owned entry's matcher up to date.
 _HOOK_SPECS: dict[str, tuple[str, str | None]] = {
     "session": ("SessionStart", None),
-    "guard": ("PreToolUse", "Bash|Edit|Write|MultiEdit|Task|Agent"),
+    "guard": ("PreToolUse", _claude.GUARD_MATCHER),
     "capture": ("Stop", None),
     "prompt": ("UserPromptSubmit", None),
     "compact": ("PreCompact", None),
@@ -12762,61 +12763,24 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     return bool(action_paths & index_paths)
 
 
-# How much of an edit's new content feeds the guard action string. Tokens are
-# what matter, not prose, so a modest window is enough to let a content-level
-# trap match ("flexTimeInterval", a banned API) while keeping the scoring pass
-# cheap and the risk-regex scan bounded.
-_HOOK_CONTENT_SNIPPET_CHARS = 400
-
-# The tools that launch a subagent. Both names, because the tool has carried
-# both across harness versions and a name that never fires costs nothing.
-SUBAGENT_TOOLS = ("Task", "Agent")
-
-# How much of a subagent's launch prompt feeds the guard. Longer than an edit
-# snippet because the prompt *is* the description of the work, not a sample of
-# it; bounded because a prompt can be an essay.
-_HOOK_SUBAGENT_PROMPT_CHARS = 1200
+# How much of an edit's new content, and of a subagent's launch prompt, feeds
+# the guard; and which tools launch a subagent. The Claude Code adapter owns
+# these (audit WP17); the names stay here as the compatibility surface.
+_HOOK_CONTENT_SNIPPET_CHARS = _claude.CONTENT_SNIPPET_CHARS
+SUBAGENT_TOOLS = _claude.SUBAGENT_TOOLS
+_HOOK_SUBAGENT_PROMPT_CHARS = _claude.SUBAGENT_PROMPT_CHARS
 
 
 def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] | None]:
     """Derive a guard action string + affected files from a PreToolUse payload.
 
-    For file edits the action carries a bounded snippet of the *new* content
-    (P0-3): with only `edit <path>` every edit of one file produced byte-identical
-    guard output, and the store could never match on what the edit actually says —
-    the exact signal a content-shaped trap needs.
+    Normalized by the Claude Code adapter (`breadcrumbs.adapters.claude`),
+    which declares every tool it guards. For file edits the action carries a
+    bounded snippet of the *new* content (P0-3). An unknown tool yields no
+    action.
     """
-    if tool == "Bash":
-        return (tool_input.get("command") or "").strip(), None
-    if tool in ("Edit", "Write", "MultiEdit"):
-        fp = tool_input.get("file_path") or tool_input.get("path") or ""
-        if tool == "Write":
-            new = tool_input.get("content") or ""
-        elif tool == "MultiEdit":
-            edits = tool_input.get("edits")
-            parts = []
-            if isinstance(edits, list):
-                for e in edits:
-                    if isinstance(e, dict) and e.get("new_string"):
-                        parts.append(str(e["new_string"]))
-            new = "\n".join(parts)
-        else:
-            new = tool_input.get("new_string") or ""
-        snippet = " ".join(str(new).split())[:_HOOK_CONTENT_SNIPPET_CHARS]
-        action = f"edit {fp}: {snippet}" if snippet else f"edit {fp}"
-        return action.strip(), [fp] if fp else None
-    if tool in SUBAGENT_TOOLS:
-        # A subagent starts cold: it does not read the resume packet and has
-        # none of this session's context. Its launch prompt is the best
-        # description of a proposed action the session produces, and until now
-        # the guard never saw it. Paths named in the prompt are mined the same
-        # way a record's prose is, so "rewrite src/auth/session.py" reaches a
-        # trap about that file.
-        prompt = tool_input.get("prompt") or tool_input.get("description") or ""
-        action = " ".join(str(prompt).split())[:_HOOK_SUBAGENT_PROMPT_CHARS]
-        files = sorted(_paths_from_text(action))
-        return action.strip(), files or None
-    return "", None
+    action = _claude.normalize_tool(tool, tool_input, paths_from_text=_paths_from_text)
+    return action.text, action.files or None
 
 
 # Advisory-dedupe state for the PreToolUse guard, keyed by host session. Lives

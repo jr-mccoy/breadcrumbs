@@ -193,6 +193,42 @@ def _read_only() -> bool:
         return False
 
 
+def _annotations(name: str):
+    """The contract's advisory annotations for tool `name`, as the SDK's type
+    (None when this SDK has no `ToolAnnotations`)."""
+    try:
+        from mcp.types import ToolAnnotations
+    except ImportError:  # pragma: no cover - SDK 1.x before annotations
+        return None
+    hints = mcp_core.TOOL_CONTRACT[name]["annotations"]
+    return ToolAnnotations.model_validate(hints)
+
+
+def _tool_registrar(mcp, *, enabled: bool = True):
+    """`@registrar()` registers a tool with its contract annotations (audit
+    WP17), on SDKs whose `tool()` accepts them; `enabled=False` registers
+    nothing (a read-only store's writers)."""
+    try:
+        accepts = "annotations" in inspect.signature(mcp.tool).parameters
+    except (TypeError, ValueError):  # pragma: no cover
+        accepts = False
+
+    def registrar():
+        def register(fn):
+            if not enabled:
+                return fn
+            kwargs = {}
+            if accepts:
+                annotations = _annotations(fn.__name__)
+                if annotations is not None:
+                    kwargs["annotations"] = annotations
+            return mcp.tool(**kwargs)(fn)
+
+        return register
+
+    return registrar
+
+
 def build_server():  # -> FastMCP
     """Construct and fully register the FastMCP server (resources, prompts, tools).
 
@@ -213,7 +249,8 @@ def build_server():  # -> FastMCP
     # A store whose policy makes MCP read-only (audit WP14) is served without
     # its writing tools at all, not with tools that always refuse. The core
     # refuses too, so a client that calls one anyway is still turned away.
-    write_tool = mcp.tool if not _read_only() else (lambda: lambda fn: fn)
+    read_tool = _tool_registrar(mcp)
+    write_tool = _tool_registrar(mcp, enabled=not _read_only())
 
     # ---------------- Resources (8) — read-only views ---------------------- #
     # Bound explicitly (not in a loop) so each URI is a distinct, documented
@@ -303,7 +340,7 @@ def build_server():  # -> FastMCP
 
     # ---------------- Tools (10) — wrap existing functions ----------------- #
 
-    @mcp.tool()
+    @read_tool()
     def memory_search(
         query: str, filters: SearchFilters | None = None, files: list[str] | None = None
     ) -> dict:
@@ -324,22 +361,22 @@ def build_server():  # -> FastMCP
         """
         return mcp_core.tool_record(type, payload, root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_guard_before_action(action: str, files: list[str] | None = None) -> dict:
         """Guard-before-action; returns the same verdict as `crumb guard`."""
         return mcp_core.tool_guard_before_action(action, files=files, root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_build_resume_packet(task: str | None = None) -> dict:
         """Build the structured resume packet (wraps `crumb resume`)."""
         return mcp_core.tool_build_resume_packet(task=task, root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_validate() -> dict:
         """Run deterministic structural validation (wraps `crumb validate`)."""
         return mcp_core.tool_validate(root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_show(id: str) -> dict:
         """Fetch one record, trap, question or jot by id, with its "see also" list."""
         return mcp_core.tool_show(id, root=_root())
@@ -493,7 +530,7 @@ def build_server():  # -> FastMCP
         """Rebuild the generated/ projections from the canonical records (wraps `crumb reindex`)."""
         return mcp_core.tool_reindex(root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_scan_secrets() -> dict:
         """Scan committed memory for secret-like strings (wraps `crumb audit`'s scan)."""
         return mcp_core.tool_scan_secrets(root=_root())
