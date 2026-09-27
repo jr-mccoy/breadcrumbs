@@ -564,8 +564,13 @@ Every mutation runs the same reindex; this command runs it on demand. In order:
    score reaches `GUARD_NOISE_FLOOR`; ties break by id. It deliberately does not
    reuse the guard's scorer, which decays by branch, clock and commit distance —
    two clones would compute different relations for identical records. Stamped
-   with `inputs_hash`, so `validate` and `audit` detect it going stale. Above
-   2000 items the map is empty and `skipped` names the reason.
+   with `inputs_hash`, so `validate` and `audit` detect it going stale. Only
+   pairs that share a file, a tag stem or a non-ubiquitous stem are scored
+   (the rest score 0), so there is no corpus cutoff (it used to be 2000 items,
+   audit WP15). Past `RELATED_PAIR_BUDGET` (3,000,000) candidate pairs, the
+   most widely shared features stop generating pairs and the file says so in
+   `degraded` (`reason`, `dropped_features`, `largest_dropped_posting`).
+   `skipped` is always `null`.
 4. **`generated/conflicts.json`** (WM-34) — pairs of live records that may
    argue with each other, `{_generated, inputs_hash, conflicts: [{rule, ids,
    similarity, message}]}`. Two rules:
@@ -897,7 +902,7 @@ carry a severity:
   **`unadopted-block`** (at schema 3, a hand-written trap/question block in a
   singleton whose id already has a file with different content — merge it into
   the file by hand, then delete the block), **`aliases`** (a malformed line in
-  `aliases.txt`, which is ignored), and three lifecycle checks over live
+  `aliases.txt`, which is ignored), and four lifecycle checks over live
   (active, unexpired) records:
   - **`evidence-missing-file`** — a decision, attempt or verification cites
     `file`/`path` evidence that is neither on disk nor in HEAD (same rules as
@@ -907,8 +912,12 @@ carry a severity:
   - **`near-duplicates`** — two live records of the same type at or above the
     near-duplicate threshold (0.6; 0.9 for jots), with the commands to
     supersede one or merge them (up to 10 pairs). A pair already reported as a
-    possible contradiction is not reported again here. A type with more than
-    2000 live items is not swept.
+    possible contradiction is not reported again here. Every type is swept at
+    any size (before audit WP15, a type with more than 2000 live items was
+    skipped without a word);
+  - **`related-degraded`** — the committed `generated/related.json` carries a
+    `degraded` report: the pair budget stopped its most widely shared
+    features, so "see also" is incomplete (see `reindex`).
 
   and two checks on the promoted-rules block in `CLAUDE.md`/`AGENTS.md` (see
   `promote` and `demote`):

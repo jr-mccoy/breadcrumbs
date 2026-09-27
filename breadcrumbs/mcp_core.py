@@ -127,7 +127,8 @@ def _data_view(fn):
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        return safetext.block(fn(*args, **kwargs), MCP_TEXT_LIMIT)
+        with cli.operation():
+            return safetext.block(fn(*args, **kwargs), MCP_TEXT_LIMIT)
 
     return wrapper
 
@@ -145,7 +146,7 @@ def _data_tree(fn):
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
-        with admission.channel("mcp"):
+        with admission.channel("mcp"), cli.operation():
             return safetext.tree(fn(*args, **kwargs), MCP_TEXT_LIMIT)
 
     return wrapper

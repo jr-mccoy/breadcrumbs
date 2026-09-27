@@ -28,6 +28,7 @@ supersedes it, and an attempt records something that happened.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -480,9 +481,6 @@ DUP_TAG_BONUS = 0.1
 # on this repo's own store. Capped, the text must carry at least 0.4.
 DUP_BONUS_MAX = 0.2
 DUP_MAX = 3
-# The audit's retrospective sweep is pairwise; past this many items of one type
-# it names the cost instead of paying it.
-DUP_SWEEP_MAX_ITEMS = 2000
 AUDIT_DUP_PAIRS_MAX = 10
 
 # Types the gate and the sweep cover. Sessions are narratives of work that
@@ -693,12 +691,35 @@ def near_duplicate_pairs(memory_dir: Path) -> list[dict]:
     `[{kind, a, b, similarity}]`, most similar first. The write-time gate only
     sees new writes; this is how a store that predates it finds what it already
     holds.
+
+    Every type is swept at any size (audit WP15; it used to skip a type above
+    2,000 items without saying so). `similarity` adds at most `DUP_BONUS_MAX`
+    to the stem overlap, so only pairs whose rarest stems intersect can reach
+    the threshold (`_prefix_index`); the result is exactly
+    `_near_duplicate_pairs_full`.
     """
     pairs = []
     for rtype in DEDUP_TYPES:
         cands = live_candidates(memory_dir, rtype)
-        if len(cands) > DUP_SWEEP_MAX_ITEMS:
-            continue
+        threshold = JOT_DUP_THRESHOLD if rtype == "jot" else DUP_THRESHOLD
+        prefixes, postings = _prefix_index(
+            [frozenset(c["specific"]) for c in cands], threshold - DUP_BONUS_MAX - 0.01
+        )
+        for i, j in _prefix_pairs(prefixes, postings):
+            score = similarity(cands[i], cands[j])
+            if score >= threshold:
+                x, y = sorted((cands[i]["id"], cands[j]["id"]))
+                pairs.append({"kind": rtype, "a": x, "b": y, "similarity": score})
+    pairs.sort(key=lambda p: (-p["similarity"], p["a"], p["b"]))
+    return pairs
+
+
+def _near_duplicate_pairs_full(memory_dir: Path) -> list[dict]:
+    """The pairwise reference implementation of `near_duplicate_pairs`, kept as
+    the oracle `tests/test_incremental_equivalence.py` holds it to."""
+    pairs = []
+    for rtype in DEDUP_TYPES:
+        cands = live_candidates(memory_dir, rtype)
         threshold = JOT_DUP_THRESHOLD if rtype == "jot" else DUP_THRESHOLD
         for i, a in enumerate(cands):
             for b in cands[i + 1 :]:
@@ -763,6 +784,21 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
                 "<id>`) or merge them (`crumb consolidate`)",
                 ids=[pair["a"], pair["b"]],
                 similarity=pair["similarity"],
+            )
+        )
+    from breadcrumbs import related as _related
+
+    degraded = _related.load_degraded(memory_dir)
+    if degraded:
+        findings.append(
+            cli._audit_finding(
+                "related-degraded",
+                cli.AUDIT_WARN,
+                None,
+                "generated/related.json is incomplete: "
+                f"{degraded.get('reason', 'over the pair budget')} "
+                f"({degraded.get('dropped_features', '?')} features dropped)",
+                degraded=degraded,
             )
         )
     return findings
@@ -983,6 +1019,174 @@ def _supersede_linked(a, b) -> bool:
 
 def find_contradictions(memory_dir: Path) -> list[dict]:
     """Records that may argue with each other. Two overlap heuristics, worded as questions.
+
+    `[{rule, ids, message, similarity}]`. Deterministic and machine-independent
+    — it reads created dates, never "now" — so the committed `conflicts.json`
+    does not churn between checkouts.
+
+    Exactly `_find_contradictions_full` (audit WP15), computed from postings.
+    - Every per-record value (created date, candidate) is computed once, not
+      once per pair.
+    - A retry pair needs a shared file or a stem overlap reaching
+      `CONFLICT_RETRY_SIMILARITY`, and a decision pair a stem overlap reaching
+      `CONFLICT_DECISION_SIMILARITY - DUP_BONUS_MAX` (the capped file and tag
+      bonus cannot make up more). Only pairs that could are scored: those
+      sharing a file, or whose rarest stems intersect (prefix filtering, see
+      `_prefix_index`).
+    - The result is memoized for the operation under the exact content of the
+      records it read, so the packet and the conflicts projection share one
+      computation.
+    """
+    memory_dir = Path(memory_dir)
+    decisions = [
+        r for r in cli.active_records(memory_dir, "decision") if not cli.record_expired(r.meta)
+    ]
+    attempts = [
+        r
+        for r in cli.active_records(memory_dir, "attempt")
+        if not cli.record_expired(r.meta) and cli._attempt_has_do_not_retry(r)
+    ]
+    key = ("contradictions", str(memory_dir), cli.content_key(decisions + attempts))
+    return cli.op_memo(key, lambda: _contradictions(decisions, attempts))
+
+
+def _prefix_index(sets: list[frozenset], min_jaccard: float):
+    """Prefix filtering for a Jaccard threshold (exact, not a heuristic).
+
+    Stems are ranked rarest first. Two sets whose Jaccard overlap is at least
+    `min_jaccard` share at least `ceil(min_jaccard * len)` stems of each, so
+    their prefixes (all but that many minus one of the most common stems)
+    intersect. Returns `(prefixes, postings)`: each set's prefix, and for each
+    stem the indexes whose prefix holds it.
+    """
+    freq: dict[str, int] = {}
+    for st in sets:
+        for s in st:
+            freq[s] = freq.get(s, 0) + 1
+    prefixes = [_prefix(st, freq, min_jaccard) for st in sets]
+    postings: dict[str, list[int]] = {}
+    for i, pre in enumerate(prefixes):
+        for s in pre:
+            postings.setdefault(s, []).append(i)
+    return prefixes, postings
+
+
+def _prefix_pairs(prefixes: list[list[str]], postings: dict[str, list[int]]):
+    """`(i, j)` for every pair i < j whose prefixes intersect, one `i` at a
+    time, so memory stays linear in the store."""
+    for i, pre in enumerate(prefixes):
+        near: set[int] = set()
+        for s in pre:
+            near.update(j for j in postings[s] if j > i)
+        for j in sorted(near):
+            yield i, j
+
+
+def _prefix(stems, freq: dict[str, int], min_jaccard: float) -> list[str]:
+    n = len(stems)
+    keep = n - math.ceil(min_jaccard * n) + 1 if n else 0
+    return sorted(stems, key=lambda s: (freq.get(s, 0), s))[:keep]
+
+
+def _contradictions(decisions: list, attempts: list) -> list[dict]:
+    assert DUP_BONUS_MAX < CONFLICT_DECISION_SIMILARITY, "decision pairs need shared stems"
+    out: list[dict] = []
+    created = [cli._dt_sort_key(d.meta.get("created_at")) for d in decisions]
+
+    # Rule 1: a decision after a do-not-retry attempt, doing what it tried.
+    # A pair qualifies by a shared file, or by a rounded stem overlap of at
+    # least CONFLICT_RETRY_SIMILARITY; only pairs that could are scored.
+    chose = [_section_candidate(d, "Decision") for d in decisions]
+    tried_all = [_section_candidate(a, "Tried") for a in attempts]
+    retry_jaccard = CONFLICT_RETRY_SIMILARITY - 0.01
+    prefixes, by_stem = _prefix_index(
+        [frozenset(c["specific"]) for c in chose + tried_all], retry_jaccard
+    )
+    by_stem = {s: [i for i in ids if i < len(chose)] for s, ids in by_stem.items()}
+    by_file: dict[str, list[int]] = {}
+    for i, c in enumerate(chose):
+        for f in c["files"]:
+            by_file.setdefault(f, []).append(i)
+    for k, att in enumerate(attempts):
+        tried = tried_all[k]
+        att_at = cli._dt_sort_key(att.meta.get("created_at"))
+        near: set[int] = set()
+        for f in tried["files"]:
+            near.update(by_file.get(f, ()))
+        for s in prefixes[len(chose) + k]:
+            near.update(by_stem.get(s, ()))
+        for i in sorted(near):
+            if created[i] <= att_at:
+                continue
+            dec = decisions[i]
+            shared_file = bool(tried["files"] & chose[i]["files"])
+            union = tried["specific"] | chose[i]["specific"]
+            text_sim = (
+                round(len(tried["specific"] & chose[i]["specific"]) / len(union), 2)
+                if union
+                else 0.0
+            )
+            if text_sim < CONFLICT_RETRY_SIMILARITY and not shared_file:
+                continue
+            did, aid = dec.meta.get("id"), att.meta.get("id")
+            out.append(
+                {
+                    "rule": "retry-after-do-not-retry",
+                    "ids": [did, aid],
+                    "similarity": text_sim,
+                    "message": (
+                        f"decision {did} may do what attempt {aid} says not to retry — "
+                        "confirm the retry condition was met, or mark one stale"
+                    ),
+                }
+            )
+
+    # Rule 2: two live decisions this alike, far apart, neither superseding.
+    # `similarity` adds at most DUP_BONUS_MAX to the stem overlap and rounds to
+    # two places, so a pair whose overlap is below `min_base` cannot reach the
+    # threshold. The 0.01 margin keeps the bound conservative.
+    cands = [candidate_from_record(r) for r in decisions]
+    sizes = [len(c["specific"]) for c in cands]
+    min_base = CONFLICT_DECISION_SIMILARITY - DUP_BONUS_MAX - 0.01
+    prefixes, postings = _prefix_index([frozenset(c["specific"]) for c in cands], min_base)
+    gap_min = CONFLICT_DECISION_MIN_GAP_DAYS * 86400
+    for i, j in _prefix_pairs(prefixes, postings):
+        n_shared = len(cands[i]["specific"] & cands[j]["specific"])
+        if n_shared < DUP_MIN_SHARED and cands[i]["specific"] != cands[j]["specific"]:
+            continue
+        if n_shared < min_base * (sizes[i] + sizes[j] - n_shared):
+            continue
+        if abs(created[i] - created[j]) <= gap_min:
+            continue
+        a, b = decisions[i], decisions[j]
+        if _supersede_linked(a, b):
+            continue
+        sim = similarity(cands[i], cands[j])
+        if sim < CONFLICT_DECISION_SIMILARITY:
+            continue
+        x, y = sorted((a.meta.get("id"), b.meta.get("id")))
+        out.append(
+            {
+                "rule": "overlapping-decisions",
+                "ids": [x, y],
+                "similarity": sim,
+                "message": (
+                    f"decisions {x} and {y} overlap heavily — supersede one or "
+                    "consolidate (`crumb consolidate`)"
+                ),
+            }
+        )
+    out.sort(key=lambda c: (c["rule"], -c["similarity"], c["ids"]))
+    return out
+
+
+def _find_contradictions_full(memory_dir: Path) -> list[dict]:
+    """The pairwise reference implementation of `find_contradictions`.
+
+    Every attempt against every decision and every decision pair. Kept as the
+    oracle `tests/test_incremental_equivalence.py` holds the indexed version to.
+
+    Records that may argue with each other. Two overlap heuristics, worded as questions.
 
     `[{rule, ids, message, similarity}]`. Deterministic and machine-independent
     — it reads created dates, never "now" — so the committed `conflicts.json`

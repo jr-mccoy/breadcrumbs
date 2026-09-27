@@ -795,7 +795,7 @@ Rebuilt by every reindex; never a source of truth.
 |---|---|---|
 | `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header and, since audit WP08, a `view` / `budget` / `rules` header. It is the portable `markdown` view: within 5,000 `approx_tokens`, and promoted records are kept with their rules. |
 | `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads, with a top-level `inputs_hash` since audit WP07 (one written by an older version has none and is not drift-checked). The hook uses it only while `index/generation.json` vouches for it. Since audit WP11 it has `format: 3`: `tokens`, `titles`, `tags`, `paths` and `commands` (`[kind, *tokens]`) over every record that could drive a guard verdict, a strict superset of what full guard can surface; a pre-filter of another format is not trusted. |
-| `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null \| reason}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
+| `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null, "degraded"?: {reason, dropped_features, largest_dropped_posting}}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
 | `generated/conflicts.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "conflicts": [{"rule", "ids", "similarity", "message"}]}` — pairs of live records that may contradict each other (WM-34). |
 | `index/search.sqlite` | never (gitignored) | The disposable search index. |
 | `index/generation.json` | never (gitignored) | The generation manifest (audit WP07): `{format, inputs_hash, stable, published_at, files: {name: sha256}, stat_fingerprint, corpus: {records}}`, written last by every publication. `corpus` (audit WP10) is the prompt corpus's record count, read by the prompt hook instead of walking the store. |
@@ -805,9 +805,15 @@ by pure overlap — shared declared files ×6, shared tag stems ×4, shared
 non-ubiquitous specific stems ×1 — keeping pairs that reach
 `GUARD_NOISE_FLOOR`, best first, ties broken by id. The score is deliberately
 machine-independent (no branch, clock or commit-distance decay), so every clone
-computes the same file. Above 2000 live items `related` is empty and `skipped`
-names the reason. `validate` and `audit` check its `inputs_hash` like the
-packet's.
+computes the same file. Since audit WP15 only pairs sharing a file, tag stem or
+non-ubiquitous stem are scored, which gives exactly the all-pairs result, and
+there is no corpus cutoff: `skipped` is always `null` (it named a reason above
+2000 live items; readers should still accept a string). Past 3,000,000
+candidate pairs the most widely shared features stop generating pairs, and an
+optional `degraded` object says so: `reason`, `dropped_features` (how many) and
+`largest_dropped_posting` (the most items one of them was shared by). A file
+without `degraded` is complete. `validate` and `audit` check its `inputs_hash`
+like the packet's.
 
 **`conflicts.json`** holds what two rules find among active, unexpired
 records. `retry-after-do-not-retry`: an attempt with a *Do Not Retry Unless*

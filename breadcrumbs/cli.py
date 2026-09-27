@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import functools
 import hashlib
 import io
 import json
@@ -31,6 +32,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
 
@@ -1269,6 +1271,56 @@ def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# One operation's parsed snapshot (audit WP15)
+# --------------------------------------------------------------------------- #
+#
+# One command, hook, MCP call or publication used to parse every record several
+# times (7,200 parses for a 1,000-record reindex) and compute the conflict
+# report twice. Inside `operation()` a record's bytes are parsed once, and a
+# derived result can be memoized under a key that names the exact content it
+# was computed from. Nothing is cached across operations, so a long-lived MCP
+# server never serves a stale view.
+
+_OP = threading.local()
+
+
+@contextlib.contextmanager
+def operation():
+    """Share parses and derived results for the duration of one operation."""
+    depth = getattr(_OP, "depth", 0)
+    if depth == 0:
+        _OP.state = {"parses": {}, "memo": {}}
+    _OP.depth = depth + 1
+    try:
+        yield
+    finally:
+        _OP.depth = depth
+        if depth == 0:
+            _OP.state = None
+
+
+def _op_state(name: str):
+    state = getattr(_OP, "state", None)
+    return state.get(name) if state else None
+
+
+def op_memo(key, compute):
+    """`compute()`, memoized for this operation under `key` (which must name
+    every input the result depends on); outside an operation, just `compute()`."""
+    memo = _op_state("memo")
+    if memo is None:
+        return compute()
+    if key not in memo:
+        memo[key] = compute()
+    return memo[key]
+
+
+def content_key(records) -> tuple:
+    """A key naming exactly these records' contents (path and bytes digest)."""
+    return tuple(sorted((str(r.path), getattr(r, "digest", None) or "") for r in records))
+
+
 class Record:
     """A loaded `.md` record: path, type, frontmatter, body, parse error (if any)."""
 
@@ -1285,6 +1337,8 @@ class Record:
         self.meta = meta or {}
         self.body = body
         self.error = error
+        # sha1 of the bytes it was parsed from (`from_bytes`), for `content_key`.
+        self.digest: str | None = None
 
     @classmethod
     def from_file(cls, path: Path, rtype: str) -> "Record":
@@ -1300,11 +1354,44 @@ class Record:
 
     @classmethod
     def from_bytes(cls, path: Path, rtype: str, data: "bytes | OSError") -> "Record":
-        """A record from bytes already read (or the error reading them)."""
+        """A record from bytes already read (or the error reading them).
+
+        Inside an `operation()`, a file whose bytes were already parsed in the
+        same operation is not parsed again (audit WP15). The key is the path,
+        the type and a digest of the exact bytes, so a changed file always
+        re-parses; the caller gets its own frontmatter dict.
+        """
         if isinstance(data, path_policy.Refused):
             return cls(path, rtype, meta=None, body="", error=str(data))
         if isinstance(data, OSError):
             return cls(path, rtype, meta=None, body="", error=f"unreadable file: {data}")
+        digest = hashlib.sha1(data).hexdigest()
+        cache = _op_state("parses")
+        if cache is not None:
+            key = (str(path), rtype, digest)
+            hit = cache.get(key)
+            if hit is None:
+                parsed = cls._parse(path, rtype, data)
+                hit = (parsed.meta, parsed.body, parsed.error)
+                cache[key] = hit
+            meta, body, error = hit
+            rec = cls(
+                path,
+                rtype,
+                # Its own top-level dict: every writer that edits a loaded
+                # record's frontmatter replaces top-level keys on a copy, and
+                # none edits a nested list in place.
+                meta=dict(meta) if meta is not None else None,
+                body=body,
+                error=error,
+            )
+        else:
+            rec = cls._parse(path, rtype, data)
+        rec.digest = digest
+        return rec
+
+    @classmethod
+    def _parse(cls, path: Path, rtype: str, data: bytes) -> "Record":
         try:
             text = path_policy.decode(data, "utf-8-sig")
         except UnicodeDecodeError as exc:
@@ -4078,6 +4165,13 @@ def _publish_projections(
     memory_dir: Path, project_root: Path | None = None
 ) -> tuple[bool, str | None]:
     """Build and write every generated projection and the search index. Caller locks."""
+    with operation():  # one parse per record for the whole generation (WP15)
+        return _publish_projections_inner(memory_dir, project_root)
+
+
+def _publish_projections_inner(
+    memory_dir: Path, project_root: Path | None = None
+) -> tuple[bool, str | None]:
     memory_dir = Path(memory_dir)
     project_root = Path(project_root) if project_root is not None else memory_dir.parent
     try:
@@ -8642,8 +8736,14 @@ def _stem(token: str) -> str:
     return _STORE_ALIASES.get(stem, stem) if _STORE_ALIASES else stem
 
 
+@functools.lru_cache(maxsize=65536)
 def _base_stem(token: str) -> str:
-    """Fold a token to its morphological stem (deterministic, idempotent)."""
+    """Fold a token to its morphological stem (deterministic, idempotent).
+
+    A pure function of the token and module constants, so memoizing it is
+    exact; a 1,000-record publication stemmed the same words 84,000 times
+    (audit WP15). Store aliases are applied after it, in `_stem`.
+    """
     word = token
     for _ in range(4):  # fixpoint: families collapse in <=4 strips
         if word.isdigit():
@@ -14842,7 +14942,8 @@ def _run_command(args: argparse.Namespace) -> int:
     """Run the parsed command, under the store's write lock when it writes."""
     if not _needs_lock(args):
         _warn_incompatible_store(args)
-        return args.func(args)
+        with operation():
+            return args.func(args)
     memory_dir = resolve_root(getattr(args, "project", None)) / MEMORY_DIRNAME
     if not memory_dir.is_dir():
         return args.func(args)  # the command reports the missing store itself
@@ -14851,7 +14952,10 @@ def _run_command(args: argparse.Namespace) -> int:
     # Restoring a backup is how a store this build cannot write gets repaired.
     repairing = args.command == "migrate" and getattr(args, "restore", None) is not None
     try:
-        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT, compatible_only=not repairing):
+        with (
+            _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT, compatible_only=not repairing),
+            operation(),
+        ):
             return args.func(args)
     except _lock.StoreLocked as exc:
         _emit_error(args, str(exc))

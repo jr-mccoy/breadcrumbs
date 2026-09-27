@@ -186,7 +186,13 @@ def write_jot(
             "ok": False,
             "error": "jot rejected by validate: " + "; ".join(f["message"] for f in fails),
         }
-    cli.reindex_projections(memory_dir, project_root)
+    # A machine-local jot changes no shared view (audit WP15). The committed
+    # packet, the guard pre-filter, related/conflicts and the search index are
+    # all built from committed directories only, and the index's freshness is
+    # the content hash of those. Local jots are read directly by every lookup
+    # that includes them. So local capture does not pay for a publication.
+    if not local:
+        cli.reindex_projections(memory_dir, project_root)
     result = {
         "ok": True,
         "kind": JOT_TYPE,
