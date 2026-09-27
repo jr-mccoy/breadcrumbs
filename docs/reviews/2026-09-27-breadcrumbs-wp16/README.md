@@ -167,6 +167,23 @@ records the package as `review_required` for that reason.
     resolve through `cli`.
 - **The CLI entry point is unchanged** (`breadcrumbs.cli:main`).
 
+## Correction (after the WP16 commit)
+
+CI failed on the WP16 commits (run 238): the parity test's `inputs_hash`
+differed on GitHub's runners. The scenario's `git commit` used the machine's
+global git config, and this development container signs commits
+(`commit.gpgsign`). The commit hash — which records carry and every inputs
+hash covers — therefore differed between machines. The scenario now runs git
+with `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, on a branch
+named `main`.
+
+The golden was regenerated from the pre-extraction tree (`fa2df0e`), not from
+the extracted code: the corrected test file was copied into a worktree of
+`fa2df0e` and `--write-golden` run there, twice, with identical output. The
+extracted code matches it. Nine lines changed, all of them the branch name and
+values derived from the commit hash. No output of the code under test
+changed. I had not checked CI after pushing WP16; WP17 onwards does.
+
 ## Limits
 
 - **F21 is not finished.**

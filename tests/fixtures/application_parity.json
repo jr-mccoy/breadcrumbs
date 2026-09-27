@@ -345,13 +345,13 @@
      "title": "Cache TTL is five minutes for the pricing API"
     }
    ],
-   "approx_tokens": 852,
+   "approx_tokens": 851,
    "budget": {
     "estimator": "approx-tokens/2",
     "estimator_rule": "ceil(ASCII chars / 4) + 1 per non-ASCII char \u2014 a heuristic, not a model tokenizer",
     "limit": 5000,
     "unit": "approx_tokens",
-    "used": 852,
+    "used": 851,
     "view": "json",
     "within": true
    },
@@ -396,7 +396,7 @@
    "open_questions": [],
    "ordering": "relevance",
    "project": {
-    "branch": "master",
+    "branch": "main",
     "commit": "<SHA>",
     "dirty": 2,
     "dirty_state": "2 uncommitted file(s)",
@@ -417,7 +417,7 @@
    "source": {
     "commit": "<SHA>",
     "generated_at": "2026-09-20T12:00:00+00:00",
-    "inputs_hash": "b7d76ceae668"
+    "inputs_hash": "6083a1188a16"
    },
    "stale_after_days": 21,
    "verification": [],
@@ -687,11 +687,11 @@
  "generated_conflicts.json": {
   "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
   "conflicts": [],
-  "inputs_hash": "b7d76ceae668"
+  "inputs_hash": "6083a1188a16"
  },
  "generated_related.json": {
   "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
-  "inputs_hash": "b7d76ceae668",
+  "inputs_hash": "6083a1188a16",
   "related": {
    "att_20260920_tried-an-in-memory-cache-for-pricing": [
     "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api"
@@ -903,7 +903,7 @@
    "estimator_rule": "ceil(ASCII chars / 4) + 1 per non-ASCII char \u2014 a heuristic, not a model tokenizer",
    "limit": 5000,
    "unit": "approx_tokens",
-   "used": 759,
+   "used": 758,
    "view": "json",
    "within": true
   },
@@ -946,7 +946,7 @@
   "open_questions": [],
   "ordering": "relevance",
   "project": {
-   "branch": "master",
+   "branch": "main",
    "commit": "<SHA>",
    "dirty": 2,
    "dirty_state": "2 uncommitted file(s)",
@@ -962,7 +962,7 @@
   "source": {
    "commit": "<SHA>",
    "generated_at": "2026-09-20T12:00:00+00:00",
-   "inputs_hash": "b7d76ceae668"
+   "inputs_hash": "6083a1188a16"
   },
   "stale_after_days": 21,
   "verification": [],

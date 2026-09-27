@@ -73,14 +73,23 @@ def normalize(value, root: Path):
 def scenario(root: Path) -> dict:
     """One scripted session through the CLI, MCP and hook transports."""
     out: dict = {}
-    for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
-        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+    # The scenario's git ignores the machine's global and system config: a
+    # global `commit.gpgsign` (or a default branch name) changes the commit
+    # hash, which records carry and every inputs hash covers.
+    git_env = {**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    for args in (
+        ["init", "-q"],
+        ["symbolic-ref", "HEAD", "refs/heads/main"],
+        ["config", "user.email", "t@t"],
+        ["config", "user.name", "t"],
+    ):
+        subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, env=git_env)
     subprocess.run(
         ["git", "commit", "-q", "--allow-empty", "-m", "i"],
         cwd=root,
         check=True,
         env={
-            **os.environ,
+            **git_env,
             "GIT_AUTHOR_DATE": "2026-09-20T12:00:00Z",
             "GIT_COMMITTER_DATE": "2026-09-20T12:00:00Z",
         },
