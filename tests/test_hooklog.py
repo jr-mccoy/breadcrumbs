@@ -115,9 +115,16 @@ class HookLogTests(unittest.TestCase):
             ):
                 for i in range(25):
                     hooklog.append(mem, {"event": "guard", "n": i})
-                    lines = hooklog.log_path(mem).read_text("utf-8").splitlines()
-                    self.assertLessEqual(len(lines), 10)
-            self.assertEqual(json.loads(lines[-1])["n"], 24)
+                    # Rotation (audit WP12): the current file and the rotated
+                    # one together, never over the bound, and only the oldest
+                    # lines ever leave.
+                    entries = hooklog.read_log(mem)
+                    self.assertLessEqual(len(entries), 10)
+                    self.assertEqual(
+                        [e["n"] for e in entries], list(range(i + 1 - len(entries), i + 1))
+                    )
+            self.assertEqual(entries[-1]["n"], 24)
+            self.assertGreaterEqual(len(entries), 5)
 
     def test_output_survives_a_handler_that_raises(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -686,12 +686,19 @@ Until a store migrates it keeps reading and writing the blocks. Schema 4 adds
 `handoff.md`.
 
 `usage` answers the question `audit`'s `[unreachable]` check cannot: not whether
-a record *could* be found, but whether it ever *was*. A record counts when it
-was shown — a packet printed or injected, a guard verdict, a hook advisory —
-and deliberately not when a write triggers a reindex, which would make the
-counts measure writes. The counts live in `private/usage.json` and are never
-committed: in frontmatter they would churn every record on every guard call, and
-in a committed file they would conflict on every merge.
+a record *could* be found, but whether it ever *was*. A record counts when its
+id was in output a host received — a packet printed or injected, a guard
+verdict, a hook advisory — counted after deduplication and budget trimming, so
+a repeat the hook stayed silent on, or a line trimmed to fit, is not a
+surfacing. It never counts when a write triggers a reindex, which would make
+the counts measure writes. A count says a record was shown, not that it was
+read or that it helped, and nothing acts on it by itself: decay and promotion
+only suggest commands. Each emission is one small event file under
+`private/usage-events/`, folded into `private/usage.json`, so parallel hooks
+never lose each other's counts; `crumb usage` prints the accounting model and
+anything not yet folded or dropped. None of it is committed: in frontmatter
+the counts would churn every record on every guard call, and in a committed
+file they would conflict on every merge.
 
 `usage --decay [DAYS]` (default 180) lists active decisions, attempts and traps
 at least DAYS old that nothing has surfaced in the last DAYS, each with the
@@ -923,11 +930,19 @@ piece is independent:
     write it down, so the next session re-violated it. Captured to
     `private/inbox/` only, after a secret scan; `capture_corrections: false` in
     `manifest.yml` turns it off.
+
+    It keeps the session's **latest task** for the compaction handoff: every
+    prompt that is not an acknowledgement or a slash command replaces it,
+    whether or not memory matched it, and what memory matched is kept apart,
+    labelled with the prompt it was for. The text stays local, capped at 300
+    characters, and is withheld if it carries a credential;
+    `retain_prompt_text: false` keeps only a digest.
   - `PreCompact → crumb hook compact` mines the transcript just before the
     context is destroyed. Compaction is the biggest memory-loss event in a long
     session and this hook cannot speak to the model at all (its stdout goes to
     the debug log), so it writes candidates to `private/inbox/` and leaves a
-    marker that the next `SessionStart` reads.
+    marker that the next `SessionStart` reads. That `SessionStart` names the
+    latest task and builds the packet around it.
   - `SubagentStop → crumb hook subagent` mines a finished subagent's transcript.
     Its findings otherwise vanish: the parent only ever sees the final message.
     It does not hold the subagent — that is a prompt-fatigue question awaiting a
@@ -999,7 +1014,8 @@ Every hook firing also appends one line to `private/hook-log.jsonl`: the
 event, how long it took and what the host received (silent, context, a
 permission prompt, a held stop, or skipped on the store lock), plus counts and
 verdicts. It never records a prompt, command, path or transcript text, and it
-is capped at 5000 lines. `crumb doctor --hook-log` summarises it per hook, and
+is kept to about 5000 lines by rotation into `private/hook-log.1.jsonl`, which
+never drops a line a parallel hook is writing. `crumb doctor --hook-log` summarises it per hook, and
 [`docs/field-test.md`](docs/field-test.md) is the protocol for reading it after
 a real session.
 

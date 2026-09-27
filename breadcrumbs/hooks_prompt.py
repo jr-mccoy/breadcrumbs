@@ -102,16 +102,37 @@ def _is_current(match: dict) -> bool:
 
 def render(matches: list[dict]) -> str:
     """The injected block, trimmed from the bottom until it fits the budget."""
-    lines = [
-        f"- `{m['id']}` [{m['kind']}] {m.get('title') or ''} — {m.get('reason') or ''}".rstrip(" —")
-        for m in matches
-    ]
-    while lines:
+    return render_emitted(matches)[0]
+
+
+def render_emitted(matches: list[dict]) -> tuple[str, list[str]]:
+    """The injected block and the ids it actually names.
+
+    Lines are dropped from the bottom until the block fits the budget, so the
+    ids returned are the ones that survive trimming: those, and only those, are
+    emitted (audit F16). `("", [])` when not even one line fits.
+    """
+    kept = list(matches)
+    while kept:
+        lines = [
+            f"- `{m['id']}` [{m['kind']}] {m.get('title') or ''} — {m.get('reason') or ''}".rstrip(
+                " —"
+            )
+            for m in kept
+        ]
         text = "\n".join([_HEADER, *lines, "", _FOOTER])
         if cli.approx_tokens(text) <= PROMPT_HOOK_TOKEN_BUDGET:
-            return text
-        lines.pop()
-    return ""
+            return text, [m["id"] for m in kept]
+        kept.pop()
+    return "", []
+
+
+def _retain_prompt_text(memory_dir: Path) -> bool:
+    """`retain_prompt_text: false` in the manifest keeps the latest task's
+    text out of `private/session-state.json` (audit F15)."""
+    manifest = cli.load_manifest(memory_dir) or {}
+    raw = str(manifest.get("retain_prompt_text", "true")).strip().lower()
+    return raw not in ("false", "no", "off", "0")
 
 
 def _capture_correction(memory_dir: Path, root: Path, prompt: str, session_id: str) -> None:
@@ -161,7 +182,12 @@ def hook_prompt(memory_dir: Path, root: Path, payload: dict) -> dict:
         return {}
     prompt = str(payload.get("prompt") or "").strip()
     session_id = hooks_common.session_id_of(payload)
-    if not prompt or _SLASH_COMMAND_RE.match(prompt):
+    if not prompt:
+        return {}
+    if _SLASH_COMMAND_RE.match(prompt):
+        # An instruction to the harness, not a statement of the task: neither
+        # looked up nor recorded as what the session is doing.
+        hooklog.note(retrieval="slash_command")
         return {}
 
     _capture_correction(memory_dir, root, prompt, session_id)
@@ -169,16 +195,34 @@ def hook_prompt(memory_dir: Path, root: Path, payload: dict) -> dict:
     from breadcrumbs import retrieval
 
     # An acknowledgement has nothing to look up; a short prompt may (audit F10).
+    # Nor is it a new task: "ok" leaves the latest task as it was (audit F15).
     if retrieval.is_acknowledgment(prompt):
         hooklog.note(retrieval="acknowledgment")
         return {}
+    # The latest task is recorded before the lookup and whatever it finds, so
+    # a task that matches nothing still replaces the last one that did.
+    hooks_common.record_task(
+        memory_dir, session_id, prompt, retain_text=_retain_prompt_text(memory_dir)
+    )
     try:
         lookup = retrieval.prompt_lookup(memory_dir, root, prompt, limit=PROMPT_HOOK_MAX_MATCHES)
     except Exception:  # pragma: no cover - retrieval never breaks the prompt
         return {}
     matches = lookup.matches
-    hooklog.note(matches=len(matches), retrieval=lookup.mode)
+    selected = [m["id"] for m in matches]
+    # The accounting stages (audit F16): `candidates` scored, `matches` selected
+    # (current records, capped), `emitted` printed. Only emitted ids count.
+    hooklog.note(
+        matches=len(matches), candidates=lookup.candidates, retrieval=lookup.mode, emitted=0
+    )
+
+    def remember(emitted: list[str]) -> None:
+        hooks_common.record_retrieval(
+            memory_dir, session_id, prompt, mode=lookup.mode, selected=selected, emitted=emitted
+        )
+
     if lookup.mode == "skipped":
+        remember([])
         # A lookup that did not run is said, once per session, rather than
         # passed off as "nothing relevant" (audit F09).
         if hooks_common.advisory_seen(memory_dir, session_id, "prompt|skipped"):
@@ -190,24 +234,31 @@ def hook_prompt(memory_dir: Path, root: Path, payload: dict) -> dict:
             }
         }
     if not matches:
+        remember([])
         return {}
 
-    ids = [m["id"] for m in matches]
-    hooks_common.record_prompt_state(memory_dir, session_id, prompt, ids)
+    text, emitted = render_emitted(matches)
+    if len(emitted) < len(selected):
+        hooklog.note(trimmed=len(selected) - len(emitted))
+    if not text:
+        remember([])
+        return {}
 
     # Same records again in one session is information exactly once. Keyed on
-    # the id set, so a different area of the store still speaks.
-    key = "prompt|" + ",".join(sorted(ids))
+    # the ids that would be printed, so a different area of the store still
+    # speaks.
+    key = "prompt|" + ",".join(sorted(emitted))
     if hooks_common.advisory_seen(memory_dir, session_id, key):
         hooklog.note(deduped=True)
+        remember([])
         return {}
 
-    text = render(matches)
-    if not text:
-        return {}
+    remember(emitted)
     from breadcrumbs import usage as _usage
 
-    _usage.record_surfaced(memory_dir, ids, "prompt", session_id=session_id)
+    # A failed count notes `usage_dropped`; the emission itself still happened.
+    _usage.record_surfaced(memory_dir, emitted, "prompt", session_id=session_id)
+    hooklog.note(emitted=len(emitted))
     return {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",

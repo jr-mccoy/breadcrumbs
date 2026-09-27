@@ -43,8 +43,13 @@ writes outside the store.
   private/
     README.md
     inbox/                    # machine-local jots — never committed
-    # usage.json              — local surfacing counts, written on demand
+    # usage.json              — local surfacing counts, folded from usage-events/ (audit WP12)
+    # usage-events/           — one file per emission, waiting to be folded (audit WP12)
     # hook-log.jsonl          — one line per hook firing, written on demand (WM-62)
+    # hook-log.1.jsonl        — the hook log's previous half, after a rotation (audit WP12)
+    # session-state.json      — per session: the latest task and the latest lookup (audit WP12)
+    # hook-guard-seen.json    — per session: advisories already shown
+    # .usage.lock, .hook-log.lock, .<state file>.lock — side locks for the files above (audit WP12)
     # migrations/<stamp>/     — pre-migration store backup
     # operations/<id>/        — journal of a multi-record operation; present only while one runs, or after a crash (`crumb recover`)
     # recovered/<id>/         — copies of files a recovery rolled back
@@ -69,12 +74,33 @@ neither is ever committed.
   know how much history "not surfaced in N days" is measured over. A file
   written before `started_at` existed gets it on its next write, set to its
   oldest `last_surfaced_at`.
+  - **Accounting model (audit WP12).** `surfaced` counts emissions: the id was
+    in output a host received, after deduplication and budget trimming. It is
+    not a count of retrievals, of reads, or of usefulness.
+  - **Writes.** Each emission is one file in `usage-events/`
+    (`{at, ids, source, session?, v: 1}`, created by an atomic rename). A fold,
+    under `.usage.lock`, adds pending events to `usage.json` and deletes them.
+    `folded_last` names the events the last fold counted, so a fold that dies
+    before deleting them cannot count them twice. Readers add pending events to
+    the folded counts.
+  - **`accounting`**: `events_folded`, `unreadable_events` (removed
+    uncounted) and `evicted_records` (dropped by the 2000-record cap). An
+    emission that could not be written at all, or that met a backlog of 2000
+    unfolded events, is noted as `usage_dropped` in the hook log.
 - `hook-log.jsonl` has one JSON object per hook firing: `event`, `at`, `ms`,
   `outcome` (`silent`, `context`, `ask`, `block`, `locked`, `other`,
   `unparsed`), `session` when the host sent one, and the counts and verdicts the handler noted. It
-  holds no prompt, command, path or transcript text. It is cut back to its
-  newest 4000 lines once it passes 5000. `crumb doctor --hook-log` reads it;
-  see `cli-spec.md` → *Hook log*.
+  holds no prompt, command, path or transcript text. When it reaches 2500 lines
+  it is renamed to `hook-log.1.jsonl` (replacing the previous one), so the two
+  hold at most 5000; nothing rewrites a file another hook appends to (audit
+  WP12). `crumb doctor --hook-log` reads both; see `cli-spec.md` → *Hook log*.
+- `session-state.json` holds, per session (the eight most recent), `task`
+  (the latest substantive prompt: `ref`, a digest; `at`; `source`; and `text`,
+  at most 300 characters, or `withheld: "credential" | "policy"`) and
+  `retrieval` (the latest lookup: `for_task`, the digest of the prompt it ran
+  for; `mode`; `selected` and `emitted` ids). Acknowledgements and slash
+  commands leave `task` alone. A file from before audit WP12 holds
+  `last_prompt` and `matched` instead and is still read.
 
 **Schema versions.** `manifest.yml` records the on-disk format version and
 `crumb migrate` moves a store forward; `validate` fails a store that is behind
@@ -189,6 +215,7 @@ change what that store does:
 | `extraction_prompt` | `true` | The Stop hook may hold the stop once to ask for records. `false` leaves only the silent machine snapshot — it stops the *prompt*, not the transcript mining. |
 | `jot_ttl_days` | `14` | The older spelling of `ttl_jot_days` (below). Still read; when both are set, `ttl_jot_days` wins. |
 | `capture_corrections` | `true` | The `UserPromptSubmit` hook writes a prompt that opens like a correction to `private/inbox/`. `false` turns that off. |
+| `retain_prompt_text` | `true` | The `UserPromptSubmit` hook keeps the latest task's text (at most 300 characters, never one carrying a credential) in `private/session-state.json`, for the packet after a compaction. `false` keeps only a digest and a time (audit WP12). |
 | `subagent_extraction` | `false` | **Reserved.** Whether a finished subagent may be held for its own extraction turn. Nothing reads it yet; it waits on the prompt-fatigue field test in `open-questions.md`, and it defaults off because the parent's Stop hook already asks once per unit of work. |
 
 **Lifespans (WM-30).** One flat key per type, `ttl_<type>_days` (flat because

@@ -276,3 +276,62 @@ def holds_lock(memory_dir: Path) -> bool:
     """Does this thread currently hold the store's lock?"""
     depth = getattr(_held, "depth", None) or {}
     return bool(depth.get(str(Path(memory_dir).resolve())))
+
+
+# --------------------------------------------------------------------------- #
+# Side locks: machine-local state that is not the store (audit WP12)
+# --------------------------------------------------------------------------- #
+#
+# Hook state, usage telemetry and the hook log live under `private/` and are
+# never records, so they do not take the store lock: a parallel session's
+# capture must not cost a guard call its dedupe, and a busy hook must not delay
+# a writer. Each has a lock file of its own, held for the few reads and writes
+# of one update.
+
+HELD = "held"
+BUSY = "busy"
+UNSUPPORTED = "unsupported"
+
+# How long a hook waits for a side lock. An update holds one for well under a
+# millisecond; this only has to outlast a burst of parallel hooks.
+SIDE_TIMEOUT = 0.25
+
+
+@contextlib.contextmanager
+def side_lock(path: Path, timeout: float = SIDE_TIMEOUT):
+    """Hold an OS lock on `path` for the `with` body, waiting up to `timeout`.
+
+    Yields `HELD`, `BUSY` (somebody held it past `timeout`) or `UNSUPPORTED`
+    (the filesystem cannot lock, or the file cannot be opened). It never
+    raises for either: the caller decides whether to skip its update (and
+    say so) or go ahead uncoordinated. The file is never unlinked.
+    """
+    try:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fh = open(path, "a+b")  # noqa: SIM115 - held for the lock's lifetime
+    except OSError:
+        yield UNSUPPORTED
+        return
+    try:
+        deadline = time.monotonic() + max(0.0, timeout)
+        state = BUSY
+        while True:
+            try:
+                if _try_os_lock(fh):
+                    state = HELD
+                    break
+            except OSError:
+                state = UNSUPPORTED
+                break
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(_POLL_SECONDS / 4)
+        try:
+            yield state
+        finally:
+            if state == HELD:
+                _os_unlock(fh)
+    finally:
+        with contextlib.suppress(OSError):
+            fh.close()

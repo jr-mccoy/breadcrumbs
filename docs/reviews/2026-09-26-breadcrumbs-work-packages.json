@@ -923,7 +923,7 @@
       "title": "Close the known-command guard miss without restoring warning spam",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP10",
         "WP18"
@@ -961,6 +961,10 @@
           "summary": "Guard pre-filter (format 3) is a strict superset of full guard: tokens, titles, tags, declared+mentioned paths and named commands from every record that could drive a verdict; each _prefilter_trap_hit test mirrors a _score_item gate. Named-command heads carry their kind ([title|span, ...]), fixing a WP10 positional bug the sorted pre-filter could trigger; run-verb summaries name the command after the verb. crumb guard --exit-zero (opt-in); verdict exit codes unchanged. New critical eval case edit-of-a-decision-file-warns. tests/test_guard_delivery.py (6 incl. the 4 named): npm test warns in all 7 permission modes; hook agrees with full guard on every eval store (227 actions, 193 warnings); remedies/controls silent; read-only ceiling and blocking stance kept; no mode ever gets allow/deny. Hook silent on required warnings 27/193 before, 0 after; routine-command cost +0.3 ms median. Full suite 1290 OK; evals and --release pass.",
           "compatibility": "The hook now warns wherever crumb guard does (edits to decision-declared files, tag matches); more actions reach full guard; pre-filter format 3 (format 2 treated as unverified); new crumb guard --exit-zero.",
           "limitations": "Superset guaranteed against the match gate, not verdicts (extra full-guard runs); broad tags produce guard-policy READ_FIRSTs the hook no longer hides; agreement test covers generated actions over four synthetic stores; named-command rule keeps its narrowness."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP11 approved, start WP12\")."
         }
       ]
     },
@@ -969,7 +973,7 @@
       "title": "Separate latest intent from retrieval state and correct telemetry",
       "priority": "P2",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP07",
         "WP09",
@@ -1001,7 +1005,16 @@
         "`test_parallel_telemetry_does_not_silently_lose_acknowledged_events`"
       ],
       "done_when": "Compaction follows current intent and usage reports measure actual emissions under their stated accounting model.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "f534a77",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp12/README.md",
+          "summary": "Latest task is recorded for every substantive prompt before the lookup (acknowledgements and slash commands excluded), with the latest lookup kept apart (for_task digest, mode, selected, emitted); compaction preamble and packet follow the latest task; text capped at 300 chars, withheld on a credential, retain_prompt_text: false keeps only a digest. Usage counts emitted ids only: guard hook counts after its dedupe exit and only the 3 matches its reason names; prompt hook dedupes and counts the ids left after budget trimming; hook log notes candidates/matches/trimmed/emitted. Usage is one event file per emission folded exactly once under .usage.lock (folded_last); hook state updates take a per-file side lock (state_dropped on timeout); hook log rotates instead of rewriting; crumb usage prints the accounting model and pending/unreadable/evicted counts; usage_dropped noted in the hook log. tests/test_emission_accounting.py (9 incl. the 4 named). Before/after (behavior.txt): latest task A->B; deduped guard surfaced 2->1; trimmed prompt counted 5->2; parallel usage increments lost 110-130/180 -> 0. Full suite 1299 OK; evals and --release pass; probes unchanged at 4 signals, guard_usage_dedupe now a recorded false positive (usage.surfaced 1, was 2).",
+          "compatibility": "Compaction restores the latest task, with new preamble labels; session-state.json gains task/retrieval (old entries still read); usage counts drop where they were inflated; usage.json gains folded_last/accounting and private/usage-events/ appears; record_surfaced returns an int; hook log rotates into hook-log.1.jsonl with new fields; new manifest key retain_prompt_text; new side lock files; prompt hook ~+1.5 ms median.",
+          "limitations": "Slash commands are not recorded as tasks; forked sessions start without a task; emitted means printed to the host, not read; compaction preamble ids are not counted; state updates waiting >0.25 s are skipped and noted; record/session caps evict; exactly-once needs OS locks (uncoordinated where unsupported); guard_usage_dedupe probe condition cannot clear without editing the byte-identical audit script."
+        }
+      ]
     },
     {
       "id": "WP13",

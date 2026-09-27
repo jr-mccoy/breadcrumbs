@@ -84,10 +84,10 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 
 | breadcrumbs event | Claude Code event | Matcher | Does |
 |---|---|---|---|
-| `session` | `SessionStart` | — | Emits the resume packet as `additionalContext`. With `source: compact` it prepends what was in flight before the compaction: the last prompt, the records surfaced for it, and the mined candidates waiting in the inbox — and builds the packet with that last prompt as its task, so the sections are ordered by relevance to it (see `resume --task`). |
+| `session` | `SessionStart` | — | Emits the resume packet as `additionalContext`. With `source: compact` it prepends what was in flight before the compaction: the latest task (the last prompt that was not an acknowledgement or a slash command, whether or not memory matched it; audit WP12), the records memory matched for *that* task, or "matched nothing", and the mined candidates waiting in the inbox. It builds the packet with that task as its task, so the sections are ordered by relevance to it (see `resume --task`). When the task's text was not kept (`retain_prompt_text: false`, or it carried a credential) it says so and orders by recency. |
 | `guard` | `PreToolUse` | `Bash\|Edit\|Write\|MultiEdit\|Task\|Agent` | Cost-aware guard verdict. A subagent launch (`Task`/`Agent`) is scored on its launch prompt and **capped at `READ_FIRST`**: the launch is not itself irreversible, and the subagent's own calls hit this same hook. |
 | `capture` | `Stop` | — | Mines the transcript (always, as a side effect), then snapshots a session record or holds the stop once for the extraction turn. The extraction instruction includes one line saying a write refused with exit 3 is a near-duplicate, answered with `--supersedes <id>` or `--allow-duplicate`. |
-| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, looked up for **any prompt that is not an acknowledgement** (audit WP10: a vocabulary such as "ok", "yes please", "go on", "thanks" or emoji alone, not a length — `npm test` and `quasar` are looked up) with **no record-count cutoff** (it used to return nothing above 500 records), with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Injects **current records only**: superseded, rejected, stale, disputed and quarantined records, answered and closed questions, records past their `expires_at`, and branch-scoped records written on another branch stay out. A verification stays in while its own lifecycle status is `active`, whatever its outcome. Captures a correction to `private/inbox/`. **Never blocks** — that would erase the prompt. |
+| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, looked up for **any prompt that is not an acknowledgement** (audit WP10: a vocabulary such as "ok", "yes please", "go on", "thanks" or emoji alone, not a length — `npm test` and `quasar` are looked up) with **no record-count cutoff** (it used to return nothing above 500 records), with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Injects **current records only**: superseded, rejected, stale, disputed and quarantined records, answered and closed questions, records past their `expires_at`, and branch-scoped records written on another branch stay out. A verification stays in while its own lifecycle status is `active`, whatever its outcome. Captures a correction to `private/inbox/`. Records the prompt as the session's latest task **before** the lookup (audit WP12), and the lookup's selected and emitted ids apart from it; acknowledgements and slash commands leave the task alone. The dedupe key and the usage count are the ids left after budget trimming. **Never blocks** — that would erase the prompt. |
 | `compact` | `PreCompact` | — | Mines the transcript and writes a marker for the next `SessionStart`. Emits nothing: this event's stdout never reaches the model. |
 | `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript, tagged `subagent` and `agent:<type>`. Does not hold the subagent. |
 
@@ -1590,12 +1590,33 @@ combination).
 
 Behavior:
 
-- **What counts.** A record counts when it is shown: a packet printed or
-  injected, a guard verdict, a hook advisory. A reindex does not count, or the
-  numbers would measure writes. The counts live in `private/usage.json`
-  (machine-local, never committed; see [`record-schema.md`](record-schema.md)
-  §1): per record the total, the count by source, `last_surfaced_at` and the
-  last 20 session ids.
+- **What counts.** A record counts when its id is in output a host received:
+  a packet printed or injected, a guard verdict, a hook advisory. A reindex
+  does not count, or the numbers would measure writes. The counts live in
+  `private/usage.json` (machine-local, never committed; see
+  [`record-schema.md`](record-schema.md) §1): per record the total, the count
+  by source, `last_surfaced_at` and the last 20 session ids.
+- **Accounting model (audit WP12).** The stages are distinct, and only the
+  last is counted:
+  - *retrieved*: records the lookup scored;
+  - *selected*: current records under the cap;
+  - *emitted*: ids in the printed output, after budget trimming and after
+    the per-session dedupe.
+
+  A deduplicated repeat, an output trimmed to nothing, a silent `PROCEED` and a
+  failed hook count nothing. The guard hook counts the three matches its reason
+  names; `crumb guard` counts every match it prints; a packet counts the ids
+  left after its budget. A count says a record was shown, not that it was read
+  or that it helped. Confirmation comes only from authored records (`crumb
+  verify`, `crumb traps --confirm`), and nothing acts on a count by itself:
+  `--decay` and audit's promotion hint print commands for a person.
+- **Contention.** Each emission is one event file in `private/usage-events/`,
+  folded into `usage.json` under a lock of its own, exactly once. Parallel
+  hooks never lose each other's counts, and a reader counts an event that is
+  still waiting to be folded. `crumb usage` prints the model and a
+  *Completeness* line when events are pending, unreadable or evicted by the
+  2000-record cap; `--json` returns it as `accounting`. An emission that could
+  not be written is noted `usage_dropped` in the hook log.
 - **`--sessions`** sorts by distinct sessions, then by raw count. Forty guard
   calls in one session are one piece of evidence; five sessions are five. Only
   the last 20 session ids are kept per record, so a row at that cap prints
@@ -1648,18 +1669,25 @@ Every hook firing appends one line to `.project-memory/private/hook-log.jsonl`
   permission prompt), `block` (the Stop hook's extraction turn), `locked` (a
   writing hook skipped on the store lock), `other` (any other JSON object) or
   `unparsed` (output that was not JSON);
-- what the handler noted: guard's `tool`, `verdict`, `skipped: "prefilter"`
-  and `deduped`; the prompt hook's `matches`, `deduped` and `correction`;
+- what the handler noted: guard's `tool`, `verdict`, `skipped: "prefilter"`,
+  `deduped`, and the accounting stages `candidates`, `matches` and `emitted`;
+  the prompt hook's `retrieval`, `candidates`, `matches`, `trimmed`,
+  `emitted`, `deduped` and `correction`; `usage_dropped` and `state_dropped`
+  when a count or a state update could not be written;
   `capture`'s `mined`, `snapshot`, `redundant` and `offered`; `mined` for
   `compact` and `subagent`.
 
 No prompt, command, file path or transcript text is logged, only counts and
 verdicts. The hook's stdout is captured and then written out unchanged, even
-when the handler raises. Logging is best-effort and takes no lock: a failed
-write is dropped. The line is written only when `private/` exists; a hook does
-not create it. The file is bounded: past 5000 lines (`HOOK_LOG_MAX_LINES`) it
-is cut back to the newest 4000 (`HOOK_LOG_TRIM_TO`), so a busy session does
-not rewrite it on every call.
+when the handler raises. Logging is best-effort: a failed write is dropped.
+The line is written only when `private/` exists; a hook does not create it.
+Each line is a single append. The log is bounded by rotation (audit WP12):
+when the current file reaches 2500 lines (half of `HOOK_LOG_MAX_LINES`) it is
+renamed to `hook-log.1.jsonl`, replacing the previous one. Rotation takes
+`private/.hook-log.lock` without waiting and re-checks the size under it.
+Nothing rewrites a file other hooks append to, so parallel hooks never drop
+each other's lines; a line leaves only when its rotated half is replaced.
+`crumb doctor --hook-log` reads both files.
 
 `crumb doctor --hook-log` summarises the log per event: firings, outcomes, the
 spoke rate (the share that were `context`, `ask` or `block`), `ms` p50 / p95 /

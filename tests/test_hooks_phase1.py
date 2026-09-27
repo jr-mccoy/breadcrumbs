@@ -426,7 +426,9 @@ class SessionStartSourceTests(unittest.TestCase):
                 "hookSpecificOutput"
             ]["additionalContext"]
             self.assertIn("context was compacted", text)
-            self.assertIn("Last prompt before compaction", text)
+            # Named the latest task since audit WP12: an "ok" after it is a
+            # later prompt, not a new task.
+            self.assertIn("Latest task before compaction", text)
             self.assertIn("src/parser.py", text)
             self.assertIn("crumb inbox promote", text)
             self.assertIn("# Resume Packet", text, "the full packet still follows")

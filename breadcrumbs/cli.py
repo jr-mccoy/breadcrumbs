@@ -6928,11 +6928,13 @@ def _packet_record_ids(packet: dict) -> list[str]:
     return [i for i in ids if i]
 
 
-def _record_packet_surfacings(memory_dir: Path, packet: dict, source: str = "resume") -> None:
+def _record_packet_surfacings(
+    memory_dir: Path, packet: dict, source: str = "resume", session_id: str | None = None
+) -> None:
     """Best-effort usage counts for a packet that was just shown to somebody."""
     from breadcrumbs import usage as _usage
 
-    _usage.record_surfaced(memory_dir, _packet_record_ids(packet), source)
+    _usage.record_surfaced(memory_dir, _packet_record_ids(packet), source, session_id=session_id)
 
 
 def _packet_inbox(memory_dir: Path) -> list[dict]:
@@ -11293,8 +11295,14 @@ def cmd_usage(args: argparse.Namespace) -> int:
         return 0
 
     rows = _usage.usage_rows(memory_dir, by_sessions=args.sessions)
+    # What a count means and how complete the counts are (audit F16).
+    acc = _usage.accounting(memory_dir)
     if args.json:
-        _print_json(args, {"usage": rows, "items": rows}, summary={"records": len(rows)})
+        _print_json(
+            args,
+            {"usage": rows, "items": rows, "accounting": acc},
+            summary={"records": len(rows)},
+        )
         return 0
     if not rows:
         print(
@@ -11315,6 +11323,18 @@ def cmd_usage(args: argparse.Namespace) -> int:
         "\nCounts are local to this machine "
         f"({MEMORY_DIRNAME}/private/usage.json, never committed)."
     )
+    print(f"Accounting: {acc['model']}")
+    gaps = [
+        f"{acc[k]} {label}"
+        for k, label in (
+            ("pending_events", "event(s) not yet folded (already counted)"),
+            ("unreadable_events", "unreadable event(s) dropped"),
+            ("evicted_records", "record(s) evicted by the cap"),
+        )
+        if acc.get(k)
+    ]
+    if gaps:
+        print("Completeness: " + "; ".join(gaps) + ".")
     return 0
 
 
@@ -12552,9 +12572,16 @@ def _hook_surfacing_matches(result: dict) -> list[dict]:
     ]
 
 
+# Matches the guard hook's reason names. Only these are emitted, so only these
+# are counted as surfaced (audit F16).
+_HOOK_GUARD_REASON_MATCHES = 3
+
+
 def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
     lines = [f"breadcrumbs guard: {result['verdict']} for this action."]
-    for m in (result.get("matches", []) if matches is None else matches)[:3]:
+    for m in (result.get("matches", []) if matches is None else matches)[
+        :_HOOK_GUARD_REASON_MATCHES
+    ]:
         title = m.get("title") or m.get("id") or "record"
         why = m.get("reason") or ""
         lines.append(f"- {title}" + (f" ({why})" if why else ""))
@@ -12593,10 +12620,26 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
         "",
     ]
     state = hooks_common.prompt_state(memory_dir, session_id)
+    # The latest substantive task, whether or not memory matched it (audit
+    # F15): acknowledgements and slash commands do not replace it. What memory
+    # matched is listed only when it was matched for *that* task; an earlier
+    # task's hits are not passed off as this one's.
+    task = state.get("task") if isinstance(state.get("task"), dict) else {}
     if state.get("last_prompt"):
-        lines.append(f"Last prompt before compaction: {state['last_prompt']}")
+        lines.append(f"Latest task before compaction (the user's words): {state['last_prompt']}")
+    elif task.get("withheld"):
+        why = (
+            "retain_prompt_text is false"
+            if task["withheld"] == "policy"
+            else "it contained a credential"
+        )
+        lines.append(f"Latest task before compaction: not retained ({why}).")
     if state.get("matched"):
-        lines.append("Records surfaced for it: " + ", ".join(f"`{i}`" for i in state["matched"]))
+        lines.append(
+            "Records memory matched for it: " + ", ".join(f"`{i}`" for i in state["matched"])
+        )
+    elif task and state.get("last_prompt"):
+        lines.append("Memory matched nothing for it.")
     # Everything this session has waiting, not only what the last firing mined.
     # A compaction that found nothing new — because the Stop hook already mined
     # the same range — would otherwise report "nothing salvaged" while the
@@ -12637,9 +12680,11 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
                 from breadcrumbs import hooks_common
 
                 session_id = hooks_common.session_id_of(payload)
-                # The last prompt before the compaction is the best statement of
-                # what this session is doing, so the rebuilt packet is ordered by
-                # relevance to it (WM-20) rather than by recency.
+                # The latest substantive task before the compaction is the best
+                # statement of what this session is doing, so the rebuilt packet
+                # is ordered by relevance to it (WM-20) rather than by recency.
+                # It is the latest task whether or not memory matched it (audit
+                # F15), and absent when its text was not retained.
                 task = hooks_common.prompt_state(memory_dir, session_id).get("last_prompt")
             # This hook is Claude Code's, which loads the project's CLAUDE.md
             # itself. A promoted record whose rule is in that file right now is
@@ -12664,8 +12709,12 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
                 }
             }
             # The packet is about to be injected into a session: this is the
-            # single most load-bearing surfacing the tool performs.
-            _record_packet_surfacings(memory_dir, packet)
+            # single most load-bearing surfacing the tool performs. The ids are
+            # read off the packet after its budget trimming, and the promoted
+            # records left out for CLAUDE.md are not in it.
+            _record_packet_surfacings(
+                memory_dir, packet, session_id=str(payload.get("session_id") or "") or None
+            )
         except Exception:  # pragma: no cover - never fail a session start on memory
             out = {}
     print(json.dumps(out))
@@ -12726,12 +12775,22 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     # deliberate behaviour of this tool, not something to silence from here.
     shown = _hook_surfacing_matches(result) or result.get("matches", [])
     reason = _hook_guard_reason(result, shown)
-    # Only what the agent is shown, and keyed by host session so WM-42 can ask
-    # "how many *sessions* did this record reach" rather than "how many times
-    # did one session fire the hook".
-    _record_guard_surfacings(
-        memory_dir, shown, "hook-guard", session_id=str(payload.get("session_id") or "") or None
-    )
+    # Only what the reason names is emitted (audit F16): it lists the first
+    # `_HOOK_GUARD_REASON_MATCHES`. Counted just before each non-empty output,
+    # keyed by host session so WM-42 can ask "how many *sessions* did this
+    # record reach" rather than "how many times did one session fire the hook".
+    emitted = shown[:_HOOK_GUARD_REASON_MATCHES]
+    _hooklog.note(candidates=len(result.get("matches", [])), matches=len(shown), emitted=0)
+
+    def count_emitted() -> None:
+        _record_guard_surfacings(
+            memory_dir,
+            emitted,
+            "hook-guard",
+            session_id=str(payload.get("session_id") or "") or None,
+        )
+        _hooklog.note(emitted=len(emitted))
+
     if verdict == "READ_FIRST":
         # Dedupe within the host session: the same records surfacing for the
         # same file is information exactly once (P0-2b/P0-3). Keyed on the
@@ -12761,6 +12820,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
                 "additionalContext": reason,
             }
         }
+        count_emitted()
         print(json.dumps(out))
         return 0
     # PAUSE / ASK_HUMAN — hand the call to the human with the reason attached,
@@ -12787,6 +12847,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
                 "permissionDecisionReason": reason,
             }
         }
+        count_emitted()
         print(json.dumps(out))
         return 0
     out = {
@@ -12795,6 +12856,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
             "additionalContext": reason,
         }
     }
+    count_emitted()
     print(json.dumps(out))
     return 0
 

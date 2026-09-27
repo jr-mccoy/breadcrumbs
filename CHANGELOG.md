@@ -356,6 +356,46 @@ Findings F10 and F11.
 - **A new critical eval case:** an edit to a file only a decision declares
   must warn.
 
+### Changed — compaction follows the latest task; usage counts emissions (audit WP12)
+
+Findings F15 and F16.
+
+- **The latest task is recorded for every substantive prompt, before the
+  lookup.** It used to be saved only when memory matched, so a later task that
+  matched nothing left the older one in place, and compaction restored the
+  older task. Acknowledgements and slash commands still leave it alone.
+  - The latest lookup is kept apart, labelled with a digest of the prompt it
+    ran for. After a compaction, the preamble lists matched records only when
+    they were matched for the latest task.
+  - The text stays local: at most 300 characters, and withheld if it carries a
+    credential. The new manifest key `retain_prompt_text: false` keeps only a
+    digest and a time.
+  - The compaction preamble now reads "Latest task before compaction (the
+    user's words)", or says the text was not retained, or says memory matched
+    nothing for it.
+- **Usage counts only emitted ids.**
+  - The guard hook counted before its dedupe exit, so a repeat it stayed silent
+    on still counted. It now counts after, and only the three matches its
+    reason names.
+  - The prompt hook counted every selected id before budget trimming. It now
+    counts, and deduplicates on, the ids left after trimming.
+  - Deduplicated, over-budget, empty and failed outputs count nothing.
+  - The hook log notes the stages (`candidates`, `matches`, `trimmed`,
+    `emitted`).
+  - `crumb usage` prints the accounting model, which says a count means shown,
+    not read or useful. `--json` carries it as `accounting`.
+- **Local telemetry is contention-safe.**
+  - Each emission is one event file under `private/usage-events/`, folded into
+    `usage.json` exactly once under `.usage.lock`. In the recorded run, six
+    parallel writers lost 110–130 of 180 increments per trial before; now none.
+  - Hook session state is updated under a side lock, per file. A busy lock
+    skips the update and notes `state_dropped`.
+  - The hook log rotates into `hook-log.1.jsonl` instead of being rewritten, so
+    a parallel hook's line is never dropped.
+  - Drops are reported: `usage_dropped` in the hook log, and pending,
+    unreadable and evicted counts in `crumb usage`.
+- **New:** `lock.side_lock`.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of
