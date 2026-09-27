@@ -1,0 +1,24 @@
+# Full guard vs the real guard hook, over actions generated from every eval store
+## before (d270e14, WP10)
+actions=227 full-guard-warns=193 hook-silent=27
+   holdout-ops: Bash Terraform state lives in the S3 backend with DynamoDB locking
+   holdout-ops: Bash Terraform state
+   holdout-ops: Edit edit infra/backend.tf: x = 1
+   holdout-ops: Bash Pin container images by digest in the manifests
+   holdout-ops: Edit edit k8s/api.yaml: x = 1
+   holdout-ops: Bash Should staging
+   library: Edit edit src/tool/__init__.py: x = 1
+   library: Bash Releases are
+## after (WP11)
+actions=227 full-guard-warns=193 hook-silent=0
+
+# Routine commands (15 per store, 4 stores): pre-filter admission, hook speech, hook latency
+## before
+  spoke: library 'npm run lint' READ_FIRST [('dec_20260212_pin-ruff-to-one-version-in-ci-and-in-the-dev-extra', ['tag'])]
+  spoke: library 'node --version' READ_FIRST [('dec_20260202_the-version-lives-only-in-src-tool-init-py', ['tag', 'title'])]
+routine commands: 60, pre-filter admits 0, hook spoke 2, median hook 1.7 ms, max 9.4 ms
+## after
+  spoke: library 'python -m pytest -q' READ_FIRST [('dec_20260215_python-3-9-is-the-supported-floor', ['tag', 'title'])]
+  spoke: library 'npm run lint' READ_FIRST [('dec_20260212_pin-ruff-to-one-version-in-ci-and-in-the-dev-extra', ['tag'])]
+  spoke: library 'node --version' READ_FIRST [('dec_20260202_the-version-lives-only-in-src-tool-init-py', ['tag', 'title'])]
+routine commands: 60, pre-filter admits 4, hook spoke 3, median hook 2.1 ms, max 10.0 ms

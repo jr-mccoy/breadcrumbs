@@ -3892,51 +3892,85 @@ GUARD_PREFILTER_FILENAME = "guard-prefilter.json"
 
 
 def _build_guard_prefilter(memory_dir: Path) -> dict:
-    """Specific tokens + path tokens from traps and do-not-retry attempts.
+    """What the `PreToolUse` hook checks before it runs the full guard.
 
-    This is what lets `crumb hook guard` escalate a trap-shaped but
-    routine-looking command (`pytest -n auto`) to full guard scoring without
-    hardcoding any particular trap in a regex and without record I/O on the
-    common hook path — the near-miss class that motivated hooks in the first place.
+    The hook runs full guard scoring only for an action this says may match.
+    Since audit WP11 it is a strict *superset* of what full guard can surface:
+    it covers every record that could drive a verdict (live decisions,
+    attempts, verifications, traps, open questions), not only traps and
+    do-not-retry attempts. It holds, for each way `_score_item` lets a match
+    through:
+
+    - **`tokens`**: every specific stem of those records. A keyword match
+      needs 2 query stems in one record; any record's stems are in the union.
+      A stem guard discounts as ubiquitous is in it too, which is why no
+      ubiquity is applied here.
+    - **`titles`**: every title stem. The short-query title rule needs a
+      single-stem action in a title (a longer action whose other stems guard
+      discounted still shares 2 stems with `tokens`).
+    - **`tags`**: every tag stem. One shared tag opens the gate.
+    - **`paths`**: every declared or mentioned file, and every path in a trap
+      or do-not-retry attempt's text. One shared path opens the gate.
+    - **`commands`**: the commands live traps name (audit F10).
+
+    It can admit an action full guard then passes over (that costs a full
+    guard run, never a warning). It cannot drop one full guard would surface:
+    `tests/test_guard_delivery.py` checks it against full guard on every eval
+    suite.
     """
     activate_store_aliases(memory_dir)
     tokens: set[str] = set()
+    titles: set[str] = set()
+    tags: set[str] = set()
     paths: set[str] = set()
     commands: list[list[str]] = []
+    for it in _candidate_items(memory_dir, include_ideas=False):
+        if not _may_drive_verdict(it):
+            continue
+        tokens |= set(it["specific"])
+        titles |= set(it.get("title_specific") or ())
+        tags |= set(it.get("tag_stems") or {t: t for t in it.get("tags") or ()})
+        paths |= set(it.get("files") or ()) | set(it.get("mentioned_files") or ())
+        for head in it.get("command_heads") or ():
+            if len(head) > _COMMAND_MIN_TOKENS and head[:9] not in commands:
+                commands.append(head[:9])  # the kind, then up to 8 tokens
     for trap in active_traps(memory_dir):
-        text = trap["heading"] + "\n" + trap["content"]
-        tokens |= _specific(text)
-        paths |= _paths_from_text(text)
-        # The commands a trap names (audit F10): a routine-looking command the
-        # full guard would warn about must never be filtered out here.
-        for head in _trap_command_heads(trap["heading"], trap["content"]):
-            if len(head) >= _COMMAND_MIN_TOKENS and head not in commands:
-                commands.append(head[:8])
+        paths |= _paths_from_text(trap["heading"] + "\n" + trap["content"])
     for rec in active_attempts(memory_dir):
         if _attempt_has_do_not_retry(rec):
             text = (
                 (rec.meta.get("title") or "") + "\n" + rec.sections.get("Do Not Retry Unless", "")
             )
-            tokens |= _specific(text)
             paths |= _paths_from_text(text)
-            # Evidence file refs count as paths too. Scraping prose alone meant
-            # `--evidence file src/billing.py` — the documented way to attach a
-            # file — contributed nothing here, so an Edit to that exact file
-            # sailed past the hook while `crumb guard "edit src/billing.py"`
-            # said PAUSE. Full scoring already reads these (see _item_from_record);
-            # the pre-filter must see the same files or it gates them out.
             paths |= set(_evidence_refs(rec, ("file", "path")))
     return {
         "format": GUARD_PREFILTER_FORMAT,
         "tokens": sorted(tokens),
+        "titles": sorted(titles),
+        "tags": sorted(tags),
         "paths": sorted(paths),
         "commands": sorted(commands),
     }
 
 
-# 2: `commands` added (audit F10). A pre-filter without it cannot know the
-# commands traps name, so it is treated as unverified and the full guard runs.
-GUARD_PREFILTER_FORMAT = 2
+def _may_drive_verdict(item: dict) -> bool:
+    """Could this item be a live match in guard? (Expiry and branch scope are
+    judged at guard time, so both are kept here: the superset errs wide.)"""
+    status = item.get("status") or "active"
+    if item["kind"] == "question":
+        return status == "open"
+    if item["kind"] == "verification":
+        return (
+            item.get("lifecycle", "active") == "active"
+            and status in ACTIONABLE_VERIFICATION_OUTCOMES
+        )
+    return status == "active"
+
+
+# 2: `commands` added (audit F10). 3: every record that could drive a verdict,
+# with `titles` and `tags` (audit WP11). A pre-filter of another format is not
+# trusted: the hook runs the full guard instead.
+GUARD_PREFILTER_FORMAT = 3
 
 
 # Written when a projection rebuild raised, removed by the next one that works.
@@ -8808,18 +8842,32 @@ def _command_tokens(text: str) -> list[str]:
     return [t.strip("\"'`.,;:").lower() for t in flat.split() if t.strip("\"'`.,;:")]
 
 
+# A head is `[kind, *tokens]`. A `title` head is the leading words of a trap's
+# summary, so the action need only match its start; a `span` head is a whole
+# backticked command, so the action must contain all of it. The kind travels
+# with the head (into the pre-filter too), never inferred from its position.
+_HEAD_TITLE = "title"
+_HEAD_SPAN = "span"
+# A summary that opens with one of these describes running the command after it
+# ("Running npm test truncates …").
+_RUN_VERBS = ("run", "running", "runs", "calling", "executing")
+
+
 def _trap_command_heads(heading: str, body: str) -> list[list[str]]:
     """The commands a trap names: its summary's head, then each backticked span."""
     summary = heading
     if heading.startswith("trap_") and ":" in heading:
         summary = heading.split(":", 1)[1]
-    heads = [_command_tokens(summary)]
+    tokens = _command_tokens(summary)
+    heads = [[_HEAD_TITLE, *tokens]]
+    if tokens and tokens[0] in _RUN_VERBS:
+        heads.append([_HEAD_TITLE, *tokens[1:]])
     # The hazard half only: a backticked command in the remedy ("use
     # `npm run test:unit`") is what to run instead, never the hazard.
     for span in _BACKTICK_SPAN_RE.findall(heading + "\n" + _trap_hazard_text(body or "")):
         tokens = _command_tokens(span)
         if len(tokens) >= _COMMAND_MIN_TOKENS:
-            heads.append(tokens)
+            heads.append([_HEAD_SPAN, *tokens])
     return heads
 
 
@@ -8827,15 +8875,18 @@ def _names_command(action_tokens: list[str], heads) -> bool:
     """Does the action run a command one of these heads names? See above."""
     if len(action_tokens) < _COMMAND_MIN_TOKENS:
         return False
-    for i, head in enumerate(heads or ()):
+    for head in heads or ():
+        if not head or head[0] not in (_HEAD_TITLE, _HEAD_SPAN):
+            continue
+        kind, tokens = head[0], head[1:]
         n = 0
-        for a, b in zip(action_tokens, head):
+        for a, b in zip(action_tokens, tokens):
             if a != b:
                 break
             n += 1
         if n < _COMMAND_MIN_TOKENS:
             continue
-        if i > 0 and n < len(head):
+        if kind == _HEAD_SPAN and n < len(tokens):
             continue  # a backticked command must be named whole
         if n == len(action_tokens) or action_tokens[n].startswith("-"):
             return True
@@ -9836,6 +9887,14 @@ def cmd_guard(args: argparse.Namespace) -> int:
     # and documented; 2 stays the usage-error code, and none of these can be
     # mistaken for a crash (1) or an unhandled error (255). The hook path
     # (`crumb hook guard`) is unaffected — hooks must exit 0.
+    #
+    # `--exit-zero` (audit WP11) is a transport convenience for a caller that
+    # cannot tolerate a non-zero status, such as a CI step under `set -e`
+    # (trap_guard-exit-code-in-ci). It is opt-in and changes only the status:
+    # the verdict is still printed and in `--json`. The mapping itself is
+    # unchanged.
+    if getattr(args, "exit_zero", False):
+        return 0
     return GUARD_VERDICT_EXIT_CODES[result["verdict"]]
 
 
@@ -12336,14 +12395,19 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
         _hooklog.note(prefilter="unverified")
         return True
+    # Each test mirrors one way `_score_item` lets a match through (see
+    # `_build_guard_prefilter`), so this can only admit more than full guard
+    # would surface, never less (audit WP11). Stems are re-stemmed at read time
+    # under the store's aliases: `_stem` is idempotent.
     if _names_command(_command_tokens(action), idx.get("commands") or ()):
         return True
-    # Two specific shared tokens, mirroring the guard anti-noise floor — a single
-    # generic word never escalates (§19b.8). Index tokens are re-stemmed at read
-    # time: a prefilter written by an older version holds raw tokens, and _stem
-    # is idempotent, so fresh and stale files compare identically.
+    q_specific = _specific(action)
     idx_tokens = {_stem(str(t)) for t in (idx.get("tokens") or ())}
-    if len(_specific(action) & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
+    if len(q_specific & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
+        return True
+    if len(q_specific) == 1 and q_specific <= {_stem(str(t)) for t in (idx.get("titles") or ())}:
+        return True
+    if q_specific & {_stem(str(t)) for t in (idx.get("tags") or ())}:
         return True
     action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
     index_paths = _norm_files(idx.get("paths") or ())
@@ -13907,6 +13971,12 @@ def _add_guard(sub, global_parser: argparse.ArgumentParser) -> None:
         default=None,
         metavar="N",
         help=f"{STALE_DAYS_HELP}; aged records score lower",
+    )
+    p_guard.add_argument(
+        "--exit-zero",
+        action="store_true",
+        help="exit 0 whatever the verdict (the verdict is still printed); by default "
+        "PROCEED=0, READ_FIRST=10, PAUSE=15, ASK_HUMAN=20",
     )
     p_guard.set_defaults(func=cmd_guard)
 

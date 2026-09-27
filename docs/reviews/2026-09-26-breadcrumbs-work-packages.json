@@ -870,7 +870,7 @@
       "title": "Unify indexed retrieval eligibility and short-prompt handling",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP01",
         "WP07"
@@ -911,6 +911,10 @@
           "summary": "New breadcrumbs/retrieval.py: acknowledgement vocabulary replaces the 12-char gate; prompt_lookup searches via the index with no corpus pre-count (full scan up to 2,000 records, else a reported `skipped` with a once-per-session notice), eligibility before the cap, corpus_summary from the verified manifest (new `corpus`) instead of pre-filter existence; Lookup reports mode/reason. Guard: a live trap naming the exact command (>=2 leading tokens, whole action or up to a flag; remedy spans excluded) gets the `command` signal and a READ_FIRST floor; pre-filter format 2 lists named commands and never filters them out; PROCEED explained as no applicable memory warning. crumb search reports lookup mode. tests/test_retrieval_boundaries.py (9 incl. the 4 named). Before/after script: 5/10 fail on 293a90b, 10/10 pass. Full suite 1284 OK; probes prompt_cliff, guard_prefilter, short_prompt_and_stale_task cleared (4 signals left); 3 known F10 critical cases pass, markers removed; baseline rewritten via reviewed path (3 improvements, 0 regressions); prompt hook 463 -> 147 ms at 5,000 records. Release workflow now runs evals --release (operator-approved).",
           "compatibility": "Short non-acknowledgement prompts and stores >500 records now get injections; a trap naming the command makes guard READ_FIRST (exit 10) and the hook deliver context; PROCEED advice text changed; new command signal, pre-filter format/commands (older pre-filters unverified), manifest corpus, search --json lookup, hook-log retrieval; search(allow_full_scan=, info=), candidate_items(explain=); releases require every critical eval case to pass.",
           "limitations": "Command rule is narrow (>=2 tokens, non-flag args break it, unnamed commands not covered); English fixed acknowledgement vocabulary; PROMPT_FULL_SCAN_MAX is a latency bound (skipped above it without an index); corpus count is files, not eligible records; guard's own lookup still scans unbounded."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP10 approved, start WP11\")."
         }
       ]
     },
@@ -919,7 +923,7 @@
       "title": "Close the known-command guard miss without restoring warning spam",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP10",
         "WP18"
@@ -949,7 +953,16 @@
         "`test_permission_mode_never_gains_auto_allow`"
       ],
       "done_when": "The critical npm case passes through the actual hook, while established false-positive controls and permission boundaries remain intact.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "d270e14",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp11/README.md",
+          "summary": "Guard pre-filter (format 3) is a strict superset of full guard: tokens, titles, tags, declared+mentioned paths and named commands from every record that could drive a verdict; each _prefilter_trap_hit test mirrors a _score_item gate. Named-command heads carry their kind ([title|span, ...]), fixing a WP10 positional bug the sorted pre-filter could trigger; run-verb summaries name the command after the verb. crumb guard --exit-zero (opt-in); verdict exit codes unchanged. New critical eval case edit-of-a-decision-file-warns. tests/test_guard_delivery.py (6 incl. the 4 named): npm test warns in all 7 permission modes; hook agrees with full guard on every eval store (227 actions, 193 warnings); remedies/controls silent; read-only ceiling and blocking stance kept; no mode ever gets allow/deny. Hook silent on required warnings 27/193 before, 0 after; routine-command cost +0.3 ms median. Full suite 1290 OK; evals and --release pass.",
+          "compatibility": "The hook now warns wherever crumb guard does (edits to decision-declared files, tag matches); more actions reach full guard; pre-filter format 3 (format 2 treated as unverified); new crumb guard --exit-zero.",
+          "limitations": "Superset guaranteed against the match gate, not verdicts (extra full-guard runs); broad tags produce guard-policy READ_FIRSTs the hook no longer hides; agreement test covers generated actions over four synthetic stores; named-command rule keeps its narrowness."
+        }
+      ]
     },
     {
       "id": "WP12",

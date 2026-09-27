@@ -329,6 +329,33 @@ What changed:
   gate). The three `known: F10` critical cases pass and their markers are
   removed.
 
+### Changed — the guard hook warns whenever `crumb guard` would (audit WP11)
+
+Findings F10 and F11.
+
+- **The hook's pre-filter is a strict superset of full guard.** It used to
+  cover only traps and do-not-retry attempts, so an edit to a file only a
+  decision declares could draw `READ_FIRST` from `crumb guard` and silence from
+  the hook. On the eval stores that was 27 of 193 warnings; it is now 0.
+  - It holds tokens, title stems, tags, declared and mentioned files, and named
+    commands, from every record that could drive a verdict (format 3).
+  - Routine commands barely move: 4 of 60 pass the pre-filter, and the median
+    hook time is 2.0 ms, against 1.8 ms.
+- **Named-command heads carry their kind** (a summary head or a backticked
+  span). Before, the kind was inferred from list position, which the sorted
+  pre-filter could break. A summary opening with "Running …" names the command
+  after the verb.
+- **`crumb guard --exit-zero`** (opt-in) exits 0 whatever the verdict. The
+  verdict-mapped codes are unchanged.
+- **Tests pin the boundaries:**
+  - no permission mode ever gets `allow` or `deny`;
+  - `ask` appears only for `PAUSE`/`ASK_HUMAN` in prompting modes;
+  - remedies and controls stay silent;
+  - read-only commands cap at `READ_FIRST`;
+  - blocking attempts keep `PAUSE`.
+- **A new critical eval case:** an edit to a file only a decision declares
+  must warn.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

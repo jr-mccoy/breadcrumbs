@@ -547,6 +547,11 @@ authorization and not a safety check of the action. A trap that names the exact
 command being run (`npm test` against "npm test truncates the database") makes
 it at least `READ_FIRST`, and the guard hook always sees such a command, however
 routine it looks. The trap's own remedy (`npm run test:unit`) never counts.
+The guard hook warns whenever `crumb guard` would: its cheap pre-check covers
+every record that could drive a verdict, so it can only add work, never drop a
+warning. Exit codes are verdict-mapped (`PROCEED` 0, `READ_FIRST` 10, `PAUSE`
+15, `ASK_HUMAN` 20); `--exit-zero` opts out for a script that cannot take a
+non-zero status.
 
 **Relevance decides what is surfaced; *stance* decides how far it can escalate.**
 Overlap (same file, same tag, shared keywords) answers "is this record about the

@@ -769,8 +769,11 @@ Behavior (deltas from `search` — everything there applies here too):
   Before, `npm test` against a trap titled "npm test truncates the database"
   matched on the title alone, scored 3 and came out `PROCEED`. The rule is
   narrow:
-  - **A trap names a command** with the leading words of its summary, or with
-    a backticked span in its hazard text. A backticked command in the trap's
+  - **A trap names a command** with the leading words of its summary (after a
+    leading "run"/"running", as in "Running make deploy pushes to prod"), or
+    with a backticked span in its hazard text. Each named command records
+    which it is: a summary head matches from its start, and a backticked span
+    must be named whole (audit WP11). A backticked command in the trap's
     remedy, such as "use `npm run test:unit`", is what to run *instead*, and
     never counts.
   - **The action matches** when their common leading tokens number at least
@@ -809,6 +812,10 @@ Behavior (deltas from `search` — everything there applies here too):
   error / no store. Deliberately clear of 1, 2, and the shell's 126+ range.
   The hook translator (`crumb hook guard`) always exits 0 — hook protocols
   treat nonzero as a hook failure.
+- **`--exit-zero`** (audit WP11) exits 0 whatever the verdict, for a caller that
+  cannot take a non-zero status (a CI step under `set -e`). It is opt-in and
+  changes the status only: the verdict is still printed and in `--json`, and
+  the default mapping is unchanged.
 
 The `PreToolUse` hook path adds three behaviors of its own:
 
@@ -825,10 +832,26 @@ The `PreToolUse` hook path adds three behaviors of its own:
     2.6 ms per call at 200 records, and 92 ms instead of 8.2 ms at 1,000.
   - A verified pre-filter that finds nothing keeps the call silent as before
     (`skipped: "prefilter"`).
-  - **It never filters out a named command** (audit WP10). The pre-filter
-    (format `2`) lists the commands live traps name, and an action that names
-    one goes to the full guard, however routine it looks. A pre-filter without
-    `format: 2` is treated as unverified.
+  - **It never filters out a named command** (audit WP10). The pre-filter lists
+    the commands live traps name, and an action that names one goes to the full
+    guard, however routine it looks.
+  - **It is a strict superset of what full guard surfaces** (audit WP11, format
+    `3`). Before, it covered traps and do-not-retry attempts only, so an edit to
+    a file only a *decision* declares could draw `READ_FIRST` from
+    `crumb guard` and silence from the hook. On the eval stores this happened
+    to 27 of 193 warnings.
+    - It now holds, from every record that could drive a verdict (live
+      decisions, attempts, verifications, traps, open questions), everything
+      `_score_item` can match on: specific stems (`tokens`), title stems
+      (`titles`), tag stems (`tags`), declared and mentioned files (`paths`)
+      and named commands (`commands`).
+    - An action passes when it shares two stems with `tokens`, is a single
+      stem found in `titles`, shares a tag or a path, or names a command.
+    - It may admit an action full guard then passes over, which costs one
+      full guard run. It cannot drop one full guard would warn about.
+      `tests/test_guard_delivery.py` checks this against full guard on every
+      eval suite.
+    - A pre-filter of another format is treated as unverified.
 - **Edits carry content.** The guard action for an `Edit`/`Write`/`MultiEdit`
   is `edit <path>: <bounded snippet of the new content>`, so successive edits
   of one file stop producing byte-identical guard input and a content-shaped

@@ -57,6 +57,13 @@ cases:
     task: "rewrite the auth middleware to use the new session parser"
     files: [src/auth/middleware.py]
 
+  - id: edit-of-a-decision-file-warns
+    suite: holdout-ops
+    check: hook_guard_warns
+    task: "tidy the formatting"
+    files: [infra/backend.tf]
+    note: "only a decision declares this file; the hook's pre-filter used to skip the edit (F11, WP11)"
+
   - id: terraform-destroy-is-not-proceed
     suite: holdout-ops
     check: guard_not
