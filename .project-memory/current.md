@@ -3,9 +3,9 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Stabilization per the 2026-09-26 audit roadmap (WP00 done, awaiting review)
+Stabilization per the 2026-09-26 audit roadmap (WP00 done; WP01 awaiting review)
 
 ## Recently Changed
-Added the audit bundle under docs/reviews/ and tools/audit/, byte-identical to its checksums. Recorded the WP00 baseline: HEAD is the audited commit. Full suite 1147 run, 0 failures, 6 skipped. Evals exit 0 but still report npm test -> PROCEED. All 19 probe defect signals reproduce identically, with 0 errors. All 26 findings are still present.
+WP01: breadcrumbs/validation.py record contract with stable codes, used by run_validate and a pre-write gate in write_record; rewrite gates refuse only newly introduced problems; packet warns on contract breaks. 18 new tests; full suite green on 3.11 and 3.9; evals unchanged; schema_types probe resolved.
 
 ## Watch Out For
