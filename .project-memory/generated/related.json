@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "150eb84fe607",
+ "inputs_hash": "e3beea3981b6",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -176,6 +176,11 @@
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
    "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches"
+  ],
+  "dec_20260927_installed-hook-launchers-never-pass-a-failure-through": [
+   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20260815_cut-0-1-10-as-the-agent-authorship-release"
   ],
   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",

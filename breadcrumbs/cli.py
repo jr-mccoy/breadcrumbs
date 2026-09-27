@@ -11679,10 +11679,11 @@ _HOOK_PYTHONS = ("python3", "python", "py")
 # while loading no memory at all. Single quotes are impossible here — the JSON is
 # carried inside a single-quoted shell word.
 HOOK_INACTIVE_CONTEXT = (
-    "Project memory (breadcrumbs) is INACTIVE this session: the crumb CLI was not "
-    "found on PATH, in ./.venv, or via `python -m breadcrumbs`, so no resume packet "
-    "was loaded. Read .project-memory/generated/resume-packet.md directly if it "
-    "exists; `pip install crumb-kit` restores automatic loading."
+    "Project memory (breadcrumbs) is INACTIVE this session: no working crumb CLI "
+    "was found on PATH, in ./.venv, or via `python -m breadcrumbs` (missing, or too "
+    "old for this hook), so no resume packet was loaded. Read "
+    ".project-memory/generated/resume-packet.md directly if it exists; "
+    "`pip install -U crumb-kit` restores automatic loading."
 )
 
 
@@ -11712,17 +11713,63 @@ def hook_command(event: str) -> str:
     the usual venv layouts (POSIX and Windows), then any interpreter that can
     import the package — and if all of that fails, say so instead of exiting mute.
 
+    A candidate that is *found but fails* is skipped like a missing one, and the
+    command as a whole always exits 0. It used to `exec` the first `crumb` it
+    found, which handed that binary's exit status straight to the host — and
+    Claude Code reads exit 2 from a `UserPromptSubmit` or `PreToolUse` hook as
+    "block". An older crumb-kit on PATH (0.2.0 knows only session/guard/capture)
+    answered `crumb hook prompt` with an argparse usage error, exit 2, and every
+    prompt in the repo was refused. A hook breadcrumbs installs must never be able
+    to veto the host by failing; a real veto is JSON on stdout, exit 0.
+
+    Because a failed candidate may be followed by another, stdin (the hook
+    payload) is read once and replayed to each, and a candidate's output is
+    passed on only when it succeeded.
+
     POSIX `sh` syntax. A launcher of your own is a supported alternative: point the
     command at whatever you like and keep the `HOOK_MARKER` key on the entry, and
     `doctor` and `--remove-integrations` will still recognize it.
 
     Cost matters here — `PreToolUse` fires on every Bash/Edit/Write and is already
     dominated by interpreter startup. Resolution is shell builtins until something
-    matches, the hit path is a single `exec`, and the interpreter fallback runs the
-    module *once* (a separate `import breadcrumbs` probe would have doubled the
-    startup cost for exactly the users who need that fallback).
+    matches, and the hit path runs the CLI once.
     """
     fallback = _hook_fallback_json(event)
+    ok = "&& { printf '%s\\n' \"$o\"; exit 0; }; done"
+    parts = [
+        # Buffer the payload when `cat` exists; a PATH broken badly enough to
+        # lack it still reaches the venv paths, which then read stdin directly.
+        "unset _crumb_in",
+        "command -v cat >/dev/null 2>&1 && _crumb_in=$(cat)",
+        '_crumb_run() { if [ -n "${_crumb_in+x}" ]; then '
+        'printf \'%s\' "$_crumb_in" | "$@"; else "$@"; fi; }',
+        "for c in " + " ".join(_HOOK_CRUMB_PATHS) + "; do "
+        'command -v "$c" >/dev/null 2>&1 || continue; '
+        f'o=$(_crumb_run "$c" hook {event} 2>/dev/null) ' + ok,
+        "for p in " + " ".join(_HOOK_PYTHONS) + "; do "
+        'command -v "$p" >/dev/null 2>&1 || continue; '
+        f'o=$(_crumb_run "$p" -m breadcrumbs hook {event} 2>/dev/null) ' + ok,
+        f"printf '%s\\n' '{fallback}'",
+        "exit 0",
+    ]
+    return "; ".join(parts)
+
+
+def _legacy_hook_command_0_3_0(event: str) -> str:
+    """The launcher 0.3.0 emitted: `exec`s the first crumb found (see hook_command).
+
+    Kept verbatim so `init --with-hooks` recognizes it as ours and upgrades it in
+    place. Never installed.
+    """
+    fallback = _hook_fallback_json(event)
+    if event == "session":
+        fallback = fallback.replace(
+            HOOK_INACTIVE_CONTEXT,
+            "Project memory (breadcrumbs) is INACTIVE this session: the crumb CLI was not "
+            "found on PATH, in ./.venv, or via `python -m breadcrumbs`, so no resume packet "
+            "was loaded. Read .project-memory/generated/resume-packet.md directly if it "
+            "exists; `pip install crumb-kit` restores automatic loading.",
+        )
     parts = [
         "for c in " + " ".join(_HOOK_CRUMB_PATHS) + "; do "
         f'command -v "$c" >/dev/null 2>&1 && exec "$c" hook {event}; done',
@@ -11745,7 +11792,7 @@ def _generated_hook_commands(event: str) -> set[str]:
     guessing that a command "looks like ours" is how we would overwrite a wrapper
     someone wrote on purpose.
     """
-    return {f"crumb hook {event}", hook_command(event)}
+    return {f"crumb hook {event}", _legacy_hook_command_0_3_0(event), hook_command(event)}
 
 
 def _hook_command_event(command: object) -> str | None:
@@ -14612,9 +14659,45 @@ def _run_command(args: argparse.Namespace) -> int:
         return 1
 
 
+def _unknown_hook_event(argv: list[str]) -> str | None:
+    """The event `crumb hook <event>` names, when this version does not know it.
+
+    A newer `init --with-hooks` can install an event this CLI predates. argparse
+    would reject it with a usage error and exit 2, and Claude Code reads exit 2
+    from a `UserPromptSubmit` or `PreToolUse` hook as "block" — one stale binary
+    on PATH refused every prompt. An event we cannot handle gets "no opinion"
+    instead. Only the event slot is inspected; a malformed flag still errors.
+    """
+    rest: list[str] = []
+    it = iter(argv)
+    for token in it:
+        if token == "--":
+            return None
+        if token.startswith("-"):
+            if _consumes_next_token(token):
+                next(it, None)
+            continue
+        rest.append(token)
+    if len(rest) >= 2 and rest[0] == "hook" and rest[1] not in HOOK_EVENTS:
+        return rest[1]
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_output()
-    parser = build_parser(requested_command(sys.argv[1:] if argv is None else list(argv)))
+    raw = sys.argv[1:] if argv is None else list(argv)
+    if requested_command(raw) == "hook":
+        unknown = _unknown_hook_event(raw)
+        if unknown is not None:
+            print(
+                f"crumb {get_version()}: unknown hook event {unknown!r} "
+                f"(this version handles {', '.join(HOOK_EVENTS)}); ignoring it. "
+                "Upgrade crumb-kit.",
+                file=sys.stderr,
+            )
+            print("{}")
+            return 0
+    parser = build_parser(requested_command(raw))
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help()
