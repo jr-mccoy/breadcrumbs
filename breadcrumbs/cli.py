@@ -914,6 +914,17 @@ def _print_json(
     is always present — an empty list when the command has no item list — so a
     consumer can read it without knowing which command it is talking to.
     """
+    print(json.dumps(_json_document(args, payload, ok=ok, summary=summary), indent=2))
+
+
+def _json_document(
+    args: argparse.Namespace,
+    payload: dict,
+    *,
+    ok: bool | None = None,
+    summary: dict | None = None,
+) -> dict:
+    """The document `_print_json` prints: `payload` inside the shared envelope."""
     payload = dict(payload)
     items = payload.get("items")
     if not isinstance(items, list):
@@ -930,7 +941,7 @@ def _print_json(
     doc["items"] = items
     payload.pop("items", None)
     doc.update(payload)
-    print(json.dumps(doc, indent=2))
+    return doc
 
 
 def _emit_warning(args: argparse.Namespace, message: str) -> None:
@@ -3976,11 +3987,14 @@ def _publish_projections(
         staged: list[str] = []
 
         def build(digest: str, *, with_index: bool = True):
+            unstable = digest == _snapshots.UNSTABLE
             packet = _build_resume_packet_once(
-                memory_dir, project_root, stale_days=STALE_AGE_DAYS, inputs_hash=digest
+                memory_dir,
+                project_root,
+                stale_days=STALE_AGE_DAYS,
+                inputs_hash=digest,
+                lead_warnings=[_snapshots.UNSTABLE_WARNING] if unstable else None,
             )
-            if digest == _snapshots.UNSTABLE:
-                packet["warnings"].insert(0, _snapshots.UNSTABLE_WARNING)
             # The guard pre-filter: a token/path index over traps and
             # do-not-retry attempts, so the PreToolUse hook can spot trap-shaped
             # *routine* commands with one small-file read instead of walking
@@ -5774,8 +5788,29 @@ def update_current(memory_dir: Path, focus: str, recently: str) -> None:
 # load_open_questions / parse_handoff_meta) are the reusable surface `guard`
 # ranks against — keep them deterministic and side-effect-free.
 
-# Hard token ceiling for the packet (§12: "3,000 to 5,000 tokens").
+# Hard token ceiling for the packet (§12: "3,000 to 5,000 tokens"). Since audit
+# WP08 it bounds the *final serialized view* — every heading, warning, protected
+# section and wrapper of the Markdown or JSON a consumer receives — in the unit
+# `approx_tokens` measures (see TOKEN_ESTIMATOR).
 TOKEN_BUDGET_MAX = 5000
+
+# The `--fast` view's own ceiling: a reorientation glance, not a briefing.
+FAST_TOKEN_BUDGET = 1500
+
+# The smallest budget each view can honour: its own framing (headings, the
+# source header, one omission note per section) with every field reduced to a
+# pointer. A smaller request is raised to this and the packet says so
+# (`budget.requested`); `crumb resume --budget` refuses it outright. Each is
+# at least 30% above the floor measured for a worst-case store (non-ASCII names,
+# task and fields, every section overfull, every field reduced to its pointer):
+# markdown 375, markdown-fast 282, json 528, json-fast 504.
+# tests/test_packet_delivery.py holds every view to its limit.
+PACKET_MIN_BUDGET = {
+    "markdown": 500,
+    "markdown-fast": 400,
+    "json": 700,
+    "json-fast": 700,
+}
 
 # Default aged-unresolved threshold in days (§12; configurable via --stale-days).
 STALE_AGE_DAYS = 21
@@ -5823,13 +5858,40 @@ TRIM_ORDER = [
     "known_traps",
     "failed_attempts",
     "active_decisions",
+    # What landed since the handoff makes the focus falsifiable; it goes after
+    # every record section, and before the warnings.
+    "commits_since_handoff",
     "warnings",
 ]
 
+# Free-text caps (audit F14). No single field may take the packet over: past its
+# cap a field becomes a marked excerpt with a pointer to the full text. The
+# canonical files are never changed.
+PROTECTED_EXCERPT_CHARS = 2000  # Current Focus, Next Action
+TASK_EXCERPT_CHARS = 500  # Requested Task
+ITEM_EXCERPT_CHARS = 300  # one entry of any list section, one warning
+NAME_EXCERPT_CHARS = 120  # project name, branch, handoff path
+# Still over budget once every list is empty: the protected fields shrink
+# through these caps, down to a bare pointer.
+_PROTECTED_SHRINK = (1000, 500, 250, 120, 0)
+
+# How `approx_tokens` counts, named wherever a budget is reported (audit F14).
+TOKEN_ESTIMATOR = "approx-tokens/2"
+TOKEN_ESTIMATOR_RULE = (
+    "ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer"
+)
+
 
 def approx_tokens(text: str) -> int:
-    """Cheap token estimate (chars/4, rounded up). Heuristic, not a real BPE count."""
-    return (len(text) + 3) // 4
+    """Cheap token estimate: ASCII chars/4 (rounded up), plus one per other char.
+
+    Plain chars/4 badly undercounts text outside ASCII: a CJK character or an
+    emoji is usually one or more tokens by itself, not a quarter of one. This
+    is still a heuristic, not any model's tokenizer; budgets reported in this
+    unit say so (TOKEN_ESTIMATOR). For ASCII text it equals the old chars/4.
+    """
+    ascii_chars = len(text.encode("ascii", "ignore"))
+    return (ascii_chars + 3) // 4 + (len(text) - ascii_chars)
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -6851,6 +6913,11 @@ def build_resume_packet(
     stale_days: int = STALE_AGE_DAYS,
     fast: bool = False,
     task: str | None = None,
+    view: str = "markdown",
+    budget: int | None = None,
+    render=None,
+    loaded_rules: dict[str, str] | None = None,
+    loaded_rules_from: tuple[str, ...] | None = None,
 ) -> dict:
     """Assemble the structured resume packet (the source of both MD and JSON output).
 
@@ -6862,19 +6929,41 @@ def build_resume_packet(
     Its `inputs_hash` stamp is the snapshot it was built from, verified
     unchanged across the build, or `unstable` with a warning (audit F07; see
     `breadcrumbs/snapshots.py`).
+
+    Audit WP08. `view` ("markdown" or "json") and `budget` say which serialized
+    view the packet is bounded for; `render` is that view's exact text, when the
+    caller wraps it (default: `render_packet_markdown` / `packet_json_text`).
+    The packet is portable unless `loaded_rules` (`promote.loaded_rules`) says
+    which standing rules its consumer has loaded, from `loaded_rules_from`;
+    only those promoted records are left out.
     """
     from breadcrumbs import snapshots as _snapshots
 
+    options = {
+        "stale_days": stale_days,
+        "fast": fast,
+        "task": task,
+        "view": view,
+        "budget": budget,
+        "render": render,
+        "loaded_rules": loaded_rules,
+        "loaded_rules_from": loaded_rules_from,
+    }
     packet, digest = _snapshots.stable_build(
         memory_dir,
         root,
-        lambda h: _build_resume_packet_once(
-            memory_dir, root, stale_days=stale_days, fast=fast, task=task, inputs_hash=h
-        ),
+        lambda h: _build_resume_packet_once(memory_dir, root, inputs_hash=h, **options),
     )
     if digest is None:
-        packet["source"]["inputs_hash"] = _snapshots.UNSTABLE
-        packet["warnings"].insert(0, _snapshots.UNSTABLE_WARNING)
+        # Built once more, stamped and warned as unstable before it is bounded,
+        # so the warning counts against the budget like any other line.
+        packet = _build_resume_packet_once(
+            memory_dir,
+            root,
+            inputs_hash=_snapshots.UNSTABLE,
+            lead_warnings=[_snapshots.UNSTABLE_WARNING],
+            **options,
+        )
     return packet
 
 
@@ -6886,6 +6975,12 @@ def _build_resume_packet_once(
     fast: bool = False,
     task: str | None = None,
     inputs_hash: str,
+    view: str = "markdown",
+    budget: int | None = None,
+    render=None,
+    loaded_rules: dict[str, str] | None = None,
+    loaded_rules_from: tuple[str, ...] | None = None,
+    lead_warnings: list[str] | None = None,
 ) -> dict:
     """One build of the packet, stamped with the digest the caller verifies."""
     memory_dir = Path(memory_dir)
@@ -6938,21 +7033,58 @@ def _build_resume_packet_once(
     listed_verifications = [
         r for r in listed_verifications if not branch_scoped_elsewhere(r.meta, current_branch)
     ]
-    # WM-40: a promoted record is already in the model's context through the
-    # instruction file; listing it again spends the packet's budget twice. Only
-    # the list sections drop it — guard, search and the warnings still see it.
+    # WM-40 / audit F13: a promoted record is a standing rule in an instruction
+    # file. The packet is portable by default: it keeps the record, and carries
+    # the rule in force, because its reader may not load that file (another
+    # harness, a read-only clone) or the file may no longer hold the rule. Only a
+    # consumer that has verifiably loaded the rule (`loaded_rules`, read from
+    # the files it loads, at the moment it loads them) gets the record elided,
+    # so the same rule is not spent twice in its context. Guard, search and the
+    # warnings see every promoted record either way.
     from breadcrumbs import promote as _promote
 
-    promoted_counts = {
-        "active_decisions": sum(1 for r in listed_decisions if _promote.is_promoted_record(r)),
-        "failed_attempts": sum(1 for r in listed_attempts if _promote.is_promoted_record(r)),
-        "known_traps": sum(1 for t in traps if _promote.is_promoted_trap(t)),
-    }
+    rule_files = _promote.rules_in_files(root)
+    rules: dict[str, dict] = {}
+
+    def _standing(rid: str, target: str | None) -> dict:
+        if rid not in rules:
+            text, in_file = _promote.effective_rule(memory_dir, rid, target, rule_files)
+            rules[rid] = {"promoted_to": target, "rule": text, "rule_in_file": in_file}
+        return rules[rid]
+
+    def _elided(rid: str, promoted: bool) -> bool:
+        return promoted and loaded_rules is not None and rid in loaded_rules
+
+    promoted_counts = {"active_decisions": 0, "failed_attempts": 0, "known_traps": 0}
     listed_decisions_all = listed_decisions
     listed_attempts_all = listed_attempts
-    listed_decisions = [r for r in listed_decisions if not _promote.is_promoted_record(r)]
-    listed_attempts = [r for r in listed_attempts if not _promote.is_promoted_record(r)]
-    listed_traps = [t for t in traps if not _promote.is_promoted_trap(t)]
+    for key, recs in (("active_decisions", listed_decisions), ("failed_attempts", listed_attempts)):
+        for r in recs:
+            rid = r.meta.get("id", r.stem)
+            if _promote.is_promoted_record(r):
+                _standing(rid, str(r.meta["promoted_to"]))
+                promoted_counts[key] += _elided(rid, True)
+    for t in traps:
+        if _promote.is_promoted_trap(t):
+            _standing(t["id"], _promote.promoted_to(t))
+            promoted_counts["known_traps"] += _elided(t["id"], True)
+    listed_decisions = [
+        r
+        for r in listed_decisions
+        if not _elided(r.meta.get("id", r.stem), _promote.is_promoted_record(r))
+    ]
+    listed_attempts = [
+        r
+        for r in listed_attempts
+        if not _elided(r.meta.get("id", r.stem), _promote.is_promoted_record(r))
+    ]
+    listed_traps = [t for t in traps if not _elided(t["id"], _promote.is_promoted_trap(t))]
+
+    def _trap_line(t: dict) -> str:
+        rule = rules.get(t["id"])
+        if not rule or not rule["rule"]:
+            return t["heading"]
+        return f"{t['id']}: {_standing_label(rule)} {rule['rule']}"
 
     # Project snapshot (git is the live source; handoff metadata is advisory).
     dirty = git_dirty_files(root)
@@ -6972,12 +7104,14 @@ def _build_resume_packet_once(
         "handoff": handoff_label,
     }
 
-    def _focus() -> str:
+    def _focus() -> tuple[str, str]:
         cf = current_sections.get("Current Focus", "")
         if not _is_placeholder(cf):
-            return cf.strip()
+            return cf.strip(), "current.md → Current Focus"
         hf = handoff_sections.get("Current Focus", "")
-        return "" if _is_placeholder(hf) else hf.strip()
+        return ("" if _is_placeholder(hf) else hf.strip()), f"{handoff_label} → Current Focus"
+
+    focus, focus_source = _focus()
 
     next_action = handoff_sections.get("Next Action", "")
     next_action = "" if _is_placeholder(next_action) else next_action.strip()
@@ -7000,13 +7134,14 @@ def _build_resume_packet_once(
         "handoff_age_days": _age_days(handoff_meta.get("updated_at")),
         "handoff_commit_distance": git_commit_distance(root, handoff_meta.get("commit")),
         "project": project,
-        "current_focus": _focus(),
+        "current_focus": focus,
         "next_action": next_action,
         "active_decisions": [
             {
                 "id": r.meta.get("id", r.stem),
                 "title": r.meta.get("title", ""),
                 "rationale": _decision_rationale(r),
+                **rules.get(r.meta.get("id", r.stem), {}),
             }
             for r in listed_decisions
         ],
@@ -7015,11 +7150,23 @@ def _build_resume_packet_once(
                 "id": r.meta.get("id", r.stem),
                 "title": r.meta.get("title", ""),
                 "do_not_retry": _attempt_do_not_retry(r),
+                **rules.get(r.meta.get("id", r.stem), {}),
             }
             for r in listed_attempts
         ],
-        "known_traps": [t["heading"] for t in listed_traps],
+        "known_traps": [_trap_line(t) for t in listed_traps],
+        # Standing rules this packet left out because its consumer has loaded
+        # them (only ever non-empty for such a consumer; see `rules`).
         "promoted": {k: v for k, v in promoted_counts.items() if v},
+        "rules": (
+            {"mode": "portable"}
+            if loaded_rules is None
+            else {
+                "mode": "elided-when-loaded",
+                "loaded_from": list(loaded_rules_from or ()),
+                "elided": sum(promoted_counts.values()),
+            }
+        ),
         "open_questions": [q["question"] for q in questions if q["status"] == "open"],
         # Committed jots only. A machine-local jot in this list would make the
         # committed packet differ between two checkouts of one store while
@@ -7041,7 +7188,8 @@ def _build_resume_packet_once(
             root, handoff_meta.get("commit"), PACKET_COMMITS_SINCE_HANDOFF_MAX
         ),
         "warnings": (
-            [f"⚠ {u}" for u in unreadable]
+            list(lead_warnings or [])
+            + [f"⚠ {u}" for u in unreadable]
             + record_contract_warnings(memory_dir)
             + compute_staleness(
                 root,
@@ -7102,7 +7250,18 @@ def _build_resume_packet_once(
             packet["likely_files_note"] = note
         _order_by_relevance(packet, memory_dir, root, task, stale_days=stale_days)
 
-    _bound_packet(packet, fast=fast)
+    _bound_packet(
+        packet,
+        fast=fast,
+        view=view,
+        budget=budget,
+        render=render,
+        sources={
+            "current_focus": focus_source,
+            "next_action": f"{handoff_label} → Next Action",
+            "requested_task": "the task you passed",
+        },
+    )
     return packet
 
 
@@ -7230,13 +7389,172 @@ _FAST_DROP = (
 )
 
 
-def _bound_packet(packet: dict, *, fast: bool) -> None:
-    """Apply --fast pruning, per-section caps, then trim to the token budget."""
+def _excerpt(text: str, limit: int, source: str | None = None) -> tuple[str, bool]:
+    """`(text, excerpted)`: `text` cut to `limit` chars, visibly, with a pointer.
+
+    The mark says how much is shown and where the whole is, so a shortened
+    field can never be mistaken for the full one. At `limit` 0 only the pointer
+    is left.
+    """
+    text = text or ""
+    if len(text) <= limit:
+        return text, False
+    where = f"; full text: {source}" if source else ""
+    shown = text[:limit].rstrip() if limit > 0 else ""
+    if shown:
+        return f"{shown}… [excerpt: {len(shown)} of {len(text)} chars{where}]", True
+    return f"[omitted: {len(text)} chars{where}]", True
+
+
+def _entry_source(section: str, entry) -> str | None:
+    if isinstance(entry, dict) and entry.get("id"):
+        return f"crumb show {entry['id']}"
+    if section == "known_traps":
+        return f"crumb show {str(entry).split(':', 1)[0].strip()}"
+    if section == "open_questions":
+        return f"crumb show {question_item_id(str(entry))}"
+    return None
+
+
+# The text fields of each list section's entries (dict entries) that can grow
+# without limit; string entries are excerpted whole.
+_ENTRY_TEXT_FIELDS = {
+    "active_decisions": ("title", "rationale", "rule"),
+    "failed_attempts": ("title", "do_not_retry", "rule"),
+    "verifications": ("subject",),
+    "inbox": ("text",),
+}
+
+
+def _excerpt_entries(packet: dict) -> None:
+    """Cap every list entry and warning at ITEM_EXCERPT_CHARS (audit F14)."""
+    excerpted = packet.setdefault("excerpted", {})
+    for key in [*SECTION_CAPS, "commits_since_handoff"]:
+        entries = packet.get(key) or []
+        out = []
+        for entry in entries:
+            source = _entry_source(key, entry)
+            hit = False
+            if isinstance(entry, dict):
+                entry = dict(entry)
+                for field in _ENTRY_TEXT_FIELDS.get(key, ()):
+                    if isinstance(entry.get(field), str):
+                        entry[field], cut = _excerpt(entry[field], ITEM_EXCERPT_CHARS, source)
+                        hit = hit or cut
+            elif isinstance(entry, str):
+                entry, hit = _excerpt(entry, ITEM_EXCERPT_CHARS, source)
+            if hit:
+                excerpted[key] = excerpted.get(key, 0) + 1
+            out.append(entry)
+        if key in packet:
+            packet[key] = out
+
+
+# Project names shrink with the protected fields, but never below this.
+_NAME_FLOOR_CHARS = 40
+
+
+def _excerpt_protected(packet: dict, originals: dict, sources: dict, cap: int) -> None:
+    """Set the protected fields from their full text at `cap` chars each."""
+    excerpted = packet.setdefault("excerpted", {})
+    same = originals["current_focus"] and (
+        originals["current_focus"].strip() == originals["next_action"].strip()
+    )
+    proj = packet.get("project") or {}
+    name_cap = min(NAME_EXCERPT_CHARS, max(cap, _NAME_FLOOR_CHARS))
+    for field in ("name", "branch", "handoff"):
+        full = originals.get(f"project.{field}")
+        if isinstance(full, str):
+            proj[field], cut = _excerpt(full, name_cap)
+            if cut:
+                excerpted[f"project.{field}"] = {"shown_chars": name_cap, "total_chars": len(full)}
+    for field, limit in (
+        ("next_action", cap),
+        ("current_focus", cap),
+        ("requested_task", min(cap, TASK_EXCERPT_CHARS)),
+    ):
+        if originals.get(field) is None:
+            continue
+        if field == "current_focus" and same:
+            # Rendered as "same as Next Action": keep the two strings equal.
+            packet[field] = packet["next_action"]
+            continue
+        packet[field], cut = _excerpt(originals[field], limit, sources.get(field))
+        if cut:
+            excerpted[field] = {
+                "shown_chars": min(limit, len(originals[field])),
+                "total_chars": len(originals[field]),
+                "source": sources.get(field),
+            }
+        else:
+            excerpted.pop(field, None)
+
+
+def packet_json_text(packet: dict) -> str:
+    """The JSON view as the MCP tool and library callers serialize it."""
+    return json.dumps(packet, indent=2)
+
+
+def _bound_packet(
+    packet: dict,
+    *,
+    fast: bool,
+    view: str = "markdown",
+    budget: int | None = None,
+    render=None,
+    sources: dict | None = None,
+) -> None:
+    """Fit the packet into its view's budget, measured on the final text (audit F14).
+
+    In order: --fast pruning; per-entry and per-field excerpts; per-section caps;
+    list trimming (TRIM_ORDER); then the protected fields shrink to pointers.
+    Every step removes something, so it terminates. Everything left out or
+    shortened is disclosed (`omitted`, `excerpted`, the inline marks), and
+    `budget` names the view, the unit, the estimator, the limit and what the
+    view actually used.
+    """
+    if view not in ("markdown", "json"):
+        raise ValueError(f"unknown packet view: {view!r}")
+    view_name = f"{view}-fast" if fast else view
+    requested = budget
+    if requested is None:
+        requested = FAST_TOKEN_BUDGET if fast else TOKEN_BUDGET_MAX
+    limit = max(int(requested), PACKET_MIN_BUDGET[view_name])
+    if render is None:
+        render = render_packet_markdown if view == "markdown" else packet_json_text
+
+    def measure() -> int:
+        return approx_tokens(render(packet))
+
+    packet["budget"] = {
+        "view": view_name,
+        "unit": "approx_tokens",
+        "estimator": TOKEN_ESTIMATOR,
+        "estimator_rule": TOKEN_ESTIMATOR_RULE,
+        "limit": limit,
+        # Placeholders at least as wide as the final values, so the text
+        # measured below is never shorter than the text emitted.
+        "used": limit,
+        "within": False,
+    }
+    if limit != requested:
+        packet["budget"]["requested"] = int(requested)
+
     if fast:
         for key in _FAST_DROP:
             packet[key] = []
         packet["omitted"] = {}
         packet["omitted_reason"] = {}
+
+    sources = sources or {}
+    originals = {
+        "current_focus": packet.get("current_focus") or "",
+        "next_action": packet.get("next_action") or "",
+        "requested_task": packet.get("requested_task"),
+        **{f"project.{k}": v for k, v in (packet.get("project") or {}).items()},
+    }
+    _excerpt_entries(packet)
+    _excerpt_protected(packet, originals, sources, PROTECTED_EXCERPT_CHARS)
 
     # Per-section caps (record how many we hid, and why). Applied in --fast mode
     # too: warnings survive the fast prune and must stay bounded.
@@ -7248,11 +7566,9 @@ def _bound_packet(packet: dict, *, fast: bool) -> None:
             packet["omitted"][key] = packet["omitted"].get(key, 0) + (len(items) - cap)
             packet["omitted_reason"][key] = "the per-section cap"
             packet[key] = items[:cap]
-    if fast:
-        return
 
     # Budget trim, lowest-priority section first, until within the ceiling.
-    while approx_tokens(render_packet_markdown(packet)) > TOKEN_BUDGET_MAX:
+    while measure() > limit:
         for key in TRIM_ORDER:
             if packet.get(key):
                 packet[key].pop()
@@ -7266,10 +7582,31 @@ def _bound_packet(packet: dict, *, fast: bool) -> None:
                 )
                 break
         else:
-            break  # nothing left to trim; emit slightly over rather than loop forever
+            break
+
+    # Every list is empty and it is still over: the protected fields give way,
+    # as marked excerpts and finally bare pointers.
+    for cap in _PROTECTED_SHRINK:
+        if measure() <= limit:
+            break
+        _excerpt_protected(packet, originals, sources, cap)
+
+    if not packet["excerpted"]:
+        packet.pop("excerpted")
+    used = measure()
+    packet["budget"]["used"] = used
+    packet["budget"]["within"] = used <= limit
 
 
 # ---- rendering ------------------------------------------------------------- #
+
+
+def _standing_label(rule: dict) -> str:
+    """How a promoted entry introduces its rule, saying where the rule lives."""
+    target = rule.get("promoted_to") or "the instruction file"
+    if rule.get("rule_in_file"):
+        return f"standing rule in {target}:"
+    return f"standing rule (promoted to {target}, not found there):"
 
 
 def _omitted_note(packet: dict, key: str) -> list[str]:
@@ -7280,11 +7617,32 @@ def _omitted_note(packet: dict, key: str) -> list[str]:
         out.append(f"_(… {n} more omitted to stay within {reason})_")
     promoted = (packet.get("promoted") or {}).get(key, 0)
     if promoted:
+        loaded = ", ".join((packet.get("rules") or {}).get("loaded_from") or []) or (
+            "the instruction file"
+        )
         out.append(
-            f"_({promoted} promoted to the instruction file — see its "
-            '"Project rules promoted from memory")_'
+            f"_({promoted} standing rule(s) left out — already loaded from {loaded} "
+            'this session, under "Project rules promoted from memory")_'
         )
     return out
+
+
+def _view_header(packet: dict) -> str | None:
+    """The line that says which view this is, its budget and its rule mode."""
+    budget = packet.get("budget")
+    if not budget:
+        return None
+    rules = packet.get("rules") or {}
+    if rules.get("mode") == "elided-when-loaded":
+        mode = f"rules: elided when loaded from {', '.join(rules.get('loaded_from') or [])}"
+    else:
+        mode = "rules: portable"
+    asked = f", raised from {budget['requested']}" if "requested" in budget else ""
+    return (
+        f"<!-- view: {budget['view']} | budget: {budget['used']}/{budget['limit']} "
+        f"{budget['unit']}{asked} ({budget['estimator']}: {budget['estimator_rule']}) "
+        f"| {mode} -->"
+    )
 
 
 def render_packet_markdown(packet: dict) -> str:
@@ -7295,6 +7653,11 @@ def render_packet_markdown(packet: dict) -> str:
         f"<!-- {GENERATED_MARKER} — do not edit by hand. Rebuilt by `crumb resume`. -->",
         f"<!-- source_commit: {src['commit']} | inputs_hash: {src['inputs_hash']} "
         f"| generated_at: {src['generated_at']} -->",
+    ]
+    header = _view_header(packet)
+    if header:
+        out.append(header)
+    out += [
         "",
         "# Resume Packet",
         "",
@@ -7322,9 +7685,10 @@ def render_packet_markdown(packet: dict) -> str:
     ]
     # Say which order the reader is looking at. A relevance-ordered list read as
     # if it were newest-first would suggest a year-old decision is the latest.
+    # The task itself is printed once, under Requested Task, not again here.
     if packet.get("ordering") == "relevance" and packet.get("requested_task"):
         out.append(
-            f"_(sections ordered by relevance to: {packet['requested_task']}; "
+            f"_(sections ordered by relevance to the Requested Task above; "
             f"the {RECENCY_FLOOR} newest in each stay first)_"
         )
     out += [
@@ -7356,7 +7720,10 @@ def render_packet_markdown(packet: dict) -> str:
         out += ["## Active Decisions"]
         if packet["active_decisions"]:
             for d in packet["active_decisions"]:
-                out.append(f"- `{d['id']}` — {d['rationale']}")
+                if d.get("rule"):
+                    out.append(f"- `{d['id']}` — {_standing_label(d)} {d['rule']}")
+                else:
+                    out.append(f"- `{d['id']}` — {d['rationale']}")
         else:
             out.append("_(none active)_")
         out += _omitted_note(packet, "active_decisions")
@@ -7365,7 +7732,10 @@ def render_packet_markdown(packet: dict) -> str:
         out += ["## Failed Attempts To Avoid"]
         if packet["failed_attempts"]:
             for a in packet["failed_attempts"]:
-                out.append(f"- `{a['id']}` — do not retry: {a['do_not_retry']}")
+                if a.get("rule"):
+                    out.append(f"- `{a['id']}` — {_standing_label(a)} {a['rule']}")
+                else:
+                    out.append(f"- `{a['id']}` — do not retry: {a['do_not_retry']}")
         else:
             out.append("_(none recorded)_")
         out += _omitted_note(packet, "failed_attempts")
@@ -7448,6 +7818,19 @@ def render_packet_markdown(packet: dict) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
+# The publication reason `resume --json` reports is clipped to this many ASCII
+# chars, so the JSON view can reserve its exact width in the budget.
+_PUBLICATION_REASON_CHARS = 200
+
+
+def _ascii_clip(text: str | None, limit: int) -> str | None:
+    """`text` as ASCII (non-ASCII escaped), at most `limit` chars, cut visibly."""
+    if text is None:
+        return None
+    flat = text.encode("ascii", "backslashreplace").decode("ascii")
+    return flat if len(flat) <= limit else flat[: limit - 3] + "..."
+
+
 def cmd_resume(args: argparse.Namespace) -> int:
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
@@ -7457,9 +7840,42 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
     task = getattr(args, "task", None)
-    packet = build_resume_packet(memory_dir, root, stale_days=stale_days, fast=args.fast, task=task)
+    budget = getattr(args, "budget", None)
+    view = "json" if args.json else "markdown"
+    view_name = f"{view}-fast" if args.fast else view
+    if budget is not None and budget < PACKET_MIN_BUDGET[view_name]:
+        _emit_error(
+            args,
+            f"--budget {budget} is below the smallest the {view_name} view can honour "
+            f"({PACKET_MIN_BUDGET[view_name]} {TOKEN_ESTIMATOR} tokens)",
+        )
+        return 2
+
+    # The JSON view is bounded on the exact document printed below (audit
+    # F14): the shared envelope, the publication report (at its widest) and
+    # `approx_tokens` all count against the budget.
+    def json_view(p: dict) -> str:
+        placeholder = {
+            "published": False,
+            "reason": "x" * _PUBLICATION_REASON_CHARS,
+            "unfinished_operations": 10**6,
+        }
+        wide = {**p, "approx_tokens": p["budget"]["limit"], "publication": placeholder}
+        return json.dumps(_json_document(args, wide), indent=2)
+
+    packet = build_resume_packet(
+        memory_dir,
+        root,
+        stale_days=stale_days,
+        fast=args.fast,
+        task=task,
+        view=view,
+        budget=budget,
+        render=json_view if args.json else None,
+    )
     md = render_packet_markdown(packet)
-    packet["approx_tokens"] = approx_tokens(md)
+    # The size of the view actually emitted, in the budget's unit.
+    packet["approx_tokens"] = packet["budget"]["used"]
     # Telemetry goes here, not inside `build_resume_packet`: every write
     # reindexes, and every reindex builds a packet, so counting there would
     # measure how often the store was *written* rather than how often a record
@@ -7487,7 +7903,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
         from breadcrumbs import lock as _lock
 
         ok, problem = try_reindex_projections(memory_dir, root, lock_timeout=_lock.HOOK_TIMEOUT)
-        publication = {"published": ok, "reason": problem}
+        publication = {"published": ok, "reason": _ascii_clip(problem, _PUBLICATION_REASON_CHARS)}
         if not ok:
             print(
                 f"warning: generated projections not refreshed: {problem}",
@@ -11996,7 +12412,19 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
                 # what this session is doing, so the rebuilt packet is ordered by
                 # relevance to it (WM-20) rather than by recency.
                 task = hooks_common.prompt_state(memory_dir, session_id).get("last_prompt")
-            packet = build_resume_packet(memory_dir, root, task=task or None)
+            # This hook is Claude Code's, which loads the project's CLAUDE.md
+            # itself. A promoted record whose rule is in that file right now is
+            # already in the session's context, so only those are left out
+            # (audit F13); everything else stays, rule text included.
+            from breadcrumbs import promote as _promote
+
+            packet = build_resume_packet(
+                memory_dir,
+                root,
+                task=task or None,
+                loaded_rules=_promote.loaded_rules(root, ("CLAUDE.md",)),
+                loaded_rules_from=("CLAUDE.md",),
+            )
             context = render_packet_markdown(packet)
             if compacted:
                 context = _compaction_preamble(memory_dir, session_id) + context
@@ -13242,6 +13670,15 @@ def _add_resume(sub, global_parser: argparse.ArgumentParser) -> None:
         help="resume FOR this task: order every section by relevance to it (the "
         "3 newest per section stay first) and scope likely-files to matching records; "
         "a task-scoped packet prints only and does not overwrite the committed snapshot",
+    )
+    p_resume.add_argument(
+        "--budget",
+        type=int,
+        default=None,
+        metavar="TOKENS",
+        help=f"bound the printed view to TOKENS approx tokens ({TOKEN_ESTIMATOR}; "
+        f"default {TOKEN_BUDGET_MAX}, {FAST_TOKEN_BUDGET} with --fast); affects what you "
+        "see, never the committed packet",
     )
     p_resume.set_defaults(func=cmd_resume)
 

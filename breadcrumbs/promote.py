@@ -16,9 +16,10 @@ demote-candidate check find it again:
     - <rule>. _(why: <rationale>; source: `<record id>`)_
 
 **Promotion does not retire the record.** It is still true — it is now also
-long-term. The packet leaves it out (it is already in the model's context
-through the instruction file) and says how many it left out; `guard` still
-scores it at full weight; `search` marks it `promoted`. Retiring a promoted
+long-term. The packet keeps it and shows the rule in force; only a consumer
+that has loaded the rule (Claude Code's SessionStart hook, from `CLAUDE.md`)
+gets it left out, and is told how many (audit WP08, see `loaded_rules`).
+`guard` still scores it at full weight; `search` marks it `promoted`. Retiring a promoted
 record demotes it: a rule nobody believes any more must not stay in the file
 every session loads.
 
@@ -461,6 +462,71 @@ def is_promoted_trap(trap: dict) -> bool:
 
 
 # --------------------------------------------------------------------------- #
+# Audit WP08 (F13): what a packet's reader actually has
+# --------------------------------------------------------------------------- #
+#
+# Promotion is one more delivery channel, not a reason for a record to vanish
+# from the packet. The packet used to drop every promoted record on the
+# strength of its `promoted_to` field. A reader that never loads that file (a
+# different harness, a read-only clone), or a file that no longer holds the
+# rule, was then left with neither. A packet now drops a promoted record only
+# for a consumer that has verifiably loaded the rule: see `loaded_rules`.
+
+
+def rules_in_files(root: Path, names=PROMOTE_TARGETS) -> dict[str, dict[str, str]]:
+    """`{file: {source id: bullet line}}` for the promoted-rules blocks present now."""
+    out: dict[str, dict[str, str]] = {}
+    for name in names:
+        rows = read_bullets(Path(root) / name)
+        out[name] = {sid: line for sid, line in rows if sid}
+    return out
+
+
+def loaded_rules(root: Path, names=("CLAUDE.md",)) -> dict[str, str]:
+    """`{source id: bullet line}` a harness that loads `names` has in its context.
+
+    Read at the moment the harness loads the same files (its session start), so
+    it is the revision that consumer actually holds. Claude Code loads the
+    project's `CLAUDE.md`; it does not load `AGENTS.md`, so a rule promoted there
+    is not "loaded" for it.
+    """
+    loaded: dict[str, str] = {}
+    for rules in rules_in_files(root, names).values():
+        loaded.update(rules)
+    return loaded
+
+
+_SOURCE_NOTE_RE = re.compile(r";?\s*source:\s*`[^`]+`")
+
+
+def rule_text(line: str) -> str:
+    """The rule a bullet states: no list marker, no source pointer."""
+    text = line.strip()
+    if text.startswith("- "):
+        text = text[2:]
+    text = _SOURCE_NOTE_RE.sub("", text)
+    return text.replace(" _()_", "").replace("_()_", "").strip()
+
+
+def effective_rule(
+    memory_dir: Path, rid: str, target: str | None, in_files: dict[str, dict[str, str]]
+) -> tuple[str, bool]:
+    """`(rule, in_file)`: the rule in force for `rid`, and whether its file holds it.
+
+    The bullet in the instruction file is what a harness loading that file
+    reads, so it wins, even when edited by hand. When the file or the bullet is
+    gone, the rule is rendered from the record, as `promote` would write it.
+    """
+    line = (in_files.get(target or "") or {}).get(rid)
+    if line:
+        return rule_text(line), True
+    item = cli.find_item(memory_dir, rid)
+    if item is None:
+        return "", False
+    return rule_text(expected_bullet(memory_dir, item)), False
+
+
+# --------------------------------------------------------------------------- #
 # WM-40/42/43: audit and doctor
 # --------------------------------------------------------------------------- #
 
@@ -656,8 +722,9 @@ def cmd_promote(args) -> int:
     print(f"Promoted {res['id']} to {res['to']}:")
     print(f"  {res['rule']}")
     print(
-        "  The record stays active; the packet now leaves it out because the rule is in "
-        f"{res['to']}. Take it back out with `crumb demote {res['id']}`."
+        f"  The record stays active; packets show it as a standing rule in {res['to']}, "
+        f"and a session that loads {res['to']} is not shown it twice. Take it back out "
+        f"with `crumb demote {res['id']}`."
     )
     return 0
 

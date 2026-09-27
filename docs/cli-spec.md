@@ -270,13 +270,56 @@ Behavior:
   what relevance changes is which entries survive a trim. The packet carries
   `ordering: "relevance"` (`"recency"` otherwise, including a task that matched
   nothing), and the rendered packet says so under the Project line:
-  `_(sections ordered by relevance to: <task>; the 3 newest in each stay first)_`.
+  `_(sections ordered by relevance to the Requested Task above; the 3 newest in
+  each stay first)_`. The task itself is printed once, under *Requested Task*.
   `--task` also scopes `likely_files` to the matching records, labelling an empty
   result `starting cold`.
-- **Bounding:** per-section caps, then a hard **5,000-token** ceiling (chars/4
-  heuristic). Current/handoff/active-decisions outrank old session observations;
-  lower-priority sections are trimmed first and an omission note is shown. Raw
-  transcripts are never included.
+- **Bounding: the view you receive is within its budget** (audit WP08). The
+  budget is measured on the final text of the view, including headings,
+  warnings, the protected sections and the envelope, not on the lists alone.
+  Raw transcripts are never included.
+
+  | View | Measured on | Default budget | Smallest |
+  |---|---|---|---|
+  | `markdown` (`resume`, the committed packet, the `SessionStart` hook, `memory://resume-packet`) | the rendered Markdown | 5,000 | 500 |
+  | `markdown-fast` (`resume --fast`) | the rendered Markdown | 1,500 | 400 |
+  | `json` (`resume --json`, MCP `memory_build_resume_packet`) | the exact JSON document printed or returned, envelope included | 5,000 | 700 |
+  | `json-fast` (`resume --fast --json`) | the same | 1,500 | 700 |
+
+  - **The unit is named.** Budgets are in `approx_tokens`, estimator
+    `approx-tokens/2`: ASCII chars / 4, rounded up, plus one per non-ASCII
+    character. It is a heuristic, not any model's tokenizer, and the packet says
+    so. For ASCII text it equals the old chars/4. Before WP08, a CJK or emoji
+    character counted a quarter.
+  - **`--budget TOKENS`** bounds the printed view instead; it never changes the
+    committed packet. A value below the view's smallest budget exits 2. A
+    library caller asking for less gets the smallest, with
+    `budget.requested` saying what was asked.
+  - **How a view is fitted:**
+    1. Every list entry and warning is capped at 300 characters, and Current
+       Focus and Next Action at 2,000 (Requested Task at 500). A longer field
+       becomes a marked excerpt with a pointer to the whole:
+       `… [excerpt: 2000 of 31499 chars; full text: handoff.md → Next Action]`.
+       Entries point at `crumb show <id>`.
+    2. The per-section caps apply.
+    3. The lists are trimmed in `TRIM_ORDER` (least load-bearing first, the
+       commits since the handoff and then the warnings last), each with its
+       `… N more omitted` note.
+    4. If the view is still over, Current Focus, Next Action, Requested Task
+       and the project names shrink (1,000, 500, 250, 120 characters), down to
+       a bare pointer: `[omitted: 45000 chars; full text: current.md → Current Focus]`.
+
+    The canonical files are never shortened.
+  - **The packet identifies itself.** The Markdown carries a second header line,
+    `<!-- view: markdown | budget: <used>/<limit> approx_tokens (approx-tokens/2: …) | rules: portable -->`.
+    `--json` carries `budget: {view, unit, estimator, estimator_rule, limit,
+    used, within, requested?}` and `excerpted` (per section, a count; per
+    protected field, `{shown_chars, total_chars, source}`). `approx_tokens` is
+    the emitted view's size, equal to `budget.used`. Before WP08 it was always
+    the Markdown's.
+  - Before WP08, a long Current Focus or Next Action was never trimmed: a
+    28,500-character focus produced a packet of 7,333 estimated tokens
+    under a "5,000-token" ceiling.
 - **Computed staleness** (not just authored): handoff **age + commit-distance**,
   **aged-unresolved** questions/decisions (> `--stale-days`), **branch mismatch**
   (incl. detached HEAD), and **expired**/**low-confidence** records.
@@ -285,14 +328,35 @@ Behavior:
   and in `search`, but is dropped from the packet's list sections (the "expired
   on …" staleness line still names an expired decision or attempt). `crumb
   expired` lists them.
-- **Promoted records leave the lists (WM-40).** A decision, attempt or trap
-  promoted to `CLAUDE.md`/`AGENTS.md` is already in the model's context through
-  that file, so *Active Decisions*, *Failed Attempts To Avoid* and *Known Traps*
-  leave it out and end with `_(N promoted to the instruction file — see its
-  "Project rules promoted from memory")_`. `--json` carries the counts as
-  `promoted` (`{active_decisions, failed_attempts, known_traps}`, non-zero
-  sections only; `{}` when nothing is promoted). The missing-evidence warning
-  below still checks promoted decisions and attempts.
+- **Promoted records stay, as their rules, unless the reader has loaded them**
+  (WM-40, audit WP08). A decision, attempt or trap promoted to `CLAUDE.md` /
+  `AGENTS.md` is a standing rule. The packet does not know that its reader
+  loads that file: it may be another harness, a read-only clone, or the file
+  may have lost the rule.
+  - **Portable packets keep the record** and show the rule in force. These are
+    `resume` in every form, the committed packet, and the MCP packet and
+    resource.
+    - Markdown: `` - `<id>` — standing rule in CLAUDE.md: <rule> ``.
+    - If the file or the bullet is gone: `standing rule (promoted to CLAUDE.md,
+      not found there):`, with the rule rendered from the record.
+    - `--json` entries gain `promoted_to`, `rule` and `rule_in_file`. A trap
+      entry reads `<trap id>: standing rule in CLAUDE.md: <rule>`.
+    - The rule in force is the bullet in the file, even one edited by hand,
+      because that is what the file's readers have.
+  - **Only the `SessionStart` hook leaves any out.** It serves Claude Code,
+    which loads the project's `CLAUDE.md`. It leaves out exactly the promoted
+    records whose bullet is in that file at session start (a rule promoted to
+    `AGENTS.md` stays). Each such section ends with `_(N standing rule(s) left
+    out — already loaded from CLAUDE.md this session, …)_`.
+  - `packet.promoted` counts what was left out
+    (`{active_decisions, failed_attempts, known_traps}`, non-zero only), so it
+    is `{}` in every portable packet. `packet.rules` is `{mode: "portable"}` or
+    `{mode: "elided-when-loaded", loaded_from, elided}`.
+  - Before WP08, every packet left promoted records out on the strength of
+    `promoted_to` alone. A missing `CLAUDE.md` then hid a live decision from
+    everyone.
+  - The missing-evidence warning below still checks promoted decisions and
+    attempts.
 - **Branch-scoped records from another branch leave the lists (WM-52).** A
   decision, attempt, verification or committed jot with `scope: branch` whose
   `branch` is not the current branch is left out of *Active Decisions*,
@@ -1441,8 +1505,8 @@ Behavior:
   ```
 
   `usage --decay` prints the commands and never runs them. Left out:
-  promoted records (the packet hides them on purpose, so they are never
-  surfaced), records past their `expires_at`, and traps confirmed with `crumb
+  promoted records (standing rules, which the `SessionStart` packet leaves out
+  whenever `CLAUDE.md` carries them, so their surfacing counts say little), records past their `expires_at`, and traps confirmed with `crumb
   traps --confirm` within the window. Verifications and questions have TTLs of
   their own and are never candidates. A trap still stored as a block (a
   schema-2 store) has no file to date it and is never a candidate either.

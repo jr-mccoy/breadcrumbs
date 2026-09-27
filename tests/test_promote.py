@@ -40,6 +40,16 @@ def store(tmp: str, *, claude_md: bool = True) -> Path:
     return Path(tmp) / crumb.MEMORY_DIRNAME
 
 
+def loaded_packet(mem: Path, tmp: str) -> dict:
+    """The packet as Claude Code's SessionStart hook builds it: CLAUDE.md is loaded."""
+    return crumb.build_resume_packet(
+        mem,
+        Path(tmp),
+        loaded_rules=promote.loaded_rules(Path(tmp), ("CLAUDE.md",)),
+        loaded_rules_from=("CLAUDE.md",),
+    )
+
+
 def decide(tmp: str, title: str = "Ledger rows are append-only", *extra: str) -> str:
     code, out, err = run(
         [
@@ -98,19 +108,31 @@ class PromoteTests(unittest.TestCase):
             self.assertEqual(claude(tmp).count(f"source: `{rid}`"), 1)
             self.assertEqual(claude(tmp), first)
 
-    def test_the_packet_leaves_it_out_and_counts_it(self):
+    def test_the_packet_keeps_it_as_a_rule_unless_its_reader_loaded_it(self):
+        # Audit F13 (WP08): the portable packet used to drop every promoted
+        # record. It now keeps it and carries the rule; only a consumer that has
+        # loaded the rule (the Claude Code hook, from CLAUDE.md) leaves it out.
         with tempfile.TemporaryDirectory() as tmp:
             mem = store(tmp)
             rid = decide(tmp)
             other = decide(tmp, "Invoices are immutable once sent")
             run(["promote", rid, "--project", tmp])
             packet = crumb.build_resume_packet(mem, Path(tmp))
+            entry = next(d for d in packet["active_decisions"] if d["id"] == rid)
+            self.assertEqual((entry["promoted_to"], entry["rule_in_file"]), ("CLAUDE.md", True))
+            self.assertIn("Ledger rows are append-only", entry["rule"])
+            self.assertEqual(packet["promoted"], {})
+            self.assertEqual(packet["rules"], {"mode": "portable"})
+            md = crumb.render_packet_markdown(packet)
+            self.assertIn(f"`{rid}` — standing rule in CLAUDE.md: Ledger rows", md)
+
+            packet = loaded_packet(mem, tmp)
             ids = [d["id"] for d in packet["active_decisions"]]
             self.assertNotIn(rid, ids)
             self.assertIn(other, ids)
             self.assertEqual(packet["promoted"], {"active_decisions": 1})
             md = crumb.render_packet_markdown(packet)
-            self.assertIn("1 promoted to the instruction file", md)
+            self.assertIn("1 standing rule(s) left out — already loaded from CLAUDE.md", md)
 
     def test_guard_still_uses_it_and_search_marks_it(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -167,6 +189,13 @@ class PromoteTests(unittest.TestCase):
                 "the daemon holds the sqlite lock: stop the daemon before migrating", text
             )
             packet = crumb.build_resume_packet(mem, Path(tmp))
+            self.assertEqual([a["id"] for a in packet["failed_attempts"]], [aid])
+            self.assertIn(
+                "Do not retry: Stopping the gradle daemon", packet["failed_attempts"][0]["rule"]
+            )
+            self.assertEqual(len(packet["known_traps"]), 1)
+            self.assertIn("stop the daemon before migrating", packet["known_traps"][0])
+            packet = loaded_packet(mem, tmp)
             self.assertEqual(packet["failed_attempts"], [])
             self.assertEqual(packet["known_traps"], [])
 
@@ -245,7 +274,9 @@ class PromoteTests(unittest.TestCase):
             code, _o, err = run(["promote", tid, "--project", tmp])
             self.assertEqual(code, 0, err)
             self.assertIn("- Promoted to: CLAUDE.md", (mem / "known-traps.md").read_text("utf-8"))
-            self.assertEqual(crumb.build_resume_packet(mem, Path(tmp))["known_traps"], [])
+            self.assertEqual(loaded_packet(mem, tmp)["known_traps"], [])
+            (portable,) = crumb.build_resume_packet(mem, Path(tmp))["known_traps"]
+            self.assertTrue(portable.startswith(f"{tid}: standing rule in CLAUDE.md:"), portable)
             # The bookkeeping bullet never reaches keyword matching.
             trap = crumb.find_trap_by_id(mem, tid)
             self.assertNotIn("Promoted", trap["content"])

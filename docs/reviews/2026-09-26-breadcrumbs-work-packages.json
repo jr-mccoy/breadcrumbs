@@ -715,7 +715,7 @@
       "title": "Build and publish coherent snapshots and projections",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "review_required",
+      "status": "completed",
       "depends_on": [
         "WP05",
         "WP06"
@@ -758,6 +758,10 @@
           "summary": "New breadcrumbs/snapshots.py: stable_build hashes inputs before and after each build, stamps with the verified digest, retries up to 3 times, else stamps 'unstable' (packet warning, validate stale). New breadcrumbs/projections.py: machine-local index/generation.json manifest (stamp, stable, per-file sha256, stat fingerprint) written last, old one removed first; verified() gates the guard hook's pre-filter, which on a missing/corrupt/replaced/out-of-date file escalates to the full guard (hooklog prefilter=unverified). _publish_projections builds packet, stamped pre-filter, related, conflicts and a staged index from one snapshot; staged indexes are unique temp files discarded unless published. Search-index freshness is content hash only (INDEX_FORMAT 2). tests/test_snapshot_consistency.py: 11 tests incl. the 4 named; the original 10 all fail on WP06 code (8 behaviorally). Full suite 1245 OK; snapshot_stamp_race and index_metadata_collision probes no longer observed (10 signals, 2 recorded instrument errors).",
           "compatibility": "Committed guard-prefilter.json gains inputs_hash (drift-checked by validate; older readers ignore it); a projection may be stamped 'unstable'; reindex may return not-ok when the store keeps changing; guard hook runs the full guard (~39 ms vs 2.6 ms at 200 records) until a local publication exists; search index format 2 rebuilt on next reindex; new machine-local index/generation.json; build_index gains inputs_hash=/publish=.",
           "limitations": "Snapshot verified by re-hashing, not an immutable copy (an undone change is invisible); the hook's generation check is a stat fingerprint, so a same-size restored-mtime edit after publication can pass it (strict paths use content hashes); no separate view-identity field yet (WP08); resume under contention prints a fresh verified-or-unstable view rather than the last published generation; a failed publication leaves outputs partly replaced with no manifest until reindex."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP07 approved, start WP08\")."
         }
       ]
     },
@@ -766,7 +770,7 @@
       "title": "Make packets genuinely bounded and portable",
       "priority": "P1",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP07"
       ],
@@ -795,7 +799,16 @@
         "`test_unicode_and_tiny_budgets_terminate_and_disclose_omissions`"
       ],
       "done_when": "Read-only and cross-harness readers receive the necessary rules and an accurately bounded, self-identifying packet.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "344fd88",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp08/README.md",
+          "summary": "_bound_packet bounds the final serialized view (markdown, markdown-fast, json, json-fast; resume --json measured on the exact printed envelope, MCP on its returned document): per-entry/warning excerpts (300 chars) and protected-field excerpts (2000) with marked pointers, caps, TRIM_ORDER (now incl. commits_since_handoff), then protected fields shrink to pointers; PACKET_MIN_BUDGET floors >=30% above measured worst case; budget/excerpted metadata and a view header line; named estimator approx-tokens/2 (ASCII/4 + 1 per non-ASCII); crumb resume --budget. Promoted records stay in portable packets with their effective rule (promoted_to/rule/rule_in_file; bullet in file wins, else rendered from record); only the Claude Code SessionStart hook elides records whose rule is in the CLAUDE.md it loads (promote.loaded_rules). tests/test_packet_delivery.py: 7 tests incl. the 4 named; all fail on 344fd88 (4 behaviorally). Full suite 1252 OK; packet_bound and promoted_adapter_missing probes no longer observed (8 signals, 2 recorded instrument errors); evals identical.",
+          "compatibility": "Promoted records appear in portable packets (promoted counts only elisions); new budget/rules/excerpted fields and rule fields on promoted entries; approx_tokens in resume --json is the JSON view's size; estimator counts non-ASCII higher; long fields appear as marked excerpts in views; JSON views may carry fewer entries than Markdown; third Markdown header line; new --budget flag.",
+          "limitations": "Heuristic estimator, no model tokenizer; loaded rules = project CLAUDE.md read at hook time (parent/user CLAUDE.md and @imports not counted; mid-session edits unseen); no loaded-rules view for other harnesses; compaction hook bounded as packet + 1000-token preamble; excerpts cut by code point; no single view-identity digest."
+        }
+      ]
     },
     {
       "id": "WP09",

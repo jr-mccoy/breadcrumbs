@@ -451,7 +451,10 @@ A record past its `expires_at` is left out of the packet's lists (it stays on
 disk and in `search`), and so is a `scope: branch` record written on another
 branch. Current/handoff/active-decisions are prioritized over old session observations, and
 sections are capped then trimmed to stay within budget even with hundreds of
-records. The packet carries a source `commit`/`inputs_hash`/`generated_at` header so
+records. The budget holds for the whole view a reader receives: a Current Focus,
+Next Action, title or warning too long for it becomes a marked excerpt that
+points at the full text, which is never changed. Each view says its size,
+limit and estimator; `--budget` sets a different limit for what you print. The packet carries a source `commit`/`inputs_hash`/`generated_at` header so
 both `validate` and `audit` can detect drift. Raw transcripts are never included.
 `--fast` is a print-only reorientation view and does not overwrite the committed
 packet. `--task TEXT` reorders every list section — decisions, failed attempts,
@@ -817,9 +820,11 @@ a managed block of its own, separate from the `init` signpost:
 The rule is rendered from the record (a decision's title, an attempt's "do
 not retry … unless …", a trap's summary and safe approach), or given with
 `--rule`. A record that is not active, or is `confidence: low`, is refused.
-The record stays `active`; the resume packet leaves it out of its lists (the
-instruction file already carries it) and says how many it left out, `guard`
-still uses it, and `search` marks it `promoted`. Promoting again re-renders
+The record stays `active`, `guard` still uses it, and `search` marks it
+`promoted`. The resume packet keeps it, shown as the rule in force
+(`` `<id>` — standing rule in CLAUDE.md: … ``), because the packet's reader may
+be a harness that never loads that file. Only Claude Code's `SessionStart` hook
+leaves out the rules its `CLAUDE.md` already carries, and says how many. Promoting again re-renders
 the line; there is only ever one per record.
 
 `crumb demote <id>` removes the line; so does retiring the record with

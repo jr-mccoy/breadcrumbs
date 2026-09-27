@@ -187,6 +187,43 @@ What changed:
 - **Search-index freshness is the content hash alone.** The index format is now
   `2`, so an older index is rebuilt.
 
+### Changed — packets are bounded as delivered, and portable (audit WP08)
+
+Findings F13 and F14.
+
+- **F14.** The 5,000-token bound was enforced on the list sections only. A
+  28,500-character Current Focus produced a packet of 7,333 estimated tokens,
+  and `len/4` was treated as if it were a token count.
+- **F13.** Every packet left promoted records out because their rule was "in
+  the instruction file". Removing `CLAUDE.md`, or reading the packet from a
+  harness that never loads it, hid a live decision.
+
+What changed:
+
+- **Every view is measured on its final text:**
+  - the Markdown `resume`, the committed packet, the hook and
+    `memory://resume-packet`;
+  - the JSON `resume --json` (the exact document printed) and MCP
+    `memory_build_resume_packet` (the document returned);
+  - the `--fast` forms, which get their own 1,500-token budget.
+- **Oversize fields become marked excerpts.** Past 2,000 characters, a Current
+  Focus or Next Action becomes an excerpt with a pointer to the full text, as
+  does any list entry or warning past 300. If still needed, they shrink to a
+  bare pointer. The canonical files are never changed. Omissions are counted
+  (`omitted`, `excerpted`).
+- **Each packet names its view, limit, usage and estimator** (`budget`, and a
+  new header line). The estimator is now `approx-tokens/2`: ASCII chars / 4
+  plus one per non-ASCII character. That is unchanged for ASCII text and no
+  longer undercounts CJK or emoji by 4×.
+- **New `crumb resume --budget TOKENS`** bounds what you print. Below a view's
+  smallest budget (500 Markdown, 700 JSON) it exits 2.
+- **Promoted records stay in portable packets as their rules** (`promoted_to`,
+  `rule`, `rule_in_file`). A rule missing from its file is flagged and rendered
+  from the record. Only Claude Code's `SessionStart` hook leaves out records
+  whose rule is in the `CLAUDE.md` it loads, and it says how many.
+- `approx_tokens` in `resume --json` is now the JSON view's own size. The
+  relevance-ordering note no longer repeats the task.
+
 ## [0.3.0] — 2026-09-24
 
 The working-memory release: phases 0 through 6 of

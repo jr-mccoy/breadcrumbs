@@ -353,7 +353,15 @@ def tool_build_resume_packet(
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    packet = cli.build_resume_packet(mem, project_root, task=task or None)
+    # The JSON view, bounded on its own serialization (audit F14), and portable:
+    # an MCP client may be any harness, so promoted records keep their rules.
+    packet = cli.build_resume_packet(
+        mem,
+        project_root,
+        task=task or None,
+        view="json",
+        render=lambda p: cli.packet_json_text({"ok": True, **p}),
+    )
     return {"ok": True, **packet}
 
 

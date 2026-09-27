@@ -281,8 +281,16 @@ class RetrievalTests(unittest.TestCase):
                     "low",
                 ]
             )
+            # Enough protected text that the whole packet is over the smallest
+            # budget a view can have (PACKET_MIN_BUDGET), so the sweep below
+            # really forces trims.
+            (mem / "current.md").write_text(
+                "# Current State\n\n## Current Focus\n" + "Reconcile the ledger. " * 80 + "\n",
+                encoding="utf-8",
+            )
             full = crumb.build_resume_packet(mem, Path(tmp))
             budget = crumb.approx_tokens(crumb.render_packet_markdown(full))
+            self.assertGreater(budget, crumb.PACKET_MIN_BUDGET["markdown"] + 100)
             saw_trim = False
             for cut in range(budget, 50, -25):
                 with mock.patch.object(_cli, "TOKEN_BUDGET_MAX", cut):

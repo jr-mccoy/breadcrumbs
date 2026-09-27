@@ -749,7 +749,7 @@ Rebuilt by every reindex; never a source of truth.
 
 | File | Committed | Contents |
 |---|---|---|
-| `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header. |
+| `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header and, since audit WP08, a `view` / `budget` / `rules` header. It is the portable `markdown` view: within 5,000 `approx_tokens`, and promoted records are kept with their rules. |
 | `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads, with a top-level `inputs_hash` since audit WP07 (one written by an older version has none and is not drift-checked). The hook uses it only while `index/generation.json` vouches for it. |
 | `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null \| reason}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
 | `generated/conflicts.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "conflicts": [{"rule", "ids", "similarity", "message"}]}` — pairs of live records that may contradict each other (WM-34). |
@@ -844,3 +844,9 @@ Rules are added only by `crumb promote`; no MCP tool adds one
 record (§8), which includes `memory_mark_status`. A hand edit that keeps the
 `source:` id is read like any other line, and shows up in `audit` as
 `promoted-drift` until `crumb promote <id>` re-renders it.
+
+**What packets do with a rule** (audit WP08). The bullet in the file is the
+rule in force. Portable packets show it on the record's entry, or render it
+from the record when the file or bullet is gone. Only a consumer that loads the
+file, Claude Code's `SessionStart` hook for `CLAUDE.md`, leaves those records
+out. See `cli-spec.md` → `resume`.

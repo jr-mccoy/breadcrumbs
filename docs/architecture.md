@@ -152,8 +152,10 @@ further: it writes one rule line, naming the record's id, into a managed block
 of its own in the instruction file — separate from the signpost block, so
 `--remove-integrations` and the signpost's bloat check keep their meaning —
 and marks the record `promoted_to`. The record stays `active` and stays the
-source of truth. The packet leaves it out of its lists, since the harness
-already injects the rule; `guard` and `search` still see it. Demotion is the
+source of truth. The packet keeps it, as the rule in force, because a packet
+may be read by a harness that never loads that file (audit WP08); only the
+Claude Code `SessionStart` view leaves out rules its `CLAUDE.md` carries.
+`guard` and `search` see it either way. Demotion is the
 way back down, and it is automatic when the record is retired: a rule nobody
 believes any more must not stay in the file every session loads. `audit`
 closes the loop in both directions — `promote-candidate` from the local usage

@@ -266,11 +266,13 @@ prompt injection: text planted in a record, a file or a web page could ask for
 exactly that call. So promotion is CLI-only — a person runs it, or an agent
 runs it where a person can see the command — and `crumb demote` is CLI-only
 with it. What promotion changes is visible over MCP:
-`memory_build_resume_packet` leaves promoted decisions, attempts and traps out
-of its lists and counts them under `promoted` (`{active_decisions,
-failed_attempts, known_traps}`, non-zero sections only), and the rendered
-`memory://resume-packet` ends each of those sections with `_(N promoted to the
-instruction file — see its "Project rules promoted from memory")_`;
+`memory_build_resume_packet` and `memory://resume-packet` are portable packets
+(audit WP08): an MCP client may be any harness, so a promoted decision, attempt
+or trap stays in its list with the rule in force (`promoted_to`, `rule`,
+`rule_in_file`; rendered `` `<id>` — standing rule in CLAUDE.md: <rule> ``),
+and `promoted` is `{}`. Only Claude Code's `SessionStart` hook leaves out rules
+it has loaded. `memory_build_resume_packet` is bounded as the `json` view:
+the returned document, `ok` included, is within `budget.limit`;
 `memory_search` matches carry a `promoted` boolean; `memory_guard_before_action`
 scores a promoted record at full weight. Retiring one through
 `memory_mark_status` does demote it (below).
