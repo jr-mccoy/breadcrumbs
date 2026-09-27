@@ -501,8 +501,9 @@ memory authoritative. Details: `docs/security.md` §4.
 
 ### Changed — rebuild cost falls without dropping work (audit WP15)
 
-Finding F23. A 1,000-record reindex parsed 7,200 records and took about 16 s,
-and a machine-local jot paid for a full publication. "See also" was skipped
+Finding F23. A 1,000-record reindex parsed 7,200 records (2.75 s here), and a
+machine-local jot paid for a full publication (2.9 s). Both now parse each
+record once: reindex 0.86 s, local jot 0.15 s. "See also" was skipped
 above 2,000 items, and the audit's duplicate sweep skipped a type above 2,000
 items without saying so. Measurements: `docs/reviews/2026-09-27-breadcrumbs-wp15/`.
 
@@ -526,6 +527,9 @@ items without saying so. Measurements: `docs/reviews/2026-09-27-breadcrumbs-wp15
   `private/inbox/`.
 - **`benchmarks/continuity_scale.py`** measures latency, parse count, input
   hashes, peak memory and bytes written.
+- **Limit.** Every write still runs one whole-store `validate` (the WP01 write
+  gate), so capture cost grows linearly: 0.15 s at 1,000 records and 1.4 s at
+  10,000 here.
 
 ## [0.3.1] — 2026-09-27
 

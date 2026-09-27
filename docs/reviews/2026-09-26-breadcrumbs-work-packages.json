@@ -1126,7 +1126,7 @@
       "title": "Reduce rebuild cost without weakening correctness",
       "priority": "P2",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP07",
         "WP10",
@@ -1159,7 +1159,17 @@
         "Performance evidence includes latency, parse count, memory, and write amplification."
       ],
       "done_when": "The system meets its qualified capture/retrieval budgets without silently omitting work or weakening strict cache correctness.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "9a28ed4",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp15/README.md",
+          "summary": "cli.operation(): one parse per record bytes per operation (key: path, type, sha1), op_memo keyed by exact record content, thread-local, nothing kept across operations; every CLI command, hook, MCP call and publication runs inside one. _base_stem memoized. related: pairs from shared-feature postings (exactly the all-pairs oracle), bounded top-3 per item (memory linear), no corpus cutoff, RELATED_PAIR_BUDGET with a visible `degraded` report and an audit `related-degraded` finding. lifecycle: contradictions and the near-duplicate sweep pair records by exact prefix filtering (pairwise oracles kept); the sweep's silent 2,000-item skip removed; contradictions memoized per operation. A machine-local jot publishes nothing. benchmarks/continuity_scale.py (latency, parses, input hashes, bytes written, peak memory; fails on non-zero exits).",
+          "tests": "tests/test_incremental_equivalence.py: 6 tests (oracle equivalence across add/edit/remove rounds; local capture leaves shared views byte- and mtime-identical; 1,000 and 10,000 record quality; parse cache never stale; budget degrades visibly and audit reports it; sweep covers >2,000 items).",
+          "results": "Suite 1332 run, 0 failures, 7 skipped (3.11); 3.9 subset 129 OK; MCP SDK 57 OK; evals identical to WP14 apart from timings; --release 20 critical pass; probes unchanged (3 signals, 3 errors); CI fixture steps 7/7; ruff clean. Behavior (2,052 records): 5 defects before, 0 after. Benchmark at 1,000 records: reindex 2,751 -> 857 ms and 7,200 -> 1,000 parses; local jot 2,909 -> 147 ms and 288,562 -> 600 bytes written; peak reindex memory 22.8 -> 11.5 MB. 10,000 records (after only): reindex 20.0 s, peak 116 MB; hooks 1.2-1.5 s.",
+          "limits": "Every write still runs one whole-store validate (WP01 gate), so capture is linear (0.15 s at 1k, 1.4 s at 10k). Hooks remain linear in the store. No cross-operation coalescing or pending generations. The pair budget is a count. Synthetic stores only."
+        }
+      ]
     },
     {
       "id": "WP16",
