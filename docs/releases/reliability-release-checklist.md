@@ -32,17 +32,17 @@ incompatibly. Both happen:
   checkout.
 
 **Build hashes.** The release workflow builds its own artifacts on the tagged
-commit, and those are the ones that matter. A local build of this revision,
-for reference (a build is not byte-reproducible: archive timestamps differ):
-
-Built from `529356e` with `python -m build`. The version is still 0.3.1,
-because the bump is the operator's step (section 7), so these are not the
-0.4.0 artifacts:
+commit, and those are the ones that matter. A local build of `8242861` (the
+version bump) with `build` (`pyproject-build`), for reference. A build is not
+byte-reproducible, because archive timestamps differ:
 
 | File | SHA-256 |
 |---|---|
-| `crumb_kit-0.3.1-py3-none-any.whl` | `bb34b253e86a9f702bb63d1406946ae4442b4cdbde4d3f88e34a733d693d21ba` |
-| `crumb_kit-0.3.1.tar.gz` | `b0cdc994e0304d7372e5e0706fc5aeca8d0eef1e1ef89170b56f54014151d2c7` |
+| `crumb_kit-0.4.0-py3-none-any.whl` | `2d90410d3da88b70c8095cd3a3561c8f44a2130edf08716bac5485fdfc286bfc` |
+| `crumb_kit-0.4.0.tar.gz` | `67261ccd1cf4f345ea5e0e858ca096dd3957bb18b7dbb77c3f5084b5d40f18ed` |
+
+`crumb-kit==0.4.0` was not on PyPI when this was written, so the release
+pre-flight will not stop with "already released".
 
 ## 2. Acceptance matrix
 

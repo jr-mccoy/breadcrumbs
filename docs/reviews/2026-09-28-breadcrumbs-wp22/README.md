@@ -70,7 +70,7 @@ was made.
 
 - **Not done until the operator releases.** The WP's "done when" is a public
   release, which is the operator's decision.
-- **The build hashes are for reference.** They are for 0.3.1-versioned
-  artifacts of `529356e`, and a build is not byte-reproducible. The artifacts
-  that matter are the ones `release.yml` builds on the tagged commit.
+- **The build hashes are for reference.** They are for the 0.4.0 artifacts
+  of `8242861`, and a build is not byte-reproducible. The artifacts that
+  matter are the ones `release.yml` builds on the merge commit it tags.
 - **The native full suite does not gate.** The reason is above.
