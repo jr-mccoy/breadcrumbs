@@ -1,12 +1,12 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 9366074 | inputs_hash: ef30bedfb0b4 | generated_at: 2026-09-28T00:25:09+00:00 -->
-<!-- view: markdown | budget: 3823/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 529356e | inputs_hash: e28246934c4b | generated_at: 2026-09-28T02:02:44+00:00 -->
+<!-- view: markdown | budget: 3805/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `9366074` · 15 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `529356e` · 13 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
@@ -16,18 +16,20 @@ WP21 is at review_required (commit 22907a1; 0.3.1 merged in 751283f). Wait for o
 
 ## Landed Since The Handoff Was Written
 _(check Current Focus / Next Action against these before redoing work)_
+- 529356e WP17: the native full suite is green on Windows and macOS (CI run 248)
+- a8c3960 CI: run the native full suite on main, weekly and on demand only
+- 9b55822 WP17, WP19, WP20: review records, results and tracker entries
+- f528a24 WP17: the write gate compares POSIX paths too (regression from 48bc814)
+- 68c8075 WP20: onboarding and operation, documented and checked
 - 9366074 WP19: review record for the continuity replays
 - 48bc814 WP17: fix what the first native full-suite run found on macOS and Windows
 - e835448 CI: bound the native job's non-gating full suite and make it verbose
 - 6157248 verify: a verification's expiry and created_at are one instant
 - fb5b57a WP19 (in progress): a rerun must reproduce the published replay verdicts
-- 5c60679 WP17 (in progress): track the Windows process tree while a check runs
-- 1451a1f WP19 (in progress): two-session continuity replays, results, demo
-- 3552a1d WP17 (in progress): report job termination and the sweep in containment
-- e8268ec Parity golden pins $USER; Windows replay cleanup sweeps descendants
-- 5e01027 WP17 (in progress): compatibility matrix, MCP contract docs, behavior evidence
 
 ## Active Decisions
+- `dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand` — Keeps per-push cost low while main and a weekly run still see platform regressions; run it by hand on a branch before merging platform-sensitive changes.
+- `dec_20260928_store-relative-paths-are-posix-and-line-endings` — A store is shared across machines and platforms; a value that differs by OS makes stamps stale everywhere and made rollback and the write gate silently wrong on Windows.
 - `dec_20260927_transports-reach-the-store-through-breadcrumbs-service` — CLI, MCP and hooks call service functions (record, mark_status, search, guard, resume_packet, prompt_lookup, admit) inside service.active(ctx); wording, exit codes and envelopes stay in the adapters. Parser lives in cli_parser.py. Aliases and clock are per-thread scoped state. Any further move out o… [excerpt: 300 of 379 chars; full text: crumb show dec_20260927_transports-reach-the-store-through-breadcrumbs-service]
 - `dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering` — related, conflicts and the near-duplicate sweep score only pairs that can reach their thresholds; pairwise versions stay as test oracles. Past RELATED_PAIR_BUDGET the related map reports degraded (audit: related-degraded) instead of skipping. Parses are shared per operation via cli.operation() keyed… [excerpt: 300 of 332 chars; full text: crumb show dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering]
 - `dec_20260927_review-profiles-solo-by-default-team-makes-agent-written` — Proportional: ordinary capture never waits for a person; only the writes that make memory authoritative are gated. Opt-in semantics use requires: instead of a store-wide schema bump.
@@ -41,9 +43,7 @@ _(check Current Focus / Next Action against these before redoing work)_
 - `dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted` — Audit F14: the bound covered lists only (7,333 tokens under a 5,000 ceiling). F13: a promoted decision vanished from every packet when CLAUDE.md was gone or unread by the consumer. Promotion is an extra delivery channel, not a reason for memory to disappear.
 - `dec_20260927_projections-are-stamped-from-a-verified-snapshot` — Audit F07/F11/F12: a stamp taken after the read certified omitted records; an unusable pre-filter silenced real hazards; a size/mtime shortcut made indexed search diverge from the full scan. Re-hashing costs ~17 ms at 1000 records; the unverified hook path costs ~40-90 ms, never silence.
 - `dec_20260927_installed-hook-launchers-never-pass-a-failure-through` — A hook we install must never be able to veto the host by failing; a real veto is JSON on stdout. Version skew between an installed hook config and a CLI on PATH is normal (global pipx vs project venv).
-- `dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record` — The audit evidence is only useful if it stays exactly what was reviewed. Reformatting the scripts would break the checksums. Each package's regressions belong in ordinary tests when that package lands, not in the probe script.
-- `dec_20260924_phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per` — No per-phase release was ever cut. The next minor after 0.2.0 is the honest number for a schema 1->4 jump, and cli.py already said the guard matcher changed in 0.3.0. Numbering it 0.9.0 would imply six releases that never existed.
-_(… 31 more omitted to stay within the per-section cap)_
+_(… 33 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -55,6 +55,7 @@ _(none recorded)_
 - trap_eval-baseline-after-retrieval-change: A retrieval change fails the evals CI job and test_evals until the baseline is rewritten
 - trap_guard-exit-code-in-ci: A CI step that calls crumb guard dies on guard's own verdict exit code
 - trap_hand-tagged-releases: Never create a git tag or GitHub Release by hand
+- trap_linux-cannot-show-a-windows-path-separator-bug: Linux cannot show a Windows path-separator bug
 - trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
 
 ## Open Questions / Blockers
@@ -65,6 +66,8 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (5d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- .github/workflows/ci.yml
+- tests/test_platform_portability.py
 - breadcrumbs/service.py
 - tests/test_application_parity.py
 - breadcrumbs/related.py
@@ -83,9 +86,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/usage.py
 - breadcrumbs/hooks_prompt.py
 - tests/test_emission_accounting.py
-- docs/reviews/2026-09-27-breadcrumbs-wp12/README.md
-- breadcrumbs/cli.py
-_(… 34 more omitted to stay within the per-section cap)_
+_(… 36 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -119,22 +120,22 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- ⚠ handoff is 0 day(s) old, written 28 commit(s) behind current HEAD.
-- active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 22 days old with no update — is this still true?
-- active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 22 days old with no update — is this still true?
-- active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 22 days old with no update — is this still true?
+- ⚠ handoff is 0 day(s) old, written 33 commit(s) behind current HEAD.
+- active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 23 days old with no update — is this still true?
+- active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 23 days old with no update — is this still true?
+- active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 23 days old with no update — is this still true?
 - active decision dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head is 24 days old with no update — is this still true?
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 40 days old with no update — is this still true?
 - active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 40 days old with no update — is this still true?
 - active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 40 days old with no update — is this still true?
 - active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 41 days old with no update — is this still true?
 - active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 42 days old with no update — is this still true?
-- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 42 days old with no update — is this still true?
+- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 43 days old with no update — is this still true?
 - active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 43 days old with no update — is this still true?
 - active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 43 days old with no update — is this still true?
 - active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 43 days old with no update — is this still true?
 - active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 43 days old with no update — is this still true?
-- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 43 days old with no update — is this still true?
-- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 43 days old with no update — is this still true?
-- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 43 days old with no update — is this still true?
+- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 44 days old with no update — is this still true?
+- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 44 days old with no update — is this still true?
+- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 44 days old with no update — is this still true?
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 44 days — did this ever get resolved?

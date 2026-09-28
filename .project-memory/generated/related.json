@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "ef30bedfb0b4",
+ "inputs_hash": "e28246934c4b",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -232,6 +232,16 @@
    "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts"
   ],
+  "dec_20260928_store-relative-paths-are-posix-and-line-endings": [
+   "trap_linux-cannot-show-a-windows-path-separator-bug",
+   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand"
+  ],
+  "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand": [
+   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+   "trap_guard-exit-code-in-ci",
+   "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed"
+  ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
@@ -259,13 +269,18 @@
   ],
   "trap_guard-exit-code-in-ci": [
    "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed",
-   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
-   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20"
+   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand",
+   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci"
   ],
   "trap_hand-tagged-releases": [
    "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
    "trap_a-hand-written-version-literal-in-prose-drifts-silently"
+  ],
+  "trap_linux-cannot-show-a-windows-path-separator-bug": [
+   "dec_20260928_store-relative-paths-are-posix-and-line-endings",
+   "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
+   "trap_a-bare-n-in-a-commit-message-links-an-issue-but-never"
   ],
   "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field": [
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
@@ -280,7 +295,7 @@
   "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed": [
    "trap_guard-exit-code-in-ci",
    "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
-   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25"
+   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand"
   ],
   "ver_20260816_crumb-mark-status-can-answer-an-open-question-fixed": [
    "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
@@ -368,9 +383,9 @@
    "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record"
   ],
   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci": [
+   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand",
    "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed",
-   "trap_guard-exit-code-in-ci",
-   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo"
+   "trap_guard-exit-code-in-ci"
   ]
  },
  "skipped": null

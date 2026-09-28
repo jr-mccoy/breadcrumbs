@@ -7,6 +7,12 @@ how to publish it.
 There are two supported paths. **Trusted Publishing (recommended)** stores no
 secrets; **manual token upload** is the fallback if you want to publish by hand.
 
+**A release that carries a remediation program** (like the 2026-09 audit)
+also has a checklist: the acceptance matrix, the separate reviews, and what is
+explicitly not claimed. The one for the audit's release is
+[`docs/releases/reliability-release-checklist.md`](docs/releases/reliability-release-checklist.md).
+It does not replace the steps below; it says what they stand on.
+
 ---
 
 ## Path A — Trusted Publishing via GitHub Actions (recommended)

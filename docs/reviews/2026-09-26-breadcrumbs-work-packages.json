@@ -1483,7 +1483,7 @@
       "title": "Apply release gates and publish an evidence-backed release",
       "priority": "P2",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP14",
         "WP16",
@@ -1514,7 +1514,17 @@
         "Published results identify source revision, methodology, and reproducible artifacts."
       ],
       "done_when": "The public release is supported by verifiable behavior, a clear operating contract, and evidence that another developer can inspect and reproduce.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-28",
+          "starting_commit": "529356e",
+          "record": "docs/reviews/2026-09-28-breadcrumbs-wp22/README.md",
+          "summary": "docs/releases/reliability-release-checklist.md: source revision and commits since v0.3.1 (66), why the next version is 0.4.0 (a `requires: review-profiles` feature and the OS-lock protocol change), reference build hashes, the acceptance matrix with the CI run behind each gate, separate reviews (evaluation baselines changed twice via the reviewed path, no dependency changes, repository memory scanned, publication artifacts, audit evidence unchanged), explicit exclusions (seven packages review_required, F21 unfinished, WP19 limits, native full suite non-gating, recorded probe false positives and errors, hooks Claude Code only), published material, draft release notes stating AI-assisted development, and the operator's ordered steps. RELEASING.md points to it. ci.yml (a8c3960, operator's request): the native full suite moved to a native-full job on main, weekly and on demand; every push still gates on the native installed-wheel smoke and contract tests.",
+          "tests": "No new tests: the checklist cites existing gates. test_release_process and test_store_upgrade_contract still hold the version/CHANGELOG/compatibility agreement the operator's bump must satisfy.",
+          "results": "CI run 249 (529356e): 23 jobs green, native-full skipped on the branch push as designed. CI run 248 (9b55822): native full suite 1,365 run, 0 failures on Windows and macOS, Python 3.9 and 3.13. Local on 529356e: evals --release 20/20 critical; wheel and sdist built (hashes in the checklist). Audit evidence unchanged since 31e56da.",
+          "limits": "Not done until the operator releases: no merge, version bump, tag, GitHub Release or upload was made (version still 0.3.1). The build hashes are reference only (0.3.1-versioned, not byte-reproducible). The native full suite is reported, not gating; the checklist asks the operator to read the native-full jobs on the merge commit before publishing."
+        }
+      ]
     }
   ]
 }

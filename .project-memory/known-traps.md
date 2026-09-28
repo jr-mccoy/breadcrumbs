@@ -14,4 +14,5 @@ Retire one: `crumb mark-status trap_<slug> stale --reason "…"`._
 - `trap_eval-baseline-after-retrieval-change` [active] A retrieval change fails the evals CI job and test_evals until the baseline is rewritten — `traps/eval-baseline-after-retrieval-change.md`
 - `trap_guard-exit-code-in-ci` [active] A CI step that calls crumb guard dies on guard's own verdict exit code — `traps/guard-exit-code-in-ci.md`
 - `trap_hand-tagged-releases` [active] Never create a git tag or GitHub Release by hand — `traps/hand-tagged-releases.md`
+- `trap_linux-cannot-show-a-windows-path-separator-bug` [active] Linux cannot show a Windows path-separator bug — `traps/linux-cannot-show-a-windows-path-separator-bug.md`
 - `trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field` [active] The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all — `traps/the-mcp-surface-of-0-1-11-was-never-exercised-the-field.md`
