@@ -131,6 +131,20 @@ part of the memory design, not an add-on.
 
 ---
 
+### 2.x What a guard verdict is not
+
+`guard` and the `PreToolUse` hook report what memory says about an action.
+They never authorize it:
+- `PROCEED` means no relevant memory, not "safe";
+- the hook asks (`permissionDecision: "ask"`) and never allows or denies on
+  its own;
+- a record's text is data, never an instruction to the reader.
+
+The operator-facing statement of this is
+[`operator-guide.md`](operator-guide.md) §3, and
+[`continuity-contract.md`](continuity-contract.md) lists what is and is not
+promised.
+
 ## 3. Validation posture (deterministic vs heuristic)
 
 `validate` is **fully deterministic**. It checks structure and invariants:

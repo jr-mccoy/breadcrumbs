@@ -12609,8 +12609,68 @@ def doctor_report(root: Path) -> dict:
                 f"caps, {dropped} dropped",
             )
 
+    if store:
+        # Audit WP20: the states an operator must recover from, each with its fix.
+        from breadcrumbs import compat as _compat
+        from breadcrumbs import related as _related
+
+        compatibility = _compat.check(memory_dir)
+        add(
+            "compatibility",
+            compatibility.writable,
+            f"schema_version {compatibility.store_version or '(new)'}; this build writes it"
+            if compatibility.writable
+            else f"{compatibility.message} (reads still work; writes are refused)",
+        )
+        failures = [f for f in run_validate(memory_dir) if f.get("status") == "fail"]
+        add(
+            "records",
+            not failures,
+            "every record passes `crumb validate`"
+            if not failures
+            else f"{len(failures)} validation failure(s) (first: {failures[0]['message']}) "
+            "— run `crumb validate`; an older store layout is fixed by `crumb migrate`",
+        )
+        degraded = _related.load_degraded(memory_dir)
+        if degraded:
+            add(
+                "related_map",
+                False,
+                f"generated/related.json is incomplete ({degraded.get('reason', 'pair budget')}); "
+                "`crumb audit` names it",
+            )
+    if hook_cmds:
+        outdated = _outdated_guard_matchers(root)
+        add(
+            "hook_matcher",
+            not outdated,
+            f"the guard hook covers {_claude.GUARD_MATCHER}"
+            if not outdated
+            else f"the installed guard hook matches {outdated[0]}, not {_claude.GUARD_MATCHER} "
+            "(PowerShell and notebook edits go unguarded) — run `crumb init --with-hooks`",
+        )
+
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))
     return {"checks": checks, "integrated": integrated, "store": store}
+
+
+def _outdated_guard_matchers(root: Path) -> list[str]:
+    """Matchers of installed breadcrumbs guard entries that differ from the
+    adapter's current `GUARD_MATCHER` (audit WP17/WP20)."""
+    path = root / ".claude" / "settings.json"
+    try:
+        data = json.loads(path_policy.read_text(path))
+    except (json.JSONDecodeError, OSError, path_policy.Refused):
+        return []
+    out = []
+    for group in (data.get("hooks") or {}).get("PreToolUse") or []:
+        if not isinstance(group, dict):
+            continue
+        if any(_hook_entry_event(h) == "guard" for h in _group_entries(group)):
+            matcher = str(group.get("matcher") or "")
+            if matcher != _claude.GUARD_MATCHER:
+                out.append(matcher or "(no matcher)")
+    return out
 
 
 def _installed_hook_commands(root: Path) -> list[str]:

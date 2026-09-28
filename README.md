@@ -23,6 +23,19 @@ project's `.project-memory/` directory, so humans and agents can resume work acr
 sessions, tools, devices, branches, and time without re-discovering decisions,
 repeating failed attempts, or trusting stale context.
 
+**New here?** Start with [`docs/quickstart.md`](docs/quickstart.md): ten
+minutes, one project, executed in CI. Then read:
+- [`docs/operator-guide.md`](docs/operator-guide.md) for running it and
+  recovering;
+- [`docs/continuity-contract.md`](docs/continuity-contract.md) for what it
+  promises and what it does not;
+- [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) for which
+  agents and platforms get what;
+- [`docs/benchmarks/continuity-results.md`](docs/benchmarks/continuity-results.md)
+  for measured delivery against no memory and a hand-kept notes file.
+
+The rest of this README is the reference.
+
 - **PyPI package name:** `crumb-kit` (`pip install crumb-kit`)
 - **Import package / GitHub repo:** `breadcrumbs`
 - **CLI binary name:** `crumb`

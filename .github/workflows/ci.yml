@@ -351,6 +351,11 @@ jobs:
           print("Installed binary: init found bundled templates; all MVP commands green.")
           PY
 
+      # Audit WP20: docs/quickstart.md is executed, line by line, against the
+      # installed binary, so the page a new user follows cannot drift.
+      - name: The quickstart works as written (installed binary)
+        run: python tools/quickstart_check.py --crumb /tmp/cv/bin/crumb
+
       - name: Install from source too (pipx install . equivalent)
         run: |
           python -m venv /tmp/cv2
@@ -396,9 +401,10 @@ jobs:
 
       # Verbose, and bounded: a test that hangs on this platform is named in
       # the log (the last one started) instead of holding the run for hours.
+      # Windows takes about 25 minutes for the whole suite (CI run 246).
       - name: Full unit suite (reported, not gating)
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 40
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
   # Review #5 M13: the repo had no lint, formatter or type-checker of any kind —

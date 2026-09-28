@@ -591,6 +591,55 @@ Ubuntu.
 - **Cross-harness resume is tested.** Claude Code's packet and a hookless MCP
   client's packet show the same record ids and the same rules in effect.
 
+### Added — continuity replays and a two-session demo (audit WP19)
+
+Finding F26 (in part). `evals/task_replays/` replays five two-session
+scenarios: repeated failure, changed decision, compaction, branch switch and
+cross-harness. Each runs under three baselines (no memory, a hand-kept
+`NOTES.md`, breadcrumbs) on two hosts, scored by an oracle independent of the
+package.
+- [`docs/benchmarks/continuity-results.md`](docs/benchmarks/continuity-results.md)
+  reports delivery with its costs and limits.
+  - breadcrumbs never presented stale guidance as current (0/10, against 4/10
+    for hand-kept notes) and pointed at the relevant record at the moment of
+    action (10/10).
+  - Hand-kept notes delivered the full facts at start more often (10/10
+    against 6/10), in far fewer tokens.
+  - No agent was run, and only one real repository was used.
+- `python evals/task_replays/demo.py` reproduces
+  [`docs/demos/two-session-handoff.md`](docs/demos/two-session-handoff.md).
+
+### Changed — onboarding, operation and recovery are documented and checked (audit WP20)
+
+Findings F24 and F26.
+- **[`docs/quickstart.md`](docs/quickstart.md).** Install, record, resume,
+  see why a memory surfaces, retire it, recover from a broken record. The page
+  is executed by `tools/quickstart_check.py` against the installed wheel in
+  CI.
+- **[`docs/operator-guide.md`](docs/operator-guide.md)** covers:
+  - capture, durable memory and standing rules;
+  - profiles, privacy and budgets;
+  - what guard does not authorize;
+  - every `doctor` finding and its fix;
+  - reconciling the handoff after a merge or release.
+- **[`docs/continuity-contract.md`](docs/continuity-contract.md)** states
+  what is promised and what is not.
+- **`crumb doctor` names four more recoveries:**
+  - a store this build may not write;
+  - records failing validation;
+  - an incomplete "see also" map;
+  - a guard hook matcher older than the adapter's.
+- **The default `handoff.md` is reconciled**, and a test holds it to the
+  latest release. It said Phase 2 was next months after it shipped.
+- **`CONTRIBUTING.md`** gains a contributor path: a failing scenario, a
+  regression test, an evidence-backed fix.
+
+### Fixed
+
+- **A new verification's 90-day expiry could be 89 days.** `verify` read the
+  clock twice, once for the expiry and once for `created_at`. Both now come
+  from one instant. Found by CI.
+
 ## [0.3.1] — 2026-09-27
 
 A hotfix: **an older `crumb` on PATH blocked every prompt.**

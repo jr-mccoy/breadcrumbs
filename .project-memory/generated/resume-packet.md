@@ -1,12 +1,12 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: c08c6be | inputs_hash: 1cdc97bab4b8 | generated_at: 2026-09-27T22:30:28+00:00 -->
-<!-- view: markdown | budget: 3793/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 9366074 | inputs_hash: ef30bedfb0b4 | generated_at: 2026-09-28T00:25:09+00:00 -->
+<!-- view: markdown | budget: 3823/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `c08c6be` · 1 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `9366074` · 15 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
@@ -16,16 +16,16 @@ WP21 is at review_required (commit 22907a1; 0.3.1 merged in 751283f). Wait for o
 
 ## Landed Since The Handoff Was Written
 _(check Current Focus / Next Action against these before redoing work)_
-- c08c6be WP16: an application layer the CLI, MCP and hooks share
-- 374c556 WP16 (in progress): structural tests, behavior evidence, docs
-- a505cec WP16 (in progress): breadcrumbs.service, and every transport uses it
-- bbe2588 WP16 (in progress): the argument parser moves to cli_parser
-- 83628b3 WP16 (in progress): parity golden captured before the extraction
-- fa2df0e Project memory: WP15 decision
-- 4a370ce WP15: rebuild cost falls without dropping work
-- 22036b2 WP15 (in progress): see-also keeps a bounded top 3 per item
-- 992a619 WP15 (in progress): benchmark times untraced runs, fails on non-zero exits
-- 2cb6f62 WP15 (in progress): changelog entry
+- 9366074 WP19: review record for the continuity replays
+- 48bc814 WP17: fix what the first native full-suite run found on macOS and Windows
+- e835448 CI: bound the native job's non-gating full suite and make it verbose
+- 6157248 verify: a verification's expiry and created_at are one instant
+- fb5b57a WP19 (in progress): a rerun must reproduce the published replay verdicts
+- 5c60679 WP17 (in progress): track the Windows process tree while a check runs
+- 1451a1f WP19 (in progress): two-session continuity replays, results, demo
+- 3552a1d WP17 (in progress): report job termination and the sweep in containment
+- e8268ec Parity golden pins $USER; Windows replay cleanup sweeps descendants
+- 5e01027 WP17 (in progress): compatibility matrix, MCP contract docs, behavior evidence
 
 ## Active Decisions
 - `dec_20260927_transports-reach-the-store-through-breadcrumbs-service` — CLI, MCP and hooks call service functions (record, mark_status, search, guard, resume_packet, prompt_lookup, admit) inside service.active(ctx); wording, exit codes and envelopes stay in the adapters. Parser lives in cli_parser.py. Aliases and clock are per-thread scoped state. Any further move out o… [excerpt: 300 of 379 chars; full text: crumb show dec_20260927_transports-reach-the-store-through-breadcrumbs-service]
@@ -119,7 +119,7 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- ⚠ handoff is 0 day(s) old, written 14 commit(s) behind current HEAD.
+- ⚠ handoff is 0 day(s) old, written 28 commit(s) behind current HEAD.
 - active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 22 days old with no update — is this still true?
 - active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 22 days old with no update — is this still true?
 - active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 22 days old with no update — is this still true?
@@ -137,4 +137,4 @@ _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 43 days old with no update — is this still true?
 - active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 43 days old with no update — is this still true?
 - active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 43 days old with no update — is this still true?
-- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 43 days — did this ever get resolved?
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 44 days — did this ever get resolved?

@@ -1,0 +1,22 @@
+## before (e835448, worktree)
+{
+ "doctor_silent_on_invalid_record": true,
+ "doctor_silent_on_unwritable_store": true,
+ "doctor_silent_on_outdated_hook_matcher": true,
+ "no_executed_quickstart": true,
+ "no_operator_guide_or_contract": true,
+ "handoff_predates_latest_release": true,
+ "no_contributor_path": true,
+ "defects_observed": 7
+}
+## after (this change)
+{
+ "doctor_silent_on_invalid_record": false,
+ "doctor_silent_on_unwritable_store": false,
+ "doctor_silent_on_outdated_hook_matcher": false,
+ "no_executed_quickstart": false,
+ "no_operator_guide_or_contract": false,
+ "handoff_predates_latest_release": false,
+ "no_contributor_path": false,
+ "defects_observed": 0
+}
