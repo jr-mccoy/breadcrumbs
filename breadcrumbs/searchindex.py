@@ -105,22 +105,29 @@ def _stat_fingerprint(memory_dir: Path, project_root: Path) -> str:
     content hash alone. It serves the generation manifest's cheap "has anything
     moved since publication" test (`projections.verified`), where a false
     "moved" costs only the slow path.
+
+    Each file is named relative to the store, never by its absolute path: one
+    directory has several spellings (macOS `/var` and `/private/var`, a Windows
+    8.3 short name), and a publisher and a reader that spelled it differently
+    never matched, so the hook always took the slow path there (audit WP17).
     """
     import hashlib
 
     memory_dir = Path(memory_dir)
-    paths = [memory_dir / f for f in cli.CORE_FILES]
-    paths += [memory_dir / "manifest.yml", memory_dir / cli.ALIASES_FILENAME]
-    paths.append(Path(project_root) / ".gitignore")
+    named = [(f, memory_dir / f) for f in cli.CORE_FILES]
+    named += [(n, memory_dir / n) for n in ("manifest.yml", cli.ALIASES_FILENAME)]
+    named.append(("<root>/.gitignore", Path(project_root) / ".gitignore"))
     for dirname in cli.DIR_TYPES:
-        paths.extend(sorted((memory_dir / dirname).glob("*.md")))
+        named.extend(
+            (f"{dirname}/{p.name}", p) for p in sorted((memory_dir / dirname).glob("*.md"))
+        )
     h = hashlib.sha256()
-    for p in paths:
+    for name, p in named:
         try:
             st = p.stat()
-            h.update(f"{p}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
+            h.update(f"{name}\0{st.st_size}\0{st.st_mtime_ns}\n".encode())
         except OSError:
-            h.update(f"{p}\0-\n".encode())
+            h.update(f"{name}\0-\n".encode())
     return h.hexdigest()[:16]
 
 

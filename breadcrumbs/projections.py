@@ -45,7 +45,10 @@ def manifest_path(memory_dir: Path) -> Path:
 
 
 def _sha(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+    # A publication hands over the text it rendered; on Windows the file holds
+    # it with CRLF. Line endings are not content, so both sides hash the same
+    # (audit WP17): the index was otherwise never verified there.
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
 
 
 def write_manifest(

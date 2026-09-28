@@ -100,34 +100,40 @@ def _rotate_at() -> int:
 
 
 def append(memory_dir: Path, entry: dict) -> None:
-    """Append one line, then rotate if the file holds half the bound. Never raises."""
+    """Append one line, then rotate if the file holds half the bound. Never raises.
+
+    The append and the rotation happen under one hold of the log's side lock.
+    An append racing a rotation's rename could fail to open the file (Windows
+    refuses to open a file mid-rename) and the line was silently lost; the
+    parallel-telemetry test lost one or two of 180 on macOS and Windows (audit
+    WP17). If the lock cannot be had in time, the line is written anyway,
+    uncoordinated: a log line is never dropped for want of a lock.
+    """
     try:
         path = log_path(memory_dir)
         if not path.parent.is_dir():
             return  # no store here, or not one this hook should create
         line = json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n"
-        # One write of the whole line to a file opened for appending, so the
-        # line lands whole at the end whatever else is appending.
-        # Never through a link (audit F17): the log is store content.
-        fd = path_policy.open_file(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
-        with os.fdopen(fd, "ab") as fh:
-            fh.write(line.encode("utf-8"))
-        if path.stat().st_size >= _rotate_at() * _MIN_LINE_BYTES:
-            _rotate(memory_dir, path)
+        from breadcrumbs import lock as _lock
+
+        with _lock.side_lock(path.parent / HOOK_LOG_LOCK_FILENAME) as state:
+            # One write of the whole line to a file opened for appending, so
+            # the line lands whole at the end whatever else is appending.
+            # Never through a link (audit F17): the log is store content.
+            fd = path_policy.open_file(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+            with os.fdopen(fd, "ab") as fh:
+                fh.write(line.encode("utf-8"))
+            if state == _lock.HELD and path.stat().st_size >= _rotate_at() * _MIN_LINE_BYTES:
+                _rotate(memory_dir, path)
     except Exception:  # pragma: no cover - logging never breaks a hook
         pass
 
 
 def _rotate(memory_dir: Path, path: Path) -> None:
-    from breadcrumbs import lock as _lock
-
-    with _lock.side_lock(path.parent / HOOK_LOG_LOCK_FILENAME, timeout=0.0) as state:
-        if state == _lock.BUSY:
-            return  # another hook is rotating; the next append looks again
-        # Re-checked under the lock: whoever rotated first left a short file.
-        if path_policy.read_bytes(path).count(b"\n") < _rotate_at():
-            return
-        os.replace(path, rotated_path(memory_dir))
+    """Move a full log aside. The caller holds the log's side lock."""
+    if path_policy.read_bytes(path).count(b"\n") < _rotate_at():
+        return
+    os.replace(path, rotated_path(memory_dir))
 
 
 def run_logged(

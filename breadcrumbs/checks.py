@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import os
 import platform
+import re
+import shutil
 import signal
 import subprocess
 import threading
@@ -64,6 +66,35 @@ EVALUATED = (PASSED, FAILED)
 # What a shell reports when it could not run the command at all: POSIX `sh`
 # uses 127 (not found) and 126 (found, not executable); `cmd.exe` uses 9009.
 _UNAVAILABLE_CODES = (126, 127) if os.name == "posix" else (9009,)
+
+# What `cmd.exe` runs without a file: its internal commands. `cmd /c` exits 1,
+# not 9009, when it cannot find the command, which read as a failed assertion.
+_CMD_BUILTINS = frozenset(
+    "assoc break call cd chdir cls color copy date del dir echo endlocal erase "
+    "exit for ftype goto if md mkdir mklink move path pause popd prompt pushd rd "
+    "rem ren rename rmdir set setlocal shift start time title type ver verify vol".split()
+)
+
+
+def _first_word(command: str) -> str:
+    """The program a `cmd.exe` command line starts with (quotes removed)."""
+    text = command.lstrip().lstrip("@").lstrip()
+    if text.startswith('"'):
+        return text[1:].split('"', 1)[0]
+    return re.split(r'[\s&|<>()"]', text, maxsplit=1)[0]
+
+
+def _cmd_cannot_find(command: str, cwd: Path) -> bool:
+    """Would `cmd.exe` fail to find the program `command` starts with?
+
+    Decided from the command, not from the shell's message, which is localized:
+    not an internal command, and no file of that name in `cwd` or on PATH.
+    """
+    word = _first_word(command)
+    if not word or word.lower().rstrip(".:") in _CMD_BUILTINS:
+        return False
+    search = os.pathsep.join([str(cwd), os.environ.get("PATH", "")])
+    return shutil.which(word, path=search) is None and not (Path(cwd) / word).exists()
 
 
 @dataclass
@@ -524,7 +555,9 @@ def run_check(
         result.status, result.signal = KILLED, -code
     else:
         result.exit_code = code
-        if code in _UNAVAILABLE_CODES:
+        if code in _UNAVAILABLE_CODES or (
+            os.name == "nt" and code == 1 and _cmd_cannot_find(command, cwd)
+        ):
             result.status = UNAVAILABLE
             result.detail = f"exit {code}: the shell could not find or run the command"
         else:

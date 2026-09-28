@@ -207,7 +207,7 @@ def resource_handoff(root: str | Path | None = None) -> str:
 
     project_root, mem = resolve(root)
     path, _label = _handoffs.read_path(mem, project_root)
-    return _read_singleton(mem, str(path.relative_to(mem)))
+    return _read_singleton(mem, path.relative_to(mem).as_posix())
 
 
 @_data_view

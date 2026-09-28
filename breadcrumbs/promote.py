@@ -642,7 +642,7 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
                 cli._audit_finding(
                     "promote-candidate",
                     cli.AUDIT_INFO,
-                    str(rec.path.relative_to(memory_dir)),
+                    rec.path.relative_to(memory_dir).as_posix(),
                     f"{rid} has held for {age} days and surfaced in {len(set(sessions))} "
                     f"sessions — make it a standing rule with `crumb promote {rid}`",
                     id=rid,

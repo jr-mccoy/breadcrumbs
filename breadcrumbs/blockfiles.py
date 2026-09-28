@@ -695,7 +695,7 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
         # One validate pass over everything just written. A failure removes
         # those files and raises: the singletons have not been rewritten, so the
         # store still reads exactly as it did.
-        written = {str(p.relative_to(memory_dir)) for p in new_paths}
+        written = {p.relative_to(memory_dir).as_posix() for p in new_paths}
         fails = [
             f
             for f in cli.run_validate(memory_dir)

@@ -60,6 +60,11 @@ def capture(tmp: str, next_action: str, *extra: str) -> dict:
 
 
 class BranchHandoffTests(unittest.TestCase):
+    def assertSamePath(self, reported, expected):
+        # The CLI reports the resolved path; a temp dir has other spellings
+        # (macOS `/var` -> `/private/var`, a Windows 8.3 short name).
+        self.assertEqual(Path(reported).resolve(), Path(expected).resolve())
+
     def test_a_feature_branch_capture_writes_its_own_handoff(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = repo_with_store(tmp)
@@ -69,7 +74,7 @@ class BranchHandoffTests(unittest.TestCase):
             res = capture(tmp, "finish the parser rewrite")
             branch_file = handoffs.branch_handoff_path(mem, "feature/parser-rewrite")
             self.assertTrue(branch_file.name.startswith("feature-parser-rewrite-"))
-            self.assertEqual(Path(res["handoff"]), branch_file)
+            self.assertSamePath(res["handoff"], branch_file)
             self.assertIn("finish the parser rewrite", branch_file.read_text("utf-8"))
             self.assertIn("_Branch: feature/parser-rewrite_", branch_file.read_text("utf-8"))
             self.assertEqual((mem / "handoff.md").read_text("utf-8"), main_handoff)
@@ -116,13 +121,13 @@ class BranchHandoffTests(unittest.TestCase):
             migrate.set_manifest_version(mem, 3)
             git(root, "checkout", "-q", "-b", "feature-z")
             res = capture(tmp, "on the old layout")
-            self.assertEqual(Path(res["handoff"]), mem / "handoff.md")
+            self.assertSamePath(res["handoff"], mem / "handoff.md")
 
     def test_without_git_everything_is_handoff_md(self):
         with tempfile.TemporaryDirectory() as tmp:
             crumb.main(["init", "--project", tmp, "--session-tracking", "full"])
             res = capture(tmp, "no git here")
-            self.assertEqual(Path(res["handoff"]), Path(tmp) / crumb.MEMORY_DIRNAME / "handoff.md")
+            self.assertSamePath(res["handoff"], Path(tmp) / crumb.MEMORY_DIRNAME / "handoff.md")
 
     def test_origin_head_names_the_default_branch(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from breadcrumbs import checks as _checks
 from breadcrumbs import cli
@@ -124,7 +124,7 @@ def expired_items(memory_dir: Path) -> list[dict]:
                 "title": rec.meta.get("title") or rec.stem,
                 "expires_at": rec.meta.get("expires_at"),
                 "days_ago": cli._age_days(rec.meta.get("expires_at")),
-                "path": str(rec.path.relative_to(memory_dir)),
+                "path": rec.path.relative_to(memory_dir).as_posix(),
             }
         )
     out.sort(key=lambda r: (cli._dt_sort_key(r["expires_at"]), r["id"]))
@@ -269,7 +269,13 @@ def _evidence_path(ref: str) -> str | None:
     head, sep, tail = ref.rpartition(":")
     if sep and head and tail.replace("-", "").isdigit():
         path = head
-    if Path(path).is_absolute() or path.startswith("~"):
+    # Either platform's absolute form: a record written on one is read on the
+    # other, and `Path` alone called `/etc/hosts` relative on Windows (WP17).
+    if (
+        PurePosixPath(path).is_absolute()
+        or PureWindowsPath(path).is_absolute()
+        or path.startswith(("~", "\\"))
+    ):
         return None
     return path
 

@@ -123,7 +123,9 @@ class TtlTests(unittest.TestCase):
             rec = crumb.find_record_by_id(mem, fixed["id"])
             created = _cli._parse_iso(rec.meta["created_at"])
             expires = _cli._parse_iso(fixed["expires_at"])
-            self.assertEqual(expires - created, timedelta(days=lifecycle.TTL_DEFAULTS["verification"]))
+            self.assertEqual(
+                expires - created, timedelta(days=lifecycle.TTL_DEFAULTS["verification"])
+            )
             self.assertTrue(rec.path.name.startswith(rec.meta["created_at"][:10]))
 
     def test_manifest_overrides_the_lifespan(self):
@@ -257,7 +259,13 @@ class EvidenceStalenessTests(unittest.TestCase):
             self.assertEqual([f["id"] for f in findings], [rid])
 
     def test_urls_globs_and_absolute_paths_are_not_checked(self):
-        for ref in ("https://example.com/x", "src/*.py", "/etc/hosts", "~/notes.md"):
+        for ref in (
+            "https://example.com/x",
+            "src/*.py",
+            "/etc/hosts",
+            "C:\\work\\x.py",
+            "~/notes.md",
+        ):
             with self.subTest(ref=ref):
                 self.assertIsNone(lifecycle._evidence_path(ref))
         self.assertEqual(lifecycle._evidence_path("src/x.py:12-20"), "src/x.py")
@@ -315,7 +323,11 @@ class RecheckTests(unittest.TestCase):
 
     def test_a_bound_failing_command_records_a_regression(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mem, vid = self._verified(tmp, "echo broken >&2; false")
+            # A failing command both `sh` and `cmd.exe` run the same way.
+            failing = (
+                f'"{sys.executable}" -c "import sys; sys.stderr.write(\'broken\'); sys.exit(1)"'
+            )
+            mem, vid = self._verified(tmp, failing)
             code, out = run(
                 ["verify", "--recheck", vid, "--bind-commands", "--yes", "--project", tmp, "--json"]
             )

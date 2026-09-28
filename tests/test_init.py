@@ -97,9 +97,9 @@ class InitTreeTests(unittest.TestCase):
             self.assertEqual(run_init(root, "--session-tracking", "full"), 0)
             memory = root / ".project-memory"
             shipped = {
-                str(p.relative_to(crumb.TEMPLATE_DIR)) for p in crumb.TEMPLATE_DIR.rglob("*")
+                p.relative_to(crumb.TEMPLATE_DIR).as_posix() for p in crumb.TEMPLATE_DIR.rglob("*")
             }
-            created = {str(p.relative_to(memory)) for p in memory.rglob("*")}
+            created = {p.relative_to(memory).as_posix() for p in memory.rglob("*")}
             self.assertEqual(shipped - created, set(), "template entries init did not create")
             # Everything in EXPECTED_TREE must be a real template entry, so the list
             # cannot drift into asserting files that no longer ship.

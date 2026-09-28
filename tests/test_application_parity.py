@@ -62,8 +62,15 @@ def normalize(value, root: Path):
     """Strip what differs between runs and machines: the temp root, commit
     hashes, and wall-clock durations. Everything else must match exactly."""
     text = json.dumps(value, sort_keys=True)
-    for form in {str(root), str(root.resolve())}:
+    # Longest spelling first: macOS `/private/var/…` contains `/var/…`, and a
+    # set's order left `/private<ROOT>` behind. Forms as JSON escapes them
+    # (Windows backslashes), then the rest of a rooted path made POSIX.
+    forms = {json.dumps(str(p))[1:-1] for p in (root, root.resolve())}
+    for form in sorted(forms, key=len, reverse=True):
         text = text.replace(form, "<ROOT>")
+    text = re.sub(
+        r'<ROOT>((?:\\\\[^"\\]*)+)', lambda m: "<ROOT>" + m.group(1).replace("\\\\", "/"), text
+    )
     text = re.sub(r"\b[0-9a-f]{40}\b", "<SHA>", text)
     text = re.sub(r'("(?:source_commit|commit|head)": ")[0-9a-f]{7,40}"', r'\1<SHA>"', text)
     text = re.sub(r'("(?:elapsed_ms|ms|seconds|duration_ms)": )[0-9.]+', r"\g<1>0", text)

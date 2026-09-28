@@ -100,8 +100,10 @@ NO_GIT_COMMIT = "(no-git)"
 #     reads as `[x]` / `[ok]` rather than a row of `?`.
 #
 # A tool must never lose its diagnostic payload to a decorative glyph.
-MARK_PASS = "✓"
-MARK_FAIL = "✗"
+_GLYPH_MARK_PASS = "✓"
+_GLYPH_MARK_FAIL = "✗"
+MARK_PASS = _GLYPH_MARK_PASS
+MARK_FAIL = _GLYPH_MARK_FAIL
 _ASCII_MARK_PASS = "[ok]"
 _ASCII_MARK_FAIL = "[x]"
 
@@ -137,8 +139,11 @@ def configure_output(stream=None) -> None:
             reconfigure(errors="replace")
         except (ValueError, OSError, TypeError):  # pragma: no cover - stream-dependent
             pass
-    if _stream_encodes(stream, MARK_PASS + MARK_FAIL):
-        MARK_PASS, MARK_FAIL = "✓", "✗"
+    # Probe the glyphs, not the current markers: after an ASCII choice the
+    # current ones always encode, so a second call switched back to glyphs the
+    # stream cannot print (a cp1252 console after any earlier call; WP17).
+    if _stream_encodes(stream, _GLYPH_MARK_PASS + _GLYPH_MARK_FAIL):
+        MARK_PASS, MARK_FAIL = _GLYPH_MARK_PASS, _GLYPH_MARK_FAIL
     else:
         MARK_PASS, MARK_FAIL = _ASCII_MARK_PASS, _ASCII_MARK_FAIL
 
@@ -342,11 +347,19 @@ def write_text_atomic(path: Path, text: str, *, expected: str | None = None) -> 
                 raise _mutations.RevisionConflict(path)
         except (FileNotFoundError, UnicodeDecodeError):
             raise _mutations.RevisionConflict(path) from None
-    _mutations.before_write(path, text)
     # Under the store's path policy (audit F17): never through a link. Text
     # mode translated "\n" to the platform's line separator; so does this.
-    data = (text.replace("\n", os.linesep) if os.linesep != "\n" else text).encode("utf-8")
+    data = _platform_bytes(text)
+    # The journal holds the bytes that land on disk. It held the text before
+    # translation, so on Windows every file a failed operation had written
+    # looked changed by someone else, and rollback left it (audit WP17).
+    _mutations.before_write(path, data)
     path_policy.write_atomic(path, data)
+
+
+def _platform_bytes(text: str) -> bytes:
+    """`text` as UTF-8 with the platform's line separator, as text mode writes it."""
+    return (text.replace("\n", os.linesep) if os.linesep != "\n" else text).encode("utf-8")
 
 
 def read_text_lenient(path: Path) -> tuple[str, str | None]:
@@ -368,10 +381,13 @@ def read_text_lenient(path: Path) -> tuple[str, str | None]:
         raw = path_policy.read_bytes(p)
     except OSError as exc:
         return "", f"unreadable file: {exc}"
+    # Universal newlines, like every other store read: a CRLF file (a Windows
+    # writer, a checkout under autocrlf) compared unequal to the same text read
+    # anywhere else, so audit missed an adapter copying a record (audit WP17).
     try:
-        return raw.decode("utf-8-sig"), None
+        return path_policy.decode(raw, "utf-8-sig"), None
     except UnicodeDecodeError as exc:
-        return raw.decode("utf-8-sig", errors="replace"), (
+        return path_policy.decode(raw, "utf-8-sig", errors="replace"), (
             f"invalid UTF-8 at byte {exc.start} ({exc.reason}) — read with replacement "
             "characters, so anything derived from it is unreliable"
         )
@@ -567,8 +583,9 @@ def rewrite_managed_block(
         return False
     from breadcrumbs import mutations as _mutations
 
-    _mutations.before_write(path, new_content)  # an adapter file is part of the operation
-    path.write_text(new_content, encoding="utf-8")
+    data = _platform_bytes(new_content)
+    _mutations.before_write(path, data)  # an adapter file is part of the operation
+    path.write_bytes(data)
     return True
 
 
@@ -1825,7 +1842,9 @@ def record_contract_entries(records: list["Record"], memory_dir: Path) -> list[t
     out = []
     for rec in records:
         ident = derive_identity(rec.stem, rec.rtype)
-        out.append((str(rec.path.relative_to(memory_dir)), ident[0] if ident else None, rec.meta))
+        out.append(
+            (rec.path.relative_to(memory_dir).as_posix(), ident[0] if ident else None, rec.meta)
+        )
     return out
 
 
@@ -1922,7 +1941,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
     seen_ids: dict[str, str] = {}
 
     for rec in records:
-        rel = str(rec.path.relative_to(memory_dir))
+        rel = rec.path.relative_to(memory_dir).as_posix()
 
         # 16.3 — valid frontmatter (parses + required keys present).
         if rec.error:
@@ -2173,7 +2192,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
         for p in sorted(gen_dir.glob("*.md")):
             if p.name == "README.md":
                 continue
-            rel = str(p.relative_to(memory_dir))
+            rel = p.relative_to(memory_dir).as_posix()
             try:
                 head = "\n".join(path_policy.read_text(p).splitlines()[:5])
             except (OSError, UnicodeDecodeError) as exc:
@@ -6910,7 +6929,8 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
     clone, and folding one developer's personal excludes into it would recreate
     the very ping-pong this exists to stop.
 
-    `git check-ignore -v` prints `<source>:<line>:<pattern>\\t<path>`; run from
+    `git check-ignore -v -z` prints `<source>`, `<line>`, `<pattern>` and
+    `<path>` per match; run from
     the project root, the source of a worktree `.gitignore` is a relative path,
     while both machine-local sources are absolute. That is the whole filter.
     """
@@ -6922,32 +6942,33 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
             rels.append(d.resolve().relative_to(Path(project_root).resolve()).as_posix())
         except ValueError:  # pragma: no cover - store outside the project root
             return set()
+    # `-z`: NUL-separated bytes both ways. Text-mode stdin sent each path with
+    # "\r\n" on Windows, git read `ideas\r`, and nothing ever matched there
+    # (audit WP17); `-z` also leaves unusual names unquoted.
     try:
         r = subprocess.run(
-            ["git", "check-ignore", "-v", "--no-index", "--stdin"],
+            ["git", "check-ignore", "-v", "-z", "--no-index", "--stdin"],
             cwd=str(project_root),
-            input="\n".join(rels) + "\n",
+            input=b"".join(rel.encode("utf-8") + b"\0" for rel in rels),
             capture_output=True,
-            text=True,
             check=False,
         )
     except (FileNotFoundError, OSError):
         return set()
     if r.returncode not in (0, 1):  # 1 = nothing ignored; anything else is an error
         return set()
+    fields = r.stdout.decode("utf-8", errors="replace").split("\0")
     out: set[str] = set()
-    for line in r.stdout.splitlines():
-        m = re.match(r"^(?P<source>.*):(?P<line>\d+):(?P<pattern>.*)\t(?P<path>.+)$", line)
-        if not m:
-            continue
-        source, pattern = m.group("source"), m.group("pattern")
+    # Each match is four fields: source, line number, pattern, path.
+    for i in range(0, len(fields) - 3, 4):
+        source, _line, pattern, path = fields[i : i + 4]
         # A negation (`!fixtures/**/…`) is reported as the deciding pattern too,
         # and it means the opposite of ignored.
-        if pattern.startswith("!"):
+        if not path or pattern.startswith("!"):
             continue
         if not source or Path(source).is_absolute() or ".git/" in source.replace("\\", "/"):
             continue
-        out.add(Path(m.group("path").strip()).name)
+        out.add(Path(path.strip()).name)
     return out
 
 
@@ -7064,7 +7085,9 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
                 blobs[p] = refused
             elif not isinstance(data, OSError):
                 blobs[p] = data
-    for p in sorted(blobs):
+    # Ordered by store-relative parts, which is the old `sorted(Path)` order on
+    # POSIX; a Windows path sorts case-insensitively, a different order.
+    for p in sorted(blobs, key=lambda q: q.relative_to(memory_dir).parts):
         # Path *and* separators, not bare contents: record ids
         # are filename-derived, so a rename changes every id in the packet
         # while leaving a contents-only hash untouched — the freshness gate
@@ -7072,7 +7095,11 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
         rel = p.relative_to(memory_dir).as_posix()
         h.update(rel.encode())
         h.update(b"\0")
-        h.update(blobs[p])
+        # Line endings are not content: git's autocrlf checks a store out with
+        # CRLF on Windows, and Windows writers use CRLF, so the same records
+        # hashed differently per machine and every stamp read as stale there
+        # (audit WP17). An LF-only file hashes exactly as it did before.
+        h.update(blobs[p].replace(b"\r\n", b"\n"))
         h.update(b"\0")
     return h.hexdigest()[:12]
 
@@ -10510,7 +10537,7 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
         )
 
     for p in _iter_committed_memory_files(memory_dir):
-        rel = str(p.relative_to(memory_dir))
+        rel = p.relative_to(memory_dir).as_posix()
         text, problem = read_text_lenient(p)
         if problem:
             record("unscannable-file", rel, 0, detail=problem)
@@ -10550,7 +10577,7 @@ def scan_instruction_like(memory_dir: Path) -> list[dict]:
         if p in seen or not p.is_file():
             continue
         seen.add(p)
-        rel = str(p.relative_to(memory_dir))
+        rel = p.relative_to(memory_dir).as_posix()
         # Lenient: scan_secrets already reports the unreadable
         # file; this pass just must not abort audit on it.
         text = _strip_html_comments(read_text_lenient(p)[0])
@@ -10602,7 +10629,11 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
             continue  # an un-stamped projection (older format) — nothing to compare
         if stamped != current:
             findings.append(
-                {"path": str(p.relative_to(memory_dir)), "stamped": stamped, "current": current}
+                {
+                    "path": p.relative_to(memory_dir).as_posix(),
+                    "stamped": stamped,
+                    "current": current,
+                }
             )
     # JSON projections that carry a top-level `inputs_hash` (related.json,
     # conflicts.json and, since audit WP07, guard-prefilter.json). One without
@@ -10616,7 +10647,11 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
         stamped = doc.get("inputs_hash") if isinstance(doc, dict) else None
         if isinstance(stamped, str) and stamped != current:
             findings.append(
-                {"path": str(p.relative_to(memory_dir)), "stamped": stamped, "current": current}
+                {
+                    "path": p.relative_to(memory_dir).as_posix(),
+                    "stamped": stamped,
+                    "current": current,
+                }
             )
     return findings
 
@@ -10656,7 +10691,7 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
     canon: list[tuple[str, str]] = []
     for rec in load_records(memory_dir):
         if not rec.error and rec.body.strip():
-            canon.append((str(rec.path.relative_to(memory_dir)), rec.body.strip()))
+            canon.append((rec.path.relative_to(memory_dir).as_posix(), rec.body.strip()))
     for name in ADAPTER_FILENAMES:
         ap = Path(root) / name
         if not ap.is_file():
@@ -10978,7 +11013,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
             _audit_finding(
                 "unreachable",
                 AUDIT_WARN,
-                str(rec.path.relative_to(memory_dir)),
+                rec.path.relative_to(memory_dir).as_posix(),
                 "no tags and no file references — guard can reach this record "
                 "only through generic keyword overlap; add tags or file/path "
                 "evidence so it can drive a verdict",

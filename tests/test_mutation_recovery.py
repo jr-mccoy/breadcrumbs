@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -212,6 +213,21 @@ class TruthfulFailureTests(MutationCase):
         self.assertTrue(cli.try_reindex_projections(self.mem, self.root)[0])
         checks = {c["check"]: c for c in cli.doctor_report(self.root)["checks"]}
         self.assertTrue(checks["projections"]["ok"])
+
+
+class WindowsLineSeparatorTests(TruthfulFailureTests):
+    """The same failures with Windows' line separator (audit WP17).
+
+    Writers put "\r\n" on disk there, and the journal recorded the text before
+    translation, so rollback took every file it had written for someone else's
+    edit and left it: two live decisions again, on Windows only.
+    """
+
+    def setUp(self):
+        patcher = mock.patch.object(os, "linesep", "\r\n")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        super().setUp()
 
 
 class RevisionTests(MutationCase):

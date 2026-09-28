@@ -64,6 +64,11 @@ if os.name == "posix":
 else:  # pragma: no cover - Windows
     import msvcrt
 
+# Windows locks are mandatory: a locked byte cannot be read by anyone else.
+# The lock covers one byte far past the owner line, so a waiter can still read
+# who holds it (it locked byte 0, and every message said "another writer").
+_WINDOWS_LOCK_OFFSET = 1 << 30
+
 # errno values that mean "somebody else holds it", as opposed to "this
 # filesystem cannot lock".
 _BUSY = {errno.EAGAIN, errno.EWOULDBLOCK, errno.EACCES, errno.EDEADLK}
@@ -180,7 +185,7 @@ def _try_os_lock(fh) -> bool:
         if os.name == "posix":
             fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         else:  # pragma: no cover - Windows
-            fh.seek(0)
+            fh.seek(_WINDOWS_LOCK_OFFSET)
             msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
         return True
     except OSError as exc:
@@ -194,7 +199,7 @@ def _os_unlock(fh) -> None:
         if os.name == "posix":
             fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
         else:  # pragma: no cover - Windows
-            fh.seek(0)
+            fh.seek(_WINDOWS_LOCK_OFFSET)
             msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
 
 

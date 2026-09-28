@@ -666,7 +666,7 @@ class InitFlagTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertTrue((root / "AGENTS.md").is_file())
-            self.assertIn(crumb.ADAPTER_BEGIN, (root / "AGENTS.md").read_text())
+            self.assertIn(crumb.ADAPTER_BEGIN, (root / "AGENTS.md").read_text(encoding="utf-8"))
             # explicitly created nothing else
             self.assertFalse((root / "CLAUDE.md").exists())
 
@@ -678,7 +678,7 @@ class InitFlagTests(unittest.TestCase):
                 ["init", "--project", tmp, "--session-tracking", "full", "--with-adapter"]
             )
             self.assertEqual(code, 0)
-            self.assertIn(crumb.ADAPTER_BEGIN, (root / "CLAUDE.md").read_text())
+            self.assertIn(crumb.ADAPTER_BEGIN, (root / "CLAUDE.md").read_text(encoding="utf-8"))
             self.assertFalse((root / "AGENTS.md").exists())
 
 
