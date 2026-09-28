@@ -319,7 +319,7 @@ def surfaced(root: Path, texts: list[str]) -> list[dict]:
         out.append(
             {
                 "id": rid,
-                "file": str(matches[0].relative_to(root)) if matches else None,
+                "file": matches[0].relative_to(root).as_posix() if matches else None,
                 "sha256": digest,
             }
         )

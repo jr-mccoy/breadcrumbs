@@ -2907,7 +2907,7 @@ def _validate_new_file(memory_dir: Path, path: Path, original: str | None = None
     would leave the bad record live. Found by re-checking the original, which is
     only done when the new text fails, so the common path costs nothing extra.
     """
-    rel = str(Path(path).relative_to(memory_dir))
+    rel = Path(path).relative_to(memory_dir).as_posix()
 
     def fails_here() -> list[dict]:
         return [f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel]

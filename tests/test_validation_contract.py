@@ -62,7 +62,7 @@ class ContractCase(unittest.TestCase):
         path.write_text(crumb.render_frontmatter(meta) + "\n" + body, encoding="utf-8")
 
     def codes(self, path: Path) -> list[str]:
-        rel = str(path.relative_to(self.mem))
+        rel = path.relative_to(self.mem).as_posix()
         return [
             f["code"]
             for f in crumb.run_validate(self.mem)

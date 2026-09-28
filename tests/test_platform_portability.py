@@ -19,6 +19,7 @@ found defects that Linux could not show. Each is pinned here in a form Linux
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import io
 import os
@@ -177,6 +178,37 @@ class CmdUnavailableTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "build.cmd").write_text("exit /b 1\n")
             self.assertFalse(checks._cmd_cannot_find("build.cmd", Path(tmp)))
+
+
+class RelativePathRenderingTests(unittest.TestCase):
+    def test_no_store_relative_path_is_rendered_with_os_separators(self):
+        """`str(p.relative_to(x))` is backslashed on Windows. Findings, JSON
+        and the write gates compare these strings, so one native rendering
+        against POSIX ones silently matched nothing there: the gate that
+        refuses an invalid write let it through (CI run 247). Linux cannot
+        show the difference, so the pattern itself is refused."""
+        offenders = []
+        for path in sorted((ROOT / "breadcrumbs").rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "str"
+                    and node.args
+                    and isinstance(node.args[0], ast.Call)
+                    and isinstance(node.args[0].func, ast.Attribute)
+                    and node.args[0].func.attr == "relative_to"
+                ):
+                    offenders.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno}")
+                if (  # the same rendering inside an f-string
+                    isinstance(node, ast.FormattedValue)
+                    and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr == "relative_to"
+                ):
+                    offenders.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno}")
+        self.assertEqual(offenders, [], "use .as_posix() for a store-relative path")
 
 
 class ConsoleMarkerTests(unittest.TestCase):
