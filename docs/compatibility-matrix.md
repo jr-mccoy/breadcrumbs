@@ -67,8 +67,8 @@ Annotations are advisory; policy is enforced by `admission.py`.
 | Platform | Python | Evidence | Status |
 |---|---|---|---|
 | Linux (Ubuntu, CI) | 3.9–3.14 | the full unit suite, the fixture checks, the installed-wheel smoke test (`package` job), evals, lint | **tested** |
-| macOS (CI `native` job) | 3.9, 3.13 | installed-wheel smoke test and adapter/MCP contract tests (gating); the full unit suite (reported): 1,364 run, 0 failures (CI run 247) | **tested** |
-| Windows (CI `native` job) | 3.9, 3.13 | installed-wheel smoke test and adapter/MCP contract tests (gating); the full unit suite (reported) | **tested, full suite being confirmed**: run 246 found 50 failures, 42 of them product defects, all fixed; run 247 found 16 from one regression, fixed in `f528a24`. A confirming run on the fixed revision is pending. |
+| macOS (CI `native` and `native-full` jobs) | 3.9, 3.13 | installed-wheel smoke test and adapter/MCP contract tests (gating, every push); the full unit suite (reported; on `main`, weekly and on demand): 1,364 run, 0 failures (CI run 247) | **tested** |
+| Windows (CI `native` and `native-full` jobs) | 3.9, 3.13 | installed-wheel smoke test and adapter/MCP contract tests (gating, every push); the full unit suite (reported; on `main`, weekly and on demand) | **tested, full suite being confirmed**: run 246 found 50 failures, 42 of them product defects, all fixed; run 247 found 16 from one regression, fixed in `f528a24`. A confirming run on the fixed revision is pending. |
 
 The first native full-suite runs, and each failure's cause, are in the
 [WP17 review record](reviews/2026-09-27-breadcrumbs-wp17/README.md).

@@ -581,7 +581,10 @@ Ubuntu.
 - **Native platforms.**
   - A `native` CI job on Windows and macOS (Python 3.9 and 3.13) builds the
     wheel, installs it into a fresh venv, and runs `tools/platform_smoke.py`
-    against the installed `crumb`.
+    against the installed `crumb`, on every push.
+  - A `native-full` job runs the whole unit suite there, on `main`, weekly
+    and on demand (it takes up to 25 minutes on Windows). It is reported, not
+    gating.
   - The smoke test covers quoting and Unicode paths, guard exit codes, a
     PowerShell hook payload, lock contention, atomic replacement, and replay
     containment.

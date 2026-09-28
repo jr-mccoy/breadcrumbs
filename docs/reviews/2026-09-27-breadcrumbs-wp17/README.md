@@ -58,9 +58,13 @@ the remaining work on 2026-09-27.
 
     It always prints a report, even when it crashes.
   - A `native` CI job (`windows-latest` and `macos-latest`, Python 3.9 and
-    3.13) builds the wheel and runs the smoke test (gating), the adapter and
-    MCP contract tests (gating), and the full unit suite (reported, not
-    gating).
+    3.13) builds the wheel and runs the smoke test (gating) and the adapter
+    and MCP contract tests (gating) on every push.
+  - A `native-full` job runs the whole unit suite on the same four
+    combinations (reported, not gating). To limit runner time it runs only
+    on `main`, weekly and on demand. Until the operator's request on
+    2026-09-28 it ran on every push, which is how runs 246 and 247 below
+    came about.
 - **Replay containment on Windows (F25), found by the native job.**
   - `checks.run_check` put a check in a process group and, on Windows, ended
     it with `taskkill /T`. Once the shell had returned, that could not find a

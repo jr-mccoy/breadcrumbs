@@ -8,6 +8,12 @@ name: ci
 on:
   push:
   pull_request:
+  # Weekly, so the native full suite (below) sees runner-image drift even when
+  # nothing merges. Monday 06:17 UTC: off the hour, when scheduled runs pile up.
+  schedule:
+    - cron: "17 6 * * 1"
+  # On demand, e.g. to run the native full suite on a branch before merging.
+  workflow_dispatch:
 
 # Least privilege by default: without a top-level block every job
 # without its own `permissions:` runs with the repository-default token scope,
@@ -399,12 +405,37 @@ jobs:
       - name: Adapter and MCP contract tests
         run: python -m unittest discover -s tests -p "test_adapter_contracts.py" -v
 
-      # Verbose, and bounded: a test that hangs on this platform is named in
-      # the log (the last one started) instead of holding the run for hours.
-      # Windows takes about 25 minutes for the whole suite (CI run 246).
-      - name: Full unit suite (reported, not gating)
-        continue-on-error: true
-        timeout-minutes: 40
+  # The whole unit suite on Windows and macOS. It takes 7–8 minutes on macOS and
+  # 20–25 on Windows per Python, so it does not run on every push: only on
+  # `main`, weekly, and on demand (Actions → ci → Run workflow, on any branch).
+  # The `native` job above still gates every push on the installed wheel.
+  #
+  # Reported, not gating: `continue-on-error` is on the job, so a failure shows
+  # as a red job while the run still succeeds. (On a step it showed green, and
+  # the failures were visible only in the log.)
+  native-full:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    # Verbose, and bounded: a test that hangs on this platform is named in the
+    # log (the last one started) instead of holding the run for hours.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+        python-version: ["3.9", "3.13"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Full unit suite
         run: python -m unittest discover -s tests -p "test_*.py" -v
 
   # Review #5 M13: the repo had no lint, formatter or type-checker of any kind —
