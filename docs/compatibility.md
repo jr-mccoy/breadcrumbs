@@ -32,11 +32,10 @@ A release that changes `SCHEMA_VERSION` must bump the minor in
 workflow runs the suite before it publishes, so the existing release process
 enforces this rule with no second tagging or publishing path.
 
-Under this policy **the next release from the audit branch is 0.4.0**. The
-branch changes compatibility surfaces: stricter `validate` (WP01), pre-filter
-formats 2 and 3, new verdict floors (WP10), refused links (WP13) and refused
-writes to newer stores (this page). `__version__` stays at `0.3.1` until the
-release itself; bumping it is step 1 of `RELEASING.md`.
+Under this policy **the audit branch's release is 0.4.0**. It changes
+compatibility surfaces: stricter `validate` (WP01), pre-filter formats 2 and 3,
+new verdict floors (WP10), refused links (WP13) and refused writes to newer
+stores (this page).
 
 ## 2. What carries a version
 
@@ -79,6 +78,7 @@ content that must be converted or must not be misread.
 | 0.2.0 | 1 | |
 | 0.3.0 | 4 | schema 1 → 4 in one release (phases 0–6); `crumb migrate` |
 | 0.3.1 | 4 | hotfix: hook launchers never pass a failure through |
+| 0.4.0 | 4 | the audit remediation (WP00–WP22); `requires: review-profiles`; OS write lock |
 <!-- compat:releases:end -->
 
 The rows are the CHANGELOG's released sections. Checked against PyPI on

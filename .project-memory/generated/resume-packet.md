@@ -1,12 +1,12 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 529356e | inputs_hash: e28246934c4b | generated_at: 2026-09-28T02:02:44+00:00 -->
-<!-- view: markdown | budget: 3805/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 5e04468 | inputs_hash: e51a1abfb68c | generated_at: 2026-09-28T02:16:12+00:00 -->
+<!-- view: markdown | budget: 3799/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `529356e` · 13 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/new-session-9f1k6i` · commit `5e04468` · 6 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
@@ -16,6 +16,7 @@ WP21 is at review_required (commit 22907a1; 0.3.1 merged in 751283f). Wait for o
 
 ## Landed Since The Handoff Was Written
 _(check Current Focus / Next Action against these before redoing work)_
+- 5e04468 WP22: release checklist prepared; nothing released
 - 529356e WP17: the native full suite is green on Windows and macOS (CI run 248)
 - a8c3960 CI: run the native full suite on main, weekly and on demand only
 - 9b55822 WP17, WP19, WP20: review records, results and tracker entries
@@ -25,7 +26,6 @@ _(check Current Focus / Next Action against these before redoing work)_
 - 48bc814 WP17: fix what the first native full-suite run found on macOS and Windows
 - e835448 CI: bound the native job's non-gating full suite and make it verbose
 - 6157248 verify: a verification's expiry and created_at are one instant
-- fb5b57a WP19 (in progress): a rerun must reproduce the published replay verdicts
 
 ## Active Decisions
 - `dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand` — Keeps per-push cost low while main and a weekly run still see platform regressions; run it by hand on a branch before merging platform-sensitive changes.
@@ -120,7 +120,7 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- ⚠ handoff is 0 day(s) old, written 33 commit(s) behind current HEAD.
+- ⚠ handoff is 0 day(s) old, written 34 commit(s) behind current HEAD.
 - active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 23 days old with no update — is this still true?
 - active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 23 days old with no update — is this still true?
 - active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 23 days old with no update — is this still true?

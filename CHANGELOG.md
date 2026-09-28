@@ -8,6 +8,29 @@ prints both.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-28
+
+**The reliability release.** It implements the remediation of an external audit
+(findings F01–F26, work packages WP00–WP22). An AI coding agent did the work,
+and every package has a review record under `docs/reviews/` stating what
+changed, the evidence and the limits. At release, seven packages (WP14–WP17,
+WP19, WP20, WP22) still await a person's review; the tracker
+(`docs/reviews/2026-09-26-breadcrumbs-work-packages.json`) says which. The
+release checklist, `docs/releases/reliability-release-checklist.md`, lists the
+gates and what is not claimed.
+
+**Upgrading.** `schema_version` is unchanged (4). This is a minor release
+because compatibility surfaces changed:
+- a store under `crumb policy set team` declares `requires: review-profiles`,
+  which an older version is refused for writing;
+- the write lock is now an OS lock that 0.3.x does not see, so run one
+  crumb-kit version per checkout;
+- `validate` is stricter, and guard's pre-filter formats and verdict floors
+  changed.
+
+Re-run `crumb init --with-hooks` so the guard hook also covers `PowerShell` and
+`NotebookEdit`.
+
 ### Changed — the record contract (audit WP01)
 
 Work package WP01 of `docs/reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md`,

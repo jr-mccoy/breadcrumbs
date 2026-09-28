@@ -5,10 +5,10 @@ This is audit work package WP22
 collects what a release of the audit remediation would stand on, so the person
 who releases it can check each item instead of trusting a summary.
 
-**Status: prepared, not released.** Nothing here has been published. The
-version is still `0.3.1`. Merging to `main`, bumping the version, and running
-the release workflow are the operator's decisions. They are listed as steps
-in section 7, and none of them has been taken.
+**Status: prepared, not released.** Nothing here has been published. At the
+operator's request, the branch carries the version bump to `0.4.0` (section
+7, step 3). Merging to `main` and running the release workflow are the
+operator's steps, and neither has been taken.
 
 ## 1. Source
 
@@ -18,7 +18,7 @@ in section 7, and none of them has been taken.
 | Revision this checklist describes | `529356e`. The commit that adds this checklist changes documentation only. |
 | Last released version | 0.3.1 (tag `v0.3.1`) |
 | Commits since `v0.3.1` | 66 |
-| Proposed version | **0.4.0**: a minor, see below |
+| Version on the branch | **0.4.0** (bumped at the operator's request): a minor, see below |
 | `schema_version` | 4, unchanged since 0.3.0 |
 
 **Why 0.4.0 and not 0.3.2.** Under the pre-1.0 policy
@@ -186,12 +186,15 @@ These are listed apart because a green suite does not review them.
 1. Review the `review_required` packages in the tracker, and record the
    outcome there.
 2. Merge the branch to `main`.
-3. On `main`, in one change:
-   - bump `__version__` in `breadcrumbs/__init__.py` to `0.4.0`;
-   - turn `## [Unreleased]` in `CHANGELOG.md` into `## [0.4.0] — <date>`;
-   - add the `0.4.0 | 4` row to `docs/compatibility.md` §3.
+3. **Done on the branch** (the operator asked for it before the merge):
+   - `__version__` is `0.4.0` in `breadcrumbs/__init__.py`;
+   - `CHANGELOG.md` has `## [0.4.0] — 2026-09-28`, with an empty
+     `## [Unreleased]` above it;
+   - `docs/compatibility.md` §3 has the `0.4.0 | 4` row.
 
-   `tests/test_store_upgrade_contract.py` checks that all three agree.
+   `tests/test_store_upgrade_contract.py` checks that all three agree. If
+   the release happens on a later day, the date in the heading can be
+   corrected on `main` first.
 4. Run `release.yml` with `mode: dry-run`, then `mode: publish`
    ([RELEASING.md](../../RELEASING.md)). Never tag by hand.
 5. After publishing, reconcile `.project-memory/handoff.md` on `main`

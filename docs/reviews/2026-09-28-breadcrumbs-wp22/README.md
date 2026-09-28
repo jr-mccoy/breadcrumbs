@@ -6,8 +6,10 @@ This implements work package WP22 of the
 `529356e`. The operator authorized the remaining work on 2026-09-27, and
 asked on 2026-09-28 to limit how often the native full suite runs.
 
-Nothing was released. The version is still `0.3.1`. No tag, GitHub Release,
-merge to `main` or upload was made.
+Nothing was released. At the operator's request the branch carries the bump
+to `0.4.0` (version, CHANGELOG section, compatibility row), so they can run
+`release.yml` after merging. No tag, GitHub Release, merge to `main` or upload
+was made.
 
 ## Change
 

@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "e28246934c4b",
+ "inputs_hash": "e51a1abfb68c",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",

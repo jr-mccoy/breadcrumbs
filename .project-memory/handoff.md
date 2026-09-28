@@ -8,7 +8,7 @@ _Commit: 529356e_
 crumb-kit 0.3.1 is released (2026-09-27). Phases 0–6 of docs/roadmap-working-memory.md shipped in 0.3.0; do not redo them. The audit remediation (docs/reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md, work packages WP00–WP22) is implemented on branch claude/new-session-9f1k6i. The tracker, docs/reviews/2026-09-26-breadcrumbs-work-packages.json, is authoritative for each package's status; each has a review record under docs/reviews/2026-09-27-breadcrumbs-wpNN/.
 
 ## Next Action
-A person reviews the work packages the tracker marks `review_required`, then merges the branch to main. The release is 0.4.0 (docs/compatibility.md: pre-1.0, minor = breaking), run through release.yml with a dry-run first (RELEASING.md). docs/releases/reliability-release-checklist.md lists the gates, exclusions and the operator's steps; read the native-full jobs on the merge commit before publishing. After the merge, reconcile this file on main (docs/operator-guide.md §6).
+A person reviews the work packages the tracker marks `review_required`, then merges the branch to main. The branch already carries the 0.4.0 bump (version, CHANGELOG, compatibility row); the release runs through release.yml with a dry-run first (RELEASING.md). docs/releases/reliability-release-checklist.md lists the gates, exclusions and the operator's steps; read the native-full jobs on the merge commit before publishing. After the merge, reconcile this file on main (docs/operator-guide.md §6).
 
 ## Blockers / Open Questions
 Merging to main and publishing 0.4.0 need the operator's approval.
