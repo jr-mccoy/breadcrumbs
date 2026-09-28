@@ -220,8 +220,9 @@ Local results are on `68c8075` (Python 3.11 unless noted), plus the fix
 | CI `native` full suite, Windows | run 246: 49 failures and 1 error on both; run 247: 16 on both, all the regression fixed in `f528a24` |
 | CI `test`, `mcp`, `package`, `evals`, `lint` | green (run 247) |
 
-The confirming Windows run on the final revision is recorded in the tracker
-entry and in the compatibility matrix.
+**Confirmed by CI run 248** (`9b55822`, which includes `f528a24`): the native
+full suite ran 1,365 tests with 0 failures on all four combinations (Windows
+3.9 in 1,384 s and 3.13 in 1,334 s; macOS 3.9 in 430 s and 3.13 in 380 s).
 
 ## Compatibility
 
