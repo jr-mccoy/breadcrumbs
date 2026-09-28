@@ -281,8 +281,16 @@ class RetrievalTests(unittest.TestCase):
                     "low",
                 ]
             )
+            # Enough protected text that the whole packet is over the smallest
+            # budget a view can have (PACKET_MIN_BUDGET), so the sweep below
+            # really forces trims.
+            (mem / "current.md").write_text(
+                "# Current State\n\n## Current Focus\n" + "Reconcile the ledger. " * 80 + "\n",
+                encoding="utf-8",
+            )
             full = crumb.build_resume_packet(mem, Path(tmp))
             budget = crumb.approx_tokens(crumb.render_packet_markdown(full))
+            self.assertGreater(budget, crumb.PACKET_MIN_BUDGET["markdown"] + 100)
             saw_trim = False
             for cut in range(budget, 50, -25):
                 with mock.patch.object(_cli, "TOKEN_BUDGET_MAX", cut):
@@ -342,7 +350,12 @@ class PromoteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             rid = jot(tmp, "a claim with nothing behind it")
-            code, _ = run(["inbox", "promote", rid, "decision", "--project", tmp])
+            # A jot is `low` and a promotion keeps that (audit F03), which the
+            # evidence rule allows. Claiming more than that without evidence is
+            # still refused.
+            code, _ = run(
+                ["inbox", "promote", rid, "decision", "--project", tmp, "--confidence", "medium"]
+            )
             self.assertEqual(code, 1)
             # Nothing was left behind, and the jot is still promotable.
             self.assertEqual(crumb.load_records(mem, types=("decision",)), [])

@@ -28,9 +28,11 @@ supersedes it, and an attempt records something that happened.
 
 from __future__ import annotations
 
+import math
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from breadcrumbs import checks as _checks
 from breadcrumbs import cli
 
 # --------------------------------------------------------------------------- #
@@ -122,7 +124,7 @@ def expired_items(memory_dir: Path) -> list[dict]:
                 "title": rec.meta.get("title") or rec.stem,
                 "expires_at": rec.meta.get("expires_at"),
                 "days_ago": cli._age_days(rec.meta.get("expires_at")),
-                "path": str(rec.path.relative_to(memory_dir)),
+                "path": rec.path.relative_to(memory_dir).as_posix(),
             }
         )
     out.sort(key=lambda r: (cli._dt_sort_key(r["expires_at"]), r["id"]))
@@ -246,10 +248,11 @@ def _trap_written_at(trap: dict) -> str | None:
 # hundred vanished files, and the first few are the signal.
 EVIDENCE_MISSING_MAX = 5
 
-# A recheck runs a command a record names. Five minutes is generous for a test
-# suite and short enough that a hung command does not hang the CLI forever.
-RECHECK_TIMEOUT_SECONDS = 300
-RECHECK_OUTPUT_LINES = 3
+# A recheck runs a command a record names; the limits live with the runner in
+# breadcrumbs/checks.py (audit F25). Five minutes is generous for a test suite
+# and short enough that a hung command does not hang the CLI forever.
+RECHECK_TIMEOUT_SECONDS = _checks.TIMEOUT_SECONDS
+RECHECK_OUTPUT_LINES = _checks.TAIL_LINES
 
 
 def _evidence_path(ref: str) -> str | None:
@@ -266,7 +269,13 @@ def _evidence_path(ref: str) -> str | None:
     head, sep, tail = ref.rpartition(":")
     if sep and head and tail.replace("-", "").isdigit():
         path = head
-    if Path(path).is_absolute() or path.startswith("~"):
+    # Either platform's absolute form: a record written on one is read on the
+    # other, and `Path` alone called `/etc/hosts` relative on Windows (WP17).
+    if (
+        PurePosixPath(path).is_absolute()
+        or PureWindowsPath(path).is_absolute()
+        or path.startswith(("~", "\\"))
+    ):
         return None
     return path
 
@@ -311,21 +320,43 @@ def missing_evidence_warnings(root: Path, records: list) -> list[str]:
     return lines
 
 
-def recheck_targets(memory_dir: Path, ids: list[str] | None) -> tuple[list, list[str]]:
+def recheck_targets(
+    memory_dir: Path, ids: list[str] | None, root: Path | None = None
+) -> tuple[list, list[str]]:
     """Verifications to recheck and the ids that could not be used, with why.
 
-    `ids` None means every active verification that names a command. A named id
-    that is not a verification, or has no command evidence, is reported rather
-    than silently skipped — the user asked for that one.
+    A verification qualifies when it declares an assertion or names a command
+    (a diagnostic). `test` evidence is a pointer to a test file, never something
+    to execute, so it does not qualify on its own (audit F25). `ids` None means
+    every such active verification.
+
+    A branch-scoped verification from another branch is not rechecked from this
+    checkout: the run would describe this branch, not the one the claim is about
+    (audit F04). A named id that fails any of this is reported rather than
+    silently skipped — the user asked for that one.
     """
     memory_dir = Path(memory_dir)
+    current = cli.git_branch(Path(root)) if root is not None else None
     problems: list[str] = []
+
+    def usable(rec) -> str | None:
+        if not (_checks.assertion_items(rec.meta) or _checks.diagnostic_commands(rec.meta)):
+            return "names no assertion or command to rerun (test-file evidence is not run)"
+        if current is not None and cli.branch_scoped_elsewhere(rec.meta, current):
+            return (
+                f"scoped to branch {rec.meta.get('branch')}; check that branch out to "
+                "recheck it (a run here would describe this branch)"
+            )
+        return None
+
     if ids is None:
-        recs = [
-            r
-            for r in cli.active_records(memory_dir, "verification")
-            if cli._evidence_refs(r, ("command", "test"))
-        ]
+        recs = []
+        for r in cli.active_records(memory_dir, "verification"):
+            why = usable(r)
+            if why is None:
+                recs.append(r)
+            elif "scoped to branch" in why:
+                problems.append(f"{r.meta.get('id', r.stem)}: {why}")
         return recs, problems
     recs = []
     for rid in ids:
@@ -338,86 +369,98 @@ def recheck_targets(memory_dir: Path, ids: list[str] | None) -> tuple[list, list
                 f"{rid}: already {rec.meta.get('status')} — recheck the record that replaced it"
             )
             continue
-        if not cli._evidence_refs(rec, ("command", "test")):
-            problems.append(f"{rid}: names no command evidence to rerun")
+        why = usable(rec)
+        if why:
+            problems.append(f"{rid}: {why}")
             continue
         recs.append(rec)
     return recs, problems
 
 
-def run_command(command: str, root: Path) -> dict:
-    """Run one recorded command in the project root. Never raises."""
-    import subprocess
+def recheck_plan(rec, *, bind_commands: bool = False) -> list[tuple[str, dict]]:
+    """What a recheck of `rec` would run: `(kind, item)` pairs, assertions first.
 
-    try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=RECHECK_TIMEOUT_SECONDS,
-        )
-        code, output = proc.returncode, (proc.stdout or "") + (proc.stderr or "")
-    except subprocess.TimeoutExpired as exc:
-        code = None
-        output = f"timed out after {RECHECK_TIMEOUT_SECONDS}s\n" + str(exc.output or "")
-    except OSError as exc:
-        code, output = None, f"could not run: {exc}"
-    lines = [ln for ln in output.splitlines() if ln.strip()][-RECHECK_OUTPUT_LINES:]
-    from breadcrumbs.transcript import redact_secrets
-
-    tail = [
-        ln if redact_secrets(ln) is not None else "[line dropped: looked like a secret]"
-        for ln in lines
-    ]
-    return {"command": command, "exit_code": code, "tail": tail}
-
-
-def recheck(memory_dir: Path, root: Path, rec, *, agent: str | None = None) -> dict:
-    """Rerun `rec`'s commands and record the result as a new verification.
-
-    The new record has the same subject, `method: runtime`, outcome `fixed` when
-    every command exited 0 and `open` otherwise, the commands as evidence, and a
-    note with each exit code and the last lines of output. The old record is
-    superseded by it: the new one is the current answer, the old one history.
+    `bind_commands` is the operator saying, for this recheck, that the record's
+    command evidence *is* its assertion — the command exits 0 exactly when the
+    subject is fixed. Without it a command is only a diagnostic.
     """
-    commands = cli._evidence_refs(rec, ("command", "test"))
-    runs = [run_command(c, root) for c in commands]
-    ok = all(r["exit_code"] == 0 for r in runs)
+    plan: list[tuple[str, dict]] = [("assert", item) for item in _checks.assertion_items(rec.meta)]
+    for command in _checks.diagnostic_commands(rec.meta):
+        if bind_commands:
+            plan.append(("assert", _checks.assertion_item(command)))
+        else:
+            plan.append(("diagnostic", {"type": "command", "ref": command}))
+    return plan
+
+
+def recheck(
+    memory_dir: Path,
+    root: Path,
+    rec,
+    *,
+    agent: str | None = None,
+    bind_commands: bool = False,
+    timeout: float | None = None,
+) -> dict:
+    """Rerun `rec`'s checks; settle its claim only if an assertion allows it.
+
+    Every run is a `checks.CheckResult`. Diagnostics are reported and settle
+    nothing. When every assertion was evaluated, the outcome is `fixed` (all
+    passed), `regressed` (one failed on a claim recorded as fixed) or `open`. It
+    is written as a new verification that supersedes `rec` and keeps its
+    subject, scope, branch, confidence, tags and evidence, including any
+    commands `bind_commands` turned into assertions.
+
+    Otherwise nothing is written: no assertion, or one that could not be
+    evaluated (missing tool, timeout, signal, unknown spec), leaves the claim
+    standing exactly as it was. The result says why (`settled: false`).
+    """
+    old_id = rec.meta.get("id", rec.stem)
+    runs = []
+    for kind, item in recheck_plan(rec, bind_commands=bind_commands):
+        if kind == "assert":
+            runs.append(_checks.run_assertion(item, Path(root), timeout=timeout))
+        else:
+            runs.append(_checks.run_check(item["ref"], Path(root), timeout=timeout))
+    old_outcome = rec.meta.get("outcome")
+    outcome, why = _checks.settle(old_outcome, [r for r in runs if r.kind == "assert"])
+    base = {"id": old_id, "runs": [r.to_dict() for r in runs], "reason": why}
+    if outcome is None:
+        return {"ok": True, "settled": False, "new_id": None, "outcome": None, **base}
+
     note_lines = []
     for r in runs:
-        code = "no exit code" if r["exit_code"] is None else f"exit {r['exit_code']}"
-        note_lines.append(f"`{r['command']}` — {code}")
-        note_lines.extend(f"    {ln}" for ln in r["tail"])
-    old_id = rec.meta.get("id", rec.stem)
-    note_lines.append(f"Recheck of {old_id}.")
+        how = r.status if r.exit_code is None else f"{r.status}, exit {r.exit_code}"
+        note_lines.append(f"`{r.command}` [{r.kind}] — {how}")
+        note_lines.extend(f"    {ln}" for ln in r.tail)
+    note_lines.append(f"Recheck of {old_id} ({old_outcome or 'no outcome'} -> {outcome}): {why}.")
+    evidence = [e for e in (rec.meta.get("evidence") or []) if isinstance(e, dict)]
+    if bind_commands:
+        evidence = [
+            _checks.assertion_item(e["ref"]) if e.get("type") == "command" else e for e in evidence
+        ]
+    scope = str(rec.meta.get("scope") or "project")
     subject = rec.meta.get("subject") or rec.meta.get("title") or old_id
     result = cli.verify(
         memory_dir,
         root,
         str(subject),
-        status="fixed" if ok else "open",
+        status=outcome,
         method="runtime",
         note="\n".join(note_lines),
-        evidence=[
-            e
-            for e in (rec.meta.get("evidence") or [])
-            if isinstance(e, dict) and e.get("type") in ("command", "test")
-        ],
+        evidence=evidence,
         tags=[str(t) for t in (rec.meta.get("tags") or [])],
+        confidence=rec.meta.get("confidence") or None,
         agent=agent,
         supersedes=old_id,
+        scope=scope,
+        # A branch-scoped claim belongs to the branch it was made on, whatever
+        # HEAD looks like now (a detached checkout of that branch, say).
+        extra={"branch": rec.meta.get("branch")} if scope == "branch" else None,
     )
     if not result.get("ok"):
-        return {"ok": False, "id": old_id, "error": result.get("error"), "runs": runs}
-    return {
-        "ok": True,
-        "id": old_id,
-        "new_id": result["id"],
-        "outcome": result["outcome"],
-        "runs": runs,
-    }
+        return {"ok": False, "settled": False, "error": result.get("error"), **base}
+    return {"ok": True, "settled": True, "new_id": result["id"], "outcome": outcome, **base}
 
 
 # --------------------------------------------------------------------------- #
@@ -444,9 +487,6 @@ DUP_TAG_BONUS = 0.1
 # on this repo's own store. Capped, the text must carry at least 0.4.
 DUP_BONUS_MAX = 0.2
 DUP_MAX = 3
-# The audit's retrospective sweep is pairwise; past this many items of one type
-# it names the cost instead of paying it.
-DUP_SWEEP_MAX_ITEMS = 2000
 AUDIT_DUP_PAIRS_MAX = 10
 
 # Types the gate and the sweep cover. Sessions are narratives of work that
@@ -624,6 +664,28 @@ def mark_superseded(
     return results
 
 
+def retire_all(
+    memory_dir: Path, old_ids: list[str], new_id: str, *, agent: str | None = None
+) -> list[dict]:
+    """`mark_superseded`, where every retirement must succeed (audit F20).
+
+    Callers used to read only the demotion information out of the results, so a
+    failed retirement left the old record live next to its replacement while
+    the writer reported success. This raises instead; inside a
+    `mutations.transaction` that rolls the whole replacement back.
+    """
+    from breadcrumbs import mutations as _mutations
+
+    results = mark_superseded(memory_dir, old_ids, new_id, agent=agent)
+    failed = [r for r in results if not r.get("ok")]
+    if failed:
+        raise _mutations.MutationFailed(
+            "could not retire "
+            + "; ".join(f"{r.get('id')}: {r.get('error') or 'unknown error'}" for r in failed)
+        )
+    return results
+
+
 def demoted_ids(results: list[dict]) -> list[str]:
     """Ids among `mark_superseded` results whose promoted rule was also removed."""
     return [r["id"] for r in results if r.get("ok") and r.get("demoted")]
@@ -635,12 +697,35 @@ def near_duplicate_pairs(memory_dir: Path) -> list[dict]:
     `[{kind, a, b, similarity}]`, most similar first. The write-time gate only
     sees new writes; this is how a store that predates it finds what it already
     holds.
+
+    Every type is swept at any size (audit WP15; it used to skip a type above
+    2,000 items without saying so). `similarity` adds at most `DUP_BONUS_MAX`
+    to the stem overlap, so only pairs whose rarest stems intersect can reach
+    the threshold (`_prefix_index`); the result is exactly
+    `_near_duplicate_pairs_full`.
     """
     pairs = []
     for rtype in DEDUP_TYPES:
         cands = live_candidates(memory_dir, rtype)
-        if len(cands) > DUP_SWEEP_MAX_ITEMS:
-            continue
+        threshold = JOT_DUP_THRESHOLD if rtype == "jot" else DUP_THRESHOLD
+        prefixes, postings = _prefix_index(
+            [frozenset(c["specific"]) for c in cands], threshold - DUP_BONUS_MAX - 0.01
+        )
+        for i, j in _prefix_pairs(prefixes, postings):
+            score = similarity(cands[i], cands[j])
+            if score >= threshold:
+                x, y = sorted((cands[i]["id"], cands[j]["id"]))
+                pairs.append({"kind": rtype, "a": x, "b": y, "similarity": score})
+    pairs.sort(key=lambda p: (-p["similarity"], p["a"], p["b"]))
+    return pairs
+
+
+def _near_duplicate_pairs_full(memory_dir: Path) -> list[dict]:
+    """The pairwise reference implementation of `near_duplicate_pairs`, kept as
+    the oracle `tests/test_incremental_equivalence.py` holds it to."""
+    pairs = []
+    for rtype in DEDUP_TYPES:
+        cands = live_candidates(memory_dir, rtype)
         threshold = JOT_DUP_THRESHOLD if rtype == "jot" else DUP_THRESHOLD
         for i, a in enumerate(cands):
             for b in cands[i + 1 :]:
@@ -705,6 +790,21 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
                 "<id>`) or merge them (`crumb consolidate`)",
                 ids=[pair["a"], pair["b"]],
                 similarity=pair["similarity"],
+            )
+        )
+    from breadcrumbs import related as _related
+
+    degraded = _related.load_degraded(memory_dir)
+    if degraded:
+        findings.append(
+            cli._audit_finding(
+                "related-degraded",
+                cli.AUDIT_WARN,
+                None,
+                "generated/related.json is incomplete: "
+                f"{degraded.get('reason', 'over the pair budget')} "
+                f"({degraded.get('dropped_features', '?')} features dropped)",
+                degraded=degraded,
             )
         )
     return findings
@@ -843,31 +943,42 @@ def merge_records(
                 "method": newest.meta.get("method"),
             }
         )
+    from breadcrumbs import mutations as _mutations
+
+    # The merged record and every source's retirement are one change (audit
+    # F20): a source that could not be retired would stay live beside the
+    # record that claims to replace it.
     try:
-        path, meta = cli.write_record(
-            memory_dir,
-            root,
-            rtype,
-            title.strip(),
-            merged,
-            tags=tags,
-            evidence=evidence,
-            confidence=confidence,
-            agent=agent,
-            extra=extra,
-        )
-    except ValueError as exc:
-        return {"ok": False, "code": 1, "error": str(exc)}
-    fails = cli._validate_new_file(memory_dir, path)
-    if fails:
-        path.unlink()
-        return {
-            "ok": False,
-            "code": 1,
-            "error": "merged record rejected by validate: "
-            + "; ".join(f["message"] for f in fails),
-        }
-    results = mark_superseded(memory_dir, [r.meta.get("id") for r in recs], meta["id"], agent=agent)
+        with _mutations.transaction(memory_dir, "consolidate"):
+            try:
+                path, meta = cli.write_record(
+                    memory_dir,
+                    root,
+                    rtype,
+                    title.strip(),
+                    merged,
+                    tags=tags,
+                    evidence=evidence,
+                    confidence=confidence,
+                    agent=agent,
+                    extra=extra,
+                )
+            except ValueError as exc:
+                return {"ok": False, "code": 1, "error": str(exc)}
+            fails = cli._validate_new_file(memory_dir, path)
+            if fails:
+                path.unlink()
+                return {
+                    "ok": False,
+                    "code": 1,
+                    "error": "merged record rejected by validate: "
+                    + "; ".join(f["message"] for f in fails),
+                }
+            results = retire_all(
+                memory_dir, [r.meta.get("id") for r in recs], meta["id"], agent=agent
+            )
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "code": 1, "error": _mutations.describe(exc)}
     cli.reindex_projections(memory_dir, root)
     return {
         "ok": True,
@@ -914,6 +1025,174 @@ def _supersede_linked(a, b) -> bool:
 
 def find_contradictions(memory_dir: Path) -> list[dict]:
     """Records that may argue with each other. Two overlap heuristics, worded as questions.
+
+    `[{rule, ids, message, similarity}]`. Deterministic and machine-independent
+    — it reads created dates, never "now" — so the committed `conflicts.json`
+    does not churn between checkouts.
+
+    Exactly `_find_contradictions_full` (audit WP15), computed from postings.
+    - Every per-record value (created date, candidate) is computed once, not
+      once per pair.
+    - A retry pair needs a shared file or a stem overlap reaching
+      `CONFLICT_RETRY_SIMILARITY`, and a decision pair a stem overlap reaching
+      `CONFLICT_DECISION_SIMILARITY - DUP_BONUS_MAX` (the capped file and tag
+      bonus cannot make up more). Only pairs that could are scored: those
+      sharing a file, or whose rarest stems intersect (prefix filtering, see
+      `_prefix_index`).
+    - The result is memoized for the operation under the exact content of the
+      records it read, so the packet and the conflicts projection share one
+      computation.
+    """
+    memory_dir = Path(memory_dir)
+    decisions = [
+        r for r in cli.active_records(memory_dir, "decision") if not cli.record_expired(r.meta)
+    ]
+    attempts = [
+        r
+        for r in cli.active_records(memory_dir, "attempt")
+        if not cli.record_expired(r.meta) and cli._attempt_has_do_not_retry(r)
+    ]
+    key = ("contradictions", str(memory_dir), cli.content_key(decisions + attempts))
+    return cli.op_memo(key, lambda: _contradictions(decisions, attempts))
+
+
+def _prefix_index(sets: list[frozenset], min_jaccard: float):
+    """Prefix filtering for a Jaccard threshold (exact, not a heuristic).
+
+    Stems are ranked rarest first. Two sets whose Jaccard overlap is at least
+    `min_jaccard` share at least `ceil(min_jaccard * len)` stems of each, so
+    their prefixes (all but that many minus one of the most common stems)
+    intersect. Returns `(prefixes, postings)`: each set's prefix, and for each
+    stem the indexes whose prefix holds it.
+    """
+    freq: dict[str, int] = {}
+    for st in sets:
+        for s in st:
+            freq[s] = freq.get(s, 0) + 1
+    prefixes = [_prefix(st, freq, min_jaccard) for st in sets]
+    postings: dict[str, list[int]] = {}
+    for i, pre in enumerate(prefixes):
+        for s in pre:
+            postings.setdefault(s, []).append(i)
+    return prefixes, postings
+
+
+def _prefix_pairs(prefixes: list[list[str]], postings: dict[str, list[int]]):
+    """`(i, j)` for every pair i < j whose prefixes intersect, one `i` at a
+    time, so memory stays linear in the store."""
+    for i, pre in enumerate(prefixes):
+        near: set[int] = set()
+        for s in pre:
+            near.update(j for j in postings[s] if j > i)
+        for j in sorted(near):
+            yield i, j
+
+
+def _prefix(stems, freq: dict[str, int], min_jaccard: float) -> list[str]:
+    n = len(stems)
+    keep = n - math.ceil(min_jaccard * n) + 1 if n else 0
+    return sorted(stems, key=lambda s: (freq.get(s, 0), s))[:keep]
+
+
+def _contradictions(decisions: list, attempts: list) -> list[dict]:
+    assert DUP_BONUS_MAX < CONFLICT_DECISION_SIMILARITY, "decision pairs need shared stems"
+    out: list[dict] = []
+    created = [cli._dt_sort_key(d.meta.get("created_at")) for d in decisions]
+
+    # Rule 1: a decision after a do-not-retry attempt, doing what it tried.
+    # A pair qualifies by a shared file, or by a rounded stem overlap of at
+    # least CONFLICT_RETRY_SIMILARITY; only pairs that could are scored.
+    chose = [_section_candidate(d, "Decision") for d in decisions]
+    tried_all = [_section_candidate(a, "Tried") for a in attempts]
+    retry_jaccard = CONFLICT_RETRY_SIMILARITY - 0.01
+    prefixes, by_stem = _prefix_index(
+        [frozenset(c["specific"]) for c in chose + tried_all], retry_jaccard
+    )
+    by_stem = {s: [i for i in ids if i < len(chose)] for s, ids in by_stem.items()}
+    by_file: dict[str, list[int]] = {}
+    for i, c in enumerate(chose):
+        for f in c["files"]:
+            by_file.setdefault(f, []).append(i)
+    for k, att in enumerate(attempts):
+        tried = tried_all[k]
+        att_at = cli._dt_sort_key(att.meta.get("created_at"))
+        near: set[int] = set()
+        for f in tried["files"]:
+            near.update(by_file.get(f, ()))
+        for s in prefixes[len(chose) + k]:
+            near.update(by_stem.get(s, ()))
+        for i in sorted(near):
+            if created[i] <= att_at:
+                continue
+            dec = decisions[i]
+            shared_file = bool(tried["files"] & chose[i]["files"])
+            union = tried["specific"] | chose[i]["specific"]
+            text_sim = (
+                round(len(tried["specific"] & chose[i]["specific"]) / len(union), 2)
+                if union
+                else 0.0
+            )
+            if text_sim < CONFLICT_RETRY_SIMILARITY and not shared_file:
+                continue
+            did, aid = dec.meta.get("id"), att.meta.get("id")
+            out.append(
+                {
+                    "rule": "retry-after-do-not-retry",
+                    "ids": [did, aid],
+                    "similarity": text_sim,
+                    "message": (
+                        f"decision {did} may do what attempt {aid} says not to retry — "
+                        "confirm the retry condition was met, or mark one stale"
+                    ),
+                }
+            )
+
+    # Rule 2: two live decisions this alike, far apart, neither superseding.
+    # `similarity` adds at most DUP_BONUS_MAX to the stem overlap and rounds to
+    # two places, so a pair whose overlap is below `min_base` cannot reach the
+    # threshold. The 0.01 margin keeps the bound conservative.
+    cands = [candidate_from_record(r) for r in decisions]
+    sizes = [len(c["specific"]) for c in cands]
+    min_base = CONFLICT_DECISION_SIMILARITY - DUP_BONUS_MAX - 0.01
+    prefixes, postings = _prefix_index([frozenset(c["specific"]) for c in cands], min_base)
+    gap_min = CONFLICT_DECISION_MIN_GAP_DAYS * 86400
+    for i, j in _prefix_pairs(prefixes, postings):
+        n_shared = len(cands[i]["specific"] & cands[j]["specific"])
+        if n_shared < DUP_MIN_SHARED and cands[i]["specific"] != cands[j]["specific"]:
+            continue
+        if n_shared < min_base * (sizes[i] + sizes[j] - n_shared):
+            continue
+        if abs(created[i] - created[j]) <= gap_min:
+            continue
+        a, b = decisions[i], decisions[j]
+        if _supersede_linked(a, b):
+            continue
+        sim = similarity(cands[i], cands[j])
+        if sim < CONFLICT_DECISION_SIMILARITY:
+            continue
+        x, y = sorted((a.meta.get("id"), b.meta.get("id")))
+        out.append(
+            {
+                "rule": "overlapping-decisions",
+                "ids": [x, y],
+                "similarity": sim,
+                "message": (
+                    f"decisions {x} and {y} overlap heavily — supersede one or "
+                    "consolidate (`crumb consolidate`)"
+                ),
+            }
+        )
+    out.sort(key=lambda c: (c["rule"], -c["similarity"], c["ids"]))
+    return out
+
+
+def _find_contradictions_full(memory_dir: Path) -> list[dict]:
+    """The pairwise reference implementation of `find_contradictions`.
+
+    Every attempt against every decision and every decision pair. Kept as the
+    oracle `tests/test_incremental_equivalence.py` holds the indexed version to.
+
+    Records that may argue with each other. Two overlap heuristics, worded as questions.
 
     `[{rule, ids, message, similarity}]`. Deterministic and machine-independent
     — it reads created dates, never "now" — so the committed `conflicts.json`
@@ -987,13 +1266,13 @@ def find_contradictions(memory_dir: Path) -> list[dict]:
     return out
 
 
-def render_conflicts(memory_dir: Path, root: Path) -> str:
-    """`generated/conflicts.json`, stamped like `related.json`."""
+def render_conflicts(memory_dir: Path, root: Path, *, inputs_hash: str | None = None) -> str:
+    """`generated/conflicts.json`, stamped like `related.json` (see `render_related`)."""
     import json
 
     doc = {
         "_generated": "GENERATED PROJECTION — do not edit. Rebuilt by `crumb reindex`.",
-        "inputs_hash": cli._inputs_hash(Path(memory_dir), Path(root)),
+        "inputs_hash": inputs_hash or cli._inputs_hash(Path(memory_dir), Path(root)),
         "conflicts": find_contradictions(memory_dir),
     }
     return json.dumps(doc, indent=1, sort_keys=True) + "\n"
@@ -1073,26 +1352,41 @@ def rollup_sessions(
     newest = recs[-1].meta
     pinned = {k: newest.get(k) for k in ("created_at", "updated_at", "branch", "commit")}
     pinned["dirty_files"] = []
-    path, meta = cli.write_record(
-        memory_dir,
-        root,
-        "session",
-        title,
-        sections,
-        agent=agent,
-        extra={"supersedes": ids, **{k: v for k, v in pinned.items() if v is not None}},
-    )
-    fails = cli._validate_new_file(memory_dir, path)
-    if fails:
-        path.unlink()
-        return {
-            "ok": False,
-            "code": 1,
-            "error": "rollup record rejected by validate: "
-            + "; ".join(f["message"] for f in fails),
-        }
-    for rec in recs:
-        rec.path.unlink()
+    from breadcrumbs import mutations as _mutations
+
+    # The rollup and the deletion of what it folds are one change (audit F20):
+    # a crash between them is rolled back by `crumb recover`, never left as a
+    # rollup beside the snapshots it replaced — or snapshots deleted with no
+    # rollup to show for them.
+    try:
+        with _mutations.transaction(memory_dir, "rollup"):
+            try:
+                path, meta = cli.write_record(
+                    memory_dir,
+                    root,
+                    "session",
+                    title,
+                    sections,
+                    agent=agent,
+                    extra={"supersedes": ids, **{k: v for k, v in pinned.items() if v is not None}},
+                )
+            except ValueError as exc:
+                # The rollup is pinned to its newest source's timestamps; a legacy
+                # snapshot with one the record contract refuses stops here, sources intact.
+                return {"ok": False, "code": 1, "error": f"rollup record refused: {exc}"}
+            fails = cli._validate_new_file(memory_dir, path)
+            if fails:
+                path.unlink()
+                return {
+                    "ok": False,
+                    "code": 1,
+                    "error": "rollup record rejected by validate: "
+                    + "; ".join(f["message"] for f in fails),
+                }
+            for rec in recs:
+                _mutations.delete(rec.path)
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "code": 1, "error": _mutations.describe(exc)}
     cli.reindex_projections(memory_dir, root)
     return {
         "ok": True,

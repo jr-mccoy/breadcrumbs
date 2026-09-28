@@ -10,7 +10,11 @@ writes outside the store.
 
 ## 1. Installed directory layout
 
-`crumb init` creates this tree in a target project:
+`crumb init` creates this tree in a target project. **Nothing in it may be a
+symbolic link or junction** (audit WP13): not the store directory, not a
+directory under it, not a file. The tool never creates one, refuses to read or
+write through one, and `validate` reports each as `path-link`. See
+[`security.md`](security.md) §2 → *Filesystem containment*.
 
 ```text
 .project-memory/
@@ -43,15 +47,26 @@ writes outside the store.
   private/
     README.md
     inbox/                    # machine-local jots — never committed
-    # usage.json              — local surfacing counts, written on demand
+    # usage.json              — local surfacing counts, folded from usage-events/ (audit WP12)
+    # usage-events/           — one file per emission, waiting to be folded (audit WP12)
     # hook-log.jsonl          — one line per hook firing, written on demand (WM-62)
+    # hook-log.1.jsonl        — the hook log's previous half, after a rotation (audit WP12)
+    # session-state.json      — per session: the latest task and the latest lookup (audit WP12)
+    # hook-guard-seen.json    — per session: advisories already shown
+    # .usage.lock, .hook-log.lock, .<state file>.lock — side locks for the files above (audit WP12)
     # migrations/<stamp>/     — pre-migration store backup
-    # .write-lock             — present only while a command writes the store (WM-51)
+    # operations/<id>/        — journal of a multi-record operation; present only while one runs, or after a crash (`crumb recover`)
+    # recovered/<id>/         — copies of files a recovery rolled back
+    # projections-pending     — present when the last projection rebuild failed
+    # miner/<session>.json    — transcript miner state: byte cursor, carried calls, candidate backlog (audit WP09)
+    # miner/acked.json        — transcript events already turned into jots, across sessions (audit WP09)
+    # .store.lock             — the write lock's file: an OS lock, permanent (WM-51, audit WP05)
 
   index/
     README.md
     # search.sqlite           — disposable search index, built at reindex once
     #                           the store has 200+ indexable records (§12)
+    # generation.json         — manifest of the last publication, written last (§12, audit WP07)
 ```
 
 **Two local telemetry files under `private/`.** Neither is a record, and
@@ -63,17 +78,42 @@ neither is ever committed.
   know how much history "not surfaced in N days" is measured over. A file
   written before `started_at` existed gets it on its next write, set to its
   oldest `last_surfaced_at`.
+  - **Accounting model (audit WP12).** `surfaced` counts emissions: the id was
+    in output a host received, after deduplication and budget trimming. It is
+    not a count of retrievals, of reads, or of usefulness.
+  - **Writes.** Each emission is one file in `usage-events/`
+    (`{at, ids, source, session?, v: 1}`, created by an atomic rename). A fold,
+    under `.usage.lock`, adds pending events to `usage.json` and deletes them.
+    `folded_last` names the events the last fold counted, so a fold that dies
+    before deleting them cannot count them twice. Readers add pending events to
+    the folded counts.
+  - **`accounting`**: `events_folded`, `unreadable_events` (removed
+    uncounted) and `evicted_records` (dropped by the 2000-record cap). An
+    emission that could not be written at all, or that met a backlog of 2000
+    unfolded events, is noted as `usage_dropped` in the hook log.
 - `hook-log.jsonl` has one JSON object per hook firing: `event`, `at`, `ms`,
   `outcome` (`silent`, `context`, `ask`, `block`, `locked`, `other`,
   `unparsed`), `session` when the host sent one, and the counts and verdicts the handler noted. It
-  holds no prompt, command, path or transcript text. It is cut back to its
-  newest 4000 lines once it passes 5000. `crumb doctor --hook-log` reads it;
-  see `cli-spec.md` → *Hook log*.
+  holds no prompt, command, path or transcript text. When it reaches 2500 lines
+  it is renamed to `hook-log.1.jsonl` (replacing the previous one), so the two
+  hold at most 5000; nothing rewrites a file another hook appends to (audit
+  WP12). `crumb doctor --hook-log` reads both; see `cli-spec.md` → *Hook log*.
+- `session-state.json` holds, per session (the eight most recent), `task`
+  (the latest substantive prompt: `ref`, a digest; `at`; `source`; and `text`,
+  at most 300 characters, or `withheld: "credential" | "policy"`) and
+  `retrieval` (the latest lookup: `for_task`, the digest of the prompt it ran
+  for; `mode`; `selected` and `emitted` ids). Acknowledgements and slash
+  commands leave `task` alone. A file from before audit WP12 holds
+  `last_prompt` and `matched` instead and is still read.
 
 **Schema versions.** `manifest.yml` records the on-disk format version and
 `crumb migrate` moves a store forward; `validate` fails a store that is behind
 (`run \`crumb migrate\``) or ahead (`upgrade crumb-kit`). Readers tolerate the
 previous shape for one major version, so an un-migrated store keeps working.
+A store that is ahead (or `requires` a feature this build lacks) is read with
+a warning and never written (audit WP21). The version policy, the upgrade
+guarantees (preview, verified backup, resume, `--restore`) and what happens to
+legacy values are in [`compatibility.md`](compatibility.md).
 
 | Version | Change |
 |---|---|
@@ -183,6 +223,10 @@ change what that store does:
 | `extraction_prompt` | `true` | The Stop hook may hold the stop once to ask for records. `false` leaves only the silent machine snapshot — it stops the *prompt*, not the transcript mining. |
 | `jot_ttl_days` | `14` | The older spelling of `ttl_jot_days` (below). Still read; when both are set, `ttl_jot_days` wins. |
 | `capture_corrections` | `true` | The `UserPromptSubmit` hook writes a prompt that opens like a correction to `private/inbox/`. `false` turns that off. |
+| `retain_prompt_text` | `true` | The `UserPromptSubmit` hook keeps the latest task's text (at most 300 characters, never one carrying a credential) in `private/session-state.json`, for the packet after a compaction. `false` keeps only a digest and a time (audit WP12). |
+| `requires` | (none) | Features a reader must implement to read this store correctly, comma-separated (`requires: review-profiles`). A build that does not implement one reads the store with a warning and never writes it, as for a newer `schema_version` (audit WP21, [`compatibility.md`](compatibility.md) §4). Defined: `review-profiles`, written by `crumb policy set team`. |
+| `review_profile` | `solo` | `solo` or `team` (audit WP14, [`security.md`](security.md) §4). Set with `crumb policy set`. An unknown value reads as `team`. |
+| `mcp_mode` | `write` (`propose` under `team`) | What MCP may write: `write`, `propose` (guidance is a proposal, and no high-impact status changes) or `read-only`. An unknown value reads as `read-only`. |
 | `subagent_extraction` | `false` | **Reserved.** Whether a finished subagent may be held for its own extraction turn. Nothing reads it yet; it waits on the prompt-fatigue field test in `open-questions.md`, and it defaults off because the parent's Stop hook already asks once per unit of work. |
 
 **Lifespans (WM-30).** One flat key per type, `ttl_<type>_days` (flat because
@@ -225,14 +269,17 @@ updated_at: 2026-06-25T14:30:00-05:00
 created_by: <username>      # human username or agent label, auto-derived
 agent: unknown             # unknown | agent | human | claude-code | codex | cursor | gemini | opencode | other
 project: <project-name>    # auto-derived from repo/dir name
-scope: project             # project | branch  (other text is accepted and read as project)
+scope: project             # project | branch  (other text: legacy only — read as project, reported by validate)
 branch: <current-branch>   # auto-derived from git HEAD
 commit: <short-sha>        # auto-derived from git HEAD
 dirty_files: []            # auto-derived from git status
 confidence: medium         # low | medium | high   (default: medium)
 privacy: repo-safe         # repo-safe | local-private | secret-prohibited  (default: repo-safe)
-review_status: unreviewed  # unreviewed | reviewed | needs-review  (default: unreviewed)
-reviewed_by: null
+review_status: unreviewed  # unreviewed | reviewed | needs-review  (default: unreviewed;
+                           #   needs-review for a proposal under the team profile, audit WP14)
+reviewed_by: null          # set only by `crumb review`, never by a payload
+# reviewed_at: 2026-09-27T12:00:00+00:00   # set by `crumb review`
+# reviewed_hash: 0123456789abcdef          # the claim the review covers; an edit makes it stale
 supersedes: []
 superseded_by: null
 expires_at: null
@@ -240,6 +287,8 @@ expires_at: null
 # promoted_to: CLAUDE.md       # decisions, attempts, traps — set by `crumb promote` (§13)
 # promoted_at: 2026-09-22T20:17:34+00:00
 # promoted_rule: <one line>    # only when `crumb promote --rule` overrode the rendered rule
+# promoted_from: jot_20260926_cache-note-1a2b   # set by `crumb inbox promote`
+# promoted_from_digest: sha256:0123456789abcdef  # the jot note it was made from
 tags:
   - memory
   - architecture
@@ -280,6 +329,12 @@ linked by `supersedes` as settled, not as a conflict.
 expired` lists such records. Expiry is not a status and nothing rewrites the
 file: record the claim again if it still holds, or `mark-status` it `stale`.
 
+**`promoted_from` / `promoted_from_digest`** name the jot a record was
+promoted from (`crumb inbox promote`), and a digest of that jot's note (the
+first 16 hex digits of its sha256). The note itself is in the record's body, so
+a reader of a committed record does not need the jot, which may be private or
+pruned. Nothing reads these keys to decide anything.
+
 **`promoted_to` / `promoted_at` / `promoted_rule`** (WM-40) say that a
 decision, attempt or trap has been made a standing rule in the long-term tier:
 the instruction file it went to (`CLAUDE.md` or `AGENTS.md`), when, and — only
@@ -300,9 +355,53 @@ leaves the resume packet's decision, attempt, verification and inbox lists and
 written on this branch; it stays on disk and in `search`. Without git, on a detached HEAD, or with no recorded branch, a
 branch-scoped record counts everywhere. `crumb jot` and `crumb verify` take
 `--scope project|branch`; jots written by a hook (`source` other than `human` or
-`agent`) default to `branch`. `crumb remember --scope` accepts free text, and
-`validate` does not check the value; anything other than `branch` is read as
-`project`.
+`agent`) default to `branch`. Every writer accepts only `project` or
+`branch`. Until 0.3.x, `crumb remember --scope` and the MCP `memory_record` tool
+accepted free text, so a legacy record may carry another value. It is still read
+as `project`, is never rewritten, and fails `validate` with `scope-unsupported`:
+the reader cannot tell whether its author meant something narrower, so the
+author must set the value explicitly.
+
+### The record contract
+
+`breadcrumbs/validation.py` holds the per-field and cross-record checks. Every
+writer runs them before writing (a refused value exits 2, or returns `{ok:
+false}` over MCP) and again through the post-write `validate` gate. `validate`
+runs them over the whole store. Each failure carries a stable `code`; `check`
+and `message` are for people. These checks establish that a record is well
+formed. They do not establish that its claim is true: a well-formed evidence
+pointer is still only a pointer.
+
+| Code | Fails when |
+|---|---|
+| `confidence-invalid` | `confidence` is not `low`, `medium` or `high` |
+| `review-status-invalid` | `review_status` is not `unreviewed`, `reviewed` or `needs-review` |
+| `scope-unsupported` | `scope` is not `project` or `branch` |
+| `evidence-malformed` | `evidence` is not a list, or an item is not a mapping with a non-empty `type` and `ref` |
+| `timestamp-invalid` | `created_at`, `updated_at`, `expires_at`, `last_confirmed` or `promoted_at` is not `YYYY-MM-DD`, optionally followed by `THH:MM[:SS[.fff\|.ffffff]]` and `Z` or `±HH:MM` |
+| `superseded-by-malformed` | `superseded_by` is not a single id |
+| `supersession-self` | a record is superseded by, or supersedes, itself |
+| `superseded-by-missing` | `superseded_by` names no record in this store |
+| `supersession-cycle` | following `superseded_by` returns to where it started, so no record on the loop is live |
+| `path-link` | something inside the store (the store itself, a directory, or a file) is a symbolic link or junction (audit WP13; reported by path, never followed) |
+
+The evidence-or-low-confidence rule (§16.9) counts only well-formed items, so an
+`evidence` list holding nothing usable no longer lets a claim stand at `medium`.
+
+The timestamp format is one fixed subset. Python 3.11 widened what
+`datetime.fromisoformat` accepts, so relying on it would let a store pass
+`validate` on one interpreter and fail on another. `supersedes` targets are not
+checked, because `rollup sessions` deletes the snapshots it folds and the
+rollup's `supersedes` still names them. Unknown keys are not an error and
+survive every rewrite.
+
+**Legacy records.** A store written before the contract may already break it.
+`validate` reports such a record and never repairs it: no value is rewritten,
+and no confidence is raised to make a check pass. A status change or other
+rewrite of an existing record is refused only for a problem the rewrite
+*introduces*, so a legacy record can always be retired. The resume packet names
+records that break the contract in one `Stale / Risk Warnings` line, and still
+reads them.
 
 ---
 
@@ -694,20 +793,27 @@ Rebuilt by every reindex; never a source of truth.
 
 | File | Committed | Contents |
 |---|---|---|
-| `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header. |
-| `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads. Unstamped. |
-| `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null \| reason}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
+| `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header and, since audit WP08, a `view` / `budget` / `rules` header. It is the portable `markdown` view: within 5,000 `approx_tokens`, and promoted records are kept with their rules. |
+| `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads, with a top-level `inputs_hash` since audit WP07 (one written by an older version has none and is not drift-checked). The hook uses it only while `index/generation.json` vouches for it. Since audit WP11 it has `format: 3`: `tokens`, `titles`, `tags`, `paths` and `commands` (`[kind, *tokens]`) over every record that could drive a guard verdict, a strict superset of what full guard can surface; a pre-filter of another format is not trusted. |
+| `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null, "degraded"?: {reason, dropped_features, largest_dropped_posting}}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
 | `generated/conflicts.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "conflicts": [{"rule", "ids", "similarity", "message"}]}` — pairs of live records that may contradict each other (WM-34). |
 | `index/search.sqlite` | never (gitignored) | The disposable search index. |
+| `index/generation.json` | never (gitignored) | The generation manifest (audit WP07): `{format, inputs_hash, stable, published_at, files: {name: sha256}, stat_fingerprint, corpus: {records}}`, written last by every publication. `corpus` (audit WP10) is the prompt corpus's record count, read by the prompt hook instead of walking the store. |
 
 **`related.json`** relates live items (status `active`; for questions, `open`)
 by pure overlap — shared declared files ×6, shared tag stems ×4, shared
 non-ubiquitous specific stems ×1 — keeping pairs that reach
 `GUARD_NOISE_FLOOR`, best first, ties broken by id. The score is deliberately
 machine-independent (no branch, clock or commit-distance decay), so every clone
-computes the same file. Above 2000 live items `related` is empty and `skipped`
-names the reason. `validate` and `audit` check its `inputs_hash` like the
-packet's.
+computes the same file. Since audit WP15 only pairs sharing a file, tag stem or
+non-ubiquitous stem are scored, which gives exactly the all-pairs result, and
+there is no corpus cutoff: `skipped` is always `null` (it named a reason above
+2000 live items; readers should still accept a string). Past 3,000,000
+candidate pairs the most widely shared features stop generating pairs, and an
+optional `degraded` object says so: `reason`, `dropped_features` (how many) and
+`largest_dropped_posting` (the most items one of them was shared by). A file
+without `degraded` is complete. `validate` and `audit` check its `inputs_hash`
+like the packet's.
 
 **`conflicts.json`** holds what two rules find among active, unexpired
 records. `retry-after-do-not-retry`: an attempt with a *Do Not Retry Unless*
@@ -726,10 +832,22 @@ clock, so every clone computes the same file; `validate` and `audit` check its
 stems, tag stems and files per record) over decisions, attempts, verifications,
 ideas and committed jots. It is built only once those number at least 200
 (`crumb reindex --search-index` builds it regardless), stamped with the
-`inputs_hash` it was built from, and consulted only while that still matches;
+`inputs_hash` of the snapshot it was built from, and consulted only while that
+still matches the store's content (index format `2`, audit WP07: there is no
+size/mtime shortcut);
 `search` returns exactly the same results with or without it. It needs the
 standard-library `sqlite3` module and is skipped where that is missing.
 Deleting `index/` is always safe.
+
+**`index/generation.json`** names the files of the last publication and the
+snapshot they were built from. It is written after every other output, and the
+previous one is removed before any output is replaced, so a set that was only
+partly replaced has no manifest. `stable` is `false` when the store kept
+changing across three builds; the outputs are then stamped `inputs_hash:
+unstable` and `validate` reports them stale. A reader trusts a generated file
+only when the manifest is `stable`, the file's sha256 matches, and the stat
+fingerprint of the canonical inputs is unchanged. Deleting it costs nothing but
+the guard hook's shortcut, until the next reindex.
 
 ---
 
@@ -776,3 +894,9 @@ Rules are added only by `crumb promote`; no MCP tool adds one
 record (§8), which includes `memory_mark_status`. A hand edit that keeps the
 `source:` id is read like any other line, and shows up in `audit` as
 `promoted-drift` until `crumb promote <id>` re-renders it.
+
+**What packets do with a rule** (audit WP08). The bullet in the file is the
+rule in force. Portable packets show it on the record's entry, or render it
+from the record when the file or bullet is gone. Only a consumer that loads the
+file, Claude Code's `SessionStart` hook for `CLAUDE.md`, leaves those records
+out. See `cli-spec.md` → `resume`.

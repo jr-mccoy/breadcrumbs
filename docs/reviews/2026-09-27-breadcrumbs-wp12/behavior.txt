@@ -1,0 +1,83 @@
+# python behavior.py <tree>  (script: behavior.py; APIs present before and after)
+
+# before (f534a77)
+{
+ "f15_latest_task_after_A_B_ok": "refactor the amber quasar routing policy in src/quasar.py",
+ "f15_pass": false,
+ "f16_guard_spoke": [
+  true,
+  false
+ ],
+ "f16_guard_surfaced": 2,
+ "f16_guard_pass": false,
+ "f16_trim_rendered": 2,
+ "f16_trim_counted": 5,
+ "f16_trim_pass": false,
+ "parallel_usage_increments_lost_of_180_per_trial": [
+  118,
+  118,
+  121,
+  110,
+  130
+ ],
+ "parallel_session_entries_lost_of_6_per_trial": [
+  0,
+  0,
+  0,
+  0,
+  0
+ ],
+ "parallel_hooklog_lines_lost_inside_retained_window_per_trial": [
+  0,
+  1,
+  7,
+  0,
+  0
+ ],
+ "parallel_pass": false
+}
+
+# after
+{
+ "f15_latest_task_after_A_B_ok": "design the calendar week view with drag to reschedule",
+ "f15_pass": true,
+ "f16_guard_spoke": [
+  true,
+  false
+ ],
+ "f16_guard_surfaced": 1,
+ "f16_guard_pass": true,
+ "f16_trim_rendered": 2,
+ "f16_trim_counted": 2,
+ "f16_trim_pass": true,
+ "parallel_usage_increments_lost_of_180_per_trial": [
+  0,
+  0,
+  0,
+  0,
+  0
+ ],
+ "parallel_session_entries_lost_of_6_per_trial": [
+  0,
+  0,
+  0,
+  0,
+  0
+ ],
+ "parallel_hooklog_lines_lost_inside_retained_window_per_trial": [
+  0,
+  0,
+  0,
+  0,
+  0
+ ],
+ "parallel_pass": true
+}
+
+# hook latency, median ms over 60 firings, 40 decisions (two runs each)
+# before (f534a77)
+{"prompt_unmatched": 9.39, "prompt_emitting": 9.11, "guard_emitting": 24.99}
+{"prompt_unmatched": 9.86, "prompt_emitting": 9.47, "guard_emitting": 26.43}
+# after
+{"prompt_unmatched": 10.69, "prompt_emitting": 10.96, "guard_emitting": 26.84}
+{"prompt_unmatched": 11.08, "prompt_emitting": 10.31, "guard_emitting": 26.82}

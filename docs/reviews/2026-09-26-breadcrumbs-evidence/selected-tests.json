@@ -1,0 +1,29 @@
+{
+  "modules": [
+    "test_parser",
+    "test_sections",
+    "test_naming",
+    "test_lock",
+    "test_searchindex",
+    "test_aliases",
+    "test_handoffs",
+    "test_scope",
+    "test_inbox",
+    "test_lifecycle",
+    "test_usage",
+    "test_hooklog"
+  ],
+  "excluded": {
+    "test_parser.CommentOnlyValueTests.test_superseded_without_a_target_fails_validate": "test data absent from release sdist",
+    "test_parser.FenceAwareSectionsTests.test_validate_sees_no_next_action_in_a_fence": "test data absent from release sdist",
+    "test_parser.RecordModelTests.test_load_records_walks_type_dirs": "test data absent from release sdist",
+    "test_searchindex.FixtureEquivalenceTests.test_fixture_10_answers_the_same_through_the_index": "fixture-10 absent from release sdist",
+    "test_parser.StartupCostTests.test_version_is_not_resolved_while_building_the_parser": "audit interpreter imports metadata/email/zipfile/csv before Breadcrumbs; separately verified"
+  },
+  "tests_run": 243,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 0,
+  "successful": true,
+  "note": "Selected upstream tests only; not the complete repository test suite."
+}

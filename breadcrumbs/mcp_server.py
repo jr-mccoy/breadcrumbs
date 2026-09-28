@@ -182,6 +182,53 @@ def _root() -> str | None:
     return os.environ.get("BREADCRUMBS_PROJECT") or None
 
 
+def _read_only() -> bool:
+    """Does the served store's policy make MCP read-only? Never raises."""
+    try:
+        from breadcrumbs import admission
+
+        _, mem = mcp_core.resolve(_root())
+        return mem.is_dir() and admission.policy(mem).mcp_mode == admission.MCP_READ_ONLY
+    except Exception:  # pragma: no cover - a policy read never breaks startup
+        return False
+
+
+def _annotations(name: str):
+    """The contract's advisory annotations for tool `name`, as the SDK's type
+    (None when this SDK has no `ToolAnnotations`)."""
+    try:
+        from mcp.types import ToolAnnotations
+    except ImportError:  # pragma: no cover - SDK 1.x before annotations
+        return None
+    hints = mcp_core.TOOL_CONTRACT[name]["annotations"]
+    return ToolAnnotations.model_validate(hints)
+
+
+def _tool_registrar(mcp, *, enabled: bool = True):
+    """`@registrar()` registers a tool with its contract annotations (audit
+    WP17), on SDKs whose `tool()` accepts them; `enabled=False` registers
+    nothing (a read-only store's writers)."""
+    try:
+        accepts = "annotations" in inspect.signature(mcp.tool).parameters
+    except (TypeError, ValueError):  # pragma: no cover
+        accepts = False
+
+    def registrar():
+        def register(fn):
+            if not enabled:
+                return fn
+            kwargs = {}
+            if accepts:
+                annotations = _annotations(fn.__name__)
+                if annotations is not None:
+                    kwargs["annotations"] = annotations
+            return mcp.tool(**kwargs)(fn)
+
+        return register
+
+    return registrar
+
+
 def build_server():  # -> FastMCP
     """Construct and fully register the FastMCP server (resources, prompts, tools).
 
@@ -198,6 +245,12 @@ def build_server():  # -> FastMCP
     # no way to change it rather than being unconditional.
     kwargs = {"version": mcp_core.cli.get_version()} if _SERVER_ACCEPTS_VERSION else {}
     mcp = FastMCP(SERVER_NAME, **kwargs)
+
+    # A store whose policy makes MCP read-only (audit WP14) is served without
+    # its writing tools at all, not with tools that always refuse. The core
+    # refuses too, so a client that calls one anyway is still turned away.
+    read_tool = _tool_registrar(mcp)
+    write_tool = _tool_registrar(mcp, enabled=not _read_only())
 
     # ---------------- Resources (8) — read-only views ---------------------- #
     # Bound explicitly (not in a loop) so each URI is a distinct, documented
@@ -287,7 +340,7 @@ def build_server():  # -> FastMCP
 
     # ---------------- Tools (10) — wrap existing functions ----------------- #
 
-    @mcp.tool()
+    @read_tool()
     def memory_search(
         query: str, filters: SearchFilters | None = None, files: list[str] | None = None
     ) -> dict:
@@ -298,7 +351,7 @@ def build_server():  # -> FastMCP
         """
         return mcp_core.tool_search(query, filters=filters, files=files, root=_root())
 
-    @mcp.tool()
+    @write_tool()
     def memory_record(type: str, payload: RecordPayload) -> dict:
         """Write a durable decision/attempt; passes the same validate gate as the CLI.
 
@@ -308,27 +361,27 @@ def build_server():  # -> FastMCP
         """
         return mcp_core.tool_record(type, payload, root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_guard_before_action(action: str, files: list[str] | None = None) -> dict:
         """Guard-before-action; returns the same verdict as `crumb guard`."""
         return mcp_core.tool_guard_before_action(action, files=files, root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_build_resume_packet(task: str | None = None) -> dict:
         """Build the structured resume packet (wraps `crumb resume`)."""
         return mcp_core.tool_build_resume_packet(task=task, root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_validate() -> dict:
         """Run deterministic structural validation (wraps `crumb validate`)."""
         return mcp_core.tool_validate(root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_show(id: str) -> dict:
         """Fetch one record, trap, question or jot by id, with its "see also" list."""
         return mcp_core.tool_show(id, root=_root())
 
-    @mcp.tool()
+    @write_tool()
     def memory_jot(
         text: str,
         tags: list[str] | None = None,
@@ -353,7 +406,7 @@ def build_server():  # -> FastMCP
             root=_root(),
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_inbox_promote(
         id: str,
         target: str,
@@ -362,8 +415,16 @@ def build_server():  # -> FastMCP
         evidence: list[dict] | None = None,
         tags: list[str] | None = None,
         confidence: str | None = None,
+        scope: str | None = None,
+        allow_duplicate: bool = False,
+        supersedes: str | None = None,
     ) -> dict:
-        """Turn a jot into a durable record (wraps `crumb inbox promote`)."""
+        """Turn a jot into a durable record (wraps `crumb inbox promote`).
+
+        The record keeps the jot's note, scope and confidence; `scope="project"`
+        widens a branch jot and `confidence` raises it. Refused as a
+        near-duplicate unless `allow_duplicate` or `supersedes`.
+        """
         return mcp_core.tool_inbox_promote(
             id,
             target,
@@ -373,9 +434,12 @@ def build_server():  # -> FastMCP
             tags=tags,
             confidence=confidence,
             root=_root(),
+            scope=scope,
+            allow_duplicate=allow_duplicate,
+            supersedes=supersedes,
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_note(
         kind: str,
         text: str,
@@ -401,7 +465,7 @@ def build_server():  # -> FastMCP
             root=_root(),
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_mark_status(
         id: str, status: str, reason: str, superseded_by: str | None = None
     ) -> dict:
@@ -421,7 +485,7 @@ def build_server():  # -> FastMCP
             id, status, reason, superseded_by=superseded_by, root=_root()
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_verify(
         subject: str,
         status: str,
@@ -461,12 +525,12 @@ def build_server():  # -> FastMCP
             root=_root(),
         )
 
-    @mcp.tool()
+    @write_tool()
     def memory_reindex() -> dict:
         """Rebuild the generated/ projections from the canonical records (wraps `crumb reindex`)."""
         return mcp_core.tool_reindex(root=_root())
 
-    @mcp.tool()
+    @read_tool()
     def memory_scan_secrets() -> dict:
         """Scan committed memory for secret-like strings (wraps `crumb audit`'s scan)."""
         return mcp_core.tool_scan_secrets(root=_root())

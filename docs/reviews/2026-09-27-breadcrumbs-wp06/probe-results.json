@@ -1,0 +1,257 @@
+{
+  "reviewed_commit": "30e41f6a36195faffdc197d0565abc7caf7c78da",
+  "source": "/home/user/breadcrumbs",
+  "python": "3.11.15 (main, Mar  3 2026, 09:26:23) [GCC 13.3.0]",
+  "platform": "Linux-6.18.44-fc-v37-x86_64-with-glibc2.39",
+  "probes": {
+    "transcript_results": {
+      "bug_observed": false,
+      "candidates": {
+        "missing_result": [],
+        "failure_after_400_chars": [],
+        "zero_failed_success": [
+          "pytest passed"
+        ]
+      },
+      "seconds": 0.0001
+    },
+    "sliding_cursor": {
+      "bug_observed": true,
+      "first_tail_entries": 15,
+      "next_tail_entries": 15,
+      "stored_cursor": 15,
+      "candidate_exists_without_cursor": true,
+      "next_write_report": {
+        "written": [],
+        "skipped": 0,
+        "dropped_for_secrets": 0
+      },
+      "seconds": 0.1276
+    },
+    "split_pair": {
+      "bug_observed": false,
+      "first_firing_candidates": [],
+      "second_firing_candidates": [],
+      "seconds": 0.0001
+    },
+    "prompt_cliff": {
+      "bug_observed": true,
+      "total_candidates": 501,
+      "active_decisions": 1,
+      "index": {
+        "built": true,
+        "records": 501,
+        "reason": null
+      },
+      "search_ids": [
+        "dec_20260927_amber-quasar-routing-policy"
+      ],
+      "hook_ids": [],
+      "seconds": 0.3667
+    },
+    "guard_prefilter": {
+      "bug_observed": true,
+      "direct_verdict": "PROCEED",
+      "direct_ids": [
+        "trap_npm-test-truncates-the-database"
+      ],
+      "hook_output": {},
+      "prefilter_hit": false,
+      "scenario": "recorded test command destructively truncates a persistent database",
+      "seconds": 0.0276
+    },
+    "resume_ignores_lock": {
+      "bug_observed": true,
+      "exit_code": 0,
+      "foreign_lock_remained": true,
+      "projection_changed": true,
+      "seconds": 0.0275
+    },
+    "snapshot_stamp_race": {
+      "bug_observed": true,
+      "new_record": "dec_20260927_newly-added-cerulean-encryption-policy",
+      "packet_ids": [],
+      "stamp_matches_current_store": true,
+      "method": "deterministic interleaving between record read and input hashing",
+      "seconds": 0.0199
+    },
+    "recheck_scope_and_claim": {
+      "probe_error": "AttributeError: 'NoneType' object has no attribute 'meta'",
+      "traceback": "Traceback (most recent call last):\n  File \"/home/user/breadcrumbs/tools/audit/regression_probes.py\", line 313, in <module>\n    value=probe()\n          ^^^^^^^\n  File \"/home/user/breadcrumbs/tools/audit/regression_probes.py\", line 167, in recheck_scope_and_claim\n    return {'bug_observed':new.meta['scope']!='branch','old_scope':old.meta['scope'],'old_branch':old.meta['branch'],'new_scope':new.meta['scope'],'new_outcome':new.meta['outcome'],'reader_branch':cli.git_branch(root),'visible_on_other_branch':any(v['id']==new.meta['id'] for v in packet['verifications']),'command_was_only_noop':True}\n                           ^^^^^^^^\nAttributeError: 'NoneType' object has no attribute 'meta'\n",
+      "seconds": 0.174
+    },
+    "jot_promotion_loss": {
+      "bug_observed": false,
+      "original_text_in_promoted_record": true,
+      "new_scope": "branch",
+      "new_confidence": "low",
+      "new_record_body": "## Decision\nInvalidate both the tenant cache and the role cache before rotating the authorization epoch.",
+      "jot_retired": "superseded",
+      "seconds": 0.0407
+    },
+    "promoted_adapter_missing": {
+      "bug_observed": true,
+      "adapter_exists": false,
+      "active_decision_ids": [],
+      "promoted_counts": {
+        "active_decisions": 1
+      },
+      "seconds": 0.0229
+    },
+    "packet_bound": {
+      "bug_observed": true,
+      "approx_tokens": 7333,
+      "claimed_limit": 5000,
+      "seconds": 0.0124
+    },
+    "symlink_read": {
+      "bug_observed": true,
+      "mcp_resource_returned_external_bytes": "SYNTHETIC-OUTSIDE-STORE-CONTENT",
+      "real_credentials_used": false,
+      "seconds": 0.0108
+    },
+    "live_lock_stale": {
+      "probe_error": "AttributeError: module 'breadcrumbs.lock' has no attribute 'STALE_SECONDS'",
+      "traceback": "Traceback (most recent call last):\n  File \"/home/user/breadcrumbs/tools/audit/regression_probes.py\", line 313, in <module>\n    value=probe()\n          ^^^^^^^\n  File \"/home/user/breadcrumbs/tools/audit/regression_probes.py\", line 217, in live_lock_stale\n    with mock.patch.object(lock.time,'time',return_value=now+lock.STALE_SECONDS+5):\n                                                             ^^^^^^^^^^^^^^^^^^\nAttributeError: module 'breadcrumbs.lock' has no attribute 'STALE_SECONDS'\n",
+      "seconds": 0.0101
+    },
+    "powershell_translation": {
+      "bug_observed": true,
+      "registered_matcher": "Bash|Edit|Write|MultiEdit|Task|Agent",
+      "translated_action": "",
+      "seconds": 0.0
+    },
+    "schema_types": {
+      "bug_observed": false,
+      "cases": {
+        "confidence": {
+          "record_validation_failed": true,
+          "findings": [
+            {
+              "check": "confidence",
+              "status": "fail",
+              "path": "decisions/2026-09-27-amber-quasar-routing-policy.md",
+              "message": "invalid confidence 'certainly' (allowed: low, medium, high)",
+              "code": "confidence-invalid"
+            }
+          ],
+          "packet": "returned"
+        },
+        "scope": {
+          "record_validation_failed": true,
+          "findings": [
+            {
+              "check": "scope",
+              "status": "fail",
+              "path": "decisions/2026-09-27-amber-quasar-routing-policy.md",
+              "message": "unsupported scope 'all-machines': it is read as 'project', which may be wider than the author meant \u2014 set scope to project or branch explicitly",
+              "code": "scope-unsupported"
+            }
+          ],
+          "packet": "returned"
+        },
+        "evidence": {
+          "record_validation_failed": true,
+          "findings": [
+            {
+              "check": "evidence",
+              "status": "fail",
+              "path": "decisions/2026-09-27-amber-quasar-routing-policy.md",
+              "message": "evidence item 1 has no type",
+              "code": "evidence-malformed"
+            },
+            {
+              "check": "evidence",
+              "status": "fail",
+              "path": "decisions/2026-09-27-amber-quasar-routing-policy.md",
+              "message": "decision has no evidence and confidence is not 'low'",
+              "code": "evidence"
+            }
+          ],
+          "packet": "returned"
+        },
+        "expires_at": {
+          "record_validation_failed": true,
+          "findings": [
+            {
+              "check": "timestamp",
+              "status": "fail",
+              "path": "decisions/2026-09-27-amber-quasar-routing-policy.md",
+              "message": "expires_at '12345' is not an ISO-8601 date or datetime",
+              "code": "timestamp-invalid"
+            }
+          ],
+          "packet": "returned"
+        },
+        "superseded_by": {
+          "record_validation_failed": true,
+          "findings": [
+            {
+              "check": "superseded",
+              "status": "fail",
+              "path": "decisions/2026-09-27-amber-quasar-routing-policy.md",
+              "message": "superseded_by 'dec_missing' names no record in this store",
+              "code": "superseded-by-missing"
+            }
+          ],
+          "packet": "returned"
+        }
+      },
+      "seconds": 0.0266
+    },
+    "short_prompt_and_stale_task": {
+      "bug_observed": true,
+      "direct_ids": [
+        "dec_20260927_quasar-policy"
+      ],
+      "short_prompt_output": {},
+      "remembered_prompt_after_unrelated_task": "amber quasar routing policy",
+      "actual_latest_prompt": "Design a completely unrelated calendar view",
+      "seconds": 0.0199
+    },
+    "index_metadata_collision": {
+      "bug_observed": true,
+      "index": {
+        "built": true,
+        "records": 201,
+        "reason": null
+      },
+      "reported_state": {
+        "state": "fresh",
+        "records": 201
+      },
+      "indexed_ids": [],
+      "full_scan_ids": [
+        "dec_20260927_amber-quasar-routing-policy"
+      ],
+      "same_size_and_restored_mtime": true,
+      "seconds": 0.1255
+    },
+    "guard_usage_dedupe": {
+      "bug_observed": true,
+      "first_spoke": true,
+      "second_spoke": false,
+      "usage": {
+        "by": {
+          "hook-guard": 2
+        },
+        "last_surfaced_at": "2026-09-27T01:50:08+00:00",
+        "sessions": [
+          "counts"
+        ],
+        "surfaced": 2
+      },
+      "seconds": 0.0192
+    },
+    "partial_supersession": {
+      "bug_observed": false,
+      "command_exit": 1,
+      "old_status": "active",
+      "live_decisions": [
+        "dec_20260927_amber-quasar-routing-policy"
+      ],
+      "method": "injected failure return during retirement; new record really written",
+      "seconds": 0.0206
+    }
+  }
+}

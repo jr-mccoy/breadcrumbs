@@ -1,0 +1,223 @@
+{
+  "reviewed_commit": "30e41f6a36195faffdc197d0565abc7caf7c78da",
+  "source": "/mnt/data/breadcrumbs_audit/crumb_kit-0.3.0",
+  "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "probes": {
+    "transcript_results": {
+      "bug_observed": true,
+      "candidates": {
+        "missing_result": [
+          "pytest passed"
+        ],
+        "failure_after_400_chars": [
+          "pytest passed"
+        ],
+        "zero_failed_success": []
+      },
+      "seconds": 0.0002
+    },
+    "sliding_cursor": {
+      "bug_observed": true,
+      "first_tail_entries": 15,
+      "next_tail_entries": 15,
+      "stored_cursor": 15,
+      "candidate_exists_without_cursor": true,
+      "next_write_report": {
+        "written": [],
+        "skipped": 0,
+        "dropped_for_secrets": 0
+      },
+      "seconds": 0.1408
+    },
+    "split_pair": {
+      "bug_observed": true,
+      "first_firing_candidates": [
+        "python -m pytest passed"
+      ],
+      "second_firing_candidates": [],
+      "seconds": 0.0001
+    },
+    "prompt_cliff": {
+      "bug_observed": true,
+      "total_candidates": 501,
+      "active_decisions": 1,
+      "index": {
+        "built": true,
+        "records": 501,
+        "reason": null
+      },
+      "search_ids": [
+        "dec_20260926_amber-quasar-routing-policy"
+      ],
+      "hook_ids": [],
+      "seconds": 0.3187
+    },
+    "guard_prefilter": {
+      "bug_observed": true,
+      "direct_verdict": "PROCEED",
+      "direct_ids": [
+        "trap_npm-test-truncates-the-database"
+      ],
+      "hook_output": {},
+      "prefilter_hit": false,
+      "scenario": "recorded test command destructively truncates a persistent database",
+      "seconds": 0.0249
+    },
+    "resume_ignores_lock": {
+      "bug_observed": true,
+      "exit_code": 0,
+      "foreign_lock_remained": true,
+      "projection_changed": true,
+      "seconds": 0.0238
+    },
+    "snapshot_stamp_race": {
+      "bug_observed": true,
+      "new_record": "dec_20260926_newly-added-cerulean-encryption-policy",
+      "packet_ids": [],
+      "stamp_matches_current_store": true,
+      "method": "deterministic interleaving between record read and input hashing",
+      "seconds": 0.0143
+    },
+    "recheck_scope_and_claim": {
+      "bug_observed": true,
+      "old_scope": "branch",
+      "old_branch": "feature/audit",
+      "new_scope": "project",
+      "new_outcome": "fixed",
+      "reader_branch": "main",
+      "visible_on_other_branch": true,
+      "command_was_only_noop": true,
+      "seconds": 1.0641
+    },
+    "jot_promotion_loss": {
+      "bug_observed": true,
+      "original_text_in_promoted_record": false,
+      "new_scope": "project",
+      "new_confidence": "medium",
+      "new_record_body": "## Context\n_(not recorded)_",
+      "jot_retired": "superseded",
+      "seconds": 0.0371
+    },
+    "promoted_adapter_missing": {
+      "bug_observed": true,
+      "adapter_exists": false,
+      "active_decision_ids": [],
+      "promoted_counts": {
+        "active_decisions": 1
+      },
+      "seconds": 0.023
+    },
+    "packet_bound": {
+      "bug_observed": true,
+      "approx_tokens": 7333,
+      "claimed_limit": 5000,
+      "seconds": 0.0141
+    },
+    "symlink_read": {
+      "bug_observed": true,
+      "mcp_resource_returned_external_bytes": "SYNTHETIC-OUTSIDE-STORE-CONTENT",
+      "real_credentials_used": false,
+      "seconds": 0.0132
+    },
+    "live_lock_stale": {
+      "bug_observed": true,
+      "holder_is_current_live_process": true,
+      "live_lock_classified_stale_after_heartbeat_gap": true,
+      "method": "injected wall-clock/heartbeat gap, not an OS-level stress test",
+      "seconds": 0.0118
+    },
+    "powershell_translation": {
+      "bug_observed": true,
+      "registered_matcher": "Bash|Edit|Write|MultiEdit|Task|Agent",
+      "translated_action": "",
+      "seconds": 0.0
+    },
+    "schema_types": {
+      "bug_observed": true,
+      "cases": {
+        "confidence": {
+          "record_validation_failed": false,
+          "findings": [],
+          "packet": "returned"
+        },
+        "scope": {
+          "record_validation_failed": false,
+          "findings": [],
+          "packet": "returned"
+        },
+        "evidence": {
+          "record_validation_failed": false,
+          "findings": [],
+          "packet": "returned"
+        },
+        "expires_at": {
+          "record_validation_failed": false,
+          "findings": [],
+          "packet": "returned"
+        },
+        "superseded_by": {
+          "record_validation_failed": false,
+          "findings": [],
+          "packet": "returned"
+        }
+      },
+      "seconds": 0.0289
+    },
+    "short_prompt_and_stale_task": {
+      "bug_observed": true,
+      "direct_ids": [
+        "dec_20260926_quasar-policy"
+      ],
+      "short_prompt_output": {},
+      "remembered_prompt_after_unrelated_task": "amber quasar routing policy",
+      "actual_latest_prompt": "Design a completely unrelated calendar view",
+      "seconds": 0.0213
+    },
+    "index_metadata_collision": {
+      "bug_observed": true,
+      "index": {
+        "built": true,
+        "records": 201,
+        "reason": null
+      },
+      "reported_state": {
+        "state": "fresh",
+        "records": 201
+      },
+      "indexed_ids": [],
+      "full_scan_ids": [
+        "dec_20260926_amber-quasar-routing-policy"
+      ],
+      "same_size_and_restored_mtime": true,
+      "seconds": 0.135
+    },
+    "guard_usage_dedupe": {
+      "bug_observed": true,
+      "first_spoke": true,
+      "second_spoke": false,
+      "usage": {
+        "by": {
+          "hook-guard": 2
+        },
+        "last_surfaced_at": "2026-09-26T18:59:22+00:00",
+        "sessions": [
+          "counts"
+        ],
+        "surfaced": 2
+      },
+      "seconds": 0.0208
+    },
+    "partial_supersession": {
+      "bug_observed": true,
+      "command_exit": 0,
+      "old_status": "active",
+      "live_decisions": [
+        "dec_20260926_amber-quasar-routing-policy",
+        "dec_20260926_replace-quasar-queue-policy"
+      ],
+      "method": "injected failure return during retirement; new record really written",
+      "seconds": 0.0216
+    }
+  }
+}

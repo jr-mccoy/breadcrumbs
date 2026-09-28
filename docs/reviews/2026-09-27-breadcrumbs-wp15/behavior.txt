@@ -1,0 +1,34 @@
+## before (9a28ed4, worktree)
+{
+ "records": 2052,
+ "reindex_exit": 0,
+ "parses_per_reindex": 14364,
+ "conflict_computations_per_reindex": 2,
+ "related_skipped": "corpus of 2052 items exceeds 2000",
+ "related_items": 0,
+ "related_map_skipped_above_2000": true,
+ "duplicate_sweep_misses_planted_twins": true,
+ "local_jot_exit": 0,
+ "local_jot_parses": 16419,
+ "local_jot_republishes_shared_views": true,
+ "parses_exceed_twice_the_records": true,
+ "conflicts_computed_more_than_once": true,
+ "defects_observed": 5
+}
+## after (this change)
+{
+ "records": 2052,
+ "reindex_exit": 0,
+ "parses_per_reindex": 2052,
+ "conflict_computations_per_reindex": 1,
+ "related_skipped": null,
+ "related_items": 2052,
+ "related_map_skipped_above_2000": false,
+ "duplicate_sweep_misses_planted_twins": false,
+ "local_jot_exit": 0,
+ "local_jot_parses": 2053,
+ "local_jot_republishes_shared_views": false,
+ "parses_exceed_twice_the_records": false,
+ "conflicts_computed_more_than_once": false,
+ "defects_observed": 0
+}

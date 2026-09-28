@@ -76,6 +76,7 @@ taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual
 | Possible contradictions | Pairs of live records that may argue with each other | `generated/conflicts.json` | regenerated | no |
 | Trap / question index | One line per trap or question, for a reader without the CLI | `known-traps.md`, `open-questions.md` (schema 3) | regenerated | no |
 | Search index | Inverted index that narrows `search`'s candidate set | `index/search.sqlite` | regenerated; machine-local | no |
+| Generation manifest | Which generated files belong to one publication, their digests and its snapshot | `index/generation.json` | written last by every publication; machine-local | no |
 | Store aliases | The project's synonyms for the stemmer | `aliases.txt` | hand-maintained | yes (configuration) |
 | Promoted rule | A decision, attempt or trap made a standing instruction, one line naming its source | the promoted-rules block in `CLAUDE.md` / `AGENTS.md` (outside the store) | until demoted or its record is retired | no — the record is |
 
@@ -94,7 +95,8 @@ so it costs a user nothing — the difference from `refs.yml`, which shipped
 committed, with example entries to clean up — and what it holds is disposable
 in the strict sense: `index/search.sqlite` is built at reindex only once the
 store has 200 indexable records, is used only while the `inputs_hash` it was
-stamped with still matches, and only narrows which records `search` parses.
+stamped with still matches the store's content (no size/mtime shortcut, since
+audit WP07), and only narrows which records `search` parses.
 Matches and scores are identical with and without it, and deleting it costs
 nothing but speed.
 
@@ -150,8 +152,10 @@ further: it writes one rule line, naming the record's id, into a managed block
 of its own in the instruction file — separate from the signpost block, so
 `--remove-integrations` and the signpost's bloat check keep their meaning —
 and marks the record `promoted_to`. The record stays `active` and stays the
-source of truth. The packet leaves it out of its lists, since the harness
-already injects the rule; `guard` and `search` still see it. Demotion is the
+source of truth. The packet keeps it, as the rule in force, because a packet
+may be read by a harness that never loads that file (audit WP08); only the
+Claude Code `SessionStart` view leaves out rules its `CLAUDE.md` carries.
+`guard` and `search` see it either way. Demotion is the
 way back down, and it is automatic when the record is retired: a rule nobody
 believes any more must not stay in the file every session loads. `audit`
 closes the loop in both directions — `promote-candidate` from the local usage
@@ -172,14 +176,14 @@ scope*: a record with `scope: branch` — a verification of work in progress, a
 jot a hook mined — applies only on the branch it was written on; elsewhere it
 leaves the packet's lists, `guard`'s live set, the prompt hook's injection and
 the near-duplicate candidates, and stays in `search`. *One writer at a time*:
-every writing invocation — CLI, hook write, MCP writer — takes an exclusive
-lock file, `private/.write-lock`, so two read-modify-write sequences cannot
-interleave and lose an update. The CLI and MCP wait 2 seconds and then refuse;
-a hook waits 0.5 seconds and then skips its write, because a hook must never
-block its host. The holder refreshes the file every 15 seconds; a lock
-untouched for 60 seconds, or whose process on this host is gone (POSIX), is
-broken — by one waiter at a time, holding a short break file while it re-checks,
-so two waiters cannot both take it. Read paths
+every writing invocation — CLI, hook write, MCP writer, and the publication of
+`generated/` projections — takes an operating-system lock on
+`private/.store.lock` (`flock` / `msvcrt.locking`). Two read-modify-write
+sequences therefore cannot interleave and lose an update. The CLI and MCP wait
+2 seconds and then refuse; a hook waits 0.5 seconds and then skips its write,
+because a hook must never block its host. The kernel releases the lock when its
+holder exits, so there is no heartbeat and no staleness rule that could hand a
+live writer's lock to a second one (audit WP05). Read paths
 never wait: `resume`, the listings, `search`, `guard`, the `SessionStart` and
 `PreToolUse` hooks, and the prompt hook's injection.
 
@@ -269,24 +273,45 @@ not a haunted attic of embeddings.
 
 Everything is in the `breadcrumbs` package, standard library only.
 
+**Layers (audit WP16).** The CLI, the MCP server and the hooks are
+transports. What they do to a store goes through `service.py`, the
+application layer. Each operation runs in an explicit `service.Context` that
+carries the root, the channel, the clock and the agent. Argument parsing,
+prompts, wording, exit codes and host payload mapping stay in the
+transports. The domain functions still live mostly in `cli.py`, but the
+argument parser does not: `service.py` and the domain modules import without
+it (`tests/test_application_parity.py` checks this). A golden of every
+transport's serialized output, captured before the extraction, holds ids,
+scores and wire contracts in place.
+
 | Module | Holds |
 |---|---|
-| `cli.py` | The CLI: record I/O, validate, the resume packet, search/guard scoring, audit, doctor, the integrations and the hook translators. The other modules call back into it. |
+| `service.py` | The application layer (audit WP16): `Context` (root, store, channel, clock, agent) and `active(ctx)`, which makes those current for one operation (the admission channel, the clock, the store's search aliases per thread, one parse cache). `record` is the one decision/attempt write both `crumb remember` and `memory_record` use. `mark_status`, `search`, `guard`, `resume_packet`, `prompt_lookup` and `admit` complete it. Failures are a `ServiceError` with a `kind` the adapter words. It never prints and does not import the parser. |
+| `cli_parser.py` | The `crumb` argument parser (moved out of `cli.py`, audit WP16). `cli.main` builds it lazily, and `cli.build_parser` and the other moved names are forwarded. |
+| `cli.py` | The CLI commands and most domain functions: record I/O, validate, the resume packet, search/guard scoring, audit, doctor, the integrations and the hook translators. The other modules call back into it. Since audit WP15 every command runs inside `operation()`: a parse cache keyed by each file's path, type and content digest (so it can never serve stale content), and `op_memo` for derived results keyed by the exact records they read. |
 | `blockfiles.py` | Traps and questions as one file each (schema 3): reading them in the dict shape the block readers return, writing them, rebuilding `known-traps.md` / `open-questions.md` as indexes, adopting hand-written blocks, and migration step 3. |
-| `related.py` | `generated/related.json`: "see also" by pure overlap, written at reindex. |
+| `related.py` | `generated/related.json`: "see also" by pure overlap, written at reindex. Since audit WP15 only pairs sharing a feature are scored (the same result as all pairs, kept as the `_compute_related_full` oracle), with no corpus cutoff; past a pair budget it records `degraded`, which `audit` reports. |
 | `searchindex.py` | `index/search.sqlite`: build, freshness check, and the narrowed candidate set `search` uses when the index is fresh. |
 | `migrate.py` | Ordered, idempotent store-format steps (2: inboxes, 3: trap/question files, 4: `handoffs/`), the manifest version write, the pre-migration backup. |
-| `inbox.py` | Jots: writing, listing, promotion, dropping. |
-| `lifecycle.py` | Record lifecycle (Phase 3): per-type TTLs and expiry, the packet's lifecycle and missing-evidence warnings, `verify --recheck`, near-duplicate similarity and the write gate, `supersedes` handling, clusters and `--merge`, contradiction rules and `generated/conflicts.json`, session rollup, and its `audit` findings. Reads the clock only through `cli._now()`. |
+| `inbox.py` | Jots: writing, listing, promotion, dropping. A machine-local jot publishes nothing: no shared view reads `private/inbox/` (audit WP15). |
+| `lifecycle.py` | Record lifecycle (Phase 3): per-type TTLs and expiry, the packet's lifecycle and missing-evidence warnings, `verify --recheck`, near-duplicate similarity and the write gate, `supersedes` handling, clusters and `--merge`, contradiction rules and `generated/conflicts.json`, session rollup, and its `audit` findings. Contradictions and the near-duplicate sweep pair records by prefix filtering, which is exact (the pairwise versions are kept as oracles), so neither has a size cutoff (audit WP15). Reads the clock only through `cli._now()`. |
 | `lifecycle_cmds.py` | The CLI surface of `lifecycle.py`: `expired`, `questions`, `consolidate`, `rollup` and the `verify --recheck` runner, imported only when one of them runs. |
 | `promote.py` | The bridge to long-term memory (Phase 4): `promote` / `demote` and their CLI surface, the promoted-rules block in `CLAUDE.md` / `AGENTS.md` (rendering, reading, rewriting), the `promoted_*` fields and the trap-block bullet, auto-demote on retire (called from `set_record_status`), the "is it promoted" predicates the packet uses, and the `promoted-bloat` / `demote-candidate` / `promoted-drift` / `promote-candidate` audit checks and the doctor summary. |
 | `handoffs.py` | One handoff per branch (schema 4): the default-branch rule, the handoff file name (slug, plus a hash when the slug is not the branch name), which file a capture writes and a resume or `memory://handoff` reads (and the label it reports), seeding a new branch handoff with `handoff.md`'s Current Focus, and `prune handoffs`. |
-| `lock.py` | The store write lock: `store_lock(memory_dir, timeout)` over `private/.write-lock` (exclusive create; pid, time and host; a 15 s heartbeat; stale after 60 s untouched or a dead pid on this host; broken under an exclusive `.write-lock.break` with a re-check), an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts. Which CLI invocations take it is `cli._needs_lock`. |
-| `transcript.py` | Deterministic transcript mining into jot candidates. |
-| `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state, the `UserPromptSubmit` hook (retrieval keeps current records only), the `PreCompact` / `SubagentStop` hooks. |
-| `hooklog.py` | The hook log (WM-62): `run_logged` wraps every `crumb hook` firing, passes its output through unchanged and appends one line to `private/hook-log.jsonl` (event, time, ms, outcome, the handler's `note()` detail; never content), bounded at 5000 lines; `summarize` for `crumb doctor --hook-log`. |
-| `usage.py` | Local surfacing counts (`private/usage.json`, with `started_at`), the `--sessions` ordering, and decay candidates for `usage --decay` and audit's `decay-candidate`. |
-| `mcp_core.py`, `mcp_server.py` | The MCP adapter over the same core functions, and its SDK binding. |
+| `mutations.py` | Multi-record operations (audit WP06): `transaction(memory_dir, kind)` journals each touched record or instruction file's before-image to `private/operations/<id>/` before the first write; a failure rolls every one back, a crash leaves the journal for `recover()` (`crumb recover`), and a nested transaction joins its parent. `write_text_atomic(…, expected=)` raises `RevisionConflict` on a lost update. |
+| `retrieval.py` | Purpose-specific lookup for the prompt hook (audit WP10): an acknowledgement vocabulary instead of a length gate, `prompt_lookup` through the index with no corpus pre-count (a full scan up to 2,000 records, else a reported `skipped`), eligibility before the cap, a cheap corpus summary, and a `Lookup` that says how it ran. |
+| `snapshots.py` | A projection's stamp is the snapshot it was built from (audit WP07): `stable_build()` hashes the inputs, builds with that stamp, and re-hashes; a store that keeps changing across three attempts is stamped `unstable`, never a digest. |
+| `projections.py` | The generation manifest `index/generation.json` (audit WP07), written after every output of a publication: stamp, stability, each file's sha256, a stat fingerprint. `verified(name)` returns a generated file only when that manifest still vouches for it; the guard hook reads its pre-filter through it. |
+| `path_policy.py` | What the store may read and write on disk (audit WP13): nothing inside `.project-memory/` may be a symbolic link or junction, and `..` never appears in a store path. On POSIX, store paths are opened one component at a time with `O_NOFOLLOW` relative to directory descriptors, so a swapped-in link is refused rather than followed; elsewhere `lstat` checks come first. `read_bytes`/`read_text`/`read_dir`/`read_files`, `write_atomic`, `mkdirs`, `open_file`, `find_links`, and `check_project_target` for project files the tool writes. Refusals are `Refused` (`PermissionError`) with a relative path, never the target. Stdlib-only, no package imports. |
+| `safetext.py` | Record text rendered as data (audit WP13): `inline` (one line, bounded) and `block` (multi-line, bounded) escape control and invisible characters and neutralize closing and envelope-named tags. Used by the hook lines, the packet renderer, the guard reason, MCP resources and tools, and the CLI's human output. |
+| `admission.py` | Who may do what (audit WP14): the `solo`/`team` profiles and `mcp_mode` from the manifest; the channel (cli, mcp, hook) set by the transport, never by a payload; refusal of payload-set review fields and `agent: human` from MCP or hooks; proposals (`needs-review`) for agent-written guidance under `team`; high-impact MCP status changes refused under `team`/`propose`; content-bound review stamps (`crumb review`) and the valid review `crumb promote` needs under `team`. What it cannot bind (a full-shell agent) is in `security.md` §4.2. |
+| `compat.py` | Can this build read and write this store? (audit WP21.) `check` compares the manifest's `schema_version` and `requires:` features with `cli.SCHEMA_VERSION` and `KNOWN_FEATURES`: current, older, newer, unknown features or unreadable. `lock.store_lock` refuses a store this build does not fully understand (`IncompatibleStore`), so every writer refuses it; `warning` is the line readers show. Policy: [`compatibility.md`](compatibility.md). |
+| `lock.py` | The store write lock: `store_lock(memory_dir, timeout)`, an OS lock (`flock` / `msvcrt.locking`) on the permanent file `private/.store.lock`, which carries the holder's pid, time and host for messages only. Also an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts; waiting on a live 0.3.0-era `.write-lock`; `LockUnsupported` when the filesystem refuses. Which CLI invocations take it is `cli._needs_lock`; projection publication takes it in `cli.try_reindex_projections`. `side_lock(path, timeout)` (audit WP12) is the same OS lock on an auxiliary file, for machine-local state that is not the store (hook state, usage folds, hook-log rotation); it yields `held`, `busy` or `unsupported` and never raises. |
+| `transcript.py` | Deterministic transcript mining into jot candidates. `ingest()` (audit WP09) reads each session's transcript incrementally: a byte cursor with file identity, Bash/edit calls carried between firings so late results join, a durable candidate backlog saved before any jot is written, and a cross-session ledger of acknowledged events, all under the store lock. |
+| `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state (each session's entry updated under a side lock, `update_state`; the latest task kept apart from the latest lookup, audit WP12), the `UserPromptSubmit` hook (retrieval keeps current records only; counts only the ids it prints), the `PreCompact` / `SubagentStop` hooks. |
+| `hooklog.py` | The hook log (WM-62): `run_logged` wraps every `crumb hook` firing, passes its output through unchanged and appends one line to `private/hook-log.jsonl` (event, time, ms, outcome, the handler's `note()` detail; never content), bounded at about 5000 lines by a locked rotation into `hook-log.1.jsonl` that never drops a parallel hook's line (audit WP12); `summarize` for `crumb doctor --hook-log`. |
+| `usage.py` | Local surfacing counts: one event file per emission in `private/usage-events/`, folded exactly once into `private/usage.json` (with `started_at` and `accounting`) under `.usage.lock` (audit WP12). Counts only emitted ids, never retrieved or trimmed ones. The `--sessions` ordering, and decay candidates for `usage --decay` and audit's `decay-candidate`. |
+| `mcp_core.py`, `mcp_server.py` | The MCP adapter: tools and resources over the application layer (`service.py`), with the MCP envelope and wording; and its SDK binding. |
 
 `evals/` sits outside the package and ships in neither the wheel nor the sdist.
 `evals/run.py` (standard library only) builds each suite's store from its

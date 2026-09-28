@@ -16,9 +16,10 @@ demote-candidate check find it again:
     - <rule>. _(why: <rationale>; source: `<record id>`)_
 
 **Promotion does not retire the record.** It is still true — it is now also
-long-term. The packet leaves it out (it is already in the model's context
-through the instruction file) and says how many it left out; `guard` still
-scores it at full weight; `search` marks it `promoted`. Retiring a promoted
+long-term. The packet keeps it and shows the rule in force; only a consumer
+that has loaded the rule (Claude Code's SessionStart hook, from `CLAUDE.md`)
+gets it left out, and is told how many (audit WP08, see `loaded_rules`).
+`guard` still scores it at full weight; `search` marks it `promoted`. Retiring a promoted
 record demotes it: a rule nobody believes any more must not stay in the file
 every session loads.
 
@@ -34,6 +35,7 @@ import re
 from pathlib import Path
 
 from breadcrumbs import cli
+from breadcrumbs import path_policy
 
 PROMOTED_BEGIN = (
     "<!-- >>> breadcrumbs promoted rules (managed by `crumb promote`) "
@@ -205,7 +207,7 @@ def _set_fields(memory_dir: Path, item: dict, fields: dict) -> dict:
     trap block, the `- Promoted to:` bullet. Validate-gated; reverted on failure."""
     memory_dir = Path(memory_dir)
     path = Path(item["path"])
-    original = path.read_text(encoding="utf-8")
+    original = path_policy.read_text(path)
     if path.parent.name in cli.DIR_TYPES:
         meta, body = cli.parse_frontmatter(original)
         for key, value in fields.items():
@@ -241,8 +243,8 @@ def _set_fields(memory_dir: Path, item: dict, fields: dict) -> dict:
                 if not _BLOCK_PROMOTED_LINE_RE.match(ln)
             )
         new_text = original[:start] + block + original[end:]
-    cli.write_text_atomic(path, new_text)
-    fails = cli._validate_new_file(memory_dir, path)
+    cli.write_text_atomic(path, new_text, expected=original)
+    fails = cli._validate_new_file(memory_dir, path, original)
     if fails:
         cli.write_text_atomic(path, original)
         return {"ok": False, "error": "; ".join(f["message"] for f in fails)}
@@ -273,7 +275,7 @@ def _resolve_target(root: Path, to: str | None) -> tuple[Path | None, str | None
 # --------------------------------------------------------------------------- #
 
 
-def promote(
+def _promote(
     memory_dir: Path,
     root: Path,
     rid: str,
@@ -311,6 +313,15 @@ def promote(
             "code": 2,
             "error": f"{item['id']} is confidence: low; add evidence before making it permanent",
         }
+    # A standing rule every session loads is the highest-impact write there is.
+    # The team profile requires a review that still matches the record (F18).
+    from breadcrumbs import admission as _admission
+
+    try:
+        meta, body = _record_meta_and_body(item)
+        _admission.check_promote(_admission.context(memory_dir), meta, body)
+    except _admission.Refused as exc:
+        return {"ok": False, "code": 1, "error": str(exc)}
     target, problem = _resolve_target(root, to)
     if problem:
         return {"ok": False, "code": 2, "error": problem}
@@ -348,7 +359,7 @@ def promote(
     return {"ok": True, "id": item["id"], "kind": item["kind"], "to": target.name, "rule": bullet}
 
 
-def demote(memory_dir: Path, root: Path, rid: str, *, reason: str | None = None) -> dict:
+def _demote(memory_dir: Path, root: Path, rid: str, *, reason: str | None = None) -> dict:
     """Remove `rid`'s rule from the long-term file and clear its promotion fields."""
     memory_dir, root = Path(memory_dir), Path(root)
     item = cli.find_item(memory_dir, rid)
@@ -377,6 +388,73 @@ def demote(memory_dir: Path, root: Path, rid: str, *, reason: str | None = None)
     return {"ok": True, "id": rid, "removed_from": removed_from, "reason": reason}
 
 
+class _Abort(Exception):
+    """A promote/demote step refused: roll back what was written, return its result."""
+
+    def __init__(self, result: dict):
+        self.result = result
+        super().__init__(result.get("error") or "refused")
+
+
+def _as_operation(kind: str, memory_dir: Path, run) -> dict:
+    """Run `run()` as one store operation (audit F20).
+
+    Promotion edits two files, the record and CLAUDE.md or AGENTS.md; demotion
+    edits them the other way round. A refusal or failure after the first write
+    rolls both back, so a rule is never left in the file every session loads
+    while its record says it is not promoted, or the other way round.
+    """
+    from breadcrumbs import mutations as _mutations
+
+    try:
+        with _mutations.transaction(memory_dir, kind):
+            result = run()
+            if not result.get("ok"):
+                raise _Abort(result)
+            return result
+    except _Abort as refused:
+        return refused.result
+    except _mutations.RevisionConflict as exc:
+        return {"ok": False, "code": 1, "error": str(exc)}
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "code": 1, "error": _mutations.describe(exc)}
+
+
+def _record_meta_and_body(item: dict) -> tuple[dict, str]:
+    """The item's frontmatter and body as written (a trap block has only meta)."""
+    path = item.get("path")
+    if path and Path(path).suffix == ".md" and Path(path).parent.name in cli.DIR_TYPES:
+        try:
+            return cli.parse_frontmatter(path_policy.read_text(Path(path)))
+        except Exception:
+            pass
+    return dict(item.get("meta") or {}), str(item.get("text") or "")
+
+
+def promote(
+    memory_dir: Path,
+    root: Path,
+    rid: str,
+    *,
+    to: str | None = None,
+    rule: str | None = None,
+    default_rule: bool = False,
+) -> dict:
+    """Write `rid` into the long-term file as one rule. See `_promote`."""
+    return _as_operation(
+        "promote",
+        Path(memory_dir),
+        lambda: _promote(memory_dir, root, rid, to=to, rule=rule, default_rule=default_rule),
+    )
+
+
+def demote(memory_dir: Path, root: Path, rid: str, *, reason: str | None = None) -> dict:
+    """Remove `rid`'s rule from the long-term file and clear its fields. See `_demote`."""
+    return _as_operation(
+        "demote", Path(memory_dir), lambda: _demote(memory_dir, root, rid, reason=reason)
+    )
+
+
 def auto_demote(memory_dir: Path, rid: str, status: str) -> dict | None:
     """Demote a promoted record that `status` retires. None when nothing to do."""
     if status not in RETIRING_STATUSES:
@@ -402,6 +480,71 @@ def is_promoted_record(rec) -> bool:
 
 def is_promoted_trap(trap: dict) -> bool:
     return bool(promoted_to(trap))
+
+
+# --------------------------------------------------------------------------- #
+# Audit WP08 (F13): what a packet's reader actually has
+# --------------------------------------------------------------------------- #
+#
+# Promotion is one more delivery channel, not a reason for a record to vanish
+# from the packet. The packet used to drop every promoted record on the
+# strength of its `promoted_to` field. A reader that never loads that file (a
+# different harness, a read-only clone), or a file that no longer holds the
+# rule, was then left with neither. A packet now drops a promoted record only
+# for a consumer that has verifiably loaded the rule: see `loaded_rules`.
+
+
+def rules_in_files(root: Path, names=PROMOTE_TARGETS) -> dict[str, dict[str, str]]:
+    """`{file: {source id: bullet line}}` for the promoted-rules blocks present now."""
+    out: dict[str, dict[str, str]] = {}
+    for name in names:
+        rows = read_bullets(Path(root) / name)
+        out[name] = {sid: line for sid, line in rows if sid}
+    return out
+
+
+def loaded_rules(root: Path, names=("CLAUDE.md",)) -> dict[str, str]:
+    """`{source id: bullet line}` a harness that loads `names` has in its context.
+
+    Read at the moment the harness loads the same files (its session start), so
+    it is the revision that consumer actually holds. Claude Code loads the
+    project's `CLAUDE.md`; it does not load `AGENTS.md`, so a rule promoted there
+    is not "loaded" for it.
+    """
+    loaded: dict[str, str] = {}
+    for rules in rules_in_files(root, names).values():
+        loaded.update(rules)
+    return loaded
+
+
+_SOURCE_NOTE_RE = re.compile(r";?\s*source:\s*`[^`]+`")
+
+
+def rule_text(line: str) -> str:
+    """The rule a bullet states: no list marker, no source pointer."""
+    text = line.strip()
+    if text.startswith("- "):
+        text = text[2:]
+    text = _SOURCE_NOTE_RE.sub("", text)
+    return text.replace(" _()_", "").replace("_()_", "").strip()
+
+
+def effective_rule(
+    memory_dir: Path, rid: str, target: str | None, in_files: dict[str, dict[str, str]]
+) -> tuple[str, bool]:
+    """`(rule, in_file)`: the rule in force for `rid`, and whether its file holds it.
+
+    The bullet in the instruction file is what a harness loading that file
+    reads, so it wins, even when edited by hand. When the file or the bullet is
+    gone, the rule is rendered from the record, as `promote` would write it.
+    """
+    line = (in_files.get(target or "") or {}).get(rid)
+    if line:
+        return rule_text(line), True
+    item = cli.find_item(memory_dir, rid)
+    if item is None:
+        return "", False
+    return rule_text(expected_bullet(memory_dir, item)), False
 
 
 # --------------------------------------------------------------------------- #
@@ -499,7 +642,7 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
                 cli._audit_finding(
                     "promote-candidate",
                     cli.AUDIT_INFO,
-                    str(rec.path.relative_to(memory_dir)),
+                    rec.path.relative_to(memory_dir).as_posix(),
                     f"{rid} has held for {age} days and surfaced in {len(set(sessions))} "
                     f"sessions — make it a standing rule with `crumb promote {rid}`",
                     id=rid,
@@ -600,8 +743,9 @@ def cmd_promote(args) -> int:
     print(f"Promoted {res['id']} to {res['to']}:")
     print(f"  {res['rule']}")
     print(
-        "  The record stays active; the packet now leaves it out because the rule is in "
-        f"{res['to']}. Take it back out with `crumb demote {res['id']}`."
+        f"  The record stays active; packets show it as a standing rule in {res['to']}, "
+        f"and a session that loads {res['to']} is not shown it twice. Take it back out "
+        f"with `crumb demote {res['id']}`."
     )
     return 0
 

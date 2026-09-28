@@ -6,6 +6,699 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
+## [Unreleased]
+
+## [0.4.0] — 2026-09-28
+
+**The reliability release.** It implements the remediation of an external audit
+(findings F01–F26, work packages WP00–WP22). An AI coding agent did the work,
+and every package has a review record under `docs/reviews/` stating what
+changed, the evidence and the limits. At release, seven packages (WP14–WP17,
+WP19, WP20, WP22) still await a person's review; the tracker
+(`docs/reviews/2026-09-26-breadcrumbs-work-packages.json`) says which. The
+release checklist, `docs/releases/reliability-release-checklist.md`, lists the
+gates and what is not claimed.
+
+**Upgrading.** `schema_version` is unchanged (4). This is a minor release
+because compatibility surfaces changed:
+- a store under `crumb policy set team` declares `requires: review-profiles`,
+  which an older version is refused for writing;
+- the write lock is now an OS lock that 0.3.x does not see, so run one
+  crumb-kit version per checkout;
+- `validate` is stricter, and guard's pre-filter formats and verdict floors
+  changed.
+
+Re-run `crumb init --with-hooks` so the guard hook also covers `PowerShell` and
+`NotebookEdit`.
+
+### Changed — the record contract (audit WP01)
+
+Work package WP01 of `docs/reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md`,
+finding F05. `validate` used to check that fields were present, not that their
+values made sense. `confidence: certainly`, a free-text `scope`, an evidence item
+with no `ref`, an `expires_at` nothing could parse, and a `superseded_by` naming
+no record all passed.
+
+- **New `breadcrumbs/validation.py`.** It holds the per-field and cross-record
+  checks. Every writer runs them before writing, and `validate` runs them over
+  the whole store. See `docs/record-schema.md` §4 → *The record contract* for
+  the codes.
+- **`validate` fails on** an invalid `confidence` or `review_status`; malformed
+  evidence; a timestamp outside the documented ISO-8601 subset; a scope other
+  than `project` or `branch`; and a `superseded_by` that is not a single id,
+  names no record, points at its own record, or loops.
+- **The evidence rule counts only well-formed items.** A record whose `evidence`
+  holds nothing usable now needs `confidence: low`, like one with no evidence.
+- **Every `validate` finding carries a stable `code`,** including in `--json`
+  output. Existing checks use their `check` name as the code.
+- **`crumb remember --scope` and `memory_record`'s `payload.scope` accept only
+  `project` or `branch`.** They were free text. The MCP tool also refuses an
+  evidence item with no `type` or `ref`.
+- **`mark-status --superseded-by` must name an existing record.**
+- **The resume packet warns** in one *Stale / Risk Warnings* line when
+  committed records break the contract. It still reads them.
+- **Timestamps ending in `Z`** are now read on Python 3.9 and 3.10, as they
+  already were on 3.11 and later.
+
+**Compatibility.** No record is rewritten and no id changes. A legacy record
+that breaks the contract is reported by `validate` and otherwise read exactly as
+before; for example, a free-text scope still counts as `project`. A status change
+or other rewrite is refused only for a problem it introduces, so such a record
+can still be retired. Every record in this repository's store and in every
+fixture already met the contract. A store that does not will see `crumb
+validate`, and any CI step that runs it, fail until those records are corrected
+by hand.
+
+### Changed — truthful transcript outcomes (audit WP02)
+
+Finding F01. The transcript miner turned uncertain tool calls into claims. A
+call with no result counted as a pass; a failure printed after the first 400
+characters of output was missed; `0 failed` read as a failure; and attempt
+candidates claimed a cause.
+
+- **Every tool call gets an outcome:** `success`, `failure`, `interrupted`,
+  `not_run` (a `<tool_use_error>` refusal or a rejected tool use) or `unknown`.
+  The harness's own signals decide first, then the whole output.
+- **Failure words in the output mean `failure` only for a test, lint or build
+  command.** Elsewhere they mean `unknown`: a `grep` that found "error:" has not
+  failed. Zero counts such as `0 failed` are not failures.
+- **Only `success` is "passed".** An attempt needs an observed failure and a
+  later observed success, and is worded "failed, then passed after N file(s)
+  changed" (not shown to be the fix). Only edits that succeeded count.
+
+### Changed — jot promotion preserves meaning (audit WP03)
+
+Finding F03. `crumb inbox promote` without `--set` wrote an empty stub, so the
+jot's note was not in the record. The record also came out `scope: project`
+and `confidence: medium` whatever the jot was, and skipped the near-duplicate
+gate.
+
+- **The note is carried into every target:** a decision's `Decision`, an
+  attempt's `Result`, an idea's `Idea`, or `Notes` for a verification, trap or
+  question. When `--set` or the trap flags supply other text, the note is kept
+  as a `From jot <id>: …` paragraph. New frontmatter keys `promoted_from` and
+  `promoted_from_digest` name the source.
+- **Scope and confidence are inherited.** `--scope project` widens a branch jot
+  and `--confidence` raises it; both are reported. So a jot with no evidence now
+  promotes as a `low`-confidence record, where it used to be refused for
+  lacking evidence at the implied `medium`.
+- **The near-duplicate gate applies**, with `--allow-duplicate` and
+  `--supersedes ID` (exit 3), and the MCP tool takes the same parameters.
+- **Private jots are guarded.** The output says when a private jot's text is now
+  committed, and a private jot carrying a credential-shaped string is refused.
+
+### Changed — recheck separates execution from proof (audit WP04)
+
+Findings F04 and F25. `crumb verify --recheck` wrote `fixed` whenever every
+recorded command exited 0, so a `python -c pass` could close a bug report. It
+also ran test-file paths as programs and lost the original's branch scope.
+
+- **Only an assertion settles a claim.** Declare one with `verify --assert CMD`:
+  a command that exits 0 exactly when the subject is fixed, stored as
+  `{type: assert, ref, spec: "1"}`. The result is `fixed`, `open` or
+  `regressed` (an assertion that fails on a claim recorded as fixed).
+- **Plain `command` evidence is a diagnostic.** It runs (with consent) and is
+  reported, but changes nothing unless bound for that run with
+  `--bind-commands`, which also records the binding.
+- **Inconclusive runs write nothing.** A missing tool, a timeout, a signal or an
+  unknown spec leaves the claim as it was (`settled: false`).
+- **`test` evidence is never executed.**
+- **A settled recheck keeps the claim's scope, branch and confidence.** A
+  branch-scoped claim is not rechecked from another branch.
+- **Runs are bounded (new `breadcrumbs/checks.py`).** Output is kept in a
+  rolling 64 KiB window, and each run gets its own process group, terminated on
+  timeout, on Ctrl-C and when the command returns.
+
+### Changed — the write lock is an OS lock (audit WP05)
+
+Findings F06 and F08. The write lock was a file judged by its age: a lock
+untouched for 60 seconds could be broken while its writer was still alive, for
+example after a suspension or a clock jump. And `crumb resume` rebuilt
+`generated/` and the search index without taking the lock at all.
+
+- **The lock is now `flock` / `msvcrt.locking`** on a permanent
+  `private/.store.lock`. The kernel releases it when its holder exits, so there
+  is no heartbeat, no staleness rule and no lock-breaking. A filesystem that
+  refuses OS locks makes writes fail with an explanation rather than run
+  uncoordinated.
+- **Publishing projections takes the lock.** `resume` prints its packet
+  regardless, and publishes only if the lock is free within 0.5 s; `--json`
+  reports `publication: {published, reason}`.
+- **The search index builds in a temp file of its own.**
+- **`init --force` keeps the lock file,** so it stays exclusive while it
+  replaces the store.
+- **Older versions.** A live 0.3.0-era `private/.write-lock` is waited on,
+  never removed. An older version does not see the new lock, so run one version
+  per checkout.
+- **The lock error now reads "try again shortly".** Deleting the file no longer
+  releases a lock; ending the holding process does.
+
+### Changed — multi-record changes are all or nothing (audit WP06)
+
+Finding F20. `remember --supersedes` wrote the replacement, then ignored whether
+retiring the old record worked, so a failed retirement left two live decisions
+and exited 0. The same shape existed in `inbox promote`, `consolidate --merge`,
+`rollup sessions`, retiring a promoted rule, and `promote`/`demote`.
+
+- **Each of these is one operation (new `breadcrumbs/mutations.py`).** Before
+  its first write, every touched record, singleton and instruction file is
+  journaled under `private/operations/<id>/`. A failed step restores all of
+  them, and the command fails with `nothing was changed`.
+- **New `crumb recover [--apply]`** rolls back an operation a killed writer left
+  unfinished. It restores only files that still hold a state the operation
+  knew, and keeps a copy of anything it removes under `private/recovered/`.
+  `crumb doctor` gains `operations` and `projections` rows, and `resume` warns
+  about unfinished operations.
+- **Retirement failures are errors.** A jot whose retirement fails now undoes
+  its promotion (it used to return `ok` with a warning). A promoted record whose
+  rule cannot be removed is not retired.
+- **Rewrites refuse lost updates.** A rewrite of a record refuses when another
+  editor changed the file after it was read, instead of discarding that edit.
+- **A failed projection rebuild is recorded** in `private/projections-pending`
+  until the next rebuild succeeds.
+
+### Changed — projections describe the snapshot they came from (audit WP07)
+
+Findings F07, F11, F12 and the rest of F06.
+
+- **F07.** A projection's `inputs_hash` was computed after its records were
+  read. A record written in between was left out of the packet but covered by
+  its stamp, so `validate` called it current.
+- **F11.** The guard hook treated a missing or unreadable pre-filter as "no
+  risk".
+- **F12.** The search index called itself fresh on a path/size/mtime match, so
+  a same-size edit with a restored mtime made indexed search miss what the full
+  scan found.
+
+What changed:
+
+- **Stamps come from a verified snapshot (new `breadcrumbs/snapshots.py`).**
+  The inputs are hashed before a build and again after it. A store that keeps
+  changing across three attempts is stamped `inputs_hash: unstable`: the packet
+  warns, `validate` reports it stale, and `reindex` reports it was not
+  published cleanly.
+- **One publication, one generation (new `breadcrumbs/projections.py`).** The
+  packet, the guard pre-filter (now stamped too), `related.json`,
+  `conflicts.json` and the search index come from one snapshot. The index is
+  staged in a unique temp file and moved into place only if the snapshot proved
+  stable. The machine-local manifest `index/generation.json` (each file's
+  sha256, the stamp, a stat fingerprint) is written last.
+- **The guard hook trusts only a verified pre-filter.** If the pre-filter is
+  missing, corrupt, replaced or older than the records, the hook checks the
+  records directly (39 ms instead of 2.6 ms at 200 records), and the hook log
+  notes `prefilter: "unverified"`.
+- **Search-index freshness is the content hash alone.** The index format is now
+  `2`, so an older index is rebuilt.
+
+### Changed — packets are bounded as delivered, and portable (audit WP08)
+
+Findings F13 and F14.
+
+- **F14.** The 5,000-token bound was enforced on the list sections only. A
+  28,500-character Current Focus produced a packet of 7,333 estimated tokens,
+  and `len/4` was treated as if it were a token count.
+- **F13.** Every packet left promoted records out because their rule was "in
+  the instruction file". Removing `CLAUDE.md`, or reading the packet from a
+  harness that never loads it, hid a live decision.
+
+What changed:
+
+- **Every view is measured on its final text:**
+  - the Markdown `resume`, the committed packet, the hook and
+    `memory://resume-packet`;
+  - the JSON `resume --json` (the exact document printed) and MCP
+    `memory_build_resume_packet` (the document returned);
+  - the `--fast` forms, which get their own 1,500-token budget.
+- **Oversize fields become marked excerpts.** Past 2,000 characters, a Current
+  Focus or Next Action becomes an excerpt with a pointer to the full text, as
+  does any list entry or warning past 300. If still needed, they shrink to a
+  bare pointer. The canonical files are never changed. Omissions are counted
+  (`omitted`, `excerpted`).
+- **Each packet names its view, limit, usage and estimator** (`budget`, and a
+  new header line). The estimator is now `approx-tokens/2`: ASCII chars / 4
+  plus one per non-ASCII character. That is unchanged for ASCII text and no
+  longer undercounts CJK or emoji by 4×.
+- **New `crumb resume --budget TOKENS`** bounds what you print. Below a view's
+  smallest budget (500 Markdown, 700 JSON) it exits 2.
+- **Promoted records stay in portable packets as their rules** (`promoted_to`,
+  `rule`, `rule_in_file`). A rule missing from its file is flagged and rendered
+  from the record. Only Claude Code's `SessionStart` hook leaves out records
+  whose rule is in the `CLAUDE.md` it loads, and it says how many.
+- `approx_tokens` in `resume --json` is now the JSON view's own size. The
+  relevance-ordering note no longer repeats the task.
+
+### Changed — transcript mining is incremental and durable (audit WP09)
+
+Finding F02. The hooks' transcript cursor counted the entries of an 8 MB tail
+and stored the count as a file position. Once a transcript outgrew 8 MB the
+tail slid, the count stopped moving, and new entries were never mined again:
+- a result arriving a firing after its call was never joined to it;
+- whatever the per-firing cap held back was lost when the cursor moved.
+
+- **A byte cursor with file identity** (`private/miner/<session>.json`,
+  replacing `miner-cursor.json`).
+  - Each firing reads only complete lines past the cursor, at most 8 MB, and
+    reports what it left.
+  - A partial last line waits for its end, and an over-long line is skipped and
+    counted.
+  - A truncated, replaced or rewritten transcript is read again from the start
+    without writing anything twice.
+- **Calls carry over between firings.** Results join their calls, and a
+  failure, edits and a pass in different firings still make one attempt.
+  Carried commands and outputs never keep a credential.
+- **A durable backlog.**
+  - Candidates are saved, with the cursor, before any jot is written.
+  - The 10-per-firing cap now defers instead of dropping.
+  - Refusals, rule caps and repeated write failures are counted, and
+    `crumb doctor` has a `miner` row.
+- **Idempotent.** Stable candidate fingerprints and a cross-session ledger of
+  acknowledged events (`private/miner/acked.json`) mean that a crash between a
+  jot and the state write, a replayed transcript, or a forked session never
+  writes the same jot twice.
+- Mining runs under the store lock. On contention nothing is consumed, and the
+  next firing reads the same bytes.
+
+### Changed — evals measure delivery and hold critical cases (audit WP18)
+
+Finding F19. The evals scored ranking only:
+- `prompt` called retrieval directly, skipping the hook's length gate,
+  dedupe and rendering;
+- `packet` re-ranked the packet and dropped its noise;
+- the only gate was "not below the baseline".
+
+So `npm test` getting `PROCEED` against a recorded hazard sat inside an
+accepted baseline, and CI was green.
+
+- **Delivery systems.** `prompt_delivered` runs the real prompt hook, including
+  a repeat in the same session. `packet_delivered` scores `crumb resume --task`
+  as printed, in reading order, with its token cost and declared budget.
+  `hook_guard_accuracy` runs the real guard hook. The ranking diagnostics and
+  their definitions are unchanged.
+- **Critical cases** (`evals/critical/cases.yml`): false-safe verdicts, silent
+  guard hooks, superseded or speculative records delivered, missing relevant
+  records, noisy controls, over-budget or malformed delivery.
+  - A failing case fails the run whatever the aggregates say, and
+    `--write-baseline` refuses to write over it.
+  - `known: <finding>` keeps a tracked failure visible without blocking
+    development. It fails `--release`, and a stale marker fails the run.
+  - `waiver:` marks an unclaimed capability.
+  - Three cases are `known: F10` today.
+- **Reviewed baselines.** `--write-baseline` needs `--reason`, lists
+  task-level changes, and refuses regressions without
+  `--accept-regressions`. `baseline.json` keeps a per-task snapshot and a
+  change log.
+- **Definitions and denominators.** Every metric's definition and denominator
+  (`n`) is in `--json` output and `baseline.json`. For example, precision@5
+  divides by what was shown, not by 5.
+- **A holdout suite** (`holdout-ops`, `split: holdout`) is reported apart from
+  `overall`, which stays the development suites.
+- **Fixed, found by the delivery evals:** hook session state dropped the
+  session it had just written when eight others shared its one-second
+  timestamp, so a repeated prompt was injected again.
+
+### Changed — retrieval does not vanish at a boundary; named commands warn (audit WP10)
+
+Findings F09 and F10, and the rest of F11 and F12.
+
+- **F09.** The prompt hook loaded every record to count them and returned
+  nothing above 500, retired ones included.
+- **F10.** Any prompt under 12 characters was skipped, so `npm test` or `quasar`
+  was never answered. `npm test` got `PROCEED` from a trap titled "npm test
+  truncates the database", and the guard pre-filter let the hook skip it.
+
+What changed:
+
+- **New `breadcrumbs/retrieval.py`.**
+  - An acknowledgement vocabulary replaces the length gate.
+  - `prompt_lookup` searches through the index with no pre-count. It scans in
+    full up to 2,000 records without a current index, and past that says the
+    lookup was skipped, once per session.
+  - Eligibility (current records only) is applied before the five-match cap.
+  - Corpus size comes from the verified generation manifest (`corpus`), not
+    the pre-filter file's existence.
+  - The prompt hook is also faster: 154 ms instead of 494 ms at 5,000 records,
+    because nothing is pre-counted.
+- **A trap that names the exact command floors `READ_FIRST`** (the `command`
+  signal). The match needs at least two leading tokens, covering the whole
+  action or stopping at a flag. A command in the trap's remedy never counts.
+- **The guard pre-filter lists named commands** (format 2) and never filters
+  one out. An older pre-filter is not trusted.
+- **`PROCEED` is explained** as "no applicable memory warning found", not an
+  authorization or a safety check.
+- **Lookups say how they ran.** `crumb search --json` has `lookup` (`indexed`,
+  or `full_scan` and why), `--explain` prints it, and the prompt hook logs
+  `retrieval`.
+- **The release workflow runs `evals/run.py --release`** (the WP18 critical
+  gate). The three `known: F10` critical cases pass and their markers are
+  removed.
+
+### Changed — the guard hook warns whenever `crumb guard` would (audit WP11)
+
+Findings F10 and F11.
+
+- **The hook's pre-filter is a strict superset of full guard.** It used to
+  cover only traps and do-not-retry attempts, so an edit to a file only a
+  decision declares could draw `READ_FIRST` from `crumb guard` and silence from
+  the hook. On the eval stores that was 27 of 193 warnings; it is now 0.
+  - It holds tokens, title stems, tags, declared and mentioned files, and named
+    commands, from every record that could drive a verdict (format 3).
+  - Routine commands barely move: 4 of 60 pass the pre-filter, and the median
+    hook time is 2.0 ms, against 1.8 ms.
+- **Named-command heads carry their kind** (a summary head or a backticked
+  span). Before, the kind was inferred from list position, which the sorted
+  pre-filter could break. A summary opening with "Running …" names the command
+  after the verb.
+- **`crumb guard --exit-zero`** (opt-in) exits 0 whatever the verdict. The
+  verdict-mapped codes are unchanged.
+- **Tests pin the boundaries:**
+  - no permission mode ever gets `allow` or `deny`;
+  - `ask` appears only for `PAUSE`/`ASK_HUMAN` in prompting modes;
+  - remedies and controls stay silent;
+  - read-only commands cap at `READ_FIRST`;
+  - blocking attempts keep `PAUSE`.
+- **A new critical eval case:** an edit to a file only a decision declares
+  must warn.
+
+### Changed — compaction follows the latest task; usage counts emissions (audit WP12)
+
+Findings F15 and F16.
+
+- **The latest task is recorded for every substantive prompt, before the
+  lookup.** It used to be saved only when memory matched, so a later task that
+  matched nothing left the older one in place, and compaction restored the
+  older task. Acknowledgements and slash commands still leave it alone.
+  - The latest lookup is kept apart, labelled with a digest of the prompt it
+    ran for. After a compaction, the preamble lists matched records only when
+    they were matched for the latest task.
+  - The text stays local: at most 300 characters, and withheld if it carries a
+    credential. The new manifest key `retain_prompt_text: false` keeps only a
+    digest and a time.
+  - The compaction preamble now reads "Latest task before compaction (the
+    user's words)", or says the text was not retained, or says memory matched
+    nothing for it.
+- **Usage counts only emitted ids.**
+  - The guard hook counted before its dedupe exit, so a repeat it stayed silent
+    on still counted. It now counts after, and only the three matches its
+    reason names.
+  - The prompt hook counted every selected id before budget trimming. It now
+    counts, and deduplicates on, the ids left after trimming.
+  - Deduplicated, over-budget, empty and failed outputs count nothing.
+  - The hook log notes the stages (`candidates`, `matches`, `trimmed`,
+    `emitted`).
+  - `crumb usage` prints the accounting model, which says a count means shown,
+    not read or useful. `--json` carries it as `accounting`.
+- **Local telemetry is contention-safe.**
+  - Each emission is one event file under `private/usage-events/`, folded into
+    `usage.json` exactly once under `.usage.lock`. In the recorded run, six
+    parallel writers lost 110–130 of 180 increments per trial before; now none.
+  - Hook session state is updated under a side lock, per file. A busy lock
+    skips the update and notes `state_dropped`.
+  - The hook log rotates into `hook-log.1.jsonl` instead of being rewritten, so
+    a parallel hook's line is never dropped.
+  - Drops are reported: `usage_dropped` in the hook log, and pending,
+    unreadable and evicted counts in `crumb usage`.
+- **New:** `lock.side_lock`.
+
+### Changed — nothing in the store is a link; record text is rendered as data (audit WP13)
+
+Finding F17.
+
+- **Nothing inside `.project-memory/` may be a symbolic link or junction.** A
+  link used to be followed. Before, on the same fixtures:
+  - `memory://current` and `memory://decisions/{id}` served a file outside the
+    project, and `crumb show` printed it;
+  - `remember` and the hooks wrote through a linked `decisions/` or `private/`;
+  - the store lock wrote its pid through a linked lock file;
+  - `init --with-adapter` wrote through a `CLAUDE.md` linked outside the project;
+  - a migration backup copied the linked file's bytes;
+  - `init --force` through a linked store deleted what it pointed at.
+
+  Each is now refused.
+- **How it is enforced** (`breadcrumbs/path_policy.py`).
+  - On POSIX every store path is opened one component at a time with
+    `O_NOFOLLOW`, and writes rename through the directory descriptor, so a
+    link swapped in mid-operation is refused too. Elsewhere, `lstat` checks
+    run first (with a documented residual race).
+  - `..` in a store path is refused.
+  - Project files the tool writes may be links that stay inside the project
+    (`AGENTS.md -> CLAUDE.md`); one resolving outside is refused.
+  - A refusal names the store-relative path and the rule, never the target or
+    a host path.
+  - `validate` reports each link as `path-link`. `migrate` refuses a store
+    containing one before backing anything up.
+- **Record text is rendered as data** (`breadcrumbs/safetext.py`). The hook
+  lines, the packet, the guard reason, MCP resources and tool results, and
+  `show`/`search`/`guard` output:
+  - escape control characters and invisible formatting;
+  - neutralize closing tags and envelope-named opening tags
+    (`&lt;/system-reminder>`);
+  - keep one-line fields to one line.
+
+  MCP text is bounded at 200,000 characters. Ordinary text is unchanged, and
+  `--json` and the files on disk keep exact values.
+- Record directories, index hits and the input hash are read one directory at
+  a time, so the checks cost nothing measurable at 1,000 records.
+
+### Changed — a version policy, and a store this build does not understand is never written (audit WP21)
+
+Findings F05, F18 and F24. The policy is `docs/compatibility.md`, approved by
+the operator.
+
+- **Pre-1.0 version policy.**
+  - A `schema_version` change, a `requires` feature, or an incompatible change
+    to a compatibility surface (exit codes, `--json` keys, ids, managed blocks,
+    MCP names, hook I/O) ships as the next `0.MINOR`. Fixes and compatible
+    additions ship as `0.x.PATCH`.
+  - The next release from this branch is **0.4.0**.
+  - `tests/test_store_upgrade_contract.py` fails when `SCHEMA_VERSION` changes
+    without a minor bump, and when the release table and the CHANGELOG
+    disagree. The release workflow already runs the suite.
+- **A newer store is read, never written.** Before, 0.3.1 and this branch
+  wrote records into a `schema_version: 5` store; only `validate` objected.
+  - A store whose `schema_version` is above this build's, or whose new
+    `requires:` manifest key names a feature it lacks, is refused at the write
+    lock (`lock.IncompatibleStore`): CLI writers exit 1 ("Upgrade crumb-kit"),
+    MCP tools return `ok: false`, and hooks skip their captures.
+  - `resume` (and the `SessionStart` packet), `guard` (and the guard hook)
+    and other reads work with a warning.
+  - `migrate --restore` is the one write allowed, for repair.
+- **Migration you can predict and undo.**
+  - `--dry-run` reports the backup and the legacy values it leaves alone
+    (free scopes and invalid metadata are reported, never rewritten).
+  - The backup gets `backup-manifest.json` and is verified before any step.
+  - An interrupted migration resumes against its original backup.
+  - `crumb migrate --restore [BACKUP]` puts the committed store back exactly,
+    and verifies it.
+- **`crumb --version` reports the code that is running.** `get_version`
+  preferred installed package metadata, which is stale for an editable
+  install or a leftover `*.egg-info`, and so reported 0.3.0 from a 0.3.1
+  checkout. It now returns `__version__`.
+- **Merged 0.3.1** into this line of work. `RELEASING.md` records a stray,
+  never-published tag `0.1.13` (no `v`).
+
+### Added — review profiles: who may make memory authoritative (audit WP14)
+
+Finding F18. `review_status: reviewed` and `agent: human` were claims anyone
+could make, and nothing separated routine capture from the writes that make
+memory authoritative. Details: `docs/security.md` §4.
+
+- **`crumb policy set solo|team [--mcp-mode write|propose|read-only]`.**
+  - `solo` (the default) changes nothing.
+  - `team`: guidance written through MCP, hooks, or the CLI inside an agent
+    session is written unattended as a proposal
+    (`review_status: needs-review`). Superseding, rejecting or quarantining
+    through MCP is refused. `crumb promote` needs a valid review. The store
+    declares `requires: review-profiles`.
+  - `mcp_mode: read-only` refuses every MCP write, and the server does not
+    list the writing tools.
+  - Unknown values fail closed (to `team`, and to `read-only`).
+- **`crumb review <id>`.** A content-bound stamp (`reviewed_by`,
+  `reviewed_at`, `reviewed_hash`). An edit makes it stale. A `reviewed` with
+  no matching stamp is only "claimed".
+- **Payloads cannot forge identity.** MCP and hook payloads may not set review
+  fields or claim `agent: human`; such calls return
+  `{ok: false, refused_by: "policy"}`. The channel is set by the transport.
+- **Stated limits.** This binds MCP clients and hooks, not an agent with a
+  shell; for those, Git review of `.project-memory/` and the instruction files
+  is the boundary. Old releases (0.3.1 and earlier) do not enforce profiles.
+
+### Changed — rebuild cost falls without dropping work (audit WP15)
+
+Finding F23. A 1,000-record reindex parsed 7,200 records (2.75 s here), and a
+machine-local jot paid for a full publication (2.9 s). Both now parse each
+record once: reindex 0.86 s, local jot 0.15 s. "See also" was skipped
+above 2,000 items, and the audit's duplicate sweep skipped a type above 2,000
+items without saying so. Measurements: `docs/reviews/2026-09-27-breadcrumbs-wp15/`.
+
+- **One parse per record per operation.** Every command, hook, MCP call and
+  publication runs inside `cli.operation()`. A record's bytes are parsed once,
+  keyed by path, type and content digest, so a changed file always re-parses.
+  Derived results such as the conflict report are memoized under the exact
+  records they read. Nothing is cached across operations.
+- **Pairs come from shared features, with the same results.** `related.json`,
+  `conflicts.json` and the duplicate sweep score only pairs that could reach
+  their thresholds: pairs sharing a feature, and exact prefix filtering for the
+  Jaccard rules. The pairwise versions are kept as test oracles, and the
+  results are identical.
+- **No corpus cutoffs.**
+  - `related.json` is built at any size. `skipped` is now always `null`.
+  - Past 3,000,000 candidate pairs, the most widely shared features stop
+    generating pairs. The file then carries a `degraded` report, and `audit`
+    raises `related-degraded`.
+  - The duplicate sweep covers every type at any size.
+- **A machine-local jot publishes nothing.** No shared view reads
+  `private/inbox/`.
+- **`benchmarks/continuity_scale.py`** measures latency, parse count, input
+  hashes, peak memory and bytes written.
+- **Limit.** Every write still runs one whole-store `validate` (the WP01 write
+  gate), so capture cost grows linearly: 0.15 s at 1,000 records and 1.4 s at
+  10,000 here.
+
+### Changed — an application layer the CLI, MCP and hooks share (audit WP16)
+
+Finding F21. `cli.py` was both the CLI and the domain kernel. `crumb
+remember` and `memory_record` were two copies of one write pipeline. Search
+aliases were one process-wide table, so a store with no aliases could stem
+with another store's aliases when two were in use at once.
+
+- **`breadcrumbs.service`.**
+  - `Context` (root, store, channel, clock, agent) and `active(ctx)`.
+  - `record`, the one decision/attempt write both transports use, plus
+    `mark_status`, `search`, `guard`, `resume_packet`, `prompt_lookup` and
+    `admit`.
+  - The CLI commands, the MCP tools, the guard hook and the prompt hook call
+    it. Wording, exit codes and envelopes stay in the transports.
+- **The argument parser moved to `breadcrumbs.cli_parser`.** Importing
+  `breadcrumbs.cli` or `breadcrumbs.service` no longer defines or imports it.
+  `cli.build_parser` and the other moved names are forwarded, and the
+  `crumb.py` shim re-exports them.
+- **Aliases and the clock are per operation.** `cli.store_aliases(memory_dir)`
+  and `cli.clock(fn)` are scoped and per-thread. Patching `cli._now` still
+  works.
+- **No output changes.** `tests/test_application_parity.py` replays one
+  session through every transport. It compares the outputs with a golden
+  captured before the extraction: ids, scores, verdicts, packets, envelopes,
+  exit codes and generated files all match.
+
+### Changed — adapters, the MCP contract and native platforms are qualified (audit WP17)
+
+Finding F22. The guard hook's matcher named six tools and translated them by
+hand. A `PowerShell` call became an empty action, and `NotebookEdit` was not
+guarded. The MCP surface had no versioned contract. Every CI job ran on
+Ubuntu.
+
+- **`breadcrumbs/adapters/claude.py`.**
+  - It declares every guarded tool: `Bash`, `PowerShell`, `Edit`, `Write`,
+    `MultiEdit`, `NotebookEdit`, `Task` and `Agent`.
+  - It declares the ignored ones (reads, searches, web fetches).
+  - It normalizes each guarded tool's documented input into an action.
+  - An unknown tool is reported as unsupported, never guessed at.
+  - The installed `PreToolUse` matcher is built from the declaration.
+    Re-running `crumb init --with-hooks` updates an existing install.
+- **A versioned MCP contract.** `mcp_core.contract()` (version 1) states the
+  tools, parameters, advisory annotations, resources, prompts and error
+  envelope, pinned by a test fixture.
+  - The server now attaches the annotations (`readOnlyHint`,
+    `destructiveHint`, …) on SDKs that accept them.
+  - They are hints for a client's UI, not access control.
+- **Native platforms.**
+  - A `native` CI job on Windows and macOS (Python 3.9 and 3.13) builds the
+    wheel, installs it into a fresh venv, and runs `tools/platform_smoke.py`
+    against the installed `crumb`, on every push.
+  - A `native-full` job runs the whole unit suite there, on `main`, weekly
+    and on demand (it takes up to 25 minutes on Windows). It is reported, not
+    gating.
+  - The smoke test covers quoting and Unicode paths, guard exit codes, a
+    PowerShell hook payload, lock contention, atomic replacement, and replay
+    containment.
+- **`docs/compatibility-matrix.md`.** Which host gets which capability, and
+  the evidence for each. Hooks are Claude Code only; other agents get files,
+  the CLI and MCP.
+- **Cross-harness resume is tested.** Claude Code's packet and a hookless MCP
+  client's packet show the same record ids and the same rules in effect.
+
+### Added — continuity replays and a two-session demo (audit WP19)
+
+Finding F26 (in part). `evals/task_replays/` replays five two-session
+scenarios: repeated failure, changed decision, compaction, branch switch and
+cross-harness. Each runs under three baselines (no memory, a hand-kept
+`NOTES.md`, breadcrumbs) on two hosts, scored by an oracle independent of the
+package.
+- [`docs/benchmarks/continuity-results.md`](docs/benchmarks/continuity-results.md)
+  reports delivery with its costs and limits.
+  - breadcrumbs never presented stale guidance as current (0/10, against 4/10
+    for hand-kept notes) and pointed at the relevant record at the moment of
+    action (10/10).
+  - Hand-kept notes delivered the full facts at start more often (10/10
+    against 6/10), in far fewer tokens.
+  - No agent was run, and only one real repository was used.
+- `python evals/task_replays/demo.py` reproduces
+  [`docs/demos/two-session-handoff.md`](docs/demos/two-session-handoff.md).
+
+### Changed — onboarding, operation and recovery are documented and checked (audit WP20)
+
+Findings F24 and F26.
+- **[`docs/quickstart.md`](docs/quickstart.md).** Install, record, resume,
+  see why a memory surfaces, retire it, recover from a broken record. The page
+  is executed by `tools/quickstart_check.py` against the installed wheel in
+  CI.
+- **[`docs/operator-guide.md`](docs/operator-guide.md)** covers:
+  - capture, durable memory and standing rules;
+  - profiles, privacy and budgets;
+  - what guard does not authorize;
+  - every `doctor` finding and its fix;
+  - reconciling the handoff after a merge or release.
+- **[`docs/continuity-contract.md`](docs/continuity-contract.md)** states
+  what is promised and what is not.
+- **`crumb doctor` names four more recoveries:**
+  - a store this build may not write;
+  - records failing validation;
+  - an incomplete "see also" map;
+  - a guard hook matcher older than the adapter's.
+- **The default `handoff.md` is reconciled**, and a test holds it to the
+  latest release. It said Phase 2 was next months after it shipped.
+- **`CONTRIBUTING.md`** gains a contributor path: a failing scenario, a
+  regression test, an evidence-backed fix.
+
+### Fixed
+
+- **A new verification's 90-day expiry could be 89 days.** `verify` read the
+  clock twice, once for the expiry and once for `created_at`. Both now come
+  from one instant. Found by CI.
+- **On Windows, a failed operation could not roll itself back.** Writers put
+  CRLF on disk, but the mutation journal recorded the text before
+  translation. Rollback therefore took every file the operation had written
+  for someone else's edit and left it in place: a failed replacement left two
+  live decisions. The journal now records the bytes written. Found by the
+  first native full-suite run (audit WP17), like the fixes below.
+- **Line endings no longer count as content.** The inputs hash and the
+  generation's file digests normalize CRLF. A store written on Windows, or
+  checked out there with git's autocrlf, read every projection as stale. An
+  LF-only store hashes exactly as before, so no existing stamp changes.
+- **The guard prefilter is trusted through any spelling of the store's
+  path.** The generation's stat fingerprint named files by absolute path. On
+  macOS (`/var` and `/private/var`) and with Windows short names, a reader
+  that spelled the path differently never matched, so the hook always took
+  the slow path.
+- **A missing program is "unavailable" on Windows, not "failed".** `cmd.exe`
+  exits 1, not 9009, when it cannot find a program, so `verify --recheck`
+  recorded a missing runner as a regression. This is decided from the command
+  line, not from the shell's localized message.
+- **Store-relative paths are POSIX everywhere.** `validate`, `audit`,
+  `scan-secrets` and the JSON envelopes printed `generated\resume-packet.md`
+  on Windows.
+- **A record directory excluded by a committed `.gitignore` is excluded on
+  Windows too.** The paths sent to `git check-ignore` ended in `\r\n` there
+  and never matched. It now uses `-z`.
+- **The lock holder's pid is shown on Windows.** The OS lock covered byte 0,
+  where the owner line is, so no waiter could read it.
+- **No hook-log line is lost to a rotation.** The append and the rotation now
+  share one hold of the log's lock.
+- **A second `configure_output` keeps ASCII markers on a cp1252 console.** It
+  probed the current markers, which after an ASCII choice always encode.
+- **`audit` sees a CRLF adapter file copying a record**, and an absolute
+  evidence path in either platform's form is not treated as a local file.
+
 ## [0.3.1] — 2026-09-27
 
 A hotfix: **an older `crumb` on PATH blocked every prompt.**

@@ -1,0 +1,2394 @@
+{
+ "hosts": [
+  "fresh",
+  "this-repo"
+ ],
+ "rows": [
+  {
+   "at_action": false,
+   "baseline": "none",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 0,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "repeated failure",
+   "memory_bytes_written": 0,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 206,
+   "scenario": "repeated-failure",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": false,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "333eb4311d0a"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 2,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "repeated failure",
+   "memory_bytes_written": 124,
+   "pointer_at_action": false,
+   "pointer_by_start": true,
+   "prose_chars": 206,
+   "scenario": "repeated-failure",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 31
+   },
+   "tokens_delivered": 31
+  },
+  {
+   "at_action": false,
+   "baseline": "breadcrumbs",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 2,
+   "delivered_sha256": {
+    "action": "92c3af9fd0d1",
+    "prompt": "f2689e77fda0",
+    "start": "a7612cf6699b"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 1,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "repeated failure",
+   "memory_bytes_written": 1175,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 206,
+   "scenario": "repeated-failure",
+   "setup_bytes": 12777,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/attempts/2026-09-27-tried-an-in-process-lru-cache-for-pricing.md",
+     "id": "att_20260927_tried-an-in-process-lru-cache-for-pricing",
+     "sha256": "f2a070920094"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 60,
+    "prompt": 100,
+    "start": 300
+   },
+   "tokens_delivered": 460
+  },
+  {
+   "at_action": false,
+   "baseline": "none",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 0,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "repeated failure",
+   "memory_bytes_written": 0,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 206,
+   "scenario": "repeated-failure",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": false,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "333eb4311d0a"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 2,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "repeated failure",
+   "memory_bytes_written": 124,
+   "pointer_at_action": false,
+   "pointer_by_start": true,
+   "prose_chars": 206,
+   "scenario": "repeated-failure",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 31
+   },
+   "tokens_delivered": 31
+  },
+  {
+   "at_action": false,
+   "baseline": "breadcrumbs",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 1,
+   "delivered_sha256": {
+    "action": "b9fd9cc185ed",
+    "prompt": "625146ebcf33",
+    "start": "455331243d3d"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 1,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "repeated failure",
+   "memory_bytes_written": 1452,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 206,
+   "scenario": "repeated-failure",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/attempts/2026-09-27-tried-an-in-process-lru-cache-for-pricing.md",
+     "id": "att_20260927_tried-an-in-process-lru-cache-for-pricing",
+     "sha256": "5159044ca178"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-crumb-guard-exits-verdict-mapped-codes-0-10-15-20.md",
+     "id": "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20",
+     "sha256": "fd14d5f116b5"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-cut-0-1-10-as-the-agent-authorship-release.md",
+     "id": "dec_20260815_cut-0-1-10-as-the-agent-authorship-release",
+     "sha256": "8129388cfa95"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-folds-morphology-with-a-deterministic-fixpoint.md",
+     "id": "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint",
+     "sha256": "94f8c78db65c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-verdict-floors-require-file-tag-specificity-keyword.md",
+     "id": "dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword",
+     "sha256": "6a3edf5c26bf"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-pypi-trusted-publisher-must-be-re-pointed-after-a-repo.md",
+     "id": "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
+     "sha256": "03c4efe3c365"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-stop-hook-extraction-turn-makes-the-agent-the-memory-author.md",
+     "id": "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
+     "sha256": "85dd0aba5906"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-the-tool-s-own-repo-commits-its-own-memory-store.md",
+     "id": "dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store",
+     "sha256": "48a95035c2e1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-questions-get-their-own-status-vocabulary-not-the-record-one.md",
+     "id": "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
+     "sha256": "1088c6a82ea0"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-traps-carry-a-lifecycle-status-and-mark-status-resolves-them.md",
+     "id": "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+     "sha256": "f253944b4ba3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-17-guard-verdicts-are-capped-by-record-stance-not-by-retrieval.md",
+     "id": "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
+     "sha256": "1b4565cbc99d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-blast-radius-is-scored-separately-from-retrieval-overlap.md",
+     "id": "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
+     "sha256": "221b56025ed6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-hook-guard-never-overrides-the-session-s-permission-mode.md",
+     "id": "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
+     "sha256": "182ddcc650d2"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-repo-presentation-is-a-release-artifact-no-hand-pinned.md",
+     "id": "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
+     "sha256": "e52a68419d6d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-03-branch-mismatch-is-judged-on-whether-the-file-reached-head.md",
+     "id": "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+     "sha256": "70c8b500847e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-read-only-action-caps-at-read-first-and-entropy-warns.md",
+     "id": "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
+     "sha256": "560884c290f6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-wrong-set-heading-parks-content-it-never-discards-the-call.md",
+     "id": "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
+     "sha256": "1e70180bae5f"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-path-extraction-is-structural-and-a-mined-path.md",
+     "id": "dec_20260905_path-extraction-is-structural-and-a-mined-path",
+     "sha256": "39459e4fa10e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-24-phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per.md",
+     "id": "dec_20260924_phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per",
+     "sha256": "296793b59da7"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-26-the-2026-09-26-audit-roadmap-is-the-plan-of-record.md",
+     "id": "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record",
+     "sha256": "99ea78d27ec8"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-a-trap-naming-the-exact-command-floors-read-first-prompts.md",
+     "id": "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
+     "sha256": "2afe868ba162"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-evals-score-delivered-context-and-critical-cases.md",
+     "id": "dec_20260927_evals-score-delivered-context-and-critical-cases",
+     "sha256": "fe4044b1658d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-installed-hook-launchers-never-pass-a-failure-through.md",
+     "id": "dec_20260927_installed-hook-launchers-never-pass-a-failure-through",
+     "sha256": "f32f0b7b117c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-nothing-inside-the-store-may-be-a-link-record-text-reaches.md",
+     "id": "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+     "sha256": "fc03d06190d3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-packets-are-bounded-on-the-delivered-view-and-promoted.md",
+     "id": "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
+     "sha256": "93c5b1d99cff"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-pair-generation-uses-postings-and-exact-prefix-filtering.md",
+     "id": "dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering",
+     "sha256": "5a6117dc86f1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-pre-1-0-releases-bump-the-minor-for-breaking-changes-newer.md",
+     "id": "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
+     "sha256": "fbcb4fc15c6c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-projections-are-stamped-from-a-verified-snapshot.md",
+     "id": "dec_20260927_projections-are-stamped-from-a-verified-snapshot",
+     "sha256": "6b56bb213929"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-review-profiles-solo-by-default-team-makes-agent-written.md",
+     "id": "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
+     "sha256": "a9d9a7bfc02b"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-the-guard-pre-filter-is-a-strict-superset-of-what-full.md",
+     "id": "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
+     "sha256": "21e97a192db3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-transcript-mining-uses-a-byte-cursor-carried-calls.md",
+     "id": "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
+     "sha256": "cf43947a8c6b"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-transports-reach-the-store-through-breadcrumbs-service.md",
+     "id": "dec_20260927_transports-reach-the-store-through-breadcrumbs-service",
+     "sha256": "df193fbc4969"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-usage-counts-emitted-ids-from-append-only-events-the-latest.md",
+     "id": "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
+     "sha256": "3083bbed1a9b"
+    },
+    {
+     "file": ".project-memory/inbox/2026-09-22-phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba.md",
+     "id": "jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba",
+     "sha256": "bf151b4bc35c"
+    },
+    {
+     "file": ".project-memory/traps/a-bare-n-in-a-commit-message-links-an-issue-but-never.md",
+     "id": "trap_a-bare-n-in-a-commit-message-links-an-issue-but-never",
+     "sha256": "00e0c1984fb9"
+    },
+    {
+     "file": ".project-memory/traps/a-hand-written-version-literal-in-prose-drifts-silently.md",
+     "id": "trap_a-hand-written-version-literal-in-prose-drifts-silently",
+     "sha256": "ca2a4d170f38"
+    },
+    {
+     "file": ".project-memory/traps/a-record-s-remedy-fields-are-mined-for-file-paths.md",
+     "id": "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
+     "sha256": "6652b7bbd84d"
+    },
+    {
+     "file": ".project-memory/traps/eval-baseline-after-retrieval-change.md",
+     "id": "trap_eval-baseline-after-retrieval-change",
+     "sha256": "05eaa558c87e"
+    },
+    {
+     "file": ".project-memory/traps/guard-exit-code-in-ci.md",
+     "id": "trap_guard-exit-code-in-ci",
+     "sha256": "64e310ed00cc"
+    },
+    {
+     "file": ".project-memory/traps/hand-tagged-releases.md",
+     "id": "trap_hand-tagged-releases",
+     "sha256": "32b6af4798e8"
+    },
+    {
+     "file": ".project-memory/traps/the-mcp-surface-of-0-1-11-was-never-exercised-the-field.md",
+     "id": "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field",
+     "sha256": "630272ec015b"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-17-f-5-guard-reprints-the-staleness-block-on-every-call.md",
+     "id": "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call",
+     "sha256": "42352dc61644"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-18-readme-status-blurb-no-longer-hard-codes-a-package-version.md",
+     "id": "ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version",
+     "sha256": "10ca14040149"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-03-resume-s-possible-drift-line-fires-on-incidental-two-word.md",
+     "id": "ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word",
+     "sha256": "b560ce396fd1"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-05-the-16-findings-of-the-0-1-11-crumb-kit-field-review-re.md",
+     "id": "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re",
+     "sha256": "a6ea3bee1a5d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02.md",
+     "id": "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
+     "sha256": "89de72119917"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16.md",
+     "id": "ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16",
+     "sha256": "952a0864fee7"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25.md",
+     "id": "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
+     "sha256": "66d8e87e227d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35.md",
+     "id": "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35",
+     "sha256": "df18d18e8a6c"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43.md",
+     "id": "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43",
+     "sha256": "0db9f2921180"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52.md",
+     "id": "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
+     "sha256": "78da169b855d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-23-relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66.md",
+     "id": "ver_20260923_relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66",
+     "sha256": "84285a52c9eb"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-25-ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci.md",
+     "id": "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+     "sha256": "c22da1952538"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 116,
+    "prompt": 177,
+    "start": 3711
+   },
+   "tokens_delivered": 4004
+  },
+  {
+   "at_action": false,
+   "baseline": "none",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 0,
+   "groups_total": 1,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "changed decision",
+   "memory_bytes_written": 0,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 367,
+   "scenario": "changed-decision",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": false,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "c8b06d090a39"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 1,
+   "groups_total": 1,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "changed decision",
+   "memory_bytes_written": 189,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 367,
+   "scenario": "changed-decision",
+   "setup_bytes": 0,
+   "stale_presented": true,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 48
+   },
+   "tokens_delivered": 48
+  },
+  {
+   "at_action": true,
+   "baseline": "breadcrumbs",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 3,
+   "delivered_sha256": {
+    "action": "dd8b610d7b6a",
+    "prompt": "0ee273543310",
+    "start": "ea56048afb3d"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 1,
+   "groups_total": 1,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "changed decision",
+   "memory_bytes_written": 2315,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 367,
+   "scenario": "changed-decision",
+   "setup_bytes": 12777,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/decisions/2026-09-27-billing-webhook-retries-use-exponential-backoff-with-jitter.md",
+     "id": "dec_20260927_billing-webhook-retries-use-exponential-backoff-with-jitter",
+     "sha256": "ae468449c7f8"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 54,
+    "prompt": 100,
+    "start": 309
+   },
+   "tokens_delivered": 463
+  },
+  {
+   "at_action": false,
+   "baseline": "none",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 0,
+   "groups_total": 1,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "changed decision",
+   "memory_bytes_written": 0,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 367,
+   "scenario": "changed-decision",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": false,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "c8b06d090a39"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 1,
+   "groups_total": 1,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "changed decision",
+   "memory_bytes_written": 189,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 367,
+   "scenario": "changed-decision",
+   "setup_bytes": 0,
+   "stale_presented": true,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 48
+   },
+   "tokens_delivered": 48
+  },
+  {
+   "at_action": true,
+   "baseline": "breadcrumbs",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 2,
+   "delivered_sha256": {
+    "action": "dd8b610d7b6a",
+    "prompt": "0ee273543310",
+    "start": "91676e732a49"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 1,
+   "groups_total": 1,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "changed decision",
+   "memory_bytes_written": 2317,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 367,
+   "scenario": "changed-decision",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/decisions/2026-08-15-crumb-guard-exits-verdict-mapped-codes-0-10-15-20.md",
+     "id": "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20",
+     "sha256": "fd14d5f116b5"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-cut-0-1-10-as-the-agent-authorship-release.md",
+     "id": "dec_20260815_cut-0-1-10-as-the-agent-authorship-release",
+     "sha256": "8129388cfa95"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-folds-morphology-with-a-deterministic-fixpoint.md",
+     "id": "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint",
+     "sha256": "94f8c78db65c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-verdict-floors-require-file-tag-specificity-keyword.md",
+     "id": "dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword",
+     "sha256": "6a3edf5c26bf"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-pypi-trusted-publisher-must-be-re-pointed-after-a-repo.md",
+     "id": "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
+     "sha256": "03c4efe3c365"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-stop-hook-extraction-turn-makes-the-agent-the-memory-author.md",
+     "id": "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
+     "sha256": "85dd0aba5906"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-the-tool-s-own-repo-commits-its-own-memory-store.md",
+     "id": "dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store",
+     "sha256": "48a95035c2e1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-questions-get-their-own-status-vocabulary-not-the-record-one.md",
+     "id": "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
+     "sha256": "1088c6a82ea0"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-traps-carry-a-lifecycle-status-and-mark-status-resolves-them.md",
+     "id": "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+     "sha256": "f253944b4ba3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-17-guard-verdicts-are-capped-by-record-stance-not-by-retrieval.md",
+     "id": "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
+     "sha256": "1b4565cbc99d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-blast-radius-is-scored-separately-from-retrieval-overlap.md",
+     "id": "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
+     "sha256": "221b56025ed6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-hook-guard-never-overrides-the-session-s-permission-mode.md",
+     "id": "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
+     "sha256": "182ddcc650d2"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-repo-presentation-is-a-release-artifact-no-hand-pinned.md",
+     "id": "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
+     "sha256": "e52a68419d6d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-03-branch-mismatch-is-judged-on-whether-the-file-reached-head.md",
+     "id": "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+     "sha256": "70c8b500847e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-read-only-action-caps-at-read-first-and-entropy-warns.md",
+     "id": "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
+     "sha256": "560884c290f6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-wrong-set-heading-parks-content-it-never-discards-the-call.md",
+     "id": "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
+     "sha256": "1e70180bae5f"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-path-extraction-is-structural-and-a-mined-path.md",
+     "id": "dec_20260905_path-extraction-is-structural-and-a-mined-path",
+     "sha256": "39459e4fa10e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-26-the-2026-09-26-audit-roadmap-is-the-plan-of-record.md",
+     "id": "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record",
+     "sha256": "99ea78d27ec8"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-a-trap-naming-the-exact-command-floors-read-first-prompts.md",
+     "id": "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
+     "sha256": "2afe868ba162"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-billing-webhook-retries-use-exponential-backoff-with-jitter.md",
+     "id": "dec_20260927_billing-webhook-retries-use-exponential-backoff-with-jitter",
+     "sha256": "a88aa1f34f28"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-evals-score-delivered-context-and-critical-cases.md",
+     "id": "dec_20260927_evals-score-delivered-context-and-critical-cases",
+     "sha256": "fe4044b1658d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-installed-hook-launchers-never-pass-a-failure-through.md",
+     "id": "dec_20260927_installed-hook-launchers-never-pass-a-failure-through",
+     "sha256": "f32f0b7b117c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-nothing-inside-the-store-may-be-a-link-record-text-reaches.md",
+     "id": "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+     "sha256": "fc03d06190d3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-packets-are-bounded-on-the-delivered-view-and-promoted.md",
+     "id": "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
+     "sha256": "93c5b1d99cff"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-pair-generation-uses-postings-and-exact-prefix-filtering.md",
+     "id": "dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering",
+     "sha256": "5a6117dc86f1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-pre-1-0-releases-bump-the-minor-for-breaking-changes-newer.md",
+     "id": "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
+     "sha256": "fbcb4fc15c6c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-projections-are-stamped-from-a-verified-snapshot.md",
+     "id": "dec_20260927_projections-are-stamped-from-a-verified-snapshot",
+     "sha256": "6b56bb213929"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-review-profiles-solo-by-default-team-makes-agent-written.md",
+     "id": "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
+     "sha256": "a9d9a7bfc02b"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-the-guard-pre-filter-is-a-strict-superset-of-what-full.md",
+     "id": "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
+     "sha256": "21e97a192db3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-transcript-mining-uses-a-byte-cursor-carried-calls.md",
+     "id": "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
+     "sha256": "cf43947a8c6b"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-transports-reach-the-store-through-breadcrumbs-service.md",
+     "id": "dec_20260927_transports-reach-the-store-through-breadcrumbs-service",
+     "sha256": "df193fbc4969"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-usage-counts-emitted-ids-from-append-only-events-the-latest.md",
+     "id": "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
+     "sha256": "3083bbed1a9b"
+    },
+    {
+     "file": ".project-memory/inbox/2026-09-22-phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba.md",
+     "id": "jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba",
+     "sha256": "bf151b4bc35c"
+    },
+    {
+     "file": ".project-memory/traps/a-bare-n-in-a-commit-message-links-an-issue-but-never.md",
+     "id": "trap_a-bare-n-in-a-commit-message-links-an-issue-but-never",
+     "sha256": "00e0c1984fb9"
+    },
+    {
+     "file": ".project-memory/traps/a-hand-written-version-literal-in-prose-drifts-silently.md",
+     "id": "trap_a-hand-written-version-literal-in-prose-drifts-silently",
+     "sha256": "ca2a4d170f38"
+    },
+    {
+     "file": ".project-memory/traps/a-record-s-remedy-fields-are-mined-for-file-paths.md",
+     "id": "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
+     "sha256": "6652b7bbd84d"
+    },
+    {
+     "file": ".project-memory/traps/eval-baseline-after-retrieval-change.md",
+     "id": "trap_eval-baseline-after-retrieval-change",
+     "sha256": "05eaa558c87e"
+    },
+    {
+     "file": ".project-memory/traps/guard-exit-code-in-ci.md",
+     "id": "trap_guard-exit-code-in-ci",
+     "sha256": "64e310ed00cc"
+    },
+    {
+     "file": ".project-memory/traps/hand-tagged-releases.md",
+     "id": "trap_hand-tagged-releases",
+     "sha256": "32b6af4798e8"
+    },
+    {
+     "file": ".project-memory/traps/the-mcp-surface-of-0-1-11-was-never-exercised-the-field.md",
+     "id": "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field",
+     "sha256": "630272ec015b"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-17-f-5-guard-reprints-the-staleness-block-on-every-call.md",
+     "id": "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call",
+     "sha256": "42352dc61644"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-18-readme-status-blurb-no-longer-hard-codes-a-package-version.md",
+     "id": "ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version",
+     "sha256": "10ca14040149"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-03-resume-s-possible-drift-line-fires-on-incidental-two-word.md",
+     "id": "ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word",
+     "sha256": "b560ce396fd1"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-05-the-16-findings-of-the-0-1-11-crumb-kit-field-review-re.md",
+     "id": "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re",
+     "sha256": "a6ea3bee1a5d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02.md",
+     "id": "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
+     "sha256": "89de72119917"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16.md",
+     "id": "ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16",
+     "sha256": "952a0864fee7"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25.md",
+     "id": "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
+     "sha256": "66d8e87e227d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35.md",
+     "id": "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35",
+     "sha256": "df18d18e8a6c"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43.md",
+     "id": "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43",
+     "sha256": "0db9f2921180"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52.md",
+     "id": "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
+     "sha256": "78da169b855d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-23-relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66.md",
+     "id": "ver_20260923_relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66",
+     "sha256": "84285a52c9eb"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-25-ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci.md",
+     "id": "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+     "sha256": "c22da1952538"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 54,
+    "prompt": 100,
+    "start": 3666
+   },
+   "tokens_delivered": 3820
+  },
+  {
+   "at_action": false,
+   "baseline": "none",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 0,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "compaction",
+   "memory_bytes_written": 0,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 5258,
+   "scenario": "compaction",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": false,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "65fe3b9ab2a4"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 2,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "compaction",
+   "memory_bytes_written": 2303,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 5258,
+   "scenario": "compaction",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 576
+   },
+   "tokens_delivered": 576
+  },
+  {
+   "at_action": false,
+   "baseline": "breadcrumbs",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 42,
+   "delivered_sha256": {
+    "action": "235a25d32371",
+    "prompt": "8833e5a8ebd0",
+    "start": "ec415a500cfd"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 1,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "compaction",
+   "memory_bytes_written": 48043,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 5258,
+   "scenario": "compaction",
+   "setup_bytes": 12777,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/attempts/2026-09-27-tried-rebuilding-the-search-index-inside-the-request-thread.md",
+     "id": "att_20260927_tried-rebuilding-the-search-index-inside-the-request-thread",
+     "sha256": "7b6caef9b22e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-25-tenant-handling-for-the-webhook-service.md",
+     "id": "dec_20260927_unrelated-note-25-tenant-handling-for-the-webhook-service",
+     "sha256": "8a4e07a995e6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-26-quota-handling-for-the-replica-service.md",
+     "id": "dec_20260927_unrelated-note-26-quota-handling-for-the-replica-service",
+     "sha256": "b7e5f9db9d56"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-27-export-handling-for-the-quota-service.md",
+     "id": "dec_20260927_unrelated-note-27-export-handling-for-the-quota-service",
+     "sha256": "ddc2d5a3bf07"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-28-webhook-handling-for-the-invoice-service.md",
+     "id": "dec_20260927_unrelated-note-28-webhook-handling-for-the-invoice-service",
+     "sha256": "4ad5e4125808"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-29-invoice-handling-for-the-ledger-service.md",
+     "id": "dec_20260927_unrelated-note-29-invoice-handling-for-the-ledger-service",
+     "sha256": "fc71c162f1cf"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-30-shard-handling-for-the-export-service.md",
+     "id": "dec_20260927_unrelated-note-30-shard-handling-for-the-export-service",
+     "sha256": "c4c455b4d240"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-31-replica-handling-for-the-shard-service.md",
+     "id": "dec_20260927_unrelated-note-31-replica-handling-for-the-shard-service",
+     "sha256": "ce6edd2080d6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-32-ledger-handling-for-the-tenant-service.md",
+     "id": "dec_20260927_unrelated-note-32-ledger-handling-for-the-tenant-service",
+     "sha256": "3e0a02d303a3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-33-tenant-handling-for-the-webhook-service.md",
+     "id": "dec_20260927_unrelated-note-33-tenant-handling-for-the-webhook-service",
+     "sha256": "0d24bfdaf3e9"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-34-quota-handling-for-the-replica-service.md",
+     "id": "dec_20260927_unrelated-note-34-quota-handling-for-the-replica-service",
+     "sha256": "611c565947b1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-35-export-handling-for-the-quota-service.md",
+     "id": "dec_20260927_unrelated-note-35-export-handling-for-the-quota-service",
+     "sha256": "469c9036783e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-36-webhook-handling-for-the-invoice-service.md",
+     "id": "dec_20260927_unrelated-note-36-webhook-handling-for-the-invoice-service",
+     "sha256": "2461d4ae73f3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-37-invoice-handling-for-the-ledger-service.md",
+     "id": "dec_20260927_unrelated-note-37-invoice-handling-for-the-ledger-service",
+     "sha256": "a16721a14aa4"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-38-shard-handling-for-the-export-service.md",
+     "id": "dec_20260927_unrelated-note-38-shard-handling-for-the-export-service",
+     "sha256": "82a61b4775d8"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-39-replica-handling-for-the-shard-service.md",
+     "id": "dec_20260927_unrelated-note-39-replica-handling-for-the-shard-service",
+     "sha256": "baa6c7d20e85"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 62,
+    "prompt": 107,
+    "start": 1004
+   },
+   "tokens_delivered": 1173
+  },
+  {
+   "at_action": false,
+   "baseline": "none",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 0,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "compaction",
+   "memory_bytes_written": 0,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 5258,
+   "scenario": "compaction",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": false,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "65fe3b9ab2a4"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 2,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "compaction",
+   "memory_bytes_written": 2303,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 5258,
+   "scenario": "compaction",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 576
+   },
+   "tokens_delivered": 576
+  },
+  {
+   "at_action": false,
+   "baseline": "breadcrumbs",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 41,
+   "delivered_sha256": {
+    "action": "985832ed2386",
+    "prompt": "372ebc195b99",
+    "start": "f68bc9be2425"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 1,
+   "groups_total": 2,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "compaction",
+   "memory_bytes_written": 41864,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 5258,
+   "scenario": "compaction",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/attempts/2026-09-27-tried-rebuilding-the-search-index-inside-the-request-thread.md",
+     "id": "att_20260927_tried-rebuilding-the-search-index-inside-the-request-thread",
+     "sha256": "a061bef3d487"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-crumb-guard-exits-verdict-mapped-codes-0-10-15-20.md",
+     "id": "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20",
+     "sha256": "fd14d5f116b5"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-cut-0-1-10-as-the-agent-authorship-release.md",
+     "id": "dec_20260815_cut-0-1-10-as-the-agent-authorship-release",
+     "sha256": "8129388cfa95"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-folds-morphology-with-a-deterministic-fixpoint.md",
+     "id": "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint",
+     "sha256": "94f8c78db65c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-verdict-floors-require-file-tag-specificity-keyword.md",
+     "id": "dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword",
+     "sha256": "6a3edf5c26bf"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-pypi-trusted-publisher-must-be-re-pointed-after-a-repo.md",
+     "id": "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
+     "sha256": "03c4efe3c365"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-stop-hook-extraction-turn-makes-the-agent-the-memory-author.md",
+     "id": "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
+     "sha256": "85dd0aba5906"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-the-tool-s-own-repo-commits-its-own-memory-store.md",
+     "id": "dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store",
+     "sha256": "48a95035c2e1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-questions-get-their-own-status-vocabulary-not-the-record-one.md",
+     "id": "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
+     "sha256": "1088c6a82ea0"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-traps-carry-a-lifecycle-status-and-mark-status-resolves-them.md",
+     "id": "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+     "sha256": "f253944b4ba3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-17-guard-verdicts-are-capped-by-record-stance-not-by-retrieval.md",
+     "id": "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
+     "sha256": "1b4565cbc99d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-blast-radius-is-scored-separately-from-retrieval-overlap.md",
+     "id": "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
+     "sha256": "221b56025ed6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-hook-guard-never-overrides-the-session-s-permission-mode.md",
+     "id": "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
+     "sha256": "182ddcc650d2"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-repo-presentation-is-a-release-artifact-no-hand-pinned.md",
+     "id": "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
+     "sha256": "e52a68419d6d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-03-branch-mismatch-is-judged-on-whether-the-file-reached-head.md",
+     "id": "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+     "sha256": "70c8b500847e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-read-only-action-caps-at-read-first-and-entropy-warns.md",
+     "id": "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
+     "sha256": "560884c290f6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-wrong-set-heading-parks-content-it-never-discards-the-call.md",
+     "id": "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
+     "sha256": "1e70180bae5f"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-path-extraction-is-structural-and-a-mined-path.md",
+     "id": "dec_20260905_path-extraction-is-structural-and-a-mined-path",
+     "sha256": "39459e4fa10e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-22-the-search-index-is-a-plain-sqlite-inverted-index-of-our.md",
+     "id": "dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our",
+     "sha256": "1d2d482b5b4a"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-25-tenant-handling-for-the-webhook-service.md",
+     "id": "dec_20260927_unrelated-note-25-tenant-handling-for-the-webhook-service",
+     "sha256": "9570af842a61"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-26-quota-handling-for-the-replica-service.md",
+     "id": "dec_20260927_unrelated-note-26-quota-handling-for-the-replica-service",
+     "sha256": "3d7a6505bb24"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-27-export-handling-for-the-quota-service.md",
+     "id": "dec_20260927_unrelated-note-27-export-handling-for-the-quota-service",
+     "sha256": "e3148a19b24e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-28-webhook-handling-for-the-invoice-service.md",
+     "id": "dec_20260927_unrelated-note-28-webhook-handling-for-the-invoice-service",
+     "sha256": "92d5e098c511"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-29-invoice-handling-for-the-ledger-service.md",
+     "id": "dec_20260927_unrelated-note-29-invoice-handling-for-the-ledger-service",
+     "sha256": "5fe6527ff1b0"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-30-shard-handling-for-the-export-service.md",
+     "id": "dec_20260927_unrelated-note-30-shard-handling-for-the-export-service",
+     "sha256": "423f1a5de8b1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-31-replica-handling-for-the-shard-service.md",
+     "id": "dec_20260927_unrelated-note-31-replica-handling-for-the-shard-service",
+     "sha256": "f47d0f8afe10"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-32-ledger-handling-for-the-tenant-service.md",
+     "id": "dec_20260927_unrelated-note-32-ledger-handling-for-the-tenant-service",
+     "sha256": "34c732a31e27"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-33-tenant-handling-for-the-webhook-service.md",
+     "id": "dec_20260927_unrelated-note-33-tenant-handling-for-the-webhook-service",
+     "sha256": "78e66e41cfd3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-34-quota-handling-for-the-replica-service.md",
+     "id": "dec_20260927_unrelated-note-34-quota-handling-for-the-replica-service",
+     "sha256": "05deab824c9b"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-35-export-handling-for-the-quota-service.md",
+     "id": "dec_20260927_unrelated-note-35-export-handling-for-the-quota-service",
+     "sha256": "bf439cef7bb6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-36-webhook-handling-for-the-invoice-service.md",
+     "id": "dec_20260927_unrelated-note-36-webhook-handling-for-the-invoice-service",
+     "sha256": "3726f06ed47e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-37-invoice-handling-for-the-ledger-service.md",
+     "id": "dec_20260927_unrelated-note-37-invoice-handling-for-the-ledger-service",
+     "sha256": "fdf9916d1eae"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-38-shard-handling-for-the-export-service.md",
+     "id": "dec_20260927_unrelated-note-38-shard-handling-for-the-export-service",
+     "sha256": "46b0656e430e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-unrelated-note-39-replica-handling-for-the-shard-service.md",
+     "id": "dec_20260927_unrelated-note-39-replica-handling-for-the-shard-service",
+     "sha256": "199749b060d0"
+    },
+    {
+     "file": ".project-memory/inbox/2026-09-22-phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba.md",
+     "id": "jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba",
+     "sha256": "bf151b4bc35c"
+    },
+    {
+     "file": ".project-memory/traps/a-bare-n-in-a-commit-message-links-an-issue-but-never.md",
+     "id": "trap_a-bare-n-in-a-commit-message-links-an-issue-but-never",
+     "sha256": "00e0c1984fb9"
+    },
+    {
+     "file": ".project-memory/traps/a-hand-written-version-literal-in-prose-drifts-silently.md",
+     "id": "trap_a-hand-written-version-literal-in-prose-drifts-silently",
+     "sha256": "ca2a4d170f38"
+    },
+    {
+     "file": ".project-memory/traps/a-record-s-remedy-fields-are-mined-for-file-paths.md",
+     "id": "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
+     "sha256": "6652b7bbd84d"
+    },
+    {
+     "file": ".project-memory/traps/eval-baseline-after-retrieval-change.md",
+     "id": "trap_eval-baseline-after-retrieval-change",
+     "sha256": "05eaa558c87e"
+    },
+    {
+     "file": ".project-memory/traps/guard-exit-code-in-ci.md",
+     "id": "trap_guard-exit-code-in-ci",
+     "sha256": "64e310ed00cc"
+    },
+    {
+     "file": ".project-memory/traps/hand-tagged-releases.md",
+     "id": "trap_hand-tagged-releases",
+     "sha256": "32b6af4798e8"
+    },
+    {
+     "file": ".project-memory/traps/the-mcp-surface-of-0-1-11-was-never-exercised-the-field.md",
+     "id": "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field",
+     "sha256": "630272ec015b"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-17-f-5-guard-reprints-the-staleness-block-on-every-call.md",
+     "id": "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call",
+     "sha256": "42352dc61644"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-18-readme-status-blurb-no-longer-hard-codes-a-package-version.md",
+     "id": "ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version",
+     "sha256": "10ca14040149"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-03-resume-s-possible-drift-line-fires-on-incidental-two-word.md",
+     "id": "ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word",
+     "sha256": "b560ce396fd1"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-05-the-16-findings-of-the-0-1-11-crumb-kit-field-review-re.md",
+     "id": "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re",
+     "sha256": "a6ea3bee1a5d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02.md",
+     "id": "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
+     "sha256": "89de72119917"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16.md",
+     "id": "ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16",
+     "sha256": "952a0864fee7"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25.md",
+     "id": "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
+     "sha256": "66d8e87e227d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35.md",
+     "id": "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35",
+     "sha256": "df18d18e8a6c"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43.md",
+     "id": "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43",
+     "sha256": "0db9f2921180"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52.md",
+     "id": "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
+     "sha256": "78da169b855d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-23-relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66.md",
+     "id": "ver_20260923_relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66",
+     "sha256": "84285a52c9eb"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-25-ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci.md",
+     "id": "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+     "sha256": "c22da1952538"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 121,
+    "prompt": 263,
+    "start": 2847
+   },
+   "tokens_delivered": 3231
+  },
+  {
+   "at_action": true,
+   "baseline": "none",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 0,
+   "groups_total": 0,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "branch switch",
+   "memory_bytes_written": 0,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 151,
+   "scenario": "branch-switch",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": true,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "8acb72b2713f"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 0,
+   "groups_total": 0,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "branch switch",
+   "memory_bytes_written": 80,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 151,
+   "scenario": "branch-switch",
+   "setup_bytes": 0,
+   "stale_presented": true,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 20
+   },
+   "tokens_delivered": 20
+  },
+  {
+   "at_action": true,
+   "baseline": "breadcrumbs",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 2,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "31cd1f81f2e8"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 0,
+   "groups_total": 0,
+   "harness": "claude-code",
+   "host": "fresh",
+   "kind": "branch switch",
+   "memory_bytes_written": 1131,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 151,
+   "scenario": "branch-switch",
+   "setup_bytes": 12777,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/decisions/2026-09-27-sso-spike-disables-secure-cookies-for-local-testing.md",
+     "id": "dec_20260927_sso-spike-disables-secure-cookies-for-local-testing",
+     "sha256": "30695ca089b9"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 303
+   },
+   "tokens_delivered": 303
+  },
+  {
+   "at_action": true,
+   "baseline": "none",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 0,
+   "groups_total": 0,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "branch switch",
+   "memory_bytes_written": 0,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 151,
+   "scenario": "branch-switch",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": true,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "8acb72b2713f"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 0,
+   "groups_total": 0,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "branch switch",
+   "memory_bytes_written": 80,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 151,
+   "scenario": "branch-switch",
+   "setup_bytes": 0,
+   "stale_presented": true,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 20
+   },
+   "tokens_delivered": 20
+  },
+  {
+   "at_action": true,
+   "baseline": "breadcrumbs",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 1,
+   "delivered_sha256": {
+    "action": "310e8d389186",
+    "prompt": "b7a81db348d1",
+    "start": "bda78b99bcd6"
+   },
+   "git_log_mentions_fact": false,
+   "groups_delivered": 0,
+   "groups_total": 0,
+   "harness": "claude-code",
+   "host": "this-repo",
+   "kind": "branch switch",
+   "memory_bytes_written": 821,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 151,
+   "scenario": "branch-switch",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/decisions/2026-08-15-crumb-guard-exits-verdict-mapped-codes-0-10-15-20.md",
+     "id": "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20",
+     "sha256": "fd14d5f116b5"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-cut-0-1-10-as-the-agent-authorship-release.md",
+     "id": "dec_20260815_cut-0-1-10-as-the-agent-authorship-release",
+     "sha256": "8129388cfa95"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-folds-morphology-with-a-deterministic-fixpoint.md",
+     "id": "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint",
+     "sha256": "94f8c78db65c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-verdict-floors-require-file-tag-specificity-keyword.md",
+     "id": "dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword",
+     "sha256": "6a3edf5c26bf"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-pypi-trusted-publisher-must-be-re-pointed-after-a-repo.md",
+     "id": "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
+     "sha256": "03c4efe3c365"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-stop-hook-extraction-turn-makes-the-agent-the-memory-author.md",
+     "id": "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
+     "sha256": "85dd0aba5906"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-the-tool-s-own-repo-commits-its-own-memory-store.md",
+     "id": "dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store",
+     "sha256": "48a95035c2e1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-questions-get-their-own-status-vocabulary-not-the-record-one.md",
+     "id": "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
+     "sha256": "1088c6a82ea0"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-traps-carry-a-lifecycle-status-and-mark-status-resolves-them.md",
+     "id": "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+     "sha256": "f253944b4ba3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-17-guard-verdicts-are-capped-by-record-stance-not-by-retrieval.md",
+     "id": "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
+     "sha256": "1b4565cbc99d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-blast-radius-is-scored-separately-from-retrieval-overlap.md",
+     "id": "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
+     "sha256": "221b56025ed6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-hook-guard-never-overrides-the-session-s-permission-mode.md",
+     "id": "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
+     "sha256": "182ddcc650d2"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-repo-presentation-is-a-release-artifact-no-hand-pinned.md",
+     "id": "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
+     "sha256": "e52a68419d6d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-03-branch-mismatch-is-judged-on-whether-the-file-reached-head.md",
+     "id": "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+     "sha256": "70c8b500847e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-read-only-action-caps-at-read-first-and-entropy-warns.md",
+     "id": "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
+     "sha256": "560884c290f6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-wrong-set-heading-parks-content-it-never-discards-the-call.md",
+     "id": "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
+     "sha256": "1e70180bae5f"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-path-extraction-is-structural-and-a-mined-path.md",
+     "id": "dec_20260905_path-extraction-is-structural-and-a-mined-path",
+     "sha256": "39459e4fa10e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-24-phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per.md",
+     "id": "dec_20260924_phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per",
+     "sha256": "296793b59da7"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-26-the-2026-09-26-audit-roadmap-is-the-plan-of-record.md",
+     "id": "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record",
+     "sha256": "99ea78d27ec8"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-a-trap-naming-the-exact-command-floors-read-first-prompts.md",
+     "id": "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
+     "sha256": "2afe868ba162"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-evals-score-delivered-context-and-critical-cases.md",
+     "id": "dec_20260927_evals-score-delivered-context-and-critical-cases",
+     "sha256": "fe4044b1658d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-installed-hook-launchers-never-pass-a-failure-through.md",
+     "id": "dec_20260927_installed-hook-launchers-never-pass-a-failure-through",
+     "sha256": "f32f0b7b117c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-nothing-inside-the-store-may-be-a-link-record-text-reaches.md",
+     "id": "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+     "sha256": "fc03d06190d3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-packets-are-bounded-on-the-delivered-view-and-promoted.md",
+     "id": "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
+     "sha256": "93c5b1d99cff"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-pair-generation-uses-postings-and-exact-prefix-filtering.md",
+     "id": "dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering",
+     "sha256": "5a6117dc86f1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-pre-1-0-releases-bump-the-minor-for-breaking-changes-newer.md",
+     "id": "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
+     "sha256": "fbcb4fc15c6c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-projections-are-stamped-from-a-verified-snapshot.md",
+     "id": "dec_20260927_projections-are-stamped-from-a-verified-snapshot",
+     "sha256": "6b56bb213929"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-review-profiles-solo-by-default-team-makes-agent-written.md",
+     "id": "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
+     "sha256": "a9d9a7bfc02b"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-sso-spike-disables-secure-cookies-for-local-testing.md",
+     "id": "dec_20260927_sso-spike-disables-secure-cookies-for-local-testing",
+     "sha256": "5e0b22601d81"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-the-guard-pre-filter-is-a-strict-superset-of-what-full.md",
+     "id": "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
+     "sha256": "21e97a192db3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-transcript-mining-uses-a-byte-cursor-carried-calls.md",
+     "id": "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
+     "sha256": "cf43947a8c6b"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-transports-reach-the-store-through-breadcrumbs-service.md",
+     "id": "dec_20260927_transports-reach-the-store-through-breadcrumbs-service",
+     "sha256": "df193fbc4969"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-usage-counts-emitted-ids-from-append-only-events-the-latest.md",
+     "id": "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
+     "sha256": "3083bbed1a9b"
+    },
+    {
+     "file": ".project-memory/inbox/2026-09-22-phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba.md",
+     "id": "jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba",
+     "sha256": "bf151b4bc35c"
+    },
+    {
+     "file": ".project-memory/traps/a-bare-n-in-a-commit-message-links-an-issue-but-never.md",
+     "id": "trap_a-bare-n-in-a-commit-message-links-an-issue-but-never",
+     "sha256": "00e0c1984fb9"
+    },
+    {
+     "file": ".project-memory/traps/a-hand-written-version-literal-in-prose-drifts-silently.md",
+     "id": "trap_a-hand-written-version-literal-in-prose-drifts-silently",
+     "sha256": "ca2a4d170f38"
+    },
+    {
+     "file": ".project-memory/traps/a-record-s-remedy-fields-are-mined-for-file-paths.md",
+     "id": "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
+     "sha256": "6652b7bbd84d"
+    },
+    {
+     "file": ".project-memory/traps/eval-baseline-after-retrieval-change.md",
+     "id": "trap_eval-baseline-after-retrieval-change",
+     "sha256": "05eaa558c87e"
+    },
+    {
+     "file": ".project-memory/traps/guard-exit-code-in-ci.md",
+     "id": "trap_guard-exit-code-in-ci",
+     "sha256": "64e310ed00cc"
+    },
+    {
+     "file": ".project-memory/traps/hand-tagged-releases.md",
+     "id": "trap_hand-tagged-releases",
+     "sha256": "32b6af4798e8"
+    },
+    {
+     "file": ".project-memory/traps/the-mcp-surface-of-0-1-11-was-never-exercised-the-field.md",
+     "id": "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field",
+     "sha256": "630272ec015b"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-17-f-5-guard-reprints-the-staleness-block-on-every-call.md",
+     "id": "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call",
+     "sha256": "42352dc61644"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-18-readme-status-blurb-no-longer-hard-codes-a-package-version.md",
+     "id": "ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version",
+     "sha256": "10ca14040149"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-03-resume-s-possible-drift-line-fires-on-incidental-two-word.md",
+     "id": "ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word",
+     "sha256": "b560ce396fd1"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-05-the-16-findings-of-the-0-1-11-crumb-kit-field-review-re.md",
+     "id": "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re",
+     "sha256": "a6ea3bee1a5d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02.md",
+     "id": "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
+     "sha256": "89de72119917"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16.md",
+     "id": "ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16",
+     "sha256": "952a0864fee7"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25.md",
+     "id": "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
+     "sha256": "66d8e87e227d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35.md",
+     "id": "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35",
+     "sha256": "df18d18e8a6c"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43.md",
+     "id": "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43",
+     "sha256": "0db9f2921180"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52.md",
+     "id": "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
+     "sha256": "78da169b855d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-23-relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66.md",
+     "id": "ver_20260923_relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66",
+     "sha256": "84285a52c9eb"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-25-ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci.md",
+     "id": "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+     "sha256": "c22da1952538"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 139,
+    "prompt": 393,
+    "start": 3644
+   },
+   "tokens_delivered": 4176
+  },
+  {
+   "at_action": false,
+   "baseline": "none",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 0,
+   "groups_total": 2,
+   "harness": "mcp",
+   "host": "fresh",
+   "kind": "cross-harness",
+   "memory_bytes_written": 0,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 152,
+   "scenario": "cross-harness",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": false,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "a4346a1676ea"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 2,
+   "groups_total": 2,
+   "harness": "mcp",
+   "host": "fresh",
+   "kind": "cross-harness",
+   "memory_bytes_written": 96,
+   "pointer_at_action": false,
+   "pointer_by_start": true,
+   "prose_chars": 152,
+   "scenario": "cross-harness",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 24
+   },
+   "tokens_delivered": 24
+  },
+  {
+   "at_action": false,
+   "baseline": "breadcrumbs",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 2,
+   "delivered_sha256": {
+    "action": "fd8a28043b99",
+    "prompt": "e3b0c44298fc",
+    "start": "5fcb46e29c17"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 2,
+   "groups_total": 2,
+   "harness": "mcp",
+   "host": "fresh",
+   "kind": "cross-harness",
+   "memory_bytes_written": 1026,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 152,
+   "scenario": "cross-harness",
+   "setup_bytes": 12777,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/decisions/2026-09-27-queue-workers-drain-before-every-deploy.md",
+     "id": "dec_20260927_queue-workers-drain-before-every-deploy",
+     "sha256": "c7ed4a49663b"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 294,
+    "prompt": 0,
+    "start": 306
+   },
+   "tokens_delivered": 600
+  },
+  {
+   "at_action": false,
+   "baseline": "none",
+   "by_action": false,
+   "by_start": false,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "e3b0c44298fc"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 0,
+   "groups_total": 2,
+   "harness": "mcp",
+   "host": "this-repo",
+   "kind": "cross-harness",
+   "memory_bytes_written": 0,
+   "pointer_at_action": false,
+   "pointer_by_start": false,
+   "prose_chars": 152,
+   "scenario": "cross-harness",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 0
+   },
+   "tokens_delivered": 0
+  },
+  {
+   "at_action": false,
+   "baseline": "notes",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 0,
+   "delivered_sha256": {
+    "action": "e3b0c44298fc",
+    "prompt": "e3b0c44298fc",
+    "start": "a4346a1676ea"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 2,
+   "groups_total": 2,
+   "harness": "mcp",
+   "host": "this-repo",
+   "kind": "cross-harness",
+   "memory_bytes_written": 96,
+   "pointer_at_action": false,
+   "pointer_by_start": true,
+   "prose_chars": 152,
+   "scenario": "cross-harness",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [],
+   "tokens_by_moment": {
+    "action": 0,
+    "prompt": 0,
+    "start": 24
+   },
+   "tokens_delivered": 24
+  },
+  {
+   "at_action": false,
+   "baseline": "breadcrumbs",
+   "by_action": true,
+   "by_start": true,
+   "capture_commands": 1,
+   "delivered_sha256": {
+    "action": "fd8a28043b99",
+    "prompt": "e3b0c44298fc",
+    "start": "10665fbbe6e9"
+   },
+   "git_log_mentions_fact": true,
+   "groups_delivered": 2,
+   "groups_total": 2,
+   "harness": "mcp",
+   "host": "this-repo",
+   "kind": "cross-harness",
+   "memory_bytes_written": 841,
+   "pointer_at_action": true,
+   "pointer_by_start": true,
+   "prose_chars": 152,
+   "scenario": "cross-harness",
+   "setup_bytes": 0,
+   "stale_presented": false,
+   "surfaced": [
+    {
+     "file": ".project-memory/decisions/2026-08-15-crumb-guard-exits-verdict-mapped-codes-0-10-15-20.md",
+     "id": "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20",
+     "sha256": "fd14d5f116b5"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-cut-0-1-10-as-the-agent-authorship-release.md",
+     "id": "dec_20260815_cut-0-1-10-as-the-agent-authorship-release",
+     "sha256": "8129388cfa95"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-folds-morphology-with-a-deterministic-fixpoint.md",
+     "id": "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint",
+     "sha256": "94f8c78db65c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-guard-verdict-floors-require-file-tag-specificity-keyword.md",
+     "id": "dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword",
+     "sha256": "6a3edf5c26bf"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-pypi-trusted-publisher-must-be-re-pointed-after-a-repo.md",
+     "id": "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
+     "sha256": "03c4efe3c365"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-stop-hook-extraction-turn-makes-the-agent-the-memory-author.md",
+     "id": "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
+     "sha256": "85dd0aba5906"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-15-the-tool-s-own-repo-commits-its-own-memory-store.md",
+     "id": "dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store",
+     "sha256": "48a95035c2e1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-questions-get-their-own-status-vocabulary-not-the-record-one.md",
+     "id": "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
+     "sha256": "1088c6a82ea0"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-16-traps-carry-a-lifecycle-status-and-mark-status-resolves-them.md",
+     "id": "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+     "sha256": "f253944b4ba3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-17-guard-verdicts-are-capped-by-record-stance-not-by-retrieval.md",
+     "id": "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
+     "sha256": "1b4565cbc99d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-blast-radius-is-scored-separately-from-retrieval-overlap.md",
+     "id": "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
+     "sha256": "221b56025ed6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-hook-guard-never-overrides-the-session-s-permission-mode.md",
+     "id": "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
+     "sha256": "182ddcc650d2"
+    },
+    {
+     "file": ".project-memory/decisions/2026-08-18-repo-presentation-is-a-release-artifact-no-hand-pinned.md",
+     "id": "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
+     "sha256": "e52a68419d6d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-03-branch-mismatch-is-judged-on-whether-the-file-reached-head.md",
+     "id": "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+     "sha256": "70c8b500847e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-read-only-action-caps-at-read-first-and-entropy-warns.md",
+     "id": "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
+     "sha256": "560884c290f6"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-a-wrong-set-heading-parks-content-it-never-discards-the-call.md",
+     "id": "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
+     "sha256": "1e70180bae5f"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-05-path-extraction-is-structural-and-a-mined-path.md",
+     "id": "dec_20260905_path-extraction-is-structural-and-a-mined-path",
+     "sha256": "39459e4fa10e"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-22-multi-agent-safety-branch-handoffs-one-command-level-store.md",
+     "id": "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
+     "sha256": "4502ad8383f2"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-a-trap-naming-the-exact-command-floors-read-first-prompts.md",
+     "id": "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
+     "sha256": "2afe868ba162"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-evals-score-delivered-context-and-critical-cases.md",
+     "id": "dec_20260927_evals-score-delivered-context-and-critical-cases",
+     "sha256": "fe4044b1658d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-nothing-inside-the-store-may-be-a-link-record-text-reaches.md",
+     "id": "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+     "sha256": "fc03d06190d3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-packets-are-bounded-on-the-delivered-view-and-promoted.md",
+     "id": "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
+     "sha256": "93c5b1d99cff"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-pair-generation-uses-postings-and-exact-prefix-filtering.md",
+     "id": "dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering",
+     "sha256": "5a6117dc86f1"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-pre-1-0-releases-bump-the-minor-for-breaking-changes-newer.md",
+     "id": "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
+     "sha256": "fbcb4fc15c6c"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-projections-are-stamped-from-a-verified-snapshot.md",
+     "id": "dec_20260927_projections-are-stamped-from-a-verified-snapshot",
+     "sha256": "6b56bb213929"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-queue-workers-drain-before-every-deploy.md",
+     "id": "dec_20260927_queue-workers-drain-before-every-deploy",
+     "sha256": "e6835b691d2d"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-review-profiles-solo-by-default-team-makes-agent-written.md",
+     "id": "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
+     "sha256": "a9d9a7bfc02b"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-the-guard-pre-filter-is-a-strict-superset-of-what-full.md",
+     "id": "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
+     "sha256": "21e97a192db3"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-transcript-mining-uses-a-byte-cursor-carried-calls.md",
+     "id": "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
+     "sha256": "cf43947a8c6b"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-transports-reach-the-store-through-breadcrumbs-service.md",
+     "id": "dec_20260927_transports-reach-the-store-through-breadcrumbs-service",
+     "sha256": "df193fbc4969"
+    },
+    {
+     "file": ".project-memory/decisions/2026-09-27-usage-counts-emitted-ids-from-append-only-events-the-latest.md",
+     "id": "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
+     "sha256": "3083bbed1a9b"
+    },
+    {
+     "file": ".project-memory/inbox/2026-09-22-phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba.md",
+     "id": "jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba",
+     "sha256": "bf151b4bc35c"
+    },
+    {
+     "file": ".project-memory/traps/a-bare-n-in-a-commit-message-links-an-issue-but-never.md",
+     "id": "trap_a-bare-n-in-a-commit-message-links-an-issue-but-never",
+     "sha256": "00e0c1984fb9"
+    },
+    {
+     "file": ".project-memory/traps/a-hand-written-version-literal-in-prose-drifts-silently.md",
+     "id": "trap_a-hand-written-version-literal-in-prose-drifts-silently",
+     "sha256": "ca2a4d170f38"
+    },
+    {
+     "file": ".project-memory/traps/a-record-s-remedy-fields-are-mined-for-file-paths.md",
+     "id": "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
+     "sha256": "6652b7bbd84d"
+    },
+    {
+     "file": ".project-memory/traps/eval-baseline-after-retrieval-change.md",
+     "id": "trap_eval-baseline-after-retrieval-change",
+     "sha256": "05eaa558c87e"
+    },
+    {
+     "file": ".project-memory/traps/guard-exit-code-in-ci.md",
+     "id": "trap_guard-exit-code-in-ci",
+     "sha256": "64e310ed00cc"
+    },
+    {
+     "file": ".project-memory/traps/hand-tagged-releases.md",
+     "id": "trap_hand-tagged-releases",
+     "sha256": "32b6af4798e8"
+    },
+    {
+     "file": ".project-memory/traps/the-mcp-surface-of-0-1-11-was-never-exercised-the-field.md",
+     "id": "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field",
+     "sha256": "630272ec015b"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-17-f-5-guard-reprints-the-staleness-block-on-every-call.md",
+     "id": "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call",
+     "sha256": "42352dc61644"
+    },
+    {
+     "file": ".project-memory/verifications/2026-08-18-readme-status-blurb-no-longer-hard-codes-a-package-version.md",
+     "id": "ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version",
+     "sha256": "10ca14040149"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-03-resume-s-possible-drift-line-fires-on-incidental-two-word.md",
+     "id": "ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word",
+     "sha256": "b560ce396fd1"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-05-the-16-findings-of-the-0-1-11-crumb-kit-field-review-re.md",
+     "id": "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re",
+     "sha256": "a6ea3bee1a5d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02.md",
+     "id": "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
+     "sha256": "89de72119917"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16.md",
+     "id": "ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16",
+     "sha256": "952a0864fee7"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25.md",
+     "id": "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
+     "sha256": "66d8e87e227d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35.md",
+     "id": "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35",
+     "sha256": "df18d18e8a6c"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43.md",
+     "id": "ver_20260922_phase-4-of-the-working-memory-roadmap-wm-40-to-wm-43",
+     "sha256": "0db9f2921180"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-22-phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52.md",
+     "id": "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
+     "sha256": "78da169b855d"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-23-relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66.md",
+     "id": "ver_20260923_relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66",
+     "sha256": "84285a52c9eb"
+    },
+    {
+     "file": ".project-memory/verifications/2026-09-25-ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci.md",
+     "id": "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+     "sha256": "c22da1952538"
+    }
+   ],
+   "tokens_by_moment": {
+    "action": 294,
+    "prompt": 0,
+    "start": 4090
+   },
+   "tokens_delivered": 4384
+  }
+ ],
+ "scenarios_version": 1
+}

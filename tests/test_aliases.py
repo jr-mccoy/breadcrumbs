@@ -86,9 +86,8 @@ class ParseAliasesTests(unittest.TestCase):
 
 class AliasSearchTests(unittest.TestCase):
     def tearDown(self):
-        # Aliases are process-global while active; never leak into other tests.
-        _cli._STORE_ALIASES = {}
-        _cli._STORE_ALIASES_KEY = None
+        # Aliases are per-thread state while active; never leak into other tests.
+        _cli._ALIASES.__dict__.clear()
 
     def test_an_alias_makes_the_synonym_match(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -105,10 +104,10 @@ class AliasSearchTests(unittest.TestCase):
             mem = store_with_trap(tmp)
             (mem / "aliases.txt").write_text("billing payments\n", encoding="utf-8")
             crumb.search(mem, Path(tmp), "payments")
-            self.assertTrue(_cli._STORE_ALIASES)
+            self.assertTrue(_cli.active_store_aliases())
             (mem / "aliases.txt").unlink()
             crumb.search(mem, Path(tmp), "payments")
-            self.assertEqual(_cli._STORE_ALIASES, {})
+            self.assertEqual(_cli.active_store_aliases(), {})
 
     def test_editing_aliases_makes_projections_stale(self):
         # The guard prefilter stores stems; a new alias changes what they are,

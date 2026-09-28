@@ -21,22 +21,53 @@ module is that machinery.
   docstring, and name the readers.
 - **Nothing is deleted without a backup.** See `backup_store`.
 
+**Operator guarantees (audit WP21).**
+
+- **Preview.** `--dry-run` lists the steps, what the backup will hold, and
+  the legacy metadata migration will *not* touch (`legacy_report`): invalid
+  values are reported for a person to fix, never rewritten automatically.
+- **A verified backup.** The backup carries `backup-manifest.json` (a SHA-256
+  per file), and it is re-read and checked against the store before any step
+  runs. A backup that does not verify stops the migration.
+- **Interruption.** `private/migrations/in-progress.json` names the backup and
+  the steps done. A migration that stopped (a crash, a failed step) resumes on
+  the next `crumb migrate` from the last completed version, against the same
+  pre-migration backup.
+- **Restore.** `crumb migrate --restore [BACKUP]` checks the backup against its
+  manifest, puts the committed store back exactly as it was, and checks the
+  result. `--dry-run` with it lists what would change.
+- **Stable ids, kept content.** No step renames a record, and every step keeps
+  frontmatter keys it does not know.
+
 Migrations never touch `private/` or `index/`: both are machine-local and
 disposable, so there is nothing there another checkout could disagree about.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import shutil
 from pathlib import Path
 from typing import Callable, NamedTuple
 
-from breadcrumbs import cli
+from breadcrumbs import cli, path_policy
 
 # Directories a backup skips: machine-local (`private/`) or disposable
 # (`index/`). Also where the backups themselves live, so a second migration
 # cannot recurse into the first one's copy.
 _BACKUP_SKIP_DIRS = ("private", "index")
+
+# In a backup directory: every file's SHA-256, written after the copy, so the
+# backup can be verified before a migration relies on it and before a restore.
+BACKUP_MANIFEST = "backup-manifest.json"
+BACKUPS_RELPATH = ("private", "migrations")
+IN_PROGRESS_RELPATH = ("private", "migrations", "in-progress.json")
+
+
+class BackupUnverified(Exception):
+    """A backup that does not match what it claims to hold."""
 
 
 class Migration(NamedTuple):
@@ -69,12 +100,12 @@ def _m2_inbox_directories(memory_dir: Path, project_root: Path) -> list[str]:
     changed: list[str] = []
     committed = memory_dir / "inbox"
     if not committed.is_dir():
-        committed.mkdir(parents=True, exist_ok=True)
-        (committed / ".gitkeep").write_text("", encoding="utf-8")
+        path_policy.mkdirs(committed)
+        cli.write_text_atomic(committed / ".gitkeep", "")
         changed.append("created inbox/ (committed jots)")
     private = memory_dir / "private" / "inbox"
     if not private.is_dir():
-        private.mkdir(parents=True, exist_ok=True)
+        path_policy.mkdirs(private)
         changed.append("created private/inbox/ (machine-local jots)")
     return changed
 
@@ -116,11 +147,11 @@ def _m4_branch_handoffs(memory_dir: Path, project_root: Path) -> list[str]:
     changed: list[str] = []
     directory = memory_dir / "handoffs"
     if not directory.is_dir():
-        directory.mkdir(parents=True, exist_ok=True)
+        path_policy.mkdirs(directory)
         changed.append("created handoffs/ (one handoff per non-default branch)")
     keep = directory / ".gitkeep"
     if not keep.exists():
-        keep.write_text("", encoding="utf-8")
+        cli.write_text_atomic(keep, "")
     return changed
 
 
@@ -189,7 +220,8 @@ def set_manifest_version(memory_dir: Path, version: int) -> None:
 
 
 def backup_store(memory_dir: Path) -> Path:
-    """Copy the whole committed store under `private/migrations/<timestamp>/`.
+    """Copy the whole committed store under `private/migrations/<timestamp>/`,
+    then verify the copy (audit WP21). Raises `BackupUnverified` if it differs.
 
     **The whole store, not the files a step declares it will touch.** A step that
     under-declares its paths is a silent data-loss bug that only shows up on
@@ -202,17 +234,211 @@ def backup_store(memory_dir: Path) -> Path:
     """
     memory_dir = Path(memory_dir)
     stamp = cli.now_iso().replace(":", "").replace("-", "")[:15]
-    dest = memory_dir / "private" / "migrations" / stamp
-    dest.mkdir(parents=True, exist_ok=True)
+    dest = memory_dir.joinpath(*BACKUPS_RELPATH) / stamp
+    n = 1
+    while dest.exists():  # two migrations in one second each get their own
+        n += 1
+        dest = memory_dir.joinpath(*BACKUPS_RELPATH) / f"{stamp}-{n}"
+    path_policy.mkdirs(dest)
     for entry in sorted(memory_dir.iterdir()):
         if entry.name in _BACKUP_SKIP_DIRS:
             continue
         target = dest / entry.name
+        # Links are copied as links, never followed (audit F17); the driver
+        # refuses a store with any, so this is the second line.
+        if entry.is_symlink():
+            continue
         if entry.is_dir():
-            shutil.copytree(entry, target, dirs_exist_ok=True)
+            shutil.copytree(entry, target, symlinks=True, dirs_exist_ok=True)
         elif entry.is_file():
-            shutil.copy2(entry, target)
+            shutil.copy2(entry, target, follow_symlinks=False)
+    source = store_files(memory_dir)
+    doc = {
+        "format": 1,
+        "created_at": cli.now_iso(),
+        "schema_version": store_schema_version(memory_dir),
+        "files": source,
+    }
+    cli.write_text_atomic(dest / BACKUP_MANIFEST, json.dumps(doc, indent=1, sort_keys=True) + "\n")
+    problems = verify_backup(dest)
+    if problems:
+        raise BackupUnverified(
+            f"the backup at {_rel(dest, memory_dir)} does not match the store: "
+            + "; ".join(problems[:5])
+        )
     return dest
+
+
+def store_files(directory: Path) -> dict[str, str]:
+    """`{relative path: sha256}` for every file of a committed store (or of a
+    backup of one), skipping `private/`, `index/` and the backup manifest.
+    Links are never followed or listed."""
+    directory = Path(directory)
+    out: dict[str, str] = {}
+    for dirpath, dirnames, filenames in os.walk(directory, followlinks=False):
+        rel_dir = Path(dirpath).relative_to(directory)
+        if rel_dir == Path("."):
+            dirnames[:] = [d for d in dirnames if d not in _BACKUP_SKIP_DIRS]
+        dirnames[:] = [d for d in dirnames if not (Path(dirpath) / d).is_symlink()]
+        for name in filenames:
+            p = Path(dirpath) / name
+            rel = (rel_dir / name).as_posix()
+            if p.is_symlink() or rel == BACKUP_MANIFEST:
+                continue
+            out[rel] = hashlib.sha256(path_policy.read_bytes(p)).hexdigest()
+    return dict(sorted(out.items()))
+
+
+def verify_backup(backup: Path) -> list[str]:
+    """What is wrong with a backup, or `[]`: every file its manifest lists is
+    present with that hash, and nothing else is there."""
+    backup = Path(backup)
+    try:
+        expected = json.loads(path_policy.read_text(backup / BACKUP_MANIFEST))["files"]
+    except Exception:
+        expected = None
+    if not isinstance(expected, dict):
+        return [f"{BACKUP_MANIFEST} is missing or unreadable (made by crumb-kit 0.3.1 or earlier?)"]
+    actual = store_files(backup)
+    problems = [f"{rel} is missing" for rel in expected if rel not in actual]
+    problems += [
+        f"{rel} differs" for rel in expected if rel in actual and actual[rel] != expected[rel]
+    ]
+    problems += [f"{rel} is not in the manifest" for rel in actual if rel not in expected]
+    return problems
+
+
+def _rel(path: Path, memory_dir: Path) -> str:
+    try:
+        return Path(path).relative_to(Path(memory_dir).parent).as_posix()
+    except ValueError:
+        return Path(path).name
+
+
+def _in_progress_path(memory_dir: Path) -> Path:
+    return Path(memory_dir).joinpath(*IN_PROGRESS_RELPATH)
+
+
+def in_progress(memory_dir: Path) -> dict | None:
+    """The marker of a migration that started and did not finish, or None."""
+    try:
+        doc = json.loads(path_policy.read_text(_in_progress_path(memory_dir)))
+    except Exception:
+        return None
+    return doc if isinstance(doc, dict) and doc.get("backup") else None
+
+
+def _write_in_progress(memory_dir: Path, doc: dict) -> None:
+    path = _in_progress_path(memory_dir)
+    path_policy.mkdirs(path.parent)
+    cli.write_text_atomic(path, json.dumps(doc, indent=1, sort_keys=True) + "\n")
+
+
+def _clear_in_progress(memory_dir: Path) -> None:
+    try:
+        _in_progress_path(memory_dir).unlink()
+    except FileNotFoundError:
+        pass
+
+
+def latest_backup(memory_dir: Path) -> Path | None:
+    """The interrupted migration's backup, else the newest verified-format one."""
+    marker = in_progress(memory_dir)
+    if marker:
+        return Path(memory_dir).parent / marker["backup"]
+    root = Path(memory_dir).joinpath(*BACKUPS_RELPATH)
+    if not root.is_dir():
+        return None
+    candidates = sorted(p for p in root.iterdir() if (p / BACKUP_MANIFEST).is_file())
+    return candidates[-1] if candidates else None
+
+
+def restore(memory_dir: Path, backup: Path | None = None, *, dry_run: bool = False) -> dict:
+    """Put the committed store back exactly as `backup` holds it (audit WP21).
+
+    Returns `{ok, backup, changed, schema_version, error}`. `changed` lists the
+    store-relative files that differ (added, removed or altered by the restore).
+    The backup is verified against its manifest first, and the store against
+    the manifest afterwards; `private/` and `index/` are never touched.
+    """
+    memory_dir = Path(memory_dir)
+    backup = Path(backup) if backup is not None else latest_backup(memory_dir)
+    base = {"ok": False, "backup": None, "changed": [], "schema_version": None, "error": None}
+    if backup is None or not backup.is_dir():
+        return {**base, "error": "no migration backup found under private/migrations/"}
+    if not backup.is_absolute():
+        backup = (Path.cwd() / backup).resolve()
+    shown = _rel(backup, memory_dir)
+    problems = verify_backup(backup)
+    if problems:
+        return {
+            **base,
+            "backup": shown,
+            "error": f"the backup at {shown} does not verify: " + "; ".join(problems[:5]),
+        }
+    saved = json.loads(path_policy.read_text(backup / BACKUP_MANIFEST))["files"]
+    current = store_files(memory_dir)
+    changed = sorted(r for r in set(current) | set(saved) if current.get(r) != saved.get(r))
+    if dry_run:
+        return {**base, "ok": True, "backup": shown, "changed": changed, "dry_run": True}
+    links = path_policy.find_links(memory_dir)
+    if links:
+        return {
+            **base,
+            "backup": shown,
+            "error": "the store contains links: " + ", ".join(links[:10]),
+        }
+    for entry in sorted(memory_dir.iterdir()):
+        if entry.name in _BACKUP_SKIP_DIRS:
+            continue
+        if entry.is_dir():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+    for entry in sorted(backup.iterdir()):
+        if entry.name == BACKUP_MANIFEST:
+            continue
+        if entry.is_dir():
+            shutil.copytree(entry, memory_dir / entry.name, symlinks=True)
+        else:
+            shutil.copy2(entry, memory_dir / entry.name, follow_symlinks=False)
+    after = store_files(memory_dir)
+    if after != saved:
+        bad = sorted(r for r in set(after) | set(saved) if after.get(r) != saved.get(r))
+        return {
+            **base,
+            "backup": shown,
+            "changed": changed,
+            "error": "the restored store does not match the backup: " + ", ".join(bad[:10]),
+        }
+    _clear_in_progress(memory_dir)
+    return {
+        **base,
+        "ok": True,
+        "backup": shown,
+        "changed": changed,
+        "schema_version": store_schema_version(memory_dir),
+    }
+
+
+def legacy_report(memory_dir: Path) -> dict:
+    """What a migration leaves as it is, for a person to decide (audit WP21).
+
+    `{code: count}` of record-contract findings (`record-schema.md` §4): free
+    scopes, invalid confidence, malformed evidence, dangling `superseded_by`,
+    and the rest. A migration never rewrites these: guessing what a free
+    `scope` meant, or raising a confidence, would be inventing facts. Unknown
+    frontmatter keys are not listed; they are kept by every step and writer.
+    """
+    counts: dict[str, int] = {}
+    for finding in cli.run_validate(Path(memory_dir)):
+        if finding.get("status") != "fail":
+            continue
+        code = finding.get("code") or finding.get("check")
+        if code in ("schema-version", "manifest"):
+            continue
+        counts[code] = counts.get(code, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 # --------------------------------------------------------------------------- #
@@ -266,6 +492,10 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
 
     pending = pending_migrations(current)
     if not pending:
+        # A migration that finished its last step but stopped before clearing
+        # its marker is complete; the marker would only mislead the next run.
+        if not dry_run:
+            _clear_in_progress(memory_dir)
         return {
             "ok": True,
             "from": current,
@@ -276,6 +506,27 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
             "error": None,
         }
 
+    # A migration reads and rewrites the whole store: with a link inside it,
+    # the backup would copy what the link points at and a step could write
+    # through it (audit F17). Refuse before anything is touched.
+    links = path_policy.find_links(memory_dir)
+    if links:
+        return {
+            "ok": False,
+            "from": current,
+            "to": current,
+            "target": target,
+            "steps": [],
+            "backup": None,
+            "error": (
+                "the store contains symbolic links or junctions, which it may not: "
+                + ", ".join(links[:10])
+                + (f" (and {len(links) - 10} more)" if len(links) > 10 else "")
+                + ". Replace each with the file or directory itself, then re-run."
+            ),
+        }
+
+    marker = in_progress(memory_dir)
     if dry_run:
         return {
             "ok": True,
@@ -285,10 +536,40 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
             "steps": [{"version": m.version, "summary": m.summary, "changed": []} for m in pending],
             "backup": None,
             "dry_run": True,
+            # What the backup will hold, and what migration leaves for a person.
+            "backup_files": len(store_files(memory_dir)),
+            "legacy": legacy_report(memory_dir),
+            "resumes": marker,
             "error": None,
         }
 
-    backup = backup_store(memory_dir)
+    # A migration that stopped part-way resumes against the backup it took
+    # before its first step, so `--restore` still returns to the original
+    # store. A new migration takes (and verifies) a new backup.
+    resumed = None
+    if marker and not verify_backup(project_root / marker["backup"]):
+        backup = project_root / marker["backup"]
+        resumed = marker
+    else:
+        try:
+            backup = backup_store(memory_dir)
+        except BackupUnverified as exc:
+            return {
+                "ok": False,
+                "from": current,
+                "to": current,
+                "target": target,
+                "steps": [],
+                "backup": None,
+                "error": f"{exc}. Nothing was migrated.",
+            }
+        marker = {
+            "backup": _rel(backup, memory_dir),
+            "from": current,
+            "target": target,
+            "started_at": cli.now_iso(),
+        }
+    _write_in_progress(memory_dir, {**marker, "at": current})
     steps: list[dict] = []
     at = current
     for m in pending:
@@ -302,11 +583,18 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
                 "target": target,
                 "steps": steps,
                 "backup": str(backup),
-                "error": f"migration to schema_version {m.version} failed: {exc}",
+                "resumed": resumed,
+                "error": (
+                    f"migration to schema_version {m.version} failed: {exc}. The store is "
+                    f"at schema_version {at}; re-run `crumb migrate` to resume, or "
+                    "`crumb migrate --restore` to return to the backup."
+                ),
             }
         set_manifest_version(memory_dir, m.version)
         at = m.version
+        _write_in_progress(memory_dir, {**marker, "at": at})
         steps.append({"version": m.version, "summary": m.summary, "changed": changed})
+    _clear_in_progress(memory_dir)
 
     # The store's shape changed, so a projection built from the old shape is
     # suspect — but only refresh one that already exists. A migration that
@@ -324,5 +612,6 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
         "target": target,
         "steps": steps,
         "backup": str(backup),
+        "resumed": resumed,
         "error": None,
     }

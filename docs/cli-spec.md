@@ -44,10 +44,11 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | Command | Reads | Writes | Purpose | Phase |
 |---|---|---|---|---|
 | `init` | project root | `.project-memory/`, `manifest.yml`, `.gitignore` edits | Install memory layout; record session + generated-projection policy in `manifest.yml`. | **1 (built)** |
-| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash` such as `related.json` and `conflicts.json`) whose stamped `inputs_hash` no longer matches the live records. | **2 (built)** |
+| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash`: `related.json`, `conflicts.json` and, since audit WP07, `guard-prefilter.json`; the stamp `unstable` is always stale) whose stamped `inputs_hash` no longer matches the live records. Also checks the record contract (`record-schema.md` §4): field vocabularies, evidence shape, timestamps, scope, and `superseded_by` links (a missing target, a self-link or a cycle). Reports every symbolic link or junction inside the store as `path-link` (audit WP13; nothing there may be one, and readers refuse them). Every finding carries a stable `code`, and `--json` includes it. | **2 (built)** |
 | `remember decision` | git state, user input | decision record | Capture a durable choice. Refuses a near-duplicate of a live decision (exit 3) unless `--supersedes ID` or `--allow-duplicate`. | **3 (built)** |
 | `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. Same near-duplicate gate as `remember decision`. | **3 (built)** |
-| `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns recorded command evidence instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). `--scope branch` makes the result apply only while the current branch is checked out (default `project`; see [Branch scope](#branch-scope-built-wm-52)). Reindexes on write. | **built** |
+| `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--assert CMD` (repeatable) declares an assertion, the only kind of check a recheck may settle the claim with. `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns a verification's checks instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). `--scope branch` makes the result apply only while the current branch is checked out (default `project`; see [Branch scope](#branch-scope-built-wm-52)). Reindexes on write. | **built** |
+| `recover [--apply]` | `private/operations/` | the files an unfinished operation touched | List, or with `--apply` roll back, the multi-record operations a writer that stopped midway left unfinished. Exit 1 while any remain unfinished. See [Multi-record operations](#multi-record-operations-and-recover-built-audit-wp06). | **built (audit WP06)** |
 | `reindex` | all canonical files | `generated/` projections, the trap/question indexes (schema 3), `index/search.sqlite` | Rebuild the generated projections from the records (mutations reindex automatically). `--search-index` builds the search index even below its size threshold — see `reindex` below. | **built** |
 | `capture session` | git state (log, status, diff --shortstat) | session record, handoff, current | Record session end; git-prefill body sections (Files Touched is a counts-only summary) over a bounded window (`since..HEAD`, capped at 20 commits) that the record names. `--fast` = git-only snapshot + one-line next action; `--next` + `--set` runs unattended without dropping narrative. At schema 4, on a branch that is not the default branch, the handoff written is `handoffs/<branch-slug>.md` instead of `handoff.md` — see [Branch handoffs](#branch-handoffs-built-wm-50). | **3 (built)** |
 | `schema [<type>]` | (none) | record contract | Print body sections / vocab / rules from source constants. `--template <type>` emits a `remember` skeleton (a `verify` one for `verification`, a `crumb note …` one for `trap` and `question`). | **built** |
@@ -55,9 +56,11 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `show <id>` | one record, trap, question or jot | the full text (read-only) | Print the body behind a one-line mention. Takes any id the tool prints — `dec_`/`att_`/`ver_`/`idea_`/`ses_`/`jot_`, `trap_…`, `q_…` (legacy `q:…` accepted) — and adds a `See also:` line from `generated/related.json`. Exit 1 with `CRUMB-ERROR` on an unknown id. See `show` below. | **built (WM-21)** |
 | `jot "<text>"` | user input, git state | a jot under `inbox/` or `private/inbox/` | The short-term tier: one observation, a TTL (`ttl_jot_days`, or the older `jot_ttl_days`; default 14), and **no evidence rule**. `--file PATH` becomes file evidence so the note can be found again; `--local` writes to `private/inbox/`, which is never committed and is where every automatic writer must put things. A jot is searchable and never reaches a `guard` verdict. A near-verbatim repeat of a live jot (similarity ≥ 0.9) is refused with exit 3 unless `--allow-duplicate` (no `--supersedes` on a jot). `--scope branch` makes it apply only while the current branch is checked out (default `project`; jots the hooks write default to `branch`). | **built (WM-03)** |
 | `inbox [--all] [--expired]` | `inbox/`, `private/inbox/` | listing (read-only) | Triage queue: live jots newest first, with id, age and source. `--json` rows also carry `scope` and `branch`. | **built (WM-03)** |
-| `inbox promote <id> <type>` | one jot | a decision / attempt / verification / trap / question / idea, + the jot | Turn a jot into a durable record **through that type's normal writer**, so the evidence rule and the validate gate apply exactly as they would to a record written by hand. The jot's file evidence and tags carry over; the jot is marked `superseded` with `superseded_by`, never deleted. | **built (WM-03)** |
+| `inbox promote <id> <type>` | one jot | a decision / attempt / verification / trap / question / idea, + the jot | Turn a jot into a durable record **through that type's normal writer**, so the evidence rule, the near-duplicate gate (`--allow-duplicate`, `--supersedes ID`, exit 3) and the validate gate apply exactly as they would to a record written by hand. The promotion preserves meaning (audit F03). The jot's note becomes the body (a decision's `Decision`, an attempt's `Result`, an idea's `Idea`, a verification's, trap's or question's `Notes`); when `--set` or the trap flags supply other text, the note is kept as a `From jot <id>: …` paragraph. The record also takes the jot's scope and confidence, `promoted_from` and `promoted_from_digest`, and its file evidence and tags. `--scope project` widens a branch jot and `--confidence` raises it. The output names the scope and confidence written, and says when a private jot's text is now committed; a private jot carrying a credential-shaped string is refused. The jot is marked `superseded` with `superseded_by` only after the record is written, and never deleted. | **built (WM-03)** |
 | `inbox drop <id>` | one jot | status change | Retire a jot as noise (`rejected`). Kept as history; `prune jots` deletes. | **built (WM-03)** |
-| `migrate [--dry-run]` | `manifest.yml`, the store | store format + `manifest.yml` | Bring the store's on-disk format up to this build's `schema_version`. Steps are ordered and idempotent, the manifest is written after each one (so a failure halts at the last completed version), and the whole store is copied to `private/migrations/<timestamp>/` first. `validate` fails with `run \`crumb migrate\`` on an older store and `upgrade crumb-kit` on a newer one. See `migrate` below for the steps. | **built (WM-01)** |
+| `migrate [--dry-run] [--restore [BACKUP]]` | `manifest.yml`, the store | store format + `manifest.yml` | Bring the store's on-disk format up to this build's `schema_version`. Steps are ordered and idempotent, the manifest is written after each one (so a failure halts at the last completed version), and the whole store is copied to `private/migrations/<timestamp>/` first, with `backup-manifest.json`, and verified before any step (audit WP21). `--dry-run` also reports the backup size and the legacy values migration leaves for a person. An interrupted migration (`private/migrations/in-progress.json`) resumes on the next run against its original backup. `--restore` puts the committed store back as a verified backup holds it (default: the interrupted migration's, else the newest), checks the result, and is the one write allowed on a store this build cannot otherwise write; with `--dry-run` it lists the files that would change. See [`compatibility.md`](compatibility.md). A store containing a symbolic link or junction is refused before anything is copied, and the backup never follows one (audit WP13). `validate` fails with `run \`crumb migrate\`` on an older store and `upgrade crumb-kit` on a newer one. See `migrate` below for the steps. | **built (WM-01)** |
+| `review <id> [--reviewer NAME]` | the record | `review_status: reviewed`, `reviewed_by`, `reviewed_at`, `reviewed_hash` | Stamp a decision, attempt, verification or trap as reviewed by a person (audit WP14). The stamp covers the record's claim: an edit makes it stale. The reviewer defaults to git's `user.email`, else the OS user. Under the team profile it is refused inside an agent session (friction, not enforcement: see `security.md` §4.2). | **built (WP14)** |
+| `policy [show \| set solo\|team [--mcp-mode write\|propose\|read-only]]` | `manifest.yml` | `review_profile`, `mcp_mode`, `requires` | Show or set the store's review policy (`security.md` §4). `team` makes agent-written guidance a proposal, keeps high-impact MCP status changes for a person, requires a valid review for `promote`, and declares `requires: review-profiles`. Setting it is refused inside an agent session. | **built (WP14)** |
 | `usage [--never \| --sessions \| --decay [DAYS]] [--top N]` | `private/usage.json` | report (read-only) | Which records actually get **shown** — a packet printed or injected, a guard verdict, a hook advisory. Counts are local to the machine and never committed. `--never` lists active records nothing has ever reached; `--sessions` orders by distinct sessions instead of raw count; `--decay` lists old records nothing has surfaced lately, with the `mark-status … stale` command for each (it never runs them). The three are mutually exclusive. See [`usage`](#usage-built-wm-02-wm-60). | **built (WM-02, WM-60)** |
 | `resume` | current, handoff, records, git state | generated resume packet | Print a bounded resume packet (≤5k tokens) with computed staleness. `--fast` = git snapshot + focus + next action + staleness (print-only). `--task TEXT` scopes `likely_files` to matching records and orders every list section by relevance to the task (print-only). | **4 (built)** |
 | `search [<query>]` | decisions, attempts, verifications, ideas, jots, traps, open questions | search output (read-only — `search` writes nothing) | Deterministic keyword/tag/file lookup over the records; the permissive layer `guard` builds on. Keyword and tag matching folds morphological variants — query and record tokens are stemmed by a small deterministic suffix-stripper (plus a tiny curated alias table: auth/config/db/repo, and the store's own `aliases.txt`), so "reconciliation" meets a record that says "reconciler"; `keyword_overlap` in `--json` output therefore contains stems. `--explain` prints the stems the query became. | **5 (built)** |
@@ -75,29 +78,108 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `consolidate --merge ID ID… --title "…"` | the named records | one merged record + status changes + reindex | Write one decision / attempt / verification / idea from the sources and mark every source `superseded`. See `consolidate` below. | **built (WM-33)** |
 | `promote <id> [--to CLAUDE.md\|AGENTS.md] [--rule "…"]` | one decision, attempt or trap | one rule line in the instruction file's promoted-rules block + `promoted_to`/`promoted_at` on the record + reindex | Make an active record a standing rule in the long-term tier. Never creates the instruction file. See `promote` and `demote` below. | **built (WM-40)** |
 | `demote <id> [--reason "…"]` | `CLAUDE.md`, `AGENTS.md`, the record | the rule line removed + promotion fields cleared + reindex | Take a promoted rule back out; the record is otherwise unchanged. | **built (WM-41)** |
-| `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` (`--hook-log`: `private/hook-log.jsonl`) | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. A `promoted_rules` row (`CLAUDE.md: 3 rule(s), 612 chars`), present only when a promoted-rules block has rules, says what the long-term tier costs every session; it does not change the exit code either. `--hook-log` instead summarises `private/hook-log.jsonl` per hook (exit 0; 2 with no store) — see [Hook log](#hook-log-built-wm-62). | **built** |
+| `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` (`--hook-log`: `private/hook-log.jsonl`) | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. An `operations` row fails while a multi-record operation is unfinished (`crumb recover`), and a `projections` row fails when the last projection rebuild raised (`crumb reindex`); neither changes the exit code. A `promoted_rules` row (`CLAUDE.md: 3 rule(s), 612 chars`), present only when a promoted-rules block has rules, says what the long-term tier costs every session; it does not change the exit code either. Since audit WP20 four more rows name a recovery: `compatibility` (a store this build may not write — upgrade), `records` (validation failures — `crumb validate`, or `crumb migrate` for an older layout), `related_map` (present only when `related.json` is `degraded`) and `hook_matcher` (present only when hooks are installed; fails when the installed guard matcher is older than `adapters.claude.GUARD_MATCHER` — `crumb init --with-hooks`); none changes the exit code. See [`operator-guide.md`](operator-guide.md) §5. `--hook-log` instead summarises `private/hook-log.jsonl` per hook (exit 0; 2 with no store) — see [Hook log](#hook-log-built-wm-62). | **built** |
 | `mcp serve\|register\|doctor` | `.mcp.json` | running server / registration / health | Run the MCP server, merge its `.mcp.json` entry, or report MCP wiring (`[mcp]` extra + registration). | **built** |
-| `hook session\|guard\|capture\|prompt\|compact\|subagent` | hook stdin payload | hook JSON on stdout (+ mined jots, one `private/hook-log.jsonl` line) | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve; a candidate that is found but fails — say an older crumb-kit on PATH that predates the event — is skipped like a missing one, and the launcher itself always exits 0, because Claude Code reads exit 2 from `UserPromptSubmit`/`PreToolUse` as "block"). An event this version does not know (installed by a newer `init`) prints `{}` and exits 0 rather than a usage error. Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). Re-running `init --with-hooks` also brings an entry **we own** up to the current matcher, which is how an existing install picked up `Task\|Agent` on the guard. The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. **Every event exits 0 and prints JSON**, whatever the payload. See the per-event table below. | **built** |
+| `hook session\|guard\|capture\|prompt\|compact\|subagent` | hook stdin payload | hook JSON on stdout (+ mined jots, one `private/hook-log.jsonl` line) | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve; a candidate that is found but fails — say an older crumb-kit on PATH that predates the event — is skipped like a missing one, and the launcher itself always exits 0, because Claude Code reads exit 2 from `UserPromptSubmit`/`PreToolUse` as "block"). An event this version does not know (installed by a newer `init`) prints `{}` and exits 0 rather than a usage error. Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). Re-running `init --with-hooks` also brings an entry **we own** up to the current matcher, which is how an existing install picked up `Task\|Agent`, and then `PowerShell\|NotebookEdit` (audit WP17), on the guard. The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. **Every event exits 0 and prints JSON**, whatever the payload. See the per-event table below. | **built** |
 
 ### Hook events
 
 | breadcrumbs event | Claude Code event | Matcher | Does |
 |---|---|---|---|
-| `session` | `SessionStart` | — | Emits the resume packet as `additionalContext`. With `source: compact` it prepends what was in flight before the compaction: the last prompt, the records surfaced for it, and the mined candidates waiting in the inbox — and builds the packet with that last prompt as its task, so the sections are ordered by relevance to it (see `resume --task`). |
-| `guard` | `PreToolUse` | `Bash\|Edit\|Write\|MultiEdit\|Task\|Agent` | Cost-aware guard verdict. A subagent launch (`Task`/`Agent`) is scored on its launch prompt and **capped at `READ_FIRST`**: the launch is not itself irreversible, and the subagent's own calls hit this same hook. |
+| `session` | `SessionStart` | — | Emits the resume packet as `additionalContext`. With `source: compact` it prepends what was in flight before the compaction: the latest task (the last prompt that was not an acknowledgement or a slash command, whether or not memory matched it; audit WP12), the records memory matched for *that* task, or "matched nothing", and the mined candidates waiting in the inbox. It builds the packet with that task as its task, so the sections are ordered by relevance to it (see `resume --task`). When the task's text was not kept (`retain_prompt_text: false`, or it carried a credential) it says so and orders by recency. |
+| `guard` | `PreToolUse` | `Bash\|PowerShell\|Edit\|Write\|MultiEdit\|NotebookEdit\|Task\|Agent` (from `adapters.claude.GUARDED_TOOLS`, audit WP17) | Cost-aware guard verdict. A shell command (`Bash`, `PowerShell`) is scored as typed; an edit (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`) on its path and a snippet of the new content (a notebook cell deletion as `delete a cell in <path>`). A tool the adapter does not know yields no action. A subagent launch (`Task`/`Agent`) is scored on its launch prompt and **capped at `READ_FIRST`**: the launch is not itself irreversible, and the subagent's own calls hit this same hook. |
 | `capture` | `Stop` | — | Mines the transcript (always, as a side effect), then snapshots a session record or holds the stop once for the extraction turn. The extraction instruction includes one line saying a write refused with exit 3 is a near-duplicate, answered with `--supersedes <id>` or `--allow-duplicate`. |
-| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Injects **current records only**: superseded, rejected, stale, disputed and quarantined records, answered and closed questions, records past their `expires_at`, and branch-scoped records written on another branch stay out. A verification stays in while its own lifecycle status is `active`, whatever its outcome. Captures a correction to `private/inbox/`. **Never blocks** — that would erase the prompt. |
+| `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, looked up for **any prompt that is not an acknowledgement** (audit WP10: a vocabulary such as "ok", "yes please", "go on", "thanks" or emoji alone, not a length — `npm test` and `quasar` are looked up) with **no record-count cutoff** (it used to return nothing above 500 records), with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Injects **current records only**: superseded, rejected, stale, disputed and quarantined records, answered and closed questions, records past their `expires_at`, and branch-scoped records written on another branch stay out. A verification stays in while its own lifecycle status is `active`, whatever its outcome. Captures a correction to `private/inbox/`. Records the prompt as the session's latest task **before** the lookup (audit WP12), and the lookup's selected and emitted ids apart from it; acknowledgements and slash commands leave the task alone. The dedupe key and the usage count are the ids left after budget trimming. **Never blocks** — that would erase the prompt. |
 | `compact` | `PreCompact` | — | Mines the transcript and writes a marker for the next `SessionStart`. Emits nothing: this event's stdout never reaches the model. |
 | `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript, tagged `subagent` and `agent:<type>`. Does not hold the subagent. |
 
+**How the prompt hook looks up** (audit WP10, `breadcrumbs/retrieval.py`).
+
+- **Acknowledgements.** A prompt made only of acknowledgement words (at most
+  four), or only of punctuation and emoji, is not looked up. Every other
+  prompt is, however short. Before, anything under 12 characters was skipped.
+- **No pre-count.** It uses the search index when that is current. Otherwise
+  it scans the store in full, up to `PROMPT_FULL_SCAN_MAX` (2,000) records.
+  Before, it loaded every record to count them and returned nothing above 500,
+  retired ones included.
+- **Past that bound it says so.** With no usable index, it injects a one-line
+  notice once per session ("memory was not searched for this prompt — … Run
+  `crumb reindex`"), rather than staying silent as if nothing were relevant.
+- **Current records only, chosen before the five-match cap**, so history never
+  takes a slot.
+- **The hook log records how it looked:** `retrieval` is `indexed`,
+  `full_scan`, `skipped` or `acknowledgment`.
+- **Whether the store has anything** comes from the verified generation
+  manifest's record count, or a file count. It used to be the guard
+  pre-filter file's existence.
+
 **What the miner writes.** Four deterministic rules over the transcript — a
-command that failed and passed after an edit (`attempt`), a test command that
+command that failed, then passed after an edit (`attempt`), a test command that
 passed (`verification`), a file edited four or more times (`trap`), and a user
-message that opens like a correction. Candidates become jots in
-`private/inbox/`, never the committed store, after a secret scan that drops
-rather than masks. Bounded at 10 per firing and deduped by fingerprint within a
-session. A cursor in `private/miner-cursor.json` stops a later firing re-mining
-what an earlier one already read.
+message that opens like a correction.
+
+Each tool call is classified before any rule runs:
+- **`success`** — the result arrived, was not flagged as an error, and printed
+  no failure.
+- **`failure`** — the harness flagged the result (Claude Code does this for a
+  non-zero exit), or a test, lint or build command prints an unambiguous
+  failure anywhere in its output. A zero count such as `0 failed` or
+  `errors: 0` is not a failure. The output is read because a pipeline such as
+  `pytest | tail` exits with `tail`'s status.
+- **`interrupted`** — the user or harness stopped the call.
+- **`not_run`** — the call was refused before it ran: a `<tool_use_error>`, or
+  a rejected tool use.
+- **`unknown`** — no result is in the transcript, or an unflagged result from
+  any other command reads like a failure. A `grep` that found the word
+  "error:" has not failed, and `python x.py | tail` printing a traceback has
+  not passed.
+
+Only `success` is worded as "passed", and only `failure` opens an attempt. An
+edit counts only when it succeeded. The attempt names the sequence ("failed,
+then passed after N file(s) changed"), not a cause. The 400-character excerpt
+in a candidate is cut after classification, around the failure when it comes
+late. Candidates become jots in `private/inbox/`, never the committed store,
+after a secret scan that drops rather than masks.
+
+**Mining is incremental and durable** (audit WP09). Each session has its state
+in `private/miner/<session>.json`, written under the store lock.
+
+- **A byte cursor.** Each firing reads only the complete lines past the cursor,
+  at most 8 MB. Whatever is beyond waits for the next firing and is reported
+  (`unread_bytes`). Before WP09 the cursor counted entries of a moving 8 MB
+  tail: once a transcript outgrew it, nothing new was ever mined.
+  - A trailing partial line is left until it is finished.
+  - A single line longer than a whole read is skipped once it ends, and
+    counted (`oversize_lines`).
+  - The file is recognised by digests of its first bytes and of the bytes just
+    before the cursor. A transcript that was truncated, replaced or rewritten
+    is read again from the start (`reset`); what was already written is not
+    written twice.
+- **Calls carry over.** A Bash or edit call still waiting for its result, and
+  the 200 most recent resolved ones, are kept between firings. A result that
+  arrives later joins its call, and a failure, edits and a pass in different
+  firings still make one attempt. A carried command or output that holds a
+  credential is blanked before it is saved.
+- **Nothing is dropped silently.**
+  - Candidates go to a backlog, and the cursor and backlog are saved, before
+    any jot is written.
+  - At most 10 jots are written per firing. The rest wait in the backlog
+    (at most 50; beyond that, new ones are dropped and counted).
+  - A candidate leaves the backlog only once its jot is written, refused (a
+    duplicate, a validation failure, a secret: counted), or dropped after five
+    failed writes (counted).
+  - What a rule's own cap holds back is counted too (`policy_capped`).
+  - The hook log and `crumb doctor`'s `miner` row show the backlog, the unread
+    bytes, the capped and the dropped.
+- **Nothing is written twice.** A candidate's fingerprint is stable (the
+  command, the file, the failing call, the user entry), and the transcript
+  events behind every acknowledged candidate are remembered across sessions
+  in `private/miner/acked.json`. So none of these writes a jot twice:
+  - a crash between a jot and the state write;
+  - a replayed transcript;
+  - a forked session that copies its parent's history.
+
+  `private/miner-cursor.json` from older versions is no longer read.
 
 **The writing events share the store.** `capture`, `compact` and `subagent`
 run under the store's write lock (see
@@ -246,13 +328,56 @@ Behavior:
   what relevance changes is which entries survive a trim. The packet carries
   `ordering: "relevance"` (`"recency"` otherwise, including a task that matched
   nothing), and the rendered packet says so under the Project line:
-  `_(sections ordered by relevance to: <task>; the 3 newest in each stay first)_`.
+  `_(sections ordered by relevance to the Requested Task above; the 3 newest in
+  each stay first)_`. The task itself is printed once, under *Requested Task*.
   `--task` also scopes `likely_files` to the matching records, labelling an empty
   result `starting cold`.
-- **Bounding:** per-section caps, then a hard **5,000-token** ceiling (chars/4
-  heuristic). Current/handoff/active-decisions outrank old session observations;
-  lower-priority sections are trimmed first and an omission note is shown. Raw
-  transcripts are never included.
+- **Bounding: the view you receive is within its budget** (audit WP08). The
+  budget is measured on the final text of the view, including headings,
+  warnings, the protected sections and the envelope, not on the lists alone.
+  Raw transcripts are never included.
+
+  | View | Measured on | Default budget | Smallest |
+  |---|---|---|---|
+  | `markdown` (`resume`, the committed packet, the `SessionStart` hook, `memory://resume-packet`) | the rendered Markdown | 5,000 | 500 |
+  | `markdown-fast` (`resume --fast`) | the rendered Markdown | 1,500 | 400 |
+  | `json` (`resume --json`, MCP `memory_build_resume_packet`) | the exact JSON document printed or returned, envelope included | 5,000 | 700 |
+  | `json-fast` (`resume --fast --json`) | the same | 1,500 | 700 |
+
+  - **The unit is named.** Budgets are in `approx_tokens`, estimator
+    `approx-tokens/2`: ASCII chars / 4, rounded up, plus one per non-ASCII
+    character. It is a heuristic, not any model's tokenizer, and the packet says
+    so. For ASCII text it equals the old chars/4. Before WP08, a CJK or emoji
+    character counted a quarter.
+  - **`--budget TOKENS`** bounds the printed view instead; it never changes the
+    committed packet. A value below the view's smallest budget exits 2. A
+    library caller asking for less gets the smallest, with
+    `budget.requested` saying what was asked.
+  - **How a view is fitted:**
+    1. Every list entry and warning is capped at 300 characters, and Current
+       Focus and Next Action at 2,000 (Requested Task at 500). A longer field
+       becomes a marked excerpt with a pointer to the whole:
+       `… [excerpt: 2000 of 31499 chars; full text: handoff.md → Next Action]`.
+       Entries point at `crumb show <id>`.
+    2. The per-section caps apply.
+    3. The lists are trimmed in `TRIM_ORDER` (least load-bearing first, the
+       commits since the handoff and then the warnings last), each with its
+       `… N more omitted` note.
+    4. If the view is still over, Current Focus, Next Action, Requested Task
+       and the project names shrink (1,000, 500, 250, 120 characters), down to
+       a bare pointer: `[omitted: 45000 chars; full text: current.md → Current Focus]`.
+
+    The canonical files are never shortened.
+  - **The packet identifies itself.** The Markdown carries a second header line,
+    `<!-- view: markdown | budget: <used>/<limit> approx_tokens (approx-tokens/2: …) | rules: portable -->`.
+    `--json` carries `budget: {view, unit, estimator, estimator_rule, limit,
+    used, within, requested?}` and `excerpted` (per section, a count; per
+    protected field, `{shown_chars, total_chars, source}`). `approx_tokens` is
+    the emitted view's size, equal to `budget.used`. Before WP08 it was always
+    the Markdown's.
+  - Before WP08, a long Current Focus or Next Action was never trimmed: a
+    28,500-character focus produced a packet of 7,333 estimated tokens
+    under a "5,000-token" ceiling.
 - **Computed staleness** (not just authored): handoff **age + commit-distance**,
   **aged-unresolved** questions/decisions (> `--stale-days`), **branch mismatch**
   (incl. detached HEAD), and **expired**/**low-confidence** records.
@@ -261,14 +386,35 @@ Behavior:
   and in `search`, but is dropped from the packet's list sections (the "expired
   on …" staleness line still names an expired decision or attempt). `crumb
   expired` lists them.
-- **Promoted records leave the lists (WM-40).** A decision, attempt or trap
-  promoted to `CLAUDE.md`/`AGENTS.md` is already in the model's context through
-  that file, so *Active Decisions*, *Failed Attempts To Avoid* and *Known Traps*
-  leave it out and end with `_(N promoted to the instruction file — see its
-  "Project rules promoted from memory")_`. `--json` carries the counts as
-  `promoted` (`{active_decisions, failed_attempts, known_traps}`, non-zero
-  sections only; `{}` when nothing is promoted). The missing-evidence warning
-  below still checks promoted decisions and attempts.
+- **Promoted records stay, as their rules, unless the reader has loaded them**
+  (WM-40, audit WP08). A decision, attempt or trap promoted to `CLAUDE.md` /
+  `AGENTS.md` is a standing rule. The packet does not know that its reader
+  loads that file: it may be another harness, a read-only clone, or the file
+  may have lost the rule.
+  - **Portable packets keep the record** and show the rule in force. These are
+    `resume` in every form, the committed packet, and the MCP packet and
+    resource.
+    - Markdown: `` - `<id>` — standing rule in CLAUDE.md: <rule> ``.
+    - If the file or the bullet is gone: `standing rule (promoted to CLAUDE.md,
+      not found there):`, with the rule rendered from the record.
+    - `--json` entries gain `promoted_to`, `rule` and `rule_in_file`. A trap
+      entry reads `<trap id>: standing rule in CLAUDE.md: <rule>`.
+    - The rule in force is the bullet in the file, even one edited by hand,
+      because that is what the file's readers have.
+  - **Only the `SessionStart` hook leaves any out.** It serves Claude Code,
+    which loads the project's `CLAUDE.md`. It leaves out exactly the promoted
+    records whose bullet is in that file at session start (a rule promoted to
+    `AGENTS.md` stays). Each such section ends with `_(N standing rule(s) left
+    out — already loaded from CLAUDE.md this session, …)_`.
+  - `packet.promoted` counts what was left out
+    (`{active_decisions, failed_attempts, known_traps}`, non-zero only), so it
+    is `{}` in every portable packet. `packet.rules` is `{mode: "portable"}` or
+    `{mode: "elided-when-loaded", loaded_from, elided}`.
+  - Before WP08, every packet left promoted records out on the strength of
+    `promoted_to` alone. A missing `CLAUDE.md` then hid a live decision from
+    everyone.
+  - The missing-evidence warning below still checks promoted decisions and
+    attempts.
 - **Branch-scoped records from another branch leave the lists (WM-52).** A
   decision, attempt, verification or committed jot with `scope: branch` whose
   `branch` is not the current branch is left out of *Active Decisions*,
@@ -349,9 +495,14 @@ Behavior:
   `generated/related.json` and `generated/conflicts.json`, each written
   atomically (see `reindex`). `--fast`
   and `--task` are **print-only** and never overwrite them.
-- **Never waits on the write lock.** `resume` only regenerates projections,
-  each replaced atomically, and a session must not fail to start because
-  another session is capturing.
+- **Waits at most 0.5 seconds for the write lock** (audit WP05). A session must
+  not fail to start because another session is capturing. If the lock is busy,
+  `resume` prints the packet it built but publishes nothing (see
+  [Store write lock](#store-write-lock-built-wm-51)).
+- **The stamp is the snapshot the packet was built from** (audit WP07). If the
+  store kept changing across three builds, the packet is stamped
+  `inputs_hash: unstable` and says so in its warnings (see
+  [Coherent projections](#coherent-projections-built-audit-wp07)).
 - Exit codes: `0` on success, `2` when no `.project-memory/` store is present.
 
 ---
@@ -413,8 +564,13 @@ Every mutation runs the same reindex; this command runs it on demand. In order:
    score reaches `GUARD_NOISE_FLOOR`; ties break by id. It deliberately does not
    reuse the guard's scorer, which decays by branch, clock and commit distance —
    two clones would compute different relations for identical records. Stamped
-   with `inputs_hash`, so `validate` and `audit` detect it going stale. Above
-   2000 items the map is empty and `skipped` names the reason.
+   with `inputs_hash`, so `validate` and `audit` detect it going stale. Only
+   pairs that share a file, a tag stem or a non-ubiquitous stem are scored
+   (the rest score 0), so there is no corpus cutoff (it used to be 2000 items,
+   audit WP15). Past `RELATED_PAIR_BUDGET` (3,000,000) candidate pairs, the
+   most widely shared features stop generating pairs and the file says so in
+   `degraded` (`reason`, `dropped_features`, `largest_dropped_posting`).
+   `skipped` is always `null`.
 4. **`generated/conflicts.json`** (WM-34) — pairs of live records that may
    argue with each other, `{_generated, inputs_hash, conflicts: [{rule, ids,
    similarity, message}]}`. Two rules:
@@ -437,6 +593,12 @@ Every mutation runs the same reindex; this command runs it on demand. In order:
    index only past the threshold, and the next ordinary reindex of a small store
    deletes it again. A build failure is swallowed: no index only means the full
    scan.
+
+All of these are one **generation**, built from one snapshot of the store and
+published together, with the manifest `index/generation.json` written last (see
+[Coherent projections](#coherent-projections-built-audit-wp07)). The packet,
+pre-filter, related map and conflict list all carry that snapshot's
+`inputs_hash`.
 
 `--json` adds a `search_index` object (`{built, records, reason}`) when
 `--search-index` is passed.
@@ -548,10 +710,20 @@ Behavior:
   document frequencies. Matches and scores are identical with and without it.
   Traps, questions, machine-local jots and any directory the freshness hash does
   not cover are always parsed directly. The index is machine-local, gitignored
-  and disposable, stamped with the inputs it was built from (a cheap stat
-  fingerprint first, `inputs_hash` when that differs); a stale, absent or
-  unreadable index — or a Python without `sqlite3` — is never used, and search
-  falls back to the full scan.
+  and disposable, stamped with the `inputs_hash` of the snapshot it was built
+  from. It is **fresh only when that content hash still matches** (audit WP07).
+  - There is no path/size/mtime shortcut: a same-size edit with a restored mtime
+    used to leave the index "fresh" and missing the new words.
+  - Hashing the store costs about 3.5 ms at 200 records and 17 ms at 1,000.
+  - An index from an older format (`index_format` below `2`) is stale.
+
+  A stale, absent or unreadable index — or a Python without `sqlite3` — is
+  never used, and search falls back to the full scan.
+- **A lookup says how it ran** (audit WP10). `--json` carries
+  `lookup: {mode, reason, candidates}` and `--explain` prints it: `indexed`, or
+  `full_scan` with the reason the index could not serve (`no search index`,
+  `the search index is stale`, `the search index is unreadable`, `the store is
+  under 200 indexed records`, …). `crumb search` always completes.
 - **Expired records are still found.** A record past its `expires_at` keeps
   its status and is searched like any other; the human line marks it
   (`[active, expired]`, or `[fixed, expired]` for a verification, whose
@@ -600,6 +772,27 @@ Behavior (deltas from `search` — everything there applies here too):
   record that mentions npm. The match is keyword-only, so it escalates only
   through the score bands. The prompt hook uses the same gate. Found by the
   relevance evals (`evals/`, WM-61).
+- **A trap that names the exact command is READ_FIRST** (audit WP10, F10).
+  Before, `npm test` against a trap titled "npm test truncates the database"
+  matched on the title alone, scored 3 and came out `PROCEED`. The rule is
+  narrow:
+  - **A trap names a command** with the leading words of its summary (after a
+    leading "run"/"running", as in "Running make deploy pushes to prod"), or
+    with a backticked span in its hazard text. Each named command records
+    which it is: a summary head matches from its start, and a backticked span
+    must be named whole (audit WP11). A backticked command in the trap's
+    remedy, such as "use `npm run test:unit`", is what to run *instead*, and
+    never counts.
+  - **The action matches** when their common leading tokens number at least
+    two and cover the whole action, or stop at a flag: `npm test` and
+    `npm test --watch` match; `npm run test:unit`, `npm install`, `pytest -q`
+    and `make` do not.
+  - **A match carries the `command` signal**, scores at least
+    `GUARD_READ_FIRST_SCORE`, and floors a live trap at `READ_FIRST`, the
+    advisory ceiling. The reader is told; the permission flow is untouched.
+- **`PROCEED` means "no applicable memory warning found".** It is not an
+  authorization and not a safety check of the action. The recommended action
+  says so.
 - **Staleness on the guard path is risks-only.** Only abnormal states — cold
   handoff (`⚠`), detached HEAD, handoff branch mismatch — ride along with a
   verdict. The routine store facts (fresh handoff age, aged records, low
@@ -626,9 +819,46 @@ Behavior (deltas from `search` — everything there applies here too):
   error / no store. Deliberately clear of 1, 2, and the shell's 126+ range.
   The hook translator (`crumb hook guard`) always exits 0 — hook protocols
   treat nonzero as a hook failure.
+- **`--exit-zero`** (audit WP11) exits 0 whatever the verdict, for a caller that
+  cannot take a non-zero status (a CI step under `set -e`). It is opt-in and
+  changes the status only: the verdict is still printed and in `--json`, and
+  the default mapping is unchanged.
 
-The `PreToolUse` hook path adds two behaviors of its own:
+The `PreToolUse` hook path adds three behaviors of its own:
 
+- **The pre-filter is trusted only when verified** (audit WP07). The hook reads
+  `generated/guard-prefilter.json` to decide whether a routine-looking call
+  needs the full guard at all. It relies on that file only when the current
+  generation manifest vouches for it (see
+  [Coherent projections](#coherent-projections-built-audit-wp07)).
+  - A missing, corrupt or replaced pre-filter, one from a publication that was
+    not stable, or one older than the records now on disk is **not** evidence
+    that no hazard exists. The hook runs the full guard against the records
+    instead, and the hook log notes `prefilter: "unverified"`.
+  - That costs time, not coverage: in the recorded run, 39 ms instead of
+    2.6 ms per call at 200 records, and 92 ms instead of 8.2 ms at 1,000.
+  - A verified pre-filter that finds nothing keeps the call silent as before
+    (`skipped: "prefilter"`).
+  - **It never filters out a named command** (audit WP10). The pre-filter lists
+    the commands live traps name, and an action that names one goes to the full
+    guard, however routine it looks.
+  - **It is a strict superset of what full guard surfaces** (audit WP11, format
+    `3`). Before, it covered traps and do-not-retry attempts only, so an edit to
+    a file only a *decision* declares could draw `READ_FIRST` from
+    `crumb guard` and silence from the hook. On the eval stores this happened
+    to 27 of 193 warnings.
+    - It now holds, from every record that could drive a verdict (live
+      decisions, attempts, verifications, traps, open questions), everything
+      `_score_item` can match on: specific stems (`tokens`), title stems
+      (`titles`), tag stems (`tags`), declared and mentioned files (`paths`)
+      and named commands (`commands`).
+    - An action passes when it shares two stems with `tokens`, is a single
+      stem found in `titles`, shares a tag or a path, or names a command.
+    - It may admit an action full guard then passes over, which costs one
+      full guard run. It cannot drop one full guard would warn about.
+      `tests/test_guard_delivery.py` checks this against full guard on every
+      eval suite.
+    - A pre-filter of another format is treated as unverified.
 - **Edits carry content.** The guard action for an `Edit`/`Write`/`MultiEdit`
   is `edit <path>: <bounded snippet of the new content>`, so successive edits
   of one file stop producing byte-identical guard input and a content-shaped
@@ -672,7 +902,7 @@ carry a severity:
   **`unadopted-block`** (at schema 3, a hand-written trap/question block in a
   singleton whose id already has a file with different content — merge it into
   the file by hand, then delete the block), **`aliases`** (a malformed line in
-  `aliases.txt`, which is ignored), and three lifecycle checks over live
+  `aliases.txt`, which is ignored), and four lifecycle checks over live
   (active, unexpired) records:
   - **`evidence-missing-file`** — a decision, attempt or verification cites
     `file`/`path` evidence that is neither on disk nor in HEAD (same rules as
@@ -682,8 +912,12 @@ carry a severity:
   - **`near-duplicates`** — two live records of the same type at or above the
     near-duplicate threshold (0.6; 0.9 for jots), with the commands to
     supersede one or merge them (up to 10 pairs). A pair already reported as a
-    possible contradiction is not reported again here. A type with more than
-    2000 live items is not swept.
+    possible contradiction is not reported again here. Every type is swept at
+    any size (before audit WP15, a type with more than 2000 live items was
+    skipped without a word);
+  - **`related-degraded`** — the committed `generated/related.json` carries a
+    `degraded` report: the pair budget stopped its most widely shared
+    features, so "see also" is incomplete (see `reindex`).
 
   and two checks on the promoted-rules block in `CLAUDE.md`/`AGENTS.md` (see
   `promote` and `demote`):
@@ -783,45 +1017,91 @@ similar first. Under `--json` the refusal is `{ok: false, command, error:
 - **`--allow-duplicate`** writes the record anyway.
 - An **exact repeat** — the same question text, the same trap slug — keeps its
   existing exit-1 error (`… reopen it with \`crumb mark-status <id> open\``).
-- Internal writers (`inbox promote`, migrations, the transcript miner) are not
-  gated. The MCP writers are: see [`mcp-spec.md`](mcp-spec.md).
+- `inbox promote` is gated like `remember` (audit F03). Other internal writers
+  (migrations, the transcript miner) are not gated. The MCP writers are: see [`mcp-spec.md`](mcp-spec.md).
 
 Records that predate the gate are found by `audit` (`near-duplicates`) and
 grouped by `consolidate`.
 
 ---
 
-## `verify --recheck` (built, WM-31)
+## `verify --recheck` (built, WM-31; replay contract: audit WP04)
 
 ```bash
-crumb verify --recheck ver_20260801_unit-suite-open          # asks y/N per record
-crumb verify --recheck ver_… --recheck ver_… --yes           # runs without asking
-crumb verify --all --yes                                     # every active verification with a command
+crumb verify "login rejects expired tokens" --status open \
+  --assert "pytest tests/test_auth.py::test_expired_token"   # declare an assertion
+crumb verify --recheck ver_20260801_login-bug                 # asks y/N per record
+crumb verify --recheck ver_… --recheck ver_… --yes            # runs without asking
+crumb verify --recheck ver_… --bind-commands --yes            # treat its commands as assertions
+crumb verify --all --yes                                      # every active verification with a check
 ```
 
-Reruns the `command`/`test` evidence a verification recorded and writes the
-result as a **new** verification. Each record's commands are printed first;
-without `--yes`, a terminal is asked `run these? [y/N]` per record, and with no
+Reruns a verification's checks. Only an **assertion** can change the claim.
+Each record's commands are printed first, marked `[assert]` or `[diagnostic]`.
+Without `--yes`, a terminal is asked `run these? [y/N]` per record; with no
 terminal the command exits 2 having run nothing. There is no MCP equivalent, on
 purpose: running commands taken from the store is a human-confirmed, CLI-only
 act.
 
-- Each command runs with `shell=True` in the project root, with a 300-second
-  timeout.
-- The new verification has the same subject, `method: runtime`, outcome `fixed`
-  when every command exited 0 and `open` otherwise, the commands as `command`
-  evidence, and a `Notes` section with each command's exit code and its last 3
-  non-empty output lines — a line that looks like a secret is replaced by
-  `[line dropped: looked like a secret]`. The old record is marked `superseded`
-  by it. The near-duplicate gate does not apply.
-- `--all` takes every active verification that names a command. A named id that
-  is not a verification or has no command evidence is reported with a
-  `CRUMB-WARN` line and skipped.
-- Exit codes: `0` all recorded (a declined record counts as skipped, not
-  failed), `1` nothing to recheck or a new record could not be written, `2` no
-  store or no terminal without `--yes`. `--json` returns `{rechecked: [{ok, id,
-  new_id, outcome, runs: [{command, exit_code, tail}]}], summary: {rechecked,
-  fixed, open, skipped}}`.
+**What runs, and what it may claim** (`breadcrumbs/checks.py`):
+
+- **Assertion.** An evidence item `{type: assert, ref: <command>, spec: "1"}`
+  declares that the command exits 0 exactly when the subject is fixed — a
+  regression test for it. `verify --assert CMD` (repeatable) writes one, and
+  MCP `memory_verify` can pass the same item in `evidence`. Only assertions
+  settle a claim.
+- **Diagnostic.** Legacy `command` evidence is run and reported, but it never
+  changes the claim: a command that exits 0 has not shown that the subject is
+  fixed. `--bind-commands` is the operator saying that, for this record, the
+  command *is* the assertion; the new record then stores it as one.
+- **Pointer.** `test` evidence is a test-file path and is never executed.
+
+**Settlement.** When every assertion was evaluated:
+- all passed → `fixed`;
+- one failed on a claim recorded as `fixed` or `not_applicable` → `regressed`;
+- otherwise → `open`.
+
+The result is a new verification that supersedes the old one and keeps its
+subject, scope, branch, confidence, tags and evidence (`method: runtime`). A
+`Notes` section lists each run's status, exit code and last 3 non-empty output
+lines; a line that looks like a secret is replaced by
+`[line dropped: looked like a secret]`.
+
+If no assertion is declared, or one could not be evaluated, **nothing is
+written**, the old record stands unchanged, and the result carries
+`settled: false` and a `reason`. An assertion is not evaluated when the shell
+could not find or run the command (exit 126/127, or 9009 on Windows), it timed
+out, it was killed by a signal, or its `spec` is not `1`.
+
+**Where it runs.** A branch-scoped verification recorded on another branch is
+not rechecked from this checkout: the run would describe this branch. Check that
+branch out first.
+
+**How it runs.** Each command runs through the platform's shell in the project
+root, as typed; POSIX parsing is never applied to a Windows string. Each run
+gets its own process group and a 300-second timeout, and output is kept in a
+rolling 64 KiB window while it runs. The whole group is terminated on timeout,
+on Ctrl-C, and after the command returns, so a background child cannot outlive
+its check. On Windows, `taskkill /T` is used; a process that detaches itself
+from the group is out of reach.
+
+**Other behavior:**
+- The near-duplicate gate does not apply.
+- `--all` takes every active verification with an assertion or a command.
+- A named id that is not a verification, has nothing to run, or is scoped to
+  another branch is reported with a `CRUMB-WARN` line and skipped.
+
+**Exit codes:** `0` means every record was processed (settled or not; a
+declined record counts as skipped); `1` means nothing to recheck, or a new
+record could not be written; `2` means no store, or no terminal without
+`--yes`.
+
+**JSON output.** `--json` returns `{rechecked: [{ok, id, settled, new_id,
+outcome, reason, runs}], summary: {rechecked, settled, not_settled, fixed, open,
+regressed, skipped}}`. Each run is `{command, kind, status, exit_code, signal,
+timed_out, duration_s, output_bytes, truncated, tail, cwd, platform, detail}`,
+where `status` is one of `passed`, `failed`, `unavailable`, `timeout`, `killed`
+or `unsupported`.
 
 ---
 
@@ -1093,9 +1373,10 @@ existing `branch` field, derived from git at write time.
 - **Where it is set.** `--scope project|branch` on `jot` and `verify`, and the
   `scope` parameter on `memory_jot` / `memory_verify`. `crumb jot` and
   `memory_jot` default to `project`; jots the hooks write (a captured
-  correction, mined candidates) default to `branch`. `remember --scope` takes
-  free text, as it always has; any record whose `scope` is `branch` is treated
-  the same way, and any other value counts as `project`.
+  correction, mined candidates) default to `branch`. `remember --scope` and
+  `memory_record` take the same two values. They took free text before the
+  record contract, and a legacy record with another value still counts as
+  `project` but fails `validate` (`scope-unsupported`, `record-schema.md` §4).
 - **Elsewhere.** A record is *branch-scoped elsewhere* when its `scope` is
   `branch`, it has a recorded branch, the current branch is known, and the two
   differ. Such a record:
@@ -1111,7 +1392,126 @@ existing `branch` field, derived from git at write time.
 - **Still visible:** the record stays on disk and in `search` (the `--json`
   match carries `scope`), `show`, `crumb inbox` (`--json` rows carry `scope`
   and `branch`) and `expired`. `jot --json` echoes the `scope` written.
-- `inbox promote` writes the durable record with the default `project` scope.
+- `inbox promote` keeps the jot's scope; `--scope project` widens a branch jot,
+  and the output says it did.
+
+---
+
+## Multi-record operations and `recover` (built, audit WP06)
+
+Some changes are several writes. Each is one **operation**: it either happens
+completely, or it has not happened at all.
+
+- `remember`, `note`, `verify` and MCP `memory_record` with `--supersedes`: the
+  new record and the old one's retirement.
+- `inbox promote`: the target, anything it supersedes, and the jot's
+  retirement.
+- `consolidate --merge`: the merged record and every source's retirement.
+- `rollup sessions`: the rollup and the deletion of the snapshots it folds.
+- `mark-status` of a promoted record: the retirement and the rule's removal
+  from `CLAUDE.md` / `AGENTS.md`.
+- `promote` and `demote`: the record and the instruction file.
+
+**How it works** (`breadcrumbs/mutations.py`):
+
+- **Journal first.** Before an operation first writes or deletes a record, a
+  singleton or an instruction file, it saves the file's prior bytes (or its
+  absence), and a digest of what it is about to write, to
+  `private/operations/<id>/`. `generated/`, `index/` and `private/` are derived
+  or local and are rebuilt instead. A clean finish removes the journal.
+- **A failed step undoes the whole operation.** For example, a retirement the
+  writer checked and found refused, or a rule that could not be removed. Every
+  touched file is restored, the projections are rebuilt, and the command fails
+  with the reason and `nothing was changed` (exit 1; MCP `{ok: false}`). Before
+  0.3.x, a failed retirement was ignored: the replacement was written, both
+  records stayed live, and the command exited 0.
+- **A writer killed midway leaves its journal.** `crumb doctor` reports it (an
+  `operations` row), and `resume` warns on stderr.
+  - `crumb recover` lists unfinished operations and what rolling each back
+    would do to every file (`restore`, `remove`, `unchanged`, or `conflict`).
+  - `crumb recover --apply` rolls them back. A file is restored only if it
+    still holds its before-image or a state the operation wrote. One changed by
+    anybody since is a `conflict`: it is left alone, and the journal stays.
+  - A file the operation created and the rollback removes is copied to
+    `private/recovered/<id>/` first, so rolling back never erases what was
+    written.
+  - `--json` returns `{operations: [{id, kind, files: [{path, action}],
+    rolled_back?, conflicts?, kept?}], applied}`. Exit 1 while any operation
+    remains unfinished.
+- **A rewrite checks its revision.** A rewrite of a record (a status change, a
+  retitle, a trap confirmation, a promotion's fields) refuses when the file no
+  longer holds the text the writer read. The error says the file "changed since
+  it was read"; nothing is written, and the other edit survives.
+- **A failed projection rebuild is visible.** After a committed write, a
+  rebuild that raises leaves `private/projections-pending`. It is reported by
+  `doctor` (a `projections` row) and cleared by the next rebuild that works.
+
+Operations run under the store write lock, which is why a journal found while
+holding the lock belongs to a writer that stopped.
+
+---
+
+## Coherent projections (built, audit WP07)
+
+The `generated/` files and the search index are derived from the records. Each
+one carries `inputs_hash`, the digest `validate` and `audit` compare against the
+store to decide whether it is current. WP07 makes that stamp, and the set of
+files, trustworthy.
+
+**A stamp describes the snapshot that was actually read**
+(`breadcrumbs/snapshots.py`).
+
+- A build hashes the inputs, builds and stamps with that hash, then hashes
+  again. The two match only if nothing changed in between, so the stamp names
+  exactly what the build read.
+- If they differ, the build retries, up to three attempts. A store that keeps
+  changing gets the stamp `unstable` instead of a digest:
+  - the packet adds a warning saying it is not certified current;
+  - `validate` reports a `freshness` failure, because `unstable` never equals a
+    digest;
+  - `reindex` / `try_reindex_projections` return
+    `(False, "the store kept changing during publication; projections stamped unstable")`.
+
+  Before 0.3.x, the hash was taken after the records were read. A record
+  written in between was missing from the packet but covered by its stamp, so
+  `validate` called the packet current.
+- Publication runs under the store lock, so a cooperating writer cannot land
+  mid-build. The check covers everything else: a hand edit, a `git checkout`, an
+  older crumb-kit, and unlocked readers such as `resume --fast`.
+
+**One publication is one generation** (`breadcrumbs/projections.py`).
+
+- The packet, pre-filter, related map and conflict list are built from one
+  snapshot and carry the same stamp. The guard pre-filter is now stamped too.
+- The search index is built into a unique temp file (`index/.index.*.tmp`). It
+  is moved into place only if the snapshot proved stable, and staged files from
+  discarded attempts or a failed publication are removed.
+- The previous manifest is removed before the files are replaced. The new
+  **`index/generation.json`** is written last, only after every output is in
+  place. It records:
+  - `inputs_hash` and `stable`;
+  - the sha256 of each generated file;
+  - a stat fingerprint (paths, sizes, mtimes) of the canonical inputs at that
+    moment.
+- The manifest is machine-local (under the gitignored `index/`). It describes
+  this checkout's publication; a committed copy would churn and be wrong on
+  another machine.
+
+**Consumers trust a projection only when the generation vouches for it.**
+`projections.verified(name)` returns the file only when:
+
+- the manifest exists and says `stable`;
+- the file's sha256 matches its entry;
+- the canonical inputs have not moved since (the fingerprint still matches).
+
+The guard hook's pre-filter is the consumer that needs this (see `guard`).
+Otherwise, a missing, corrupt, replaced or out-of-date pre-filter reads as
+"nothing risky here" (audit F11). The stat fingerprint is a cheap "did anything
+move" test for that hot path, not proof of equal content. The strict checks, the
+search index's freshness and `validate`, compare content hashes.
+
+**The search index is fresh only by content hash** (audit F12). See `search`.
+The index format is `2`; an older index is rebuilt.
 
 ---
 
@@ -1123,26 +1523,38 @@ already atomic; the lock stops two read-modify-write sequences (a handoff
 rewrite, an index rebuild) from interleaving so that one silently undoes the
 other.
 
-- **The lock file** is `.project-memory/private/.write-lock` (gitignored with
-  the rest of `private/`), created with `O_CREAT | O_EXCL` and holding the
-  owner's pid, a Unix timestamp and the host name. It exists only while a
-  writer holds it. Within one process an in-process lock per store serialises
-  threads, and the lock is re-entrant within a thread.
-- **The holder keeps it fresh.** A heartbeat thread touches the file every 15
-  seconds while the lock is held, so a long writer (a migration backup, a
-  search-index build) keeps it.
-- **Stale locks are broken.** A lock is stale when its file has not been
-  touched (mtime, or the timestamp inside) for 60 seconds, or — only for a lock
-  written on this host, and only on POSIX — when its pid no longer exists. A
-  lock from another host (a store on a shared filesystem) is judged by age
-  alone. Breaking is exclusive: a waiter first creates
-  `private/.write-lock.break`, re-checks that the lock is still stale while
-  holding it, and only then removes it. A fresh lock another waiter took
-  meanwhile passes that re-check and is left alone, so two waiters cannot both
-  proceed. A break file left by a crashed waiter is ignored after 5 seconds.
-- **`init --force`** keeps its own lock file while it replaces everything else
-  in the store, so the rest of `init` (scaffold, integrations, reindex) still
-  runs locked.
+- **The lock is an operating-system lock** (audit WP05): `flock` on POSIX and
+  `msvcrt.locking` on Windows, on `.project-memory/private/.store.lock`
+  (gitignored with the rest of `private/`). The kernel holds it, so it is
+  released the moment its holder exits, however that happens.
+  - There is no heartbeat, no age limit and no "stale lock" rule: a live
+    writer is never judged dead because a clock jumped or a process was
+    suspended, and a crashed one never wedges the store.
+  - The file is permanent and never unlinked. While a writer holds it, the file
+    carries the writer's pid, a Unix timestamp and the host, but only for error
+    messages.
+  - Within one process, an in-process lock per store serialises threads, and
+    the lock is re-entrant within a thread.
+- **Filesystems.** An OS lock is exact on a local filesystem. If the store's
+  filesystem refuses one (some network or sync-managed mounts), a write fails
+  with `cannot take a write lock on …; the store must be on a local filesystem
+  for concurrent writers to be safe` rather than proceeding uncoordinated.
+- **Older versions.** crumb-kit 0.3.0 and earlier used an exclusive-create
+  `private/.write-lock` with a heartbeat. While such a file is fresh (touched
+  within 60 seconds) and its process alive, this version waits for it too; it
+  never removes one. An older version does not see this version's lock, so run
+  one version per checkout.
+- **`init --force`** keeps both lock files while it replaces everything else in
+  the store. An OS lock lives on the file's inode, so replacing the file would
+  let a second writer lock a new one while `init` still runs.
+- **Publishing projections takes the lock.** The four `generated/` files and
+  the search index are each replaced atomically, but not together, so every
+  rebuild runs under the lock. A writer already holds it. `resume` waits only
+  0.5 seconds; if another writer holds the lock, it still prints the packet it
+  built but writes nothing, warns on stderr, and reports
+  `publication: {published: false, reason}` in `--json`. The search index is
+  built in a temp file of its own, and it is moved into place only as part of a
+  stable generation (audit WP07).
 - **Which invocations take it** is decided per invocation (`_needs_lock` over
   `LOCKED_COMMANDS` in `breadcrumbs/cli.py`): `init` (when a store exists),
   `remember`, `note`, `jot`, `inbox promote` and `inbox drop`, `verify`,
@@ -1151,14 +1563,15 @@ other.
   waits up to 2 seconds, then exits 1:
 
   ```text
-  CRUMB-ERROR: crumb jot: store is locked by pid 9502; try again, or remove a stale lock
+  CRUMB-ERROR: crumb jot: store is locked by pid 9502; try again shortly
   ```
 
   Under `--json` that is `{ok: false, command, error}`. When the holder is
   another thread of the same process, the message says `store is locked by
   another thread of this process; …`. With no store, the command runs without
   the lock and reports the missing store itself (exit 2).
-- **Invocations that never wait:** everything else — `resume` (see `resume`),
+- **Invocations that never wait:** everything else — `resume` (it waits 0.5
+  seconds to publish, never to show the packet),
   the `inbox`, `traps` and `consolidate` listings, `search`, `guard`, `show`,
   `validate`, `audit`, `scan-secrets`, `doctor`, `usage`, `expired`,
   `questions`, `schema`, `mcp`.
@@ -1167,8 +1580,8 @@ other.
   [Hook events](#hook-events)). The MCP writers wait 2 seconds and return
   `{ok: false, error: "store is locked by pid N; …"}` (see
   [`mcp-spec.md`](mcp-spec.md)).
-- A lock held by a process that is still running but stuck keeps its
-  heartbeat and is not broken; deleting the file releases it.
+- A lock held by a process that is still running but stuck stays held until
+  that process exits or is killed. Deleting the file does not release it.
 
 ---
 
@@ -1188,12 +1601,33 @@ combination).
 
 Behavior:
 
-- **What counts.** A record counts when it is shown: a packet printed or
-  injected, a guard verdict, a hook advisory. A reindex does not count, or the
-  numbers would measure writes. The counts live in `private/usage.json`
-  (machine-local, never committed; see [`record-schema.md`](record-schema.md)
-  §1): per record the total, the count by source, `last_surfaced_at` and the
-  last 20 session ids.
+- **What counts.** A record counts when its id is in output a host received:
+  a packet printed or injected, a guard verdict, a hook advisory. A reindex
+  does not count, or the numbers would measure writes. The counts live in
+  `private/usage.json` (machine-local, never committed; see
+  [`record-schema.md`](record-schema.md) §1): per record the total, the count
+  by source, `last_surfaced_at` and the last 20 session ids.
+- **Accounting model (audit WP12).** The stages are distinct, and only the
+  last is counted:
+  - *retrieved*: records the lookup scored;
+  - *selected*: current records under the cap;
+  - *emitted*: ids in the printed output, after budget trimming and after
+    the per-session dedupe.
+
+  A deduplicated repeat, an output trimmed to nothing, a silent `PROCEED` and a
+  failed hook count nothing. The guard hook counts the three matches its reason
+  names; `crumb guard` counts every match it prints; a packet counts the ids
+  left after its budget. A count says a record was shown, not that it was read
+  or that it helped. Confirmation comes only from authored records (`crumb
+  verify`, `crumb traps --confirm`), and nothing acts on a count by itself:
+  `--decay` and audit's promotion hint print commands for a person.
+- **Contention.** Each emission is one event file in `private/usage-events/`,
+  folded into `usage.json` under a lock of its own, exactly once. Parallel
+  hooks never lose each other's counts, and a reader counts an event that is
+  still waiting to be folded. `crumb usage` prints the model and a
+  *Completeness* line when events are pending, unreadable or evicted by the
+  2000-record cap; `--json` returns it as `accounting`. An emission that could
+  not be written is noted `usage_dropped` in the hook log.
 - **`--sessions`** sorts by distinct sessions, then by raw count. Forty guard
   calls in one session are one piece of evidence; five sessions are five. Only
   the last 20 session ids are kept per record, so a row at that cap prints
@@ -1209,8 +1643,8 @@ Behavior:
   ```
 
   `usage --decay` prints the commands and never runs them. Left out:
-  promoted records (the packet hides them on purpose, so they are never
-  surfaced), records past their `expires_at`, and traps confirmed with `crumb
+  promoted records (standing rules, which the `SessionStart` packet leaves out
+  whenever `CLAUDE.md` carries them, so their surfacing counts say little), records past their `expires_at`, and traps confirmed with `crumb
   traps --confirm` within the window. Verifications and questions have TTLs of
   their own and are never candidates. A trap still stored as a block (a
   schema-2 store) has no file to date it and is never a candidate either.
@@ -1246,18 +1680,25 @@ Every hook firing appends one line to `.project-memory/private/hook-log.jsonl`
   permission prompt), `block` (the Stop hook's extraction turn), `locked` (a
   writing hook skipped on the store lock), `other` (any other JSON object) or
   `unparsed` (output that was not JSON);
-- what the handler noted: guard's `tool`, `verdict`, `skipped: "prefilter"`
-  and `deduped`; the prompt hook's `matches`, `deduped` and `correction`;
+- what the handler noted: guard's `tool`, `verdict`, `skipped: "prefilter"`,
+  `deduped`, and the accounting stages `candidates`, `matches` and `emitted`;
+  the prompt hook's `retrieval`, `candidates`, `matches`, `trimmed`,
+  `emitted`, `deduped` and `correction`; `usage_dropped` and `state_dropped`
+  when a count or a state update could not be written;
   `capture`'s `mined`, `snapshot`, `redundant` and `offered`; `mined` for
   `compact` and `subagent`.
 
 No prompt, command, file path or transcript text is logged, only counts and
 verdicts. The hook's stdout is captured and then written out unchanged, even
-when the handler raises. Logging is best-effort and takes no lock: a failed
-write is dropped. The line is written only when `private/` exists; a hook does
-not create it. The file is bounded: past 5000 lines (`HOOK_LOG_MAX_LINES`) it
-is cut back to the newest 4000 (`HOOK_LOG_TRIM_TO`), so a busy session does
-not rewrite it on every call.
+when the handler raises. Logging is best-effort: a failed write is dropped.
+The line is written only when `private/` exists; a hook does not create it.
+Each line is a single append. The log is bounded by rotation (audit WP12):
+when the current file reaches 2500 lines (half of `HOOK_LOG_MAX_LINES`) it is
+renamed to `hook-log.1.jsonl`, replacing the previous one. Rotation takes
+`private/.hook-log.lock` without waiting and re-checks the size under it.
+Nothing rewrites a file other hooks append to, so parallel hooks never drop
+each other's lines; a line leaves only when its rotated half is replaced.
+`crumb doctor --hook-log` reads both files.
 
 `crumb doctor --hook-log` summarises the log per event: firings, outcomes, the
 spoke rate (the share that were `context`, `ask` or `block`), `ms` p50 / p95 /

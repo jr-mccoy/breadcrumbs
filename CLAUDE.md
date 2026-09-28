@@ -41,13 +41,15 @@ python -m build                         # build wheel + sdist into dist/
 
 - `pyproject.toml` has `dynamic = ["version"]` and reads it via
   `[tool.setuptools.dynamic] version = {attr = "breadcrumbs.__version__"}`.
-- `breadcrumbs/cli.py` reads it (lazily, in `get_version()`) as the
-  source-checkout fallback.
+- `breadcrumbs/cli.py` returns it from `get_version()` (lazily). Installed
+  metadata is not consulted at run time: it can be stale (editable installs,
+  a leftover `*.egg-info`), and `__version__` is what the running code is.
 
 **To change the version, edit that one line.** Never add a version literal to
 `pyproject.toml` or `cli.py` — that reintroduces the hand-sync drift this design
 removed. The package version is independent of the record `schema_version`
-(`SCHEMA_VERSION` in `cli.py`, currently `1`); `crumb --version` prints both.
+(`SCHEMA_VERSION` in `cli.py`, currently `4`); `crumb --version` prints both.
+A `schema_version` change is always a minor release (`docs/compatibility.md`).
 
 ## Releasing (do it this way — the old way kept breaking)
 
@@ -56,8 +58,10 @@ the git tag and the GitHub Release itself, on the exact commit it builds, so a
 tag can never point at a pre-bump commit (that mistake caused nearly every past
 failed release). Two steps:
 
-1. **Bump `__version__`** in `breadcrumbs/__init__.py` and add a `CHANGELOG.md`
-   entry. Merge to `main`. That is the only manual edit a release needs.
+1. **Bump `__version__`** in `breadcrumbs/__init__.py`, add a `CHANGELOG.md`
+   entry, and add the release's row to `docs/compatibility.md` §3 (the test
+   suite checks all three agree). Merge to `main`. Those are the only manual
+   edits a release needs.
 2. **Run the workflow from `main`:** *Actions → release → Run workflow*, or
    ```bash
    gh workflow run release.yml --ref main -f mode=publish

@@ -120,9 +120,24 @@ private half, which the committed resume packet deliberately excludes — this
 resource is read live by the agent working in this checkout, not written to a
 file somebody else will read.
 
-Reading the other `memory://*` returns the same bytes the CLI / plain files show. An
-unknown `{id}` raises (surfaced to the client as a resource error). A missing
-`.project-memory/` is a clear `FileNotFoundError`, not a crash.
+Reading the other `memory://*` returns the same text the CLI / plain files show,
+rendered as data (audit WP13):
+- control characters (ANSI escapes, NUL, a bare carriage return, U+2028) and
+  invisible formatting (bidirectional overrides, zero-width characters) are shown
+  as escapes such as `\x1b` and `\u202e`;
+- a closing tag, or an opening tag named like a response envelope
+  (`system-reminder`, `function_results`, …), loses its `<` (`&lt;/…>`);
+- text past 200,000 characters (`MCP_TEXT_LIMIT`) is left out with a note.
+
+Ordinary text is returned byte for byte. Every string in a tool result gets the
+same treatment; keys, ids and numbers are untouched. The files on disk never
+change.
+
+An unknown `{id}` raises (surfaced to the client as a resource error). A missing
+`.project-memory/` is a clear `FileNotFoundError`, not a crash. A store file that
+is a symbolic link or junction, or is under one, is refused with a
+`PermissionError` naming the store-relative path and the rule, never the link's
+target or what it holds (see *Safety posture*).
 
 ## Prompts (6) — flows mapping to CLI
 
@@ -147,7 +162,7 @@ current instruction, the code, the tests, or authoritative docs.
 | `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?, allow_duplicate?, supersedes?, scope?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, expires_at, path, supersedes?}` or `{ok:false, error}` |
 | `memory_note` | `(kind, text, fields?, tags?, allow_duplicate?, supersedes?)` | `cli.note` | `{ok, kind, ref|id, path, supersedes?}` or `{ok:false, error}` |
 | `memory_jot` | `(text, tags?, files?, local?, allow_duplicate?, scope?)` | `inbox.write_jot` + validate gate, reindex | `{ok, kind, id, path, local, expires_at, source, scope}` or `{ok:false, error}` |
-| `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path}` or `{ok:false, error}` |
+| `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?, scope?, allow_duplicate?, supersedes?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path, scope, confidence, from_private, scope_widened, supersedes?}` or `{ok:false, error}` (a near-duplicate carries `duplicates` and `message`) |
 | `memory_reindex` | `()` | `cli.reindex_projections` | `{ok, path}` |
 | `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
 | `memory_build_resume_packet` | `(task?)` | `cli.build_resume_packet` | `{ok, …packet}` (`task` is passed to the engine: scoped `likely_files`, echoed `requested_task`, `starting cold` label, list sections ordered by relevance with `ordering: "relevance"` — identical to `crumb resume --task`) |
@@ -191,7 +206,7 @@ lock*). A call waits up to 2 seconds for another writer — a CLI command, a
 hook, another MCP call in the same server — and then returns without writing:
 
 ```jsonc
-{ "ok": false, "error": "store is locked by pid 4242; try again, or remove a stale lock" }
+{ "ok": false, "error": "store is locked by pid 4242; try again shortly" }
 ```
 
 When the holder is another MCP call in the same server process, the error
@@ -208,8 +223,9 @@ stays in `memory_search`, whose matches carry `scope`. `memory_jot` defaults to
 `"project"`, as `crumb jot` does, and its result echoes the `scope` written. Any
 other value is refused before anything is written:
 `{ok: false, error: "scope must be one of project, branch"}`.
-`memory_record`'s `payload.scope` is free text as on `crumb remember`; the
-value `"branch"` has the same effect there.
+`memory_record`'s `payload.scope` takes the same two values; anything else is
+refused by the record contract (`record-schema.md` §4) with `{ok: false, error}`
+naming the value.
 
 ### Near-duplicate refusal (the four writers)
 
@@ -243,8 +259,9 @@ carries `supersedes: [id]` (trap and question files do not carry the key), the
 old one is marked `superseded` with `superseded_by` (a question: `closed`), and
 the result echoes `supersedes`. An exact repeat of a question's text or a
 trap's slug keeps its own error (reopen the existing one with
-`memory_mark_status`). `memory_inbox_promote` is not gated: it goes through the
-internal writers, which write what they are given.
+`memory_mark_status`). `memory_inbox_promote` is gated the same way. The record
+it writes keeps the jot's note, scope and confidence unless `scope` or
+`confidence` says otherwise (`cli-spec.md` → `inbox promote`).
 
 **No lifecycle-command tools.** `crumb verify --recheck` has no MCP
 equivalent, on purpose: it runs shell commands taken from the store, which is a
@@ -264,11 +281,13 @@ prompt injection: text planted in a record, a file or a web page could ask for
 exactly that call. So promotion is CLI-only — a person runs it, or an agent
 runs it where a person can see the command — and `crumb demote` is CLI-only
 with it. What promotion changes is visible over MCP:
-`memory_build_resume_packet` leaves promoted decisions, attempts and traps out
-of its lists and counts them under `promoted` (`{active_decisions,
-failed_attempts, known_traps}`, non-zero sections only), and the rendered
-`memory://resume-packet` ends each of those sections with `_(N promoted to the
-instruction file — see its "Project rules promoted from memory")_`;
+`memory_build_resume_packet` and `memory://resume-packet` are portable packets
+(audit WP08): an MCP client may be any harness, so a promoted decision, attempt
+or trap stays in its list with the rule in force (`promoted_to`, `rule`,
+`rule_in_file`; rendered `` `<id>` — standing rule in CLAUDE.md: <rule> ``),
+and `promoted` is `{}`. Only Claude Code's `SessionStart` hook leaves out rules
+it has loaded. `memory_build_resume_packet` is bounded as the `json` view:
+the returned document, `ok` included, is within `budget.limit`;
 `memory_search` matches carry a `promoted` boolean; `memory_guard_before_action`
 scores a promoted record at full weight. Retiring one through
 `memory_mark_status` does demote it (below).
@@ -351,12 +370,12 @@ Mirrors the `remember` CLI surface:
 {
   "title": "Use markdown as the source of truth",     // required
   "sections": { "Decision": "…", "Rationale": "…" },  // {heading: text}
-  "evidence": [ { "type": "commit", "ref": "abc1234" } ],
+  "evidence": [ { "type": "commit", "ref": "abc1234" } ],  // each item needs a non-empty type and ref
   "tags": ["storage"],
   "confidence": "high",      // optional; omitted ⇒ "low" when no evidence; explicit
                              // medium/high without evidence is an error (validate §16.9)
   "privacy": "repo-safe",    // optional
-  "scope": "project",        // optional; free text, "branch" = applies on this branch only
+  "scope": "project",        // optional; "project" | "branch" (applies on this branch only)
   "status": "active",        // optional
   "agent": "agent",          // optional; recorded in created_by/agent
   "supersedes": "dec_…",     // optional; the live record of this type it replaces
@@ -414,6 +433,39 @@ name rather than silently written.
 
 ---
 
+## Versioned contract (audit WP17)
+
+`mcp_core.contract()` states what a client can rely on:
+- each tool's name and parameters, and whether it writes;
+- advisory annotations;
+- the resources and prompts;
+- the error envelope.
+
+`MCP_CONTRACT_VERSION` is `1`. `tests/test_adapter_contracts.py` pins it to
+`tests/fixtures/mcp_contract_v1.json` and holds the live server to it on both
+SDK majors (the CI `mcp` job). A change is a version bump, never a drift.
+
+- **Envelope.** Every tool answers a JSON object with `ok`.
+  - On failure it carries `error` (a string).
+  - A policy refusal adds `refused_by: "policy"`.
+  - A near-duplicate refusal is `error: "near-duplicate"`, with
+    `duplicates` and `message`.
+  - With no store, every tool returns `{ok: false, error}`.
+  - A resource template that names no record is an error, never an empty
+    success.
+- **Annotations.** `readOnlyHint`, `destructiveHint`, `idempotentHint` and
+  `openWorldHint` are advisory, for a client's approval UI. **They are not
+  access control**: the store's policy (`security.md` §4) decides what a call
+  may do.
+  - Read-only: `memory_search`, `memory_guard_before_action`,
+    `memory_build_resume_packet`, `memory_validate`, `memory_show` and
+    `memory_scan_secrets`. "Read-only" means no record changes; the guard and
+    the packet still update machine-local usage counts.
+  - `memory_mark_status` is marked destructive, because it changes what memory
+    authorizes. `memory_reindex` and `memory_mark_status` are idempotent.
+  - An SDK whose `tool()` takes no `annotations` (early 1.x) serves the tools
+    without them.
+
 ## Safety posture
 
 - **Data, not instruction.** Memory content returned over MCP is context about
@@ -435,6 +487,29 @@ name rather than silently written.
   can only take a promoted rule out, by retiring its record.
 - **Secret-scan before commit.** `memory_scan_secrets` is available so an agent
   can check before any "commit memory" step (§2.6, §15, Fixture 6).
+- **The store's review policy decides what MCP may write** (audit WP14,
+  [`security.md`](security.md) §4).
+  - Every tool call is marked as arriving through MCP by the server, never by
+    its payload.
+  - A payload may not set `review_status` (beyond `unreviewed` or
+    `needs-review`), `reviewed_by`, `reviewed_at` or `reviewed_hash`, or claim
+    `agent: human`. Such a call returns `{ok: false, error, refused_by:
+    "policy"}`.
+  - Under the `team` profile (or `mcp_mode: propose`), guidance written here
+    is a proposal (`review_status: needs-review`), and superseding, rejecting
+    or quarantining a record is refused.
+  - Under `mcp_mode: read-only`, every writing tool refuses, and the server
+    does not list them.
+  - No tool changes the policy or reviews a record: `crumb policy` and `crumb
+    review` are CLI-only. That binds MCP clients; it is not a boundary against
+    an agent that also has a shell.
+- **Nothing outside the store is read or written through it** (audit WP13).
+  Nothing inside `.project-memory/` may be a symbolic link or junction: the
+  store directory, its directories and every file read or written. A link is
+  refused, not followed, and on POSIX each path is opened one component at a
+  time with `O_NOFOLLOW`, so a link swapped in mid-read is refused too. The
+  refusal names the store-relative path, never the target. See
+  [`security.md`](security.md) §2 → *Filesystem containment*.
 - **No new identity scheme.** `find_record_by_id` and `find_item` use the same
   filename-canonical ids ([`record-schema.md`](record-schema.md) §5) the CLI,
   search, guard and resume already use; `find_item` is also what `crumb show`

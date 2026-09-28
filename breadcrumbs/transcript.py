@@ -50,9 +50,19 @@ DEFAULT_MAX_BYTES = 8_000_000
 EDIT_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 BASH_TOOL = "Bash"
 
-# How much of a tool result is kept. The first lines of a failure carry the
-# error; the rest is a wall.
+# How much of a tool result is kept for display. The outcome is classified from
+# the whole result first: a failure printed after the cutoff is still a failure.
 RESULT_SNIPPET_CHARS = 400
+
+# What happened to a tool call, as far as the transcript can show (audit F01).
+# Only SUCCESS may be worded as "passed". A call whose result never arrived is
+# UNKNOWN, not a success that happened to print nothing.
+SUCCESS = "success"
+FAILURE = "failure"
+INTERRUPTED = "interrupted"  # started, then stopped by the user or the harness
+NOT_RUN = "not_run"  # refused before it ran: blocked by a hook, rejected by the user
+UNKNOWN = "unknown"  # no result in the transcript (yet), or one that settles nothing
+OUTCOMES = (SUCCESS, FAILURE, INTERRUPTED, NOT_RUN, UNKNOWN)
 
 
 def read_transcript(path: str | Path, *, max_bytes: int = DEFAULT_MAX_BYTES) -> list[dict]:
@@ -73,18 +83,29 @@ def read_transcript(path: str | Path, *, max_bytes: int = DEFAULT_MAX_BYTES) -> 
             raw = fh.read()
     except Exception:
         return []
+    return _parse_lines(raw)[0]
+
+
+def _parse_lines(raw: bytes) -> tuple[list[dict], int]:
+    """`(entries, malformed)` from JSONL bytes.
+
+    Split on the byte `\n` only: a JSON string may legally hold U+2028 or a
+    form feed, which `str.splitlines` would break the record on.
+    """
     out: list[dict] = []
-    for line in raw.decode("utf-8", errors="replace").splitlines():
-        line = line.strip()
+    malformed = 0
+    for chunk in raw.split(b"\n"):
+        line = chunk.decode("utf-8", errors="replace").strip()
         if not line:
             continue
         try:
             obj = json.loads(line)
         except ValueError:
+            malformed += 1
             continue
         if isinstance(obj, dict):
             out.append(obj)
-    return out
+    return out, malformed
 
 
 # --------------------------------------------------------------------------- #
@@ -94,14 +115,28 @@ def read_transcript(path: str | Path, *, max_bytes: int = DEFAULT_MAX_BYTES) -> 
 
 @dataclass
 class ToolCall:
-    """One tool invocation and the result that came back for it."""
+    """One tool invocation, and what the transcript shows came back for it.
+
+    `result_received` says whether a `tool_result` answered the call at all;
+    `outcome` is one of `OUTCOMES`. `result_text` is a bounded display excerpt,
+    cut after the outcome was decided from the full result.
+    """
 
     name: str
     input: dict
     result_text: str
-    is_error: bool
     index: int
     timestamp: str | None = None
+    result_received: bool = False
+    outcome: str = UNKNOWN
+    # The harness's `tool_use` id: what joins a result to its call across
+    # firings, and what a mined candidate cites as the event it came from.
+    call_id: str = ""
+
+    @property
+    def is_error(self) -> bool:
+        """The call ran and failed. Interrupted, refused and unanswered calls did not."""
+        return self.outcome == FAILURE
 
 
 def _content_blocks(entry: dict) -> list:
@@ -142,61 +177,165 @@ _BASH_FAILURE_RE = re.compile(
     r"FAIL(ED)?\b|AssertionError|npm ERR!)"
 )
 
+# A count of zero is a success report, not a failure: "15 passed, 0 failed",
+# "test result: ok. 3 passed; 0 failed", "failures: 0", "no errors". These are
+# removed before the failure test, so the words in them cannot trip it.
+_ZERO_FAILURE_RE = re.compile(
+    r"(?i)(\b(0|no|zero)\s+(tests?\s+)?(failed|failures?|errors?)\b"
+    r"|\b(failed|failures?|errors?)\s*[:=]\s*0\b)"
+)
+
+
+def _failure_match(text: str) -> re.Match | None:
+    """The first unambiguous failure in the *whole* output, zero counts excepted."""
+    return _BASH_FAILURE_RE.search(_ZERO_FAILURE_RE.sub(" ", text or ""))
+
 
 def _looks_failed(text: str) -> bool:
-    return bool(_BASH_FAILURE_RE.search(text or ""))
+    return _failure_match(text) is not None
 
 
-def pair_tool_calls(entries: list[dict]) -> list[ToolCall]:
+# How the harness says a call never ran or was stopped. `<tool_use_error>` is
+# the harness refusing the call (a hook blocked it, the input was invalid); the
+# two phrases are what Claude Code writes when the user rejects or interrupts a
+# tool. None of these is the command failing, and none may read as it passing.
+# Anchored: each is the whole result when the harness writes it, and a `cat` of
+# a file that merely quotes one (this module's tests do) must not match.
+_NOT_RUN_RE = re.compile(
+    r"^\s*(<tool_use_error>|The user doesn't want to proceed with this tool use)", re.I
+)
+_INTERRUPTED_RE = re.compile(r"^\s*\[Request interrupted by user")
+
+# Commands whose *output* is a verdict: test runners, linters, type checkers and
+# builds. A failure in their output is a failure. Any other command's output
+# may be data — a `cat` or `grep` of source that contains "error:" has not
+# failed — so failure words there make the outcome UNKNOWN, not FAILURE.
+_BUILD_CMD_RE = re.compile(
+    r"(?i)^((npm|yarn|pnpm) (run )?(build|test|lint|check|typecheck)\b|make\b|"
+    r"cargo (build|check|clippy|test)\b|go (build|vet|test)\b|python -m (build|mypy|ruff)\b)"
+)
+
+
+def _output_is_a_verdict(command: str) -> bool:
+    cmd = normalize_command(command)
+    return bool(_TEST_CMD_RE.match(cmd) or _BUILD_CMD_RE.match(cmd))
+
+
+def _excerpt(flat: str, at: int | None) -> str:
+    """A bounded display excerpt, keeping the failure in view when it is late."""
+    if len(flat) <= RESULT_SNIPPET_CHARS:
+        return flat
+    if at is None or at < RESULT_SNIPPET_CHARS - 80:
+        return flat[:RESULT_SNIPPET_CHARS]
+    start = max(0, at - 80)
+    return "… " + flat[start : start + RESULT_SNIPPET_CHARS - 2]
+
+
+def classify_result(
+    name: str,
+    text: str,
+    flagged: bool,
+    structured: dict | None = None,
+    command: str = "",
+) -> tuple[str, str]:
+    """(outcome, excerpt) for a call whose result arrived.
+
+    Structured signals first: the harness's interrupt flag and `is_error` (which
+    Claude Code sets for a non-zero exit, writing `Exit code N` first). Then the
+    full Bash output, because a pipeline such as `pytest | tail` exits with
+    `tail`'s status and a clean exit proves nothing about what it piped:
+
+    - a test, lint or build run whose output reports a failure *failed*;
+    - any other command whose output reads like a failure is UNKNOWN — a `grep`
+      that found the word "error:" has not failed, but `python x.py | tail`
+      printing a traceback has not passed either;
+    - otherwise it succeeded.
+
+    An edit whose new content says "failed" has not failed, so no other tool
+    gets the textual test. The excerpt is cut last, around the failure when
+    there is one.
+    """
+    flat = " ".join(str(text or "").split())
+    structured = structured if isinstance(structured, dict) else {}
+    if _NOT_RUN_RE.search(flat):
+        return NOT_RUN, _excerpt(flat, None)
+    if structured.get("interrupted") is True or _INTERRUPTED_RE.search(flat):
+        return INTERRUPTED, _excerpt(flat, None)
+    match = _failure_match(flat) if name == BASH_TOOL else None
+    at = match.start() if match else None
+    if flagged:
+        return FAILURE, _excerpt(flat, at)
+    if match:
+        return (FAILURE if _output_is_a_verdict(command) else UNKNOWN), _excerpt(flat, at)
+    return SUCCESS, _excerpt(flat, None)
+
+
+def pair_tool_calls(entries: list[dict], carried: list[ToolCall] | None = None) -> list[ToolCall]:
     """Match each `tool_use` block to the `tool_result` that answers it.
 
     Results arrive in a later entry and reference the call by `tool_use_id`, so
     a single forward pass collects the calls and a second resolves them. A call
-    with no result (the session ended mid-tool) is kept with empty text: that it
-    was *attempted* is still a fact, and dropping it would silently lose the
-    last action of every interrupted session.
+    with no result (the session ended mid-tool, or the result lands in a later
+    firing) is kept with `result_received=False` and outcome UNKNOWN: that it
+    was *attempted* is still a fact, but nothing about how it ended is.
+
+    `carried` are calls from earlier firings (audit F02): they come first, in
+    their order, and a result in `entries` resolves a carried call that was
+    still waiting for one.
     """
     calls: dict[str, ToolCall] = {}
     order: list[str] = []
-    results: dict[str, tuple[str, bool]] = {}
+    for call in carried or []:
+        key = call.call_id or f"_carried{len(order)}"
+        if key not in calls:
+            calls[key] = call
+            order.append(key)
+    results: dict[str, tuple[str, bool, dict | None]] = {}
 
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             continue
         ts = entry.get("timestamp") if isinstance(entry.get("timestamp"), str) else None
-        for block in _content_blocks(entry):
-            if not isinstance(block, dict):
-                continue
+        blocks = [b for b in _content_blocks(entry) if isinstance(b, dict)]
+        # `toolUseResult` sits on the entry, not the block, so it can only be
+        # attributed when the entry answers exactly one call.
+        n_results = sum(1 for b in blocks if b.get("type") == "tool_result")
+        structured = entry.get("toolUseResult") if n_results == 1 else None
+        for block in blocks:
             btype = block.get("type")
             if btype == "tool_use":
                 call_id = str(block.get("id") or f"_pos{index}")
                 name = str(block.get("name") or "")
                 payload = block.get("input")
+                if call_id not in calls:
+                    order.append(call_id)
                 calls[call_id] = ToolCall(
                     name=name,
                     input=payload if isinstance(payload, dict) else {},
                     result_text="",
-                    is_error=False,
                     index=index,
                     timestamp=ts,
+                    call_id=call_id,
                 )
-                order.append(call_id)
             elif btype == "tool_result":
                 call_id = str(block.get("tool_use_id") or "")
                 if not call_id:
                     continue
-                text = " ".join(_result_text(block).split())[:RESULT_SNIPPET_CHARS]
-                results[call_id] = (text, bool(block.get("is_error")))
+                results[call_id] = (
+                    _result_text(block),
+                    bool(block.get("is_error")),
+                    structured if isinstance(structured, dict) else None,
+                )
 
     out: list[ToolCall] = []
     for call_id in order:
         call = calls[call_id]
-        text, flagged = results.get(call_id, ("", False))
-        call.result_text = text
-        # A Bash command reports failure two ways: the harness flags it, or the
-        # output says so. Only Bash gets the textual test — an edit whose new
-        # content happens to contain the word "failed" has not failed.
-        call.is_error = flagged or (call.name == BASH_TOOL and _looks_failed(text))
+        if call_id in results and not call.result_received:
+            text, flagged, structured = results[call_id]
+            call.result_received = True
+            call.outcome, call.result_text = classify_result(
+                call.name, text, flagged, structured, str(call.input.get("command") or "")
+            )
         out.append(call)
     return out
 
@@ -235,7 +374,12 @@ def normalize_command(command: str) -> str:
 
 
 def _edited_path(call: ToolCall) -> str | None:
-    if call.name not in EDIT_TOOLS:
+    """The file a call edited — only when the edit is known to have happened.
+
+    A refused, interrupted or failed edit ("string not found") changed nothing,
+    and one with no result may not have either.
+    """
+    if call.name not in EDIT_TOOLS or call.outcome != SUCCESS:
         return None
     value = call.input.get("file_path") or call.input.get("path") or call.input.get("notebook_path")
     return str(value) if value else None
@@ -291,15 +435,32 @@ class Candidate:
     command: str | None = None
     evidence: list[dict] = field(default_factory=list)
     confidence: str = "low"
+    # What makes two sightings the same candidate, when the title can drift
+    # between firings (a churn count that grows, an attempt whose edit list
+    # was cut): the file, the command, the failing call. Default: the title.
+    key: str | None = None
+    # The transcript events it came from: tool_use ids, or a user entry's id.
+    # Acknowledged events are never mined into a jot again, in any session, so
+    # a replayed or forked transcript cannot duplicate them (audit F02).
+    events: list[str] = field(default_factory=list)
 
     @property
     def fingerprint(self) -> str:
         """Content identity, so the same candidate is never written twice.
 
-        Kind and title only: the note carries a snippet of tool output that can
-        differ between runs of the same failure, and a fingerprint that moved
-        with it would defeat the deduplication it exists for.
+        Kind and key (the title unless the rule names something steadier): the
+        note carries a snippet of tool output that can differ between runs of
+        the same failure, and a fingerprint that moved with it would defeat the
+        deduplication it exists for.
         """
+        ident = self.key if self.key is not None else self.title
+        return hashlib.sha1(f"{self.kind}\0{ident}".encode()).hexdigest()[:16]
+
+    @property
+    def title_fingerprint(self) -> str:
+        """The fingerprint before audit WP09 (kind and title), which jots
+        written by older versions carry. Checked too, so re-mining a session
+        after an upgrade does not offer them again."""
         return hashlib.sha1(f"{self.kind}\0{self.title}".encode()).hexdigest()[:16]
 
 
@@ -326,17 +487,22 @@ def redact_secrets(text: str) -> str | None:
 # --------------------------------------------------------------------------- #
 
 
-def _mine_attempts(calls: list[ToolCall]) -> list[Candidate]:
+def _mine_attempts(calls: list[ToolCall], limit: int | None = MAX_ATTEMPTS) -> list[Candidate]:
     """Rule 1 — a command failed, files changed, the same command passed.
 
     This is the shape of nearly every real debugging loop, and the resulting
-    attempt record ("X failed until Y changed") is the single most useful thing
-    a future session can be told about this one.
+    attempt record is the single most useful thing a future session can be told
+    about this one. It is worded as the sequence the transcript shows, not as a
+    cause: the edits came between the failure and the pass, and whether they
+    were the fix is for whoever promotes the candidate to say.
+
+    Both ends must be observed outcomes. An interrupted or refused run did not
+    fail, and a run whose result never arrived did not pass.
     """
     out: list[Candidate] = []
     seen: set[str] = set()
     for i, failure in enumerate(calls):
-        if failure.name != BASH_TOOL or not failure.is_error:
+        if failure.name != BASH_TOOL or failure.outcome != FAILURE:
             continue
         command = normalize_command(failure.input.get("command", ""))
         if not command or command in seen:
@@ -347,7 +513,7 @@ def _mine_attempts(calls: list[ToolCall]) -> list[Candidate]:
             if path and path not in edited:
                 edited.append(path)
                 continue
-            if later.name != BASH_TOOL or later.is_error:
+            if later.name != BASH_TOOL or later.outcome != SUCCESS:
                 continue
             if normalize_command(later.input.get("command", "")) != command:
                 continue
@@ -356,28 +522,35 @@ def _mine_attempts(calls: list[ToolCall]) -> list[Candidate]:
             seen.add(command)
             shown = edited[:3]
             note = _clip(
-                f"{failure.result_text} Fixed after editing: {', '.join(shown)}", NOTE_MAX_CHARS
+                f"{failure.result_text} Passed on a later run, after edits to: "
+                f"{', '.join(shown)} (not shown to be the fix).",
+                NOTE_MAX_CHARS,
             )
             out.append(
                 Candidate(
                     kind="attempt",
                     title=_clip(
-                        f"{command} failed until {len(edited)} file(s) changed", TITLE_MAX_CHARS
+                        f"{command} failed, then passed after {len(edited)} file(s) changed",
+                        TITLE_MAX_CHARS,
                     ),
                     note=note,
                     files=list(edited),
                     command=command,
                     evidence=[{"type": "command", "ref": command}]
                     + [{"type": "file", "ref": f} for f in shown],
+                    key=f"{command}\0{failure.call_id}",
+                    events=[e for e in (failure.call_id, later.call_id) if e],
                 )
             )
             break
-        if len(out) >= MAX_ATTEMPTS:
+        if limit is not None and len(out) >= limit:
             break
     return out
 
 
-def _mine_verifications(calls: list[ToolCall]) -> list[Candidate]:
+def _mine_verifications(
+    calls: list[ToolCall], limit: int | None = MAX_VERIFICATIONS
+) -> list[Candidate]:
     """Rule 2 — a test or lint command that passed.
 
     Recorded because `resume` builds *Verification Commands* out of exactly this
@@ -387,7 +560,10 @@ def _mine_verifications(calls: list[ToolCall]) -> list[Candidate]:
     out: list[Candidate] = []
     seen: set[str] = set()
     for call in calls:
-        if call.name != BASH_TOOL or call.is_error:
+        # "Passed" needs a result that arrived, was not flagged, and printed no
+        # failure. Anything short of that — no result, interrupted, refused —
+        # is not evidence the command passes.
+        if call.name != BASH_TOOL or call.outcome != SUCCESS:
             continue
         command = normalize_command(call.input.get("command", ""))
         if not command or command in seen or not _TEST_CMD_RE.match(command):
@@ -397,17 +573,23 @@ def _mine_verifications(calls: list[ToolCall]) -> list[Candidate]:
             Candidate(
                 kind="verification",
                 title=_clip(f"{command} passed", TITLE_MAX_CHARS),
-                note=_clip(f"Ran clean in this session. {call.result_text}", NOTE_MAX_CHARS),
+                note=_clip(
+                    "Exited without a reported error and printed no failure in this "
+                    f"session. {call.result_text}",
+                    NOTE_MAX_CHARS,
+                ),
                 command=command,
                 evidence=[{"type": "command", "ref": command}],
+                key=command,
+                events=[call.call_id] if call.call_id else [],
             )
         )
-        if len(out) >= MAX_VERIFICATIONS:
+        if limit is not None and len(out) >= limit:
             break
     return out
 
 
-def _mine_churn(calls: list[ToolCall]) -> list[Candidate]:
+def _mine_churn(calls: list[ToolCall], limit: int | None = MAX_CHURN) -> list[Candidate]:
     """Rule 3 — one file edited over and over.
 
     The weakest of the four, and worded as a question rather than a finding:
@@ -415,10 +597,13 @@ def _mine_churn(calls: list[ToolCall]) -> list[Candidate]:
     landing in one file. It is offered so somebody who knows which can say.
     """
     counts: dict[str, int] = {}
+    edits: dict[str, list[str]] = {}
     for call in calls:
         path = _edited_path(call)
         if path:
             counts[path] = counts.get(path, 0) + 1
+            if call.call_id:
+                edits.setdefault(path, []).append(call.call_id)
     hot = sorted(
         ((p, n) for p, n in counts.items() if n >= CHURN_MIN_EDITS),
         key=lambda pair: (-pair[1], pair[0]),
@@ -433,8 +618,11 @@ def _mine_churn(calls: list[ToolCall]) -> list[Candidate]:
             ),
             files=[path],
             evidence=[{"type": "file", "ref": path}],
+            # One candidate per file per session, however the count grows.
+            key=path,
+            events=edits.get(path, []),
         )
-        for path, n in hot[:MAX_CHURN]
+        for path, n in (hot if limit is None else hot[:limit])
     ]
 
 
@@ -457,7 +645,16 @@ def _user_text(entry: dict) -> str:
     return " ".join(" ".join(parts).split())
 
 
-def _mine_corrections(entries: list[dict]) -> list[Candidate]:
+def _entry_event(entry: dict, text: str) -> str:
+    """A user entry's identity: its `uuid`, else its timestamp and words."""
+    uid = entry.get("uuid")
+    if isinstance(uid, str) and uid:
+        return uid
+    stamp = entry.get("timestamp") if isinstance(entry.get("timestamp"), str) else ""
+    return "entry:" + hashlib.sha1(f"{stamp}\0{text}".encode()).hexdigest()[:16]
+
+
+def _mine_corrections(entries: list[dict], limit: int | None = MAX_CORRECTIONS) -> list[Candidate]:
     """Rule 4 — the user overriding what the agent just did.
 
     The highest-value moment in a session by a distance, and the one nothing in
@@ -469,37 +666,77 @@ def _mine_corrections(entries: list[dict]) -> list[Candidate]:
         text = _user_text(entry)
         if not text or len(text) > CORRECTION_MAX_CHARS or not CORRECTION_RE.match(text):
             continue
+        event = _entry_event(entry, text)
         out.append(
             Candidate(
                 kind="correction",
                 title=_clip(text, TITLE_MAX_CHARS),
                 note=_clip(text, NOTE_MAX_CHARS),
+                key=event,
+                events=[event],
             )
         )
-        if len(out) >= MAX_CORRECTIONS:
+        if limit is not None and len(out) >= limit:
             break
     return out
+
+
+# Each rule's cap: how many of its candidates one window may yield. What a cap
+# holds back is a deliberate policy drop, and it is counted (`capped`), never
+# silent (audit F02).
+_RULES = (
+    ("attempt", _mine_attempts, MAX_ATTEMPTS, "calls"),
+    ("verification", _mine_verifications, MAX_VERIFICATIONS, "calls"),
+    ("trap", _mine_churn, MAX_CHURN, "calls"),
+    ("correction", _mine_corrections, MAX_CORRECTIONS, "entries"),
+)
+
+
+@dataclass
+class Window:
+    """What one mining pass saw: its candidates, what the caps held back, its calls."""
+
+    candidates: list[Candidate]
+    capped: int
+    calls: list[ToolCall]
+
+
+def mine_window(
+    entries: list[dict],
+    carried: list[ToolCall] | None = None,
+    *,
+    seen=None,
+) -> Window:
+    """Candidates from `entries`, joined with the calls `carried` from earlier firings.
+
+    `seen(candidate)` says a candidate was already acknowledged. Those are
+    removed *before* the caps apply, so re-detections of what earlier firings
+    wrote never crowd out something new.
+    """
+    calls = pair_tool_calls(entries, carried)
+    candidates: list[Candidate] = []
+    capped = 0
+    for _kind, rule, cap, source in _RULES:
+        found = rule(calls if source == "calls" else entries, None)
+        if seen is not None:
+            found = [c for c in found if not seen(c)]
+        candidates += found[:cap]
+        capped += max(0, len(found) - cap)
+    return Window(candidates, capped, calls)
 
 
 def mine(entries: list[dict], *, since_index: int = 0) -> tuple[list[Candidate], int]:
     """Candidates from `entries[since_index:]`, plus how many entries were read.
 
-    The second value is what the caller stores as its cursor, so the next firing
-    starts where this one stopped instead of re-mining a transcript that only
-    grows.
+    A pure function over one list, for tests and for callers that hold a whole
+    transcript. The hooks use `ingest`, which keeps a byte cursor and the
+    calls still waiting for a result between firings.
     """
     total = len(entries)
     window = entries[max(0, since_index) :]
     if not window:
         return [], total
-    calls = pair_tool_calls(window)
-    candidates = (
-        _mine_attempts(calls)
-        + _mine_verifications(calls)
-        + _mine_churn(calls)
-        + _mine_corrections(window)
-    )
-    return candidates, total
+    return mine_window(window).candidates, total
 
 
 # --------------------------------------------------------------------------- #
@@ -592,6 +829,426 @@ def _session_fingerprints(memory_dir: Path, session_id: str) -> set[str]:
     return out
 
 
+# --------------------------------------------------------------------------- #
+# Durable incremental ingestion (audit F02, WP09)
+# --------------------------------------------------------------------------- #
+#
+# The hooks used to re-read an 8 MB tail every firing and keep, as a cursor, how
+# many *entries* of that tail had been mined. Past 8 MB the tail slides, the
+# count stops meaning anything, and new entries were never mined again. A
+# call's result arriving a firing later was never joined to it, and whatever
+# the per-firing cap held back was gone once the cursor moved.
+#
+# Now, per session (`hooks_common.load_miner_state`):
+#
+# - **The cursor is a byte offset** at a line boundary, with digests of the
+#   file's first bytes and of the bytes just before the offset. A file that no
+#   longer matches (truncated, replaced, rewritten) is read again from byte 0.
+#   A trailing partial line is left for the next firing.
+# - **Bash and edit calls are carried** between firings, bounded: every call
+#   still waiting for its result, and the most recent resolved ones. A late
+#   result joins its call, and the attempt rule sees a failure, edits and a
+#   pass that came in different firings. A carried command or output holding a
+#   credential is blanked first.
+# - **Candidates go to a backlog before any jot is written**, and the cursor
+#   and backlog are saved first. A candidate leaves the backlog only once it
+#   is written, refused for a counted reason (duplicate, validation, secret),
+#   or dropped after repeated write failures (counted). What the per-firing
+#   cap holds back waits for the next firing.
+# - **Acknowledged events are remembered** (`hooks_common.load_acked`): a
+#   candidate whose transcript events were already acknowledged, in this
+#   session or another, is not proposed again. A crash between a jot and the
+#   state write, a replayed transcript, or a forked session therefore cannot
+#   write the same thing twice.
+#
+# The whole pass runs under the store lock (WP05). If another writer holds it,
+# nothing is consumed and the next firing reads the same bytes.
+
+# The most transcript bytes one firing reads past its cursor. What lies beyond
+# waits for the next firing, and the report says how much (`unread_bytes`).
+MAX_BYTES_PER_FIRING = DEFAULT_MAX_BYTES
+# A finished transcript (a subagent's) is mined in one go: at most this much of
+# its tail, with the rest disclosed as `skipped_bytes`.
+ONE_SHOT_MAX_BYTES = 4 * DEFAULT_MAX_BYTES
+# How the cursor recognises its file.
+IDENTITY_HEAD_BYTES = 4096
+IDENTITY_ANCHOR_BYTES = 256
+# Bash and edit calls carried between firings.
+MAX_CARRIED_CALLS = 200
+# Candidates waiting to be written. Past this, new ones are dropped and counted.
+MAX_BACKLOG = 50
+# Failed write attempts before a candidate is dropped (counted).
+MAX_BACKLOG_ATTEMPTS = 5
+# How far an over-long line's skip scan reads at a time.
+_SCAN_BLOCK = 1 << 20
+
+_CARRIED_TOOLS = (BASH_TOOL, *EDIT_TOOLS)
+
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()[:32]
+
+
+def _event_key(event: str) -> str:
+    return hashlib.sha1(str(event).encode("utf-8")).hexdigest()[:16]
+
+
+def _carry(call: ToolCall) -> dict | None:
+    """A call as the miner keeps it between firings: bounded, and never a secret."""
+    if call.name not in _CARRIED_TOOLS:
+        return None
+    if call.name == BASH_TOOL:
+        command = normalize_command(call.input.get("command", ""))
+        inp = {"command": command if redact_secrets(command) is not None else ""}
+    else:
+        path = (
+            call.input.get("file_path") or call.input.get("path") or call.input.get("notebook_path")
+        )
+        inp = {"file_path": str(path)[:COMMAND_MAX_CHARS]} if path else {}
+    text = call.result_text if call.outcome == FAILURE else ""
+    if redact_secrets(text) is None:
+        text = ""
+    return {
+        "id": call.call_id,
+        "name": call.name,
+        "input": inp,
+        "text": text,
+        "received": call.result_received,
+        "outcome": call.outcome,
+        "ts": call.timestamp,
+    }
+
+
+def _uncarry(row) -> ToolCall | None:
+    try:
+        return ToolCall(
+            name=str(row["name"]),
+            input=dict(row.get("input") or {}),
+            result_text=str(row.get("text") or ""),
+            index=-1,
+            timestamp=row.get("ts") if isinstance(row.get("ts"), str) else None,
+            result_received=bool(row.get("received")),
+            outcome=str(row.get("outcome") or UNKNOWN),
+            call_id=str(row.get("id") or ""),
+        )
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return None
+
+
+def _carry_forward(calls: list[ToolCall], stats: dict) -> list[dict]:
+    """Every call still waiting for a result, then the newest resolved ones."""
+    rows = [r for r in (_carry(c) for c in calls) if r]
+    pending = [i for i, r in enumerate(rows) if not r["received"]]
+    resolved = [i for i, r in enumerate(rows) if r["received"]]
+    if len(pending) > MAX_CARRIED_CALLS:
+        evicted = len(pending) - MAX_CARRIED_CALLS
+        stats["evicted_pending"] = stats.get("evicted_pending", 0) + evicted
+        pending = pending[evicted:]
+    room = MAX_CARRIED_CALLS - len(pending)
+    keep = set(pending) | set(resolved[-room:] if room > 0 else [])
+    return [r for i, r in enumerate(rows) if i in keep]
+
+
+def _read_new(path: Path, state: dict, max_bytes: int, report: dict) -> tuple[list[dict], dict]:
+    """The complete lines past the cursor, and the state that records reading them."""
+    size = path.stat().st_size
+    offset = int(state.get("offset") or 0)
+    ident = state.get("identity") if isinstance(state.get("identity"), dict) else {}
+    with path.open("rb") as fh:
+        if offset:
+            reason = None
+            if size < offset:
+                reason = "truncated"
+            else:
+                fh.seek(0)
+                head = fh.read(int(ident.get("head_len") or 0))
+                anchor_at = max(0, offset - IDENTITY_ANCHOR_BYTES)
+                fh.seek(anchor_at)
+                anchor = fh.read(offset - anchor_at)
+                if _digest(head) != ident.get("head") or _digest(anchor) != ident.get("anchor"):
+                    reason = "replaced"
+            if reason:
+                report["reset"] = reason
+                offset = 0
+        fh.seek(offset)
+        chunk = fh.read(max_bytes)
+        cut = chunk.rfind(b"\n")
+        if cut >= 0:
+            consumed = cut + 1
+        elif len(chunk) >= max_bytes:
+            # One line longer than a whole firing's read. It cannot be parsed
+            # within budget, so it is skipped, and counted, once it has ended.
+            consumed = len(chunk)
+            while True:
+                block = fh.read(_SCAN_BLOCK)
+                if not block:
+                    consumed = 0  # still being written: wait for its end
+                    break
+                nl = block.find(b"\n")
+                if nl >= 0:
+                    consumed += nl + 1
+                    report["oversize_lines"] += 1
+                    break
+                consumed += len(block)
+            chunk = b""
+        else:
+            consumed = 0  # a partial last line: the rest is still to come
+        data = chunk[:consumed]
+        new_offset = offset + consumed
+        head_len = min(IDENTITY_HEAD_BYTES, new_offset)
+        fh.seek(0)
+        head = fh.read(head_len)
+        anchor_at = max(0, new_offset - IDENTITY_ANCHOR_BYTES)
+        fh.seek(anchor_at)
+        anchor = fh.read(new_offset - anchor_at)
+    entries, malformed = _parse_lines(data)
+    report["malformed_lines"] += malformed
+    report["consumed_bytes"] = consumed
+    report["unread_bytes"] = max(0, size - new_offset)
+    return entries, {
+        "offset": new_offset,
+        "identity": {"head": _digest(head), "head_len": head_len, "anchor": _digest(anchor)},
+    }
+
+
+def _empty_report() -> dict:
+    return {
+        "written": [],
+        "skipped": 0,
+        "dropped_for_secrets": 0,
+        "policy_capped": 0,
+        "dropped_backlog": 0,
+        "backlog": 0,
+        "consumed_bytes": 0,
+        "unread_bytes": 0,
+        "skipped_bytes": 0,
+        "oversize_lines": 0,
+        "malformed_lines": 0,
+        "reset": None,
+        "locked": False,
+        "error": None,
+    }
+
+
+def ingest(
+    memory_dir: Path,
+    project_root: Path,
+    transcript_path: str | None,
+    *,
+    session_id: str,
+    extra_tags: list[str] | None = None,
+    one_shot: bool = False,
+    max_bytes: int = MAX_BYTES_PER_FIRING,
+) -> dict:
+    """Mine what is new in a transcript into jots, durably. Never raises.
+
+    `one_shot` mines a finished transcript whole (a subagent's), without a
+    cursor; its candidates still go through this session's backlog. The report
+    keeps `written` / `skipped` / `dropped_for_secrets` and adds what was held
+    back or left: `policy_capped`, `backlog`, `dropped_backlog`, `unread_bytes`,
+    `skipped_bytes`, `oversize_lines`, `malformed_lines`, `reset` and `locked`.
+    """
+    from breadcrumbs import lock as _lock
+
+    report = _empty_report()
+    if not transcript_path:
+        return report
+    memory_dir = Path(memory_dir)
+    try:
+        with _lock.store_lock(memory_dir, timeout=_lock.HOOK_TIMEOUT):
+            _ingest_locked(
+                memory_dir,
+                Path(project_root),
+                Path(transcript_path),
+                session_id=session_id,
+                extra_tags=extra_tags,
+                one_shot=one_shot,
+                max_bytes=max_bytes,
+                report=report,
+            )
+    except _lock.StoreLocked as exc:
+        report["locked"] = True
+        report["error"] = str(exc)
+    except Exception as exc:  # pragma: no cover - mining never breaks its hook
+        report["error"] = f"{type(exc).__name__}: {exc}"
+    return report
+
+
+def _ingest_locked(
+    memory_dir: Path,
+    project_root: Path,
+    path: Path,
+    *,
+    session_id: str,
+    extra_tags: list[str] | None,
+    one_shot: bool,
+    max_bytes: int,
+    report: dict,
+) -> None:
+    from breadcrumbs import hooks_common
+
+    state = hooks_common.load_miner_state(memory_dir, session_id)
+    stats = dict(state.get("stats") or {})
+    acked = hooks_common.load_acked(memory_dir)
+    acked_set = set(acked)
+    known = _session_fingerprints(memory_dir, session_id)
+    backlog = [b for b in state.get("backlog") or [] if isinstance(b, dict)]
+    queued = {b.get("fingerprint") for b in backlog}
+
+    def ack(events) -> None:
+        for event in events or []:
+            key = _event_key(event)
+            if key not in acked_set:
+                acked_set.add(key)
+                acked.append(key)
+
+    def seen(c: Candidate) -> bool:
+        if c.fingerprint in known or c.fingerprint in queued or c.title_fingerprint in known:
+            return True
+        return bool(c.events) and all(_event_key(e) in acked_set for e in c.events)
+
+    # 1. Read what is new, and mine it with the calls carried from before.
+    progress: dict = {}
+    entries: list[dict] = []
+    carried: list[ToolCall] = []
+    if path.is_file():
+        if one_shot:
+            size = path.stat().st_size
+            report["skipped_bytes"] = max(0, size - ONE_SHOT_MAX_BYTES)
+            entries = read_transcript(path, max_bytes=ONE_SHOT_MAX_BYTES)
+        else:
+            entries, progress = _read_new(path, state, max_bytes, report)
+            carried = [c for c in (_uncarry(r) for r in state.get("calls") or []) if c]
+    window = mine_window(entries, carried, seen=seen)
+    report["policy_capped"] = window.capped
+
+    # 2. Queue the candidates. Secrets are refused here, before anything
+    #    is stored, and the refusal is an acknowledgment.
+    for c in window.candidates:
+        title, note = redact_secrets(c.title), redact_secrets(c.note)
+        if title is None or note is None:
+            report["dropped_for_secrets"] += 1
+            ack(c.events)
+            continue
+        if len(backlog) >= MAX_BACKLOG:
+            report["dropped_backlog"] += 1
+            ack(c.events)
+            continue
+        backlog.append(
+            {
+                "fingerprint": c.fingerprint,
+                "kind": c.kind,
+                "title": title,
+                "note": note,
+                "files": list(c.files),
+                "evidence": list(c.evidence),
+                "events": list(c.events),
+                "tags": sorted({"mined", c.kind, *(extra_tags or [])}),
+                "attempts": 0,
+            }
+        )
+        queued.add(c.fingerprint)
+
+    # 3. Durable before acting: the cursor, the carried calls and the backlog.
+    #    If this write fails, nothing below runs and the next firing re-reads.
+    for key in ("policy_capped", "dropped_for_secrets", "oversize_lines", "malformed_lines"):
+        stats[key] = stats.get(key, 0) + report[key]
+    if report["reset"]:
+        stats["resets"] = stats.get("resets", 0) + 1
+    if not one_shot and path.is_file():
+        state.update(progress)
+        state["path"] = str(path)
+        state["calls"] = _carry_forward(window.calls, stats)
+        state["unread_bytes"] = report["unread_bytes"]
+    state["backlog"] = backlog
+    state["stats"] = stats
+    hooks_common.save_miner_state(memory_dir, session_id, state)
+    hooks_common.save_acked(memory_dir, acked)
+
+    # 4. Write jots from the backlog, oldest first, up to the per-firing cap.
+    _flush_backlog(memory_dir, project_root, session_id, backlog, known, ack, stats, report)
+    state["backlog"] = backlog
+    state["stats"] = stats
+    hooks_common.save_miner_state(memory_dir, session_id, state)
+    hooks_common.save_acked(memory_dir, acked)
+    report["backlog"] = len(backlog)
+
+
+def _flush_backlog(
+    memory_dir: Path,
+    project_root: Path,
+    session_id: str,
+    backlog: list[dict],
+    known: set[str],
+    ack,
+    stats: dict,
+    report: dict,
+) -> None:
+    from breadcrumbs import inbox as _inbox
+
+    remaining: list[dict] = []
+    stop = False
+    for item in backlog:
+        if stop or len(report["written"]) >= MINER_MAX_JOTS_PER_FIRING:
+            remaining.append(item)
+            continue
+        fingerprint = item.get("fingerprint")
+        if fingerprint in known:
+            # Written by an earlier firing that stopped before it saved.
+            report["skipped"] += 1
+            ack(item.get("events"))
+            continue
+        try:
+            result = _inbox.write_jot(
+                memory_dir,
+                project_root,
+                item.get("note") or item.get("title") or "",
+                tags=item.get("tags") or ["mined"],
+                files=item.get("files") or [],
+                local=True,
+                source="transcript",
+                agent=cli.detect_agent(fallback="agent"),
+                host_session=session_id,
+                fingerprint=fingerprint,
+                evidence=item.get("evidence") or [],
+                title=item.get("title"),
+            )
+        except Exception:
+            # Not the candidate's fault (disk, permissions): keep it, try again
+            # next firing, and stop writing for this one.
+            item["attempts"] = int(item.get("attempts") or 0) + 1
+            if item["attempts"] >= MAX_BACKLOG_ATTEMPTS:
+                report["dropped_backlog"] += 1
+                ack(item.get("events"))
+            else:
+                remaining.append(item)
+            stop = True
+            continue
+        if result.get("ok"):
+            known.add(fingerprint)
+            report["written"].append(result["id"])
+        else:
+            report["skipped"] += 1  # refused by validate: final, and counted
+        ack(item.get("events"))
+    stats["dropped_backlog"] = stats.get("dropped_backlog", 0) + report["dropped_backlog"]
+    backlog[:] = remaining
+
+
+def note_report(report: dict) -> None:
+    """What a hook's log line says about one ingestion."""
+    from breadcrumbs import hooklog
+
+    hooklog.note(
+        mined=len(report.get("written") or []),
+        miner_backlog=report.get("backlog") or None,
+        miner_unread_bytes=report.get("unread_bytes") or None,
+        miner_capped=report.get("policy_capped") or None,
+        miner_dropped=report.get("dropped_backlog") or None,
+        miner_reset=report.get("reset"),
+        miner_locked=True if report.get("locked") else None,
+    )
+
+
 def mine_transcript_into_jots(
     memory_dir: Path,
     project_root: Path,
@@ -601,32 +1258,12 @@ def mine_transcript_into_jots(
     use_cursor: bool = True,
     extra_tags: list[str] | None = None,
 ) -> dict:
-    """Read, mine and write in one call — what every hook actually wants.
-
-    Best-effort throughout: any failure returns an empty report rather than
-    propagating into the hook. `use_cursor=False` mines the whole file, which is
-    what a finished subagent transcript needs (it is never read again).
-    """
-    empty = {"written": [], "skipped": 0, "dropped_for_secrets": 0}
-    if not transcript_path:
-        return empty
-    try:
-        entries = read_transcript(transcript_path)
-        if not entries:
-            return empty
-        from breadcrumbs import hooks_common
-
-        since = hooks_common.miner_cursor(memory_dir, session_id) if use_cursor else 0
-        candidates, read_to = mine(entries, since_index=since)
-        report = write_candidates(
-            memory_dir,
-            project_root,
-            candidates,
-            session_id=session_id,
-            extra_tags=extra_tags,
-        )
-        if use_cursor:
-            hooks_common.set_miner_cursor(memory_dir, session_id, read_to)
-        return report
-    except Exception:  # pragma: no cover - mining never breaks its hook
-        return empty
+    """What every hook wants: `ingest`, incrementally (`use_cursor`) or once whole."""
+    return ingest(
+        memory_dir,
+        project_root,
+        transcript_path,
+        session_id=session_id,
+        extra_tags=extra_tags,
+        one_shot=not use_cursor,
+    )

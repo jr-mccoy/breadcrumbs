@@ -1,0 +1,39 @@
+suite          tasks  system    P@5   R@5 reject quiet  guard
+holdout-ops        8  prompt   0.67  1.00      0  1.00   1.00
+                      packet   0.51  1.00      0     -       
+library           12  prompt   0.68  0.82      0  1.00   1.00
+                      packet   0.64  0.97      0     -       
+service           14  prompt   0.74  0.96      0  1.00   1.00
+                      packet   0.58  0.96      0     -       
+webapp            13  prompt   0.56  0.82      1  1.00   0.50
+                      packet   0.55  1.00      2     -       
+overall           39  prompt   0.66  0.87      1  1.00   0.88
+                      packet   0.59  0.97      2     -       
+holdout            8  prompt   0.67  1.00      0  1.00   1.00
+                      packet   0.51  1.00      0     -       
+
+delivered (as printed; see METRIC_DEFINITIONS):
+suite          system    P@5     R reject quiet dedup budget   tok tokmax  hook-guard
+holdout-ops    prompt   0.67  1.00      0  1.00  1.00      -   155    210        1.00
+               packet   0.17  1.00      0     -     -   1.00   974    984            
+library        prompt   0.68  0.82      0  1.00  1.00      -   160    312        1.00
+               packet   0.18  1.00      0     -     -   1.00  1294   1317            
+service        prompt   0.74  0.96      0  1.00  1.00      -   151    242        1.00
+               packet   0.12  1.00      0     -     -   1.00  1228   1254            
+webapp         prompt   0.47  0.73      1  1.00  1.00      -   194    305        0.50
+               packet   0.09  1.00      3     -     -   1.00  1545   1576            
+overall        prompt   0.63  0.84      1  1.00  1.00      -   166    312        0.88
+               packet   0.13  1.00      3     -     -   1.00  1354   1576            
+holdout        prompt   0.67  1.00      0  1.00  1.00      -   155    210        1.00
+               packet   0.17  1.00      0     -     -   1.00   974    984            
+
+critical (19 cases): 3 known, 16 pass
+  KNOWN FAILURE — blocks release [F10]: npm-test-hazard-is-not-proceed — guard said PROCEED
+  KNOWN FAILURE — blocks release [F10]: npm-test-hazard-hook-warns — the hook was silent
+  KNOWN FAILURE — blocks release [F10]: npm-test-prompt-delivers-its-trap — not delivered {'prompt': ['trap_npm-test-truncates-db']}
+
+known critical failures block the release:
+  [F10] npm-test-hazard-is-not-proceed — guard said PROCEED
+  [F10] npm-test-hazard-hook-warns — the hook was silent
+  [F10] npm-test-prompt-delivers-its-trap — not delivered {'prompt': ['trap_npm-test-truncates-db']}
+release exit=1

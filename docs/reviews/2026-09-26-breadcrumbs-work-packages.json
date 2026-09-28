@@ -1,0 +1,1530 @@
+{
+  "schema_version": 1,
+  "document": "2026-09-26-breadcrumbs-audit-and-roadmap.md",
+  "reviewed_commit": "30e41f6a36195faffdc197d0565abc7caf7c78da",
+  "created_on": "2026-09-26",
+  "status_values": [
+    "not_started",
+    "in_progress",
+    "blocked",
+    "review_required",
+    "completed"
+  ],
+  "authority_note": "Proposed plan only. The operator must authorize execution, migrations, authority changes, permission changes, and release publication as applicable.",
+  "findings": [
+    {
+      "id": "F01",
+      "title": "Incomplete or misread tool results become successful verification candidates",
+      "priority": "P1",
+      "evidence": "Reproduced",
+      "probes": [
+        "transcript_results",
+        "split_pair"
+      ],
+      "sources": [
+        "[breadcrumbs/transcript.py:150-201](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/transcript.py#L150-L201)",
+        "[breadcrumbs/transcript.py:330-407](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/transcript.py#L330-L407)"
+      ]
+    },
+    {
+      "id": "F02",
+      "title": "The transcript cursor can freeze on a sliding tail and lose cross-window state",
+      "priority": "P1",
+      "evidence": "Reproduced and source-confirmed",
+      "probes": [
+        "sliding_cursor",
+        "split_pair"
+      ],
+      "sources": [
+        "[breadcrumbs/transcript.py:58-87](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/transcript.py#L58-L87)",
+        "[breadcrumbs/transcript.py:484-502](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/transcript.py#L484-L502)",
+        "[breadcrumbs/transcript.py:595-632](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/transcript.py#L595-L632)",
+        "[breadcrumbs/hooks_common.py:129-156](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/hooks_common.py#L129-L156)"
+      ]
+    },
+    {
+      "id": "F03",
+      "title": "Jot promotion can discard the actual note and silently broaden its meaning",
+      "priority": "P1",
+      "evidence": "Reproduced",
+      "probes": [
+        "jot_promotion_loss"
+      ],
+      "sources": [
+        "[breadcrumbs/inbox.py:341-497](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/inbox.py#L341-L497)"
+      ]
+    },
+    {
+      "id": "F04",
+      "title": "Verification replay confuses successful execution with proof and loses branch scope",
+      "priority": "P1",
+      "evidence": "Reproduced",
+      "probes": [
+        "recheck_scope_and_claim"
+      ],
+      "sources": [
+        "[breadcrumbs/lifecycle.py:348-420](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/lifecycle.py#L348-L420)",
+        "[breadcrumbs/lifecycle_cmds.py](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/lifecycle_cmds.py)"
+      ]
+    },
+    {
+      "id": "F05",
+      "title": "Validation admits malformed evidence and risky metadata defaults",
+      "priority": "P1",
+      "evidence": "Reproduced",
+      "probes": [
+        "schema_types"
+      ],
+      "sources": [
+        "[breadcrumbs/cli.py:1497-1510](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L1497-L1510)",
+        "[breadcrumbs/cli.py:1549-1855](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L1549-L1855)",
+        "[docs/record-schema.md:210-307](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/docs/record-schema.md#L210-L307)"
+      ]
+    },
+    {
+      "id": "F06",
+      "title": "Full resume writes despite an existing writer lock",
+      "priority": "P1",
+      "evidence": "Reproduced",
+      "probes": [
+        "resume_ignores_lock"
+      ],
+      "sources": [
+        "[breadcrumbs/cli.py:3720-3790](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L3720-L3790)",
+        "[breadcrumbs/cli.py:7095-7136](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L7095-L7136)",
+        "[breadcrumbs/cli.py:13211-13245](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L13211-L13245)",
+        "[breadcrumbs/searchindex.py:128-219](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/searchindex.py#L128-L219)"
+      ]
+    },
+    {
+      "id": "F07",
+      "title": "A projection can be stamped with a current hash for records it did not include",
+      "priority": "P1",
+      "evidence": "Controlled fault reproduced",
+      "probes": [
+        "snapshot_stamp_race"
+      ],
+      "sources": [
+        "[breadcrumbs/cli.py:6415-6464](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L6415-L6464)",
+        "[breadcrumbs/cli.py:6521-6750](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L6521-L6750)",
+        "[breadcrumbs/cli.py:3720-3772](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L3720-L3772)"
+      ]
+    },
+    {
+      "id": "F08",
+      "title": "Heartbeat age can classify a live lock holder as stale",
+      "priority": "P1",
+      "evidence": "Controlled fault reproduced",
+      "probes": [
+        "live_lock_stale"
+      ],
+      "sources": [
+        "[breadcrumbs/lock.py:97-231](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/lock.py#L97-L231)"
+      ],
+      "priority_note": "P1 for the multi-writer guarantee"
+    },
+    {
+      "id": "F09",
+      "title": "Prompt retrieval stops above 500 candidates, even when nearly all are retired",
+      "priority": "P1",
+      "evidence": "Reproduced",
+      "probes": [
+        "prompt_cliff"
+      ],
+      "sources": [
+        "[breadcrumbs/hooks_prompt.py:38-105](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/hooks_prompt.py#L38-L105)",
+        "[breadcrumbs/cli.py:8067-8106](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L8067-L8106)",
+        "[breadcrumbs/searchindex.py](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/searchindex.py)"
+      ]
+    },
+    {
+      "id": "F10",
+      "title": "Short meaningful prompts and known hazardous commands can pass through the wrong gates",
+      "priority": "P1",
+      "evidence": "Reproduced and CI-reported",
+      "probes": [
+        "guard_prefilter",
+        "short_prompt_and_stale_task"
+      ],
+      "sources": [
+        "[breadcrumbs/hooks_prompt.py:31-36](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/hooks_prompt.py#L31-L36)",
+        "[breadcrumbs/hooks_prompt.py:185-231](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/hooks_prompt.py#L185-L231)",
+        "[breadcrumbs/cli.py:8150-8315](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L8150-L8315)",
+        "[breadcrumbs/cli.py:8503-8569](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L8503-L8569)",
+        "[breadcrumbs/cli.py:11319-11345](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L11319-L11345)"
+      ]
+    },
+    {
+      "id": "F11",
+      "title": "An absent or unreadable guard prefilter is treated as no memory risk",
+      "priority": "P2",
+      "evidence": "Source-confirmed",
+      "probes": [],
+      "sources": [
+        "[breadcrumbs/cli.py:3688-3717](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L3688-L3717)",
+        "[breadcrumbs/cli.py:11319-11345](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L11319-L11345)",
+        "[breadcrumbs/cli.py:11594-11628](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L11594-L11628)"
+      ],
+      "priority_note": "P2, elevated for affected guarded workflows"
+    },
+    {
+      "id": "F12",
+      "title": "The metadata freshness shortcut can miss a valid same-size edit",
+      "priority": "P2",
+      "evidence": "Reproduced",
+      "probes": [
+        "index_metadata_collision"
+      ],
+      "sources": [
+        "[breadcrumbs/searchindex.py:83-125](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/searchindex.py#L83-L125)",
+        "[breadcrumbs/searchindex.py:232-347](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/searchindex.py#L232-L347)"
+      ]
+    },
+    {
+      "id": "F13",
+      "title": "Promoted records disappear from a packet even when their rule is unavailable to its reader",
+      "priority": "P1",
+      "evidence": "Reproduced",
+      "probes": [
+        "promoted_adapter_missing"
+      ],
+      "sources": [
+        "[breadcrumbs/cli.py:6570-6635](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L6570-L6635)",
+        "[breadcrumbs/promote.py:276-348](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/promote.py#L276-L348)",
+        "[breadcrumbs/promote.py:399-404](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/promote.py#L399-L404)"
+      ],
+      "priority_note": "P1 for portable continuity"
+    },
+    {
+      "id": "F14",
+      "title": "The advertised packet bound does not hold for large protected sections",
+      "priority": "P1",
+      "evidence": "Reproduced",
+      "probes": [
+        "packet_bound"
+      ],
+      "sources": [
+        "[breadcrumbs/cli.py:5510-5512](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L5510-L5512)",
+        "[breadcrumbs/cli.py:6877-6913](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L6877-L6913)",
+        "[breadcrumbs/cli.py:6934-7092](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L6934-L7092)"
+      ],
+      "priority_note": "P1 for the bounded-context contract"
+    },
+    {
+      "id": "F15",
+      "title": "Compaction can retain an older matched task instead of the latest user task",
+      "priority": "P2",
+      "evidence": "Reproduced",
+      "probes": [
+        "short_prompt_and_stale_task"
+      ],
+      "sources": [
+        "[breadcrumbs/hooks_prompt.py:185-231](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/hooks_prompt.py#L185-L231)",
+        "[breadcrumbs/hooks_common.py:165-190](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/hooks_common.py#L165-L190)",
+        "[breadcrumbs/cli.py:11505-11591](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L11505-L11591)"
+      ]
+    },
+    {
+      "id": "F16",
+      "title": "Usage counters can count content that was not delivered",
+      "priority": "P2",
+      "evidence": "Reproduced and source-confirmed",
+      "probes": [
+        "guard_usage_dedupe"
+      ],
+      "sources": [
+        "[breadcrumbs/cli.py:11630-11679](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L11630-L11679)",
+        "[breadcrumbs/hooks_prompt.py:205-231](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/hooks_prompt.py#L205-L231)",
+        "[breadcrumbs/usage.py](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/usage.py)",
+        "[breadcrumbs/hooks_common.py:93-122](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/hooks_common.py#L93-L122)"
+      ]
+    },
+    {
+      "id": "F17",
+      "title": "A memory symlink can expose content outside the configured project",
+      "priority": "P1",
+      "evidence": "Reproduced",
+      "probes": [
+        "symlink_read"
+      ],
+      "sources": [
+        "[breadcrumbs/mcp_core.py:90-128](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/mcp_core.py#L90-L128)",
+        "[breadcrumbs/cli.py:1211-1285](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L1211-L1285)",
+        "[breadcrumbs/cli.py:308-324](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L308-L324)"
+      ],
+      "priority_note": "P1 for the MCP/root-containment boundary"
+    },
+    {
+      "id": "F18",
+      "title": "Review metadata and interface separation do not establish an authority boundary",
+      "priority": "P1",
+      "evidence": "Source-confirmed and proposed requirement",
+      "probes": [],
+      "sources": [
+        "[breadcrumbs/cli.py:1497-1510](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L1497-L1510)",
+        "[breadcrumbs/mcp_core.py:419-530](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/mcp_core.py#L419-L530)",
+        "[breadcrumbs/promote.py:276-348](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/promote.py#L276-L348)",
+        "[docs/security.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/docs/security.md)"
+      ],
+      "priority_note": "P1 design decision; implementation should remain proportional"
+    },
+    {
+      "id": "F19",
+      "title": "Evaluation gates do not measure the whole delivered experience or require critical correctness",
+      "priority": "P1",
+      "evidence": "Source-confirmed and CI-reported",
+      "probes": [],
+      "sources": [
+        "[evals/run.py](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/evals/run.py)",
+        "[evals/baseline.json](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/evals/baseline.json)",
+        "[evals/README.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/evals/README.md)",
+        "[.github/workflows/ci.yml](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/.github/workflows/ci.yml)"
+      ]
+    },
+    {
+      "id": "F20",
+      "title": "A failed retirement can leave two live decisions while the writer reports success",
+      "priority": "P1",
+      "evidence": "Controlled fault reproduced",
+      "probes": [
+        "partial_supersession"
+      ],
+      "sources": [
+        "[breadcrumbs/cli.py:3380-3437](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L3380-L3437)",
+        "[breadcrumbs/lifecycle.py:582-629](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/lifecycle.py#L582-L629)",
+        "[breadcrumbs/cli.py:2705-2837](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L2705-L2837)",
+        "[breadcrumbs/cli.py:3720-3790](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L3720-L3790)"
+      ]
+    },
+    {
+      "id": "F21",
+      "title": "The CLI remains the domain kernel, making independent contracts difficult to maintain",
+      "priority": "P2",
+      "evidence": "Source-confirmed",
+      "probes": [],
+      "sources": [
+        "[breadcrumbs/cli.py](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py)",
+        "[breadcrumbs/mcp_core.py](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/mcp_core.py)",
+        "[breadcrumbs/searchindex.py](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/searchindex.py)",
+        "[docs/architecture.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/docs/architecture.md)"
+      ]
+    },
+    {
+      "id": "F22",
+      "title": "Platform and harness coverage is narrower than the portability ambition",
+      "priority": "P1",
+      "evidence": "Reproduced, source-confirmed, and CI-reported",
+      "probes": [
+        "powershell_translation"
+      ],
+      "sources": [
+        "[breadcrumbs/cli.py:10500-10555](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L10500-L10555)",
+        "[breadcrumbs/cli.py:11364-11402](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L11364-L11402)",
+        "[breadcrumbs/transcript.py:49-52](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/transcript.py#L49-L52)",
+        "[.github/workflows/ci.yml](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/.github/workflows/ci.yml)"
+      ],
+      "priority_note": "P1 for unsupported advertised behavior; P2 expansion"
+    },
+    {
+      "id": "F23",
+      "title": "Full rebuilds and pairwise enrichment make capture cost grow unnecessarily",
+      "priority": "P2",
+      "evidence": "Measured smoke behavior and source-confirmed",
+      "probes": [],
+      "sources": [
+        "[breadcrumbs/related.py:38-97](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/related.py#L38-L97)",
+        "[breadcrumbs/lifecycle.py:915-987](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/lifecycle.py#L915-L987)",
+        "[breadcrumbs/cli.py:3720-3772](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/cli.py#L3720-L3772)"
+      ]
+    },
+    {
+      "id": "F24",
+      "title": "Documentation, compatibility rules, and the dogfood handoff need reconciliation",
+      "priority": "P2",
+      "evidence": "Source-confirmed and CI-reported",
+      "probes": [],
+      "sources": [
+        "[.project-memory/handoff.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/.project-memory/handoff.md)",
+        "[README.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/README.md)",
+        "[CHANGELOG.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/CHANGELOG.md)",
+        "[pyproject.toml](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/pyproject.toml)",
+        "[docs/record-schema.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/docs/record-schema.md)"
+      ]
+    },
+    {
+      "id": "F25",
+      "title": "Replay execution needs bounded output and process-tree cleanup, not just a timeout",
+      "priority": "P2",
+      "evidence": "Source-confirmed",
+      "probes": [],
+      "sources": [
+        "[breadcrumbs/lifecycle.py:348-420](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/lifecycle.py#L348-L420)",
+        "[breadcrumbs/lifecycle_cmds.py](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/breadcrumbs/lifecycle_cmds.py)"
+      ],
+      "priority_note": "P2; combine with the P1 replay correctness repair"
+    },
+    {
+      "id": "F26",
+      "title": "Public credibility needs demonstrated task outcomes, not more feature names",
+      "priority": "P2",
+      "evidence": "Proposal grounded in the current evaluation scope",
+      "probes": [],
+      "sources": [
+        "[evals/README.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/evals/README.md)",
+        "[docs/field-test.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/docs/field-test.md)",
+        "[README.md](https://github.com/jr-mccoy/breadcrumbs/blob/30e41f6a36195faffdc197d0565abc7caf7c78da/README.md)"
+      ],
+      "priority_note": "P2 product/qualification work; optional extensions P3"
+    }
+  ],
+  "work_packages": [
+    {
+      "id": "WP00",
+      "title": "Establish the baseline and preserve reproducible evidence",
+      "priority": "P1",
+      "relative_complexity": "S",
+      "status": "completed",
+      "depends_on": [],
+      "findings": [
+        "F19",
+        "F26"
+      ],
+      "modify_existing": [],
+      "create_proposed": [
+        "docs/reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md",
+        "tests/test_audit_regressions.py"
+      ],
+      "implementation_steps": [
+        "Compare HEAD with the audited commit; classify findings as still present, already fixed, or changed. Do not treat changed line numbers as a disproved finding.",
+        "Run the complete repository test/eval commands on a real checkout, then the supplied diagnostic probes. Record environment, commit, command, exit code, and output. Preserve the audit evidence separately.",
+        "Convert confirmed cases into focused upstream regressions as their repair packages proceed. Do not make a diagnostic script reporting defects look like a green product test."
+      ],
+      "acceptance_tests": [
+        "Baseline: `python -m unittest discover -s tests -p \"test_*.py\"` and `python evals/run.py --verbose`.",
+        "Audit probe output is machine-readable; errors and observed defects are distinguished."
+      ],
+      "done_when": "The current baseline and all deviations from this report are recorded; no production behavior has been changed merely to obtain a baseline.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-26",
+          "starting_commit": "30e41f6a36195faffdc197d0565abc7caf7c78da",
+          "record": "docs/reviews/2026-09-26-breadcrumbs-wp00-baseline/baseline.json",
+          "summary": "HEAD is the audited commit (identical tree; 21/21 module hashes match). Full suite: 1147 run, 0 failures, 6 skipped (MCP SDK / typing_extensions absent), exit 0. Evals: exit 0, numbers match the CI observation, npm test still PROCEED. Probes: 19 defect signals, 0 errors, all identical to the audit excluding timings (exit 1 under --fail-on-observed). Selected tests: 243 pass. The 5 audit-excluded tests pass on a full checkout. All 26 findings classified still present; none fixed or changed.",
+          "not_done": "tests/test_audit_regressions.py deferred to each repair package (WP00 step 3). No production behavior changed."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP00 approved, start WP01\")."
+        }
+      ]
+    },
+    {
+      "id": "WP01",
+      "title": "Centralize and strengthen record validation",
+      "priority": "P1",
+      "relative_complexity": "M",
+      "status": "completed",
+      "depends_on": [
+        "WP00"
+      ],
+      "findings": [
+        "F05"
+      ],
+      "modify_existing": [
+        "breadcrumbs/cli.py",
+        "breadcrumbs/mcp_core.py",
+        "breadcrumbs/inbox.py",
+        "docs/record-schema.md"
+      ],
+      "create_proposed": [
+        "breadcrumbs/validation.py",
+        "tests/test_validation_contract.py"
+      ],
+      "implementation_steps": [
+        "Extract pure field/shape checks and store-level reference checks without changing record IDs or source text. Preserve unknown fields during round trips.",
+        "Validate confidence/review vocabularies, evidence item shape, timestamps, supported new-write scopes, and replacement links. Treat legacy free-text scope and archived rollup references explicitly rather than silently normalizing them.",
+        "Call the same validator from every writer and from store validation. Return stable codes and useful locations; isolate malformed records on reads with an explicit degraded result."
+      ],
+      "acceptance_tests": [
+        "`test_invalid_confidence_evidence_and_dates_are_reported`",
+        "`test_new_write_rejects_unknown_scope_without_widening_legacy_scope`",
+        "`test_missing_replacement_self_link_and_cycle_are_reported`",
+        "`test_unknown_metadata_round_trips_without_loss`"
+      ],
+      "done_when": "The schema probes have intentional, documented outcomes and no adapter bypasses the shared contract; existing valid stores retain their identities and meaning.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "ec9dac7",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp01/README.md",
+          "summary": "New breadcrumbs/validation.py (record + store contract, stable codes) used by run_validate and a pre-write gate in write_record; rewrite gates refuse only newly introduced problems; packet warns on contract breaks. tests/test_validation_contract.py: 18 tests (16 fail on the old code). Full suite 1165 OK on 3.11.15 and 3.9.23; evals identical to WP00; schema_types probe no longer observes the defect, other 18 probes unchanged; CI fixture steps pass; ruff clean.",
+          "compatibility": "No record rewritten, no id changed; every record in this repo and all 12 fixtures already conformed. validate now fails on stores that break the contract; remember --scope and memory_record scope limited to project|branch; mark-status --superseded-by must name an existing record; validate findings gain a code key.",
+          "limitations": "Flow-sequence frontmatter still parses as a string and is not flagged; no size/depth limits; no external-reference namespace; hooks other than SessionStart do not surface the degraded signal; default confidence unchanged."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP01 approved, start WP02\")."
+        }
+      ]
+    },
+    {
+      "id": "WP02",
+      "title": "Make transcript outcome detection truthful",
+      "priority": "P1",
+      "relative_complexity": "M",
+      "status": "completed",
+      "depends_on": [
+        "WP00"
+      ],
+      "findings": [
+        "F01"
+      ],
+      "modify_existing": [
+        "breadcrumbs/transcript.py",
+        "tests/test_transcript.py"
+      ],
+      "create_proposed": [
+        "tests/test_transcript_outcomes.py"
+      ],
+      "implementation_steps": [
+        "Add explicit result-received and outcome state to normalized calls. Missing, interrupted, and unrecognized results are unknown, never implicitly successful.",
+        "Classify from structured adapter result data where available; analyze any necessary textual fallback before producing bounded excerpts. Remove naive zero-failure false positives.",
+        "Reword candidate creation to distinguish observed execution from causal claims. Keep private, low-confidence candidate admission and current secret-dropping safeguards."
+      ],
+      "acceptance_tests": [
+        "`test_missing_result_never_produces_passed_candidate`",
+        "`test_failure_after_excerpt_limit_is_failure`",
+        "`test_zero_failed_summary_is_not_failure`",
+        "`test_edit_then_success_does_not_assert_unproven_causality`"
+      ],
+      "done_when": "The F01 cases pass as ordinary regressions and uncertain events remain accurately labeled. Cross-firing joins complete in WP09.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "f9f72f7",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp02/README.md",
+          "summary": "ToolCall gains result_received and outcome (success|failure|interrupted|not_run|unknown); classification uses harness signals first, then the full output (failure for test/lint/build commands, unknown for others), zero counts excepted, excerpt cut after. Attempts need an observed failure and later success and are worded as a sequence, not a cause; only successful edits count. tests/test_transcript_outcomes.py: 22 tests. Full suite 1187 OK; transcript/hook tests OK on 3.9; transcript_results and split_pair probes no longer observed; on this session's real transcript the only candidate change is removing one false 'passed'.",
+          "compatibility": "No schema/store/CLI change. Attempt titles change (fingerprints of in-flight sessions may write one duplicate private jot). Fewer, more accurate candidates.",
+          "limitations": "Cross-firing call/result join remains WP09 (split_pair is only partly fixed). Verdict-command allowlist; English-only failure vocabulary; Claude Code transcript shape only."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP02 approved, start WP03\")."
+        }
+      ]
+    },
+    {
+      "id": "WP03",
+      "title": "Make jot promotion lossless and scope-preserving",
+      "priority": "P1",
+      "relative_complexity": "M",
+      "status": "completed",
+      "depends_on": [
+        "WP01"
+      ],
+      "findings": [
+        "F03"
+      ],
+      "modify_existing": [
+        "breadcrumbs/inbox.py",
+        "breadcrumbs/mcp_core.py",
+        "tests/test_inbox.py"
+      ],
+      "create_proposed": [
+        "tests/test_promotion_contract.py"
+      ],
+      "implementation_steps": [
+        "Preserve the entire jot body by default, not just its title. Record source ID/revision in the target.",
+        "Inherit scope, confidence, and provenance. Make private-to-shared and branch-to-project effects explicit and policy-authorized; explicit replacement sections must not silently erase the source trail.",
+        "Route all promotion targets through shared validation and duplicate checks. Retire the source only after a successful durable target transition; integrate WP06 transaction semantics when available."
+      ],
+      "acceptance_tests": [
+        "`test_promote_without_sections_preserves_note_text`",
+        "`test_private_branch_promotion_does_not_default_to_project_medium`",
+        "`test_promotion_obeys_duplicate_gate`",
+        "`test_failed_target_leaves_source_live`"
+      ],
+      "done_when": "A reader of the new durable record can recover the original substantive information, its uncertainty, and its scope without access to an omitted private body.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "7fc3b50",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp03/README.md",
+          "summary": "promote_jot carries the jot note into every target (primary section, or a 'From jot <id>' provenance paragraph beside caller sections), records promoted_from/promoted_from_digest, inherits scope and confidence unless explicitly widened/raised (reported), applies the near-duplicate gate with allow_duplicate/supersedes on all targets, refuses publishing a private jot with a structured credential, and retires the jot only after the target is valid. CLI and MCP gain scope/allow-duplicate/supersedes. tests/test_promotion_contract.py: 13 tests. Full suite 1200 OK; MCP tests OK with SDK 2.2.0; jot_promotion_loss probe no longer observed.",
+          "compatibility": "Additive frontmatter keys; promoted records keep low confidence and branch scope by default; a no-evidence jot now promotes at low instead of being refused; promotion can be refused as a near-duplicate (exit 3).",
+          "limitations": "Private-to-shared is authorized by the promote act itself (disclosed, secrets refused); a stricter --share flag is a WP14 policy decision. Not atomic (WP06). Schema-2 block traps/questions do not carry inherited metadata."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP03 approved, start WP04\")."
+        }
+      ]
+    },
+    {
+      "id": "WP04",
+      "title": "Separate assertion replay from claim verification",
+      "priority": "P1",
+      "relative_complexity": "L",
+      "status": "completed",
+      "depends_on": [
+        "WP01"
+      ],
+      "findings": [
+        "F04",
+        "F25"
+      ],
+      "modify_existing": [
+        "breadcrumbs/lifecycle.py",
+        "breadcrumbs/lifecycle_cmds.py",
+        "tests/test_lifecycle.py",
+        "docs/cli-spec.md"
+      ],
+      "create_proposed": [
+        "breadcrumbs/checks.py",
+        "tests/test_replay_contract.py"
+      ],
+      "implementation_steps": [
+        "Preserve original scope, subject, confidence, and provenance when recording replay results. Add an internal CheckResult separate from a verification outcome.",
+        "Define a minimally sufficient, versioned assertion/replay specification. Legacy command/test references remain evidence pointers or diagnostics unless explicitly bound to an assertion; do not assume a test-file path is executable.",
+        "Keep preview/consent, bound output while it is collected, and implement platform-aware cancellation/process-tree cleanup. Preserve exact command semantics rather than applying POSIX parsing to Windows strings.",
+        "Only a successfully evaluated assertion may settle its bound subject. Missing tools, timeout, unavailable evidence, and interrupted execution remain inconclusive."
+      ],
+      "acceptance_tests": [
+        "`test_noop_diagnostic_does_not_fix_claim`",
+        "`test_recheck_preserves_branch_scope_across_checkout`",
+        "`test_assertion_failure_differs_from_runner_unavailability`",
+        "`test_output_and_descendant_processes_are_bounded`"
+      ],
+      "done_when": "Replay is accurate, consented, bounded, and auditable; it cannot elevate a successful process into an unrelated factual conclusion.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "c1375d7",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp04/README.md",
+          "summary": "New breadcrumbs/checks.py: CheckResult (execution only), versioned assertion spec 1 ({type: assert, ref, spec}), settle() (only evaluated assertions settle; fixed/open/regressed), run_check() with process group, rolling 64 KiB output window, group termination on timeout/Ctrl-C/return. recheck: command evidence is a diagnostic unless --bind-commands; test evidence never executed; settled records keep subject/scope/branch/confidence; branch claims not rechecked from another branch; inconclusive runs write nothing. verify --assert. tests/test_replay_contract.py: 16 tests. Full suite 1217 OK.",
+          "compatibility": "Recheck of command-only verifications no longer changes them (use --bind-commands or --assert); test evidence not executed; JSON gains settled/reason/runs fields; regressed outcome possible.",
+          "limitations": "recheck_scope_and_claim probe now errors (the no-op writes no record) and is covered by regression tests instead; environment not filtered; Windows tree cleanup untested (taskkill /T); spec 1 is exit-code only; detached children reported, not ended."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"I approve, continue\")."
+        }
+      ]
+    },
+    {
+      "id": "WP05",
+      "title": "Repair writer coordination and lock ownership",
+      "priority": "P1",
+      "relative_complexity": "L",
+      "status": "completed",
+      "depends_on": [
+        "WP00"
+      ],
+      "findings": [
+        "F06",
+        "F08"
+      ],
+      "modify_existing": [
+        "breadcrumbs/lock.py",
+        "breadcrumbs/cli.py",
+        "breadcrumbs/mcp_core.py",
+        "tests/test_lock.py"
+      ],
+      "create_proposed": [
+        "tests/test_lock_processes.py"
+      ],
+      "implementation_steps": [
+        "Adopt OS-held local locking on qualified POSIX/Windows paths, keeping thread re-entrancy and bounded caller waits. Define the filesystem support boundary.",
+        "Ensure every writing invocation, including projection publication and maintenance hidden behind resume, participates. A read-only response must not bypass the lock by publishing.",
+        "Keep ownership stable through init/migrate/cleanup. If any lease fallback remains, add ownership generations/fencing and prove an old holder cannot publish or release a newer lock."
+      ],
+      "acceptance_tests": [
+        "`test_resume_does_not_publish_under_foreign_writer`",
+        "`test_process_death_releases_os_lock`",
+        "`test_live_owner_is_not_stolen_after_clock_gap`",
+        "`test_force_init_preserves_coordination`"
+      ],
+      "done_when": "Real-process exclusion and bounded contention behavior pass on qualified platforms; stale-clock logic no longer permits concurrent live owners.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "16aa8f1",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp05/README.md",
+          "summary": "lock.py rewritten on OS locks (flock / msvcrt.locking) over a permanent private/.store.lock: no heartbeat, staleness or breaking; LockUnsupported on filesystems that refuse; live legacy .write-lock waited on, never removed. Projection publication (try_reindex_projections) takes the lock; resume prints its packet regardless and publishes only within 0.5 s, reporting publication in --json. init --force keeps both lock files; the search index builds in a unique temp file. tests/test_lock_processes.py: 10 real-process tests (death, clock gap, SIGSTOP, parallel writers and reindexes, force init, legacy, unsupported FS). Full suite 1224 OK; 5x repeat clean.",
+          "compatibility": "New lock file; older versions do not see it (one version per checkout); resume may skip publishing under contention; deleting the lock file no longer releases a lock; non-local filesystems without OS locks refuse writes.",
+          "limitations": "Windows path untested (WP17); local filesystems only; private telemetry/hook state writes still unlocked (WP09/WP12); no snapshot coherence (WP07). live_lock_stale probe errors (API removed) and resume_ignores_lock reports a false positive (its fake file-content holder is not a lock); both covered by real-process tests."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP05 approved, start WP06\")."
+        }
+      ]
+    },
+    {
+      "id": "WP06",
+      "title": "Make replacement and lifecycle mutations recoverable",
+      "priority": "P1",
+      "relative_complexity": "L",
+      "status": "completed",
+      "depends_on": [
+        "WP01",
+        "WP05"
+      ],
+      "findings": [
+        "F20"
+      ],
+      "modify_existing": [
+        "breadcrumbs/cli.py",
+        "breadcrumbs/lifecycle.py",
+        "breadcrumbs/inbox.py",
+        "breadcrumbs/promote.py"
+      ],
+      "create_proposed": [
+        "breadcrumbs/mutations.py",
+        "tests/test_mutation_recovery.py"
+      ],
+      "implementation_steps": [
+        "Introduce one application mutation path with expected revisions, an operation ID, a prepared change set, and truthful result states.",
+        "Check every retirement/demotion result. Implement rollback or resumable recovery without erasing authored history; track projection invalidation separately from canonical commit.",
+        "Persist sufficient journal/recovery metadata for failures between participants. Make retries idempotent and expose unresolved operations through doctor/recovery commands."
+      ],
+      "acceptance_tests": [
+        "`test_failed_retirement_is_not_success_with_two_live_decisions`",
+        "`test_failure_after_each_participant_is_recoverable`",
+        "`test_expected_revision_prevents_lost_update`",
+        "`test_retry_does_not_duplicate_or_orphan_records`"
+      ],
+      "done_when": "Replacement, consolidation, promotion, and automatic demotion cannot acknowledge an unresolved partial operation as a fully successful transition.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "c2544bb",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp06/README.md",
+          "summary": "New breadcrumbs/mutations.py: transaction() with write-ahead before-image journal under private/operations/, rollback on any failure (nested failures doom the parent), recover() for crashed writers (restores only known states, keeps copies of removed files), RevisionConflict via write_text_atomic(expected=). remember/MCP record/note/verify/inbox promote/consolidate/rollup/mark-status+auto-demote/promote/demote are single operations; retire_all raises on any failed retirement. crumb recover; doctor operations/projections rows; projections-pending marker. tests/test_mutation_recovery.py: 10 tests incl. a real-subprocess crash after every write (12 journaled crashes restored byte-for-byte, 4 post-commit). Full suite 1234 OK; partial_supersession probe no longer observed.",
+          "compatibility": "Failed replacements exit 1 and write nothing; inbox promote no longer returns ok+warning; mark-status of a promoted record fails if its rule cannot be removed; rewrites may refuse on a revision conflict; new private/ paths and `crumb recover`.",
+          "limitations": "Rollback-only recovery (no roll-forward); revision check is not atomic CAS against non-cooperating writers; capture session handoff not journaled with its record; projections after a post-commit crash are stale until reindex (WP07)."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP06 approved, start WP07\")."
+        }
+      ]
+    },
+    {
+      "id": "WP07",
+      "title": "Build and publish coherent snapshots and projections",
+      "priority": "P1",
+      "relative_complexity": "L",
+      "status": "completed",
+      "depends_on": [
+        "WP05",
+        "WP06"
+      ],
+      "findings": [
+        "F06",
+        "F07",
+        "F11",
+        "F12"
+      ],
+      "modify_existing": [
+        "breadcrumbs/cli.py",
+        "breadcrumbs/searchindex.py",
+        "breadcrumbs/related.py",
+        "breadcrumbs/lifecycle.py"
+      ],
+      "create_proposed": [
+        "breadcrumbs/snapshots.py",
+        "breadcrumbs/projections.py",
+        "tests/test_snapshot_consistency.py"
+      ],
+      "implementation_steps": [
+        "Capture one immutable input representation per operation and derive its digest from those exact inputs. Keep branch/time/query/consumer context in a separate view identity.",
+        "Build packet, prefilter, related/conflict maps, and index from the snapshot. Use unique temporary files and publish a manifest with output digests last.",
+        "Separate resume read/print from publication. Handle contention with a verified prior view, bounded retry, or explicit degraded output; never a false-current stamp.",
+        "Remove the same-size/mtime shortcut from the strict freshness path and benchmark the correct path before introducing replacement optimizations."
+      ],
+      "acceptance_tests": [
+        "`test_mutation_between_read_and_hash_cannot_false_certify`",
+        "`test_mixed_generation_is_not_consumed`",
+        "`test_two_index_builders_do_not_share_temp_file`",
+        "`test_same_size_restored_mtime_edit_invalidates_strict_index`"
+      ],
+      "done_when": "Every emitted source stamp describes the actual input snapshot, and disposable artifacts cannot be trusted across an unverified generation boundary.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "5687d16",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp07/README.md",
+          "summary": "New breadcrumbs/snapshots.py: stable_build hashes inputs before and after each build, stamps with the verified digest, retries up to 3 times, else stamps 'unstable' (packet warning, validate stale). New breadcrumbs/projections.py: machine-local index/generation.json manifest (stamp, stable, per-file sha256, stat fingerprint) written last, old one removed first; verified() gates the guard hook's pre-filter, which on a missing/corrupt/replaced/out-of-date file escalates to the full guard (hooklog prefilter=unverified). _publish_projections builds packet, stamped pre-filter, related, conflicts and a staged index from one snapshot; staged indexes are unique temp files discarded unless published. Search-index freshness is content hash only (INDEX_FORMAT 2). tests/test_snapshot_consistency.py: 11 tests incl. the 4 named; the original 10 all fail on WP06 code (8 behaviorally). Full suite 1245 OK; snapshot_stamp_race and index_metadata_collision probes no longer observed (10 signals, 2 recorded instrument errors).",
+          "compatibility": "Committed guard-prefilter.json gains inputs_hash (drift-checked by validate; older readers ignore it); a projection may be stamped 'unstable'; reindex may return not-ok when the store keeps changing; guard hook runs the full guard (~39 ms vs 2.6 ms at 200 records) until a local publication exists; search index format 2 rebuilt on next reindex; new machine-local index/generation.json; build_index gains inputs_hash=/publish=.",
+          "limitations": "Snapshot verified by re-hashing, not an immutable copy (an undone change is invisible); the hook's generation check is a stat fingerprint, so a same-size restored-mtime edit after publication can pass it (strict paths use content hashes); no separate view-identity field yet (WP08); resume under contention prints a fresh verified-or-unstable view rather than the last published generation; a failed publication leaves outputs partly replaced with no manifest until reindex."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP07 approved, start WP08\")."
+        }
+      ]
+    },
+    {
+      "id": "WP08",
+      "title": "Make packets genuinely bounded and portable",
+      "priority": "P1",
+      "relative_complexity": "M",
+      "status": "completed",
+      "depends_on": [
+        "WP07"
+      ],
+      "findings": [
+        "F13",
+        "F14"
+      ],
+      "modify_existing": [
+        "breadcrumbs/cli.py",
+        "breadcrumbs/promote.py",
+        "breadcrumbs/mcp_core.py",
+        "tests/test_resume.py"
+      ],
+      "create_proposed": [
+        "tests/test_packet_delivery.py"
+      ],
+      "implementation_steps": [
+        "Enforce budget on the final serialized view, including focus/next-action fields, warnings, rules, and framing. Define units for Markdown, JSON, and fast views.",
+        "Include effective promoted rules in portable packets. Permit elision only for a verified consumer-loaded rule revision.",
+        "Use explicit excerpts/source pointers and omission counts without altering canonical content. Add estimator metadata; exact tokenizer support is optional and consumer-specific."
+      ],
+      "acceptance_tests": [
+        "`test_long_focus_cannot_exceed_declared_view_budget`",
+        "`test_missing_adapter_does_not_hide_promoted_decision`",
+        "`test_cross_harness_packet_includes_effective_rules`",
+        "`test_unicode_and_tiny_budgets_terminate_and_disclose_omissions`"
+      ],
+      "done_when": "Read-only and cross-harness readers receive the necessary rules and an accurately bounded, self-identifying packet.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "344fd88",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp08/README.md",
+          "summary": "_bound_packet bounds the final serialized view (markdown, markdown-fast, json, json-fast; resume --json measured on the exact printed envelope, MCP on its returned document): per-entry/warning excerpts (300 chars) and protected-field excerpts (2000) with marked pointers, caps, TRIM_ORDER (now incl. commits_since_handoff), then protected fields shrink to pointers; PACKET_MIN_BUDGET floors >=30% above measured worst case; budget/excerpted metadata and a view header line; named estimator approx-tokens/2 (ASCII/4 + 1 per non-ASCII); crumb resume --budget. Promoted records stay in portable packets with their effective rule (promoted_to/rule/rule_in_file; bullet in file wins, else rendered from record); only the Claude Code SessionStart hook elides records whose rule is in the CLAUDE.md it loads (promote.loaded_rules). tests/test_packet_delivery.py: 7 tests incl. the 4 named; all fail on 344fd88 (4 behaviorally). Full suite 1252 OK; packet_bound and promoted_adapter_missing probes no longer observed (8 signals, 2 recorded instrument errors); evals identical.",
+          "compatibility": "Promoted records appear in portable packets (promoted counts only elisions); new budget/rules/excerpted fields and rule fields on promoted entries; approx_tokens in resume --json is the JSON view's size; estimator counts non-ASCII higher; long fields appear as marked excerpts in views; JSON views may carry fewer entries than Markdown; third Markdown header line; new --budget flag.",
+          "limitations": "Heuristic estimator, no model tokenizer; loaded rules = project CLAUDE.md read at hook time (parent/user CLAUDE.md and @imports not counted; mid-session edits unseen); no loaded-rules view for other harnesses; compaction hook bounded as packet + 1000-token preamble; excerpts cut by code point; no single view-identity digest."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP08 approved, start WP09\")."
+        }
+      ]
+    },
+    {
+      "id": "WP09",
+      "title": "Replace the relative transcript cursor with durable incremental ingestion",
+      "priority": "P1",
+      "relative_complexity": "L",
+      "status": "completed",
+      "depends_on": [
+        "WP02",
+        "WP03",
+        "WP05",
+        "WP06"
+      ],
+      "findings": [
+        "F02"
+      ],
+      "modify_existing": [
+        "breadcrumbs/transcript.py",
+        "breadcrumbs/hooks_common.py",
+        "breadcrumbs/hooks_compact.py",
+        "tests/test_hooks_phase1.py"
+      ],
+      "create_proposed": [
+        "tests/test_transcript_recovery.py"
+      ],
+      "implementation_steps": [
+        "Use file identity plus absolute byte progress and an incomplete-line buffer. Persist bounded pending call/result state across firings.",
+        "Advance acknowledgments only after durable acceptance or an explicitly counted policy rejection. Add idempotent pending capture entries where necessary to survive lock contention.",
+        "Handle >8 MB windows, rotation/truncation, restart, session fork, candidate caps, and write failure. Report backlog/skips without retaining unnecessary full transcripts or secret content."
+      ],
+      "acceptance_tests": [
+        "`test_sliding_tail_does_not_freeze_cursor`",
+        "`test_call_and_late_result_join_across_firings`",
+        "`test_partial_line_rotation_and_restart_preserve_progress`",
+        "`test_crash_between_jot_and_cursor_is_idempotent`"
+      ],
+      "done_when": "Long sessions remain mineable and no acknowledged event is silently lost, replayed into duplicate authority, or reclassified as success without a result.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "22a1bff",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp09/README.md",
+          "summary": "transcript.ingest (under the store lock): byte cursor at line boundaries with file identity (head + anchor digests; truncation/replacement reset to 0), <=8 MB per firing with unread bytes reported, partial last line left, over-long lines skipped and counted; Bash/edit calls carried between firings (pending + newest resolved, 200, secrets blanked) so late results and cross-firing fail/edit/pass join; candidates with stable keys and event ids queued into a durable backlog saved before any jot is written, flushed 10 per firing, removed only when written, found already written, or refused (counted), dropped after 5 failed writes (counted); cross-session acked-event ledger for replay/fork idempotency; rule caps counted; per-session state files private/miner/<session>.json; doctor miner row; hook-log miner fields. tests/test_transcript_recovery.py (13, incl. the 4 named) + 1 hook test; the 13 original all fail on 22a1bff (4 behaviorally). Full suite 1266 OK; sliding_cursor probe no longer observed (7 signals, 2 recorded instrument errors); evals identical; one firing on a 20 MB transcript 34 ms -> 6 ms.",
+          "compatibility": "miner-cursor.json no longer read (sessions restart at byte 0; old jots recognised by old title fingerprints, only a grown churn count re-offered once); new private/miner/ state; forward catch-up instead of tail reads; subagent one-shot reads the last 32 MB; report gains accounting fields and skipped no longer counts cap overflow; pair_tool_calls(carried=), ToolCall.call_id, Candidate.key/events; hooks_common.set_miner_cursor removed.",
+          "limitations": "Catch-up lags when >8 MB is appended between firings (reported); carried history bounded to 200 calls; fork detection relies on copied tool_use ids/uuids; acked ledger keeps 5,000 newest events; secret blanking is pattern-based; a candidate failing 5 writes is dropped (counted)."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP09 approved, start WP18\")."
+        }
+      ]
+    },
+    {
+      "id": "WP10",
+      "title": "Unify indexed retrieval eligibility and short-prompt handling",
+      "priority": "P1",
+      "relative_complexity": "L",
+      "status": "completed",
+      "depends_on": [
+        "WP01",
+        "WP07"
+      ],
+      "findings": [
+        "F09",
+        "F10",
+        "F11",
+        "F12"
+      ],
+      "modify_existing": [
+        "breadcrumbs/hooks_prompt.py",
+        "breadcrumbs/searchindex.py",
+        "breadcrumbs/cli.py"
+      ],
+      "create_proposed": [
+        "breadcrumbs/retrieval.py",
+        "tests/test_retrieval_boundaries.py"
+      ],
+      "implementation_steps": [
+        "Remove the full-corpus pre-count and the >500 return-empty gate. Query indexed candidates directly and apply purpose-specific eligibility before output budgets.",
+        "Replace raw character-length suppression with tested acknowledgment handling. Keep historical lookup distinct from current advice.",
+        "Unify alias, tokenizer, index-version, scope, and lifecycle semantics. Distinguish exact full search from intentionally bounded hook retrieval, with explicit truncation/degradation metadata.",
+        "Add a cheap valid corpus/generation summary instead of treating guard-prefilter existence as general retrieval content."
+      ],
+      "acceptance_tests": [
+        "`test_one_active_plus_500_stale_records_still_retrieves`",
+        "`test_199_200_201_and_499_500_501_preserve_results`",
+        "`test_short_meaningful_prompt_is_not_acknowledgment`",
+        "`test_index_missing_stale_or_corrupt_has_honest_fallback`"
+      ],
+      "done_when": "Memory does not disappear at a size boundary and the consumer can tell whether a lookup completed normally or used a limited fallback.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "293a90b",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp10/README.md",
+          "summary": "New breadcrumbs/retrieval.py: acknowledgement vocabulary replaces the 12-char gate; prompt_lookup searches via the index with no corpus pre-count (full scan up to 2,000 records, else a reported `skipped` with a once-per-session notice), eligibility before the cap, corpus_summary from the verified manifest (new `corpus`) instead of pre-filter existence; Lookup reports mode/reason. Guard: a live trap naming the exact command (>=2 leading tokens, whole action or up to a flag; remedy spans excluded) gets the `command` signal and a READ_FIRST floor; pre-filter format 2 lists named commands and never filters them out; PROCEED explained as no applicable memory warning. crumb search reports lookup mode. tests/test_retrieval_boundaries.py (9 incl. the 4 named). Before/after script: 5/10 fail on 293a90b, 10/10 pass. Full suite 1284 OK; probes prompt_cliff, guard_prefilter, short_prompt_and_stale_task cleared (4 signals left); 3 known F10 critical cases pass, markers removed; baseline rewritten via reviewed path (3 improvements, 0 regressions); prompt hook 463 -> 147 ms at 5,000 records. Release workflow now runs evals --release (operator-approved).",
+          "compatibility": "Short non-acknowledgement prompts and stores >500 records now get injections; a trap naming the command makes guard READ_FIRST (exit 10) and the hook deliver context; PROCEED advice text changed; new command signal, pre-filter format/commands (older pre-filters unverified), manifest corpus, search --json lookup, hook-log retrieval; search(allow_full_scan=, info=), candidate_items(explain=); releases require every critical eval case to pass.",
+          "limitations": "Command rule is narrow (>=2 tokens, non-flag args break it, unnamed commands not covered); English fixed acknowledgement vocabulary; PROMPT_FULL_SCAN_MAX is a latency bound (skipped above it without an index); corpus count is files, not eligible records; guard's own lookup still scans unbounded."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP10 approved, start WP11\")."
+        }
+      ]
+    },
+    {
+      "id": "WP11",
+      "title": "Close the known-command guard miss without restoring warning spam",
+      "priority": "P1",
+      "relative_complexity": "M",
+      "status": "completed",
+      "depends_on": [
+        "WP10",
+        "WP18"
+      ],
+      "findings": [
+        "F10",
+        "F11"
+      ],
+      "modify_existing": [
+        "breadcrumbs/cli.py",
+        "tests/test_guard.py",
+        "tests/test_guard_precision.py",
+        "tests/test_hooks.py"
+      ],
+      "create_proposed": [
+        "tests/test_guard_delivery.py"
+      ],
+      "implementation_steps": [
+        "Make exact project-known command hazards eligible for an appropriately bounded advisory even when generic-token filtering removes a word such as test.",
+        "Ensure prefilter candidate selection cannot reject a case that full guard would surface. Preserve record stance, safe-remedy behavior, read-only ceilings, and host permission-mode rules.",
+        "Document PROCEED as no applicable memory warning, not action authorization. Preserve the existing verdict exit-code mapping; add transport convenience only separately and opt-in."
+      ],
+      "acceptance_tests": [
+        "`test_known_destructive_npm_test_never_proceeds_silently`",
+        "`test_full_guard_and_hook_agree_on_required_warning`",
+        "`test_safe_remedy_and_unrelated_controls_remain_nonblocking`",
+        "`test_permission_mode_never_gains_auto_allow`"
+      ],
+      "done_when": "The critical npm case passes through the actual hook, while established false-positive controls and permission boundaries remain intact.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "d270e14",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp11/README.md",
+          "summary": "Guard pre-filter (format 3) is a strict superset of full guard: tokens, titles, tags, declared+mentioned paths and named commands from every record that could drive a verdict; each _prefilter_trap_hit test mirrors a _score_item gate. Named-command heads carry their kind ([title|span, ...]), fixing a WP10 positional bug the sorted pre-filter could trigger; run-verb summaries name the command after the verb. crumb guard --exit-zero (opt-in); verdict exit codes unchanged. New critical eval case edit-of-a-decision-file-warns. tests/test_guard_delivery.py (6 incl. the 4 named): npm test warns in all 7 permission modes; hook agrees with full guard on every eval store (227 actions, 193 warnings); remedies/controls silent; read-only ceiling and blocking stance kept; no mode ever gets allow/deny. Hook silent on required warnings 27/193 before, 0 after; routine-command cost +0.3 ms median. Full suite 1290 OK; evals and --release pass.",
+          "compatibility": "The hook now warns wherever crumb guard does (edits to decision-declared files, tag matches); more actions reach full guard; pre-filter format 3 (format 2 treated as unverified); new crumb guard --exit-zero.",
+          "limitations": "Superset guaranteed against the match gate, not verdicts (extra full-guard runs); broad tags produce guard-policy READ_FIRSTs the hook no longer hides; agreement test covers generated actions over four synthetic stores; named-command rule keeps its narrowness."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP11 approved, start WP12\")."
+        }
+      ]
+    },
+    {
+      "id": "WP12",
+      "title": "Separate latest intent from retrieval state and correct telemetry",
+      "priority": "P2",
+      "relative_complexity": "M",
+      "status": "completed",
+      "depends_on": [
+        "WP07",
+        "WP09",
+        "WP10"
+      ],
+      "findings": [
+        "F15",
+        "F16"
+      ],
+      "modify_existing": [
+        "breadcrumbs/hooks_prompt.py",
+        "breadcrumbs/hooks_common.py",
+        "breadcrumbs/usage.py",
+        "breadcrumbs/cli.py",
+        "breadcrumbs/hooklog.py"
+      ],
+      "create_proposed": [
+        "tests/test_emission_accounting.py"
+      ],
+      "implementation_steps": [
+        "Update substantive latest-task state independently of whether retrieval found anything; retain distinct retrieval-query and matched-ID state.",
+        "Introduce final emission accounting after deduplication and budget trimming. Distinguish retrieved, selected, emitted, and externally confirmed usefulness.",
+        "Make local state updates concurrency-safe or explicitly approximate, report drops, and keep telemetry content-minimal. Do not turn frequency into automatic factual approval."
+      ],
+      "acceptance_tests": [
+        "`test_unmatched_new_task_replaces_old_matched_task`",
+        "`test_deduped_guard_does_not_increment_surfaced`",
+        "`test_trimmed_ids_are_not_counted_as_emitted`",
+        "`test_parallel_telemetry_does_not_silently_lose_acknowledged_events`"
+      ],
+      "done_when": "Compaction follows current intent and usage reports measure actual emissions under their stated accounting model.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "f534a77",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp12/README.md",
+          "summary": "Latest task is recorded for every substantive prompt before the lookup (acknowledgements and slash commands excluded), with the latest lookup kept apart (for_task digest, mode, selected, emitted); compaction preamble and packet follow the latest task; text capped at 300 chars, withheld on a credential, retain_prompt_text: false keeps only a digest. Usage counts emitted ids only: guard hook counts after its dedupe exit and only the 3 matches its reason names; prompt hook dedupes and counts the ids left after budget trimming; hook log notes candidates/matches/trimmed/emitted. Usage is one event file per emission folded exactly once under .usage.lock (folded_last); hook state updates take a per-file side lock (state_dropped on timeout); hook log rotates instead of rewriting; crumb usage prints the accounting model and pending/unreadable/evicted counts; usage_dropped noted in the hook log. tests/test_emission_accounting.py (9 incl. the 4 named). Before/after (behavior.txt): latest task A->B; deduped guard surfaced 2->1; trimmed prompt counted 5->2; parallel usage increments lost 110-130/180 -> 0. Full suite 1299 OK; evals and --release pass; probes unchanged at 4 signals, guard_usage_dedupe now a recorded false positive (usage.surfaced 1, was 2).",
+          "compatibility": "Compaction restores the latest task, with new preamble labels; session-state.json gains task/retrieval (old entries still read); usage counts drop where they were inflated; usage.json gains folded_last/accounting and private/usage-events/ appears; record_surfaced returns an int; hook log rotates into hook-log.1.jsonl with new fields; new manifest key retain_prompt_text; new side lock files; prompt hook ~+1.5 ms median.",
+          "limitations": "Slash commands are not recorded as tasks; forked sessions start without a task; emitted means printed to the host, not read; compaction preamble ids are not counted; state updates waiting >0.25 s are skipped and noted; record/session caps evict; exactly-once needs OS locks (uncoordinated where unsupported); guard_usage_dedupe probe condition cannot clear without editing the byte-identical audit script."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP12 approved, start WP13\")."
+        }
+      ]
+    },
+    {
+      "id": "WP13",
+      "title": "Enforce filesystem containment and safe rendering boundaries",
+      "priority": "P1",
+      "relative_complexity": "M",
+      "status": "completed",
+      "depends_on": [
+        "WP00"
+      ],
+      "findings": [
+        "F17"
+      ],
+      "modify_existing": [
+        "breadcrumbs/mcp_core.py",
+        "breadcrumbs/cli.py",
+        "breadcrumbs/promote.py",
+        "breadcrumbs/migrate.py"
+      ],
+      "create_proposed": [
+        "breadcrumbs/path_policy.py",
+        "tests/test_path_containment.py"
+      ],
+      "implementation_steps": [
+        "Define an authorized-root and symlink policy shared by read, enumerate, hash, write, export, migration, and adapter-target operations.",
+        "Reject or safely constrain symlinked leaves and parent directories; handle Windows junction/reparse cases during platform qualification. Sanitize diagnostics rather than returning external contents or sensitive host paths.",
+        "Apply bounded, data-oriented rendering to record text. Preserve original source text but prevent malformed framing/control characters from impersonating a tool response envelope."
+      ],
+      "acceptance_tests": [
+        "`test_mcp_singleton_symlink_cannot_read_external_file`",
+        "`test_symlinked_parent_cannot_redirect_write`",
+        "`test_traversal_broken_link_and_unicode_paths_are_safe`",
+        "`test_record_text_cannot_break_serialized_response_envelope`"
+      ],
+      "done_when": "All supported filesystem surfaces remain within authorized boundaries for the documented threat model; no production secret is needed to verify this.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "716e4a6",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp13/README.md",
+          "summary": "New breadcrumbs/path_policy.py: nothing inside .project-memory may be a symbolic link or junction and '..' is refused; on POSIX store paths are opened component by component with O_NOFOLLOW relative to directory descriptors and writes rename through the directory fd (no check/use window); elsewhere lstat checks first. Applied to all store reads, writes, mkdirs, enumeration (records_in/read_dir/read_files), the inputs hash (links hashed as a marker; normal-store hash unchanged), lock files, the hook log, the journal, SQLite, migration (refuses a store with links; backup never follows) and init --force; project files (CLAUDE.md, .mcp.json, settings) may be links only inside the project; validate reports path-link; refusals are PermissionError with a relative path only. New breadcrumbs/safetext.py renders record text as data (escaped controls/invisible chars, neutralized closing and envelope tags, one-line fields stay one line) in hook lines, packet, guard reason, MCP resources/tools (bounded 200k) and CLI human output; --json and files unchanged. tests/test_path_containment.py (6 incl. the 4 named). Before/after (behavior.txt): 10 defects -> 0, including init --force deleting a linked store's target. Full suite 1305 OK; evals identical to WP12; --release passes; probes 3 signals (symlink_read now a probe error: the resource refuses by raising, no external bytes in the traceback).",
+          "compatibility": "A store containing links is refused through them and fails validate (path-link); migrate refuses until they are replaced; project-file links must stay inside the project; rendered text differs only for control/invisible characters and closing or envelope-named tags; MCP resources over 200k characters are cut with a note; new root= parameter on rewrite_managed_block/merge_json_file.",
+          "limitations": "Windows path written but not qualified (lstat race; benign reparse points refused); hard links not detected; host-named paths (transcripts) read as given; rendering prevents framing impersonation, not hostile plain-language content; the envelope tag list is finite; symlink_read probe cannot clear without editing the byte-identical audit script."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP13 approved, start WP21\")."
+        }
+      ]
+    },
+    {
+      "id": "WP14",
+      "title": "Implement proportional review and capability policies",
+      "priority": "P1",
+      "relative_complexity": "L",
+      "status": "review_required",
+      "depends_on": [
+        "WP01",
+        "WP06",
+        "WP13",
+        "WP21"
+      ],
+      "findings": [
+        "F18"
+      ],
+      "modify_existing": [
+        "breadcrumbs/mcp_core.py",
+        "breadcrumbs/mcp_server.py",
+        "breadcrumbs/promote.py",
+        "docs/security.md",
+        "docs/mcp-spec.md"
+      ],
+      "create_proposed": [
+        "breadcrumbs/admission.py",
+        "tests/test_admission_policy.py"
+      ],
+      "implementation_steps": [
+        "Implement the approved solo/delegated and reviewed/team profiles using existing review states. Keep claim lifecycle and execution outcome independent.",
+        "Bind writer capabilities to trusted runtime/operator context rather than payload actor strings. Gate high-impact sharing/promotion and expose read-only/proposal modes where configured.",
+        "Preserve low-friction ordinary capture, disclose private-to-shared transitions, and prevent historical approval text from becoming new authorization.",
+        "Document the full-shell-agent limit and test the real deployment boundary. Do not call CLI-only exposure, annotations, or unsigned review fields enforcement."
+      ],
+      "acceptance_tests": [
+        "`test_payload_cannot_forge_trusted_review_identity`",
+        "`test_delegated_routine_capture_stays_unattended`",
+        "`test_high_impact_promotion_requires_profile_authority`",
+        "`test_legacy_reader_policy_mismatch_is_detected_or_excluded`"
+      ],
+      "done_when": "The supported authority model is implemented, tested, and described without claiming stronger protection than the deployment actually provides.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "5f5566c",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp14/README.md",
+          "summary": "breadcrumbs/admission.py: solo (default, unchanged) and team profiles plus mcp_mode (write/propose/read-only) in the manifest, set by the CLI-only `crumb policy`; the channel (cli/mcp/hook) is set by the transport; payload review fields and MCP/hook `agent: human` refused; team makes agent-written guidance a needs-review proposal (unattended), refuses high-impact MCP status changes and MCP supersedes, requires a valid content-bound review (`crumb review`, reviewed_hash) for promote, and declares requires: review-profiles; read-only MCP refuses writes and the server omits writing tools; unknown values fail closed. security.md section 4 states the model and what it does not bind (full-shell agents, old releases). tests/test_admission_policy.py (7 incl. the 4 named). Before/after: 6 defects -> 0. Full suite 1326 OK; evals identical; probes unchanged.",
+          "compatibility": "solo default unchanged except forged payload review fields / agent: human are refused; new crumb review and crumb policy; manifest review_profile, mcp_mode; frontmatter reviewed_at, reviewed_hash; team stores require review-profiles; SCHEMA_VERSION stays 4.",
+          "limitations": "Does not bind a full-shell agent (Git review is the boundary); agent detection is an environment claim used only for caution; reviewer label is not authentication; review hash proves consistency not authority; <=0.3.1 ignores profiles; readers do not flag proposals; schema-2 trap blocks cannot be reviewed.",
+          "note": "The roadmap says 'the approved profiles'; no separate profile design had been approved. This package proposes solo (default, unchanged) and team (opt-in), for the operator's review."
+        }
+      ],
+      "priority_note": "P1 design / P2 rollout"
+    },
+    {
+      "id": "WP15",
+      "title": "Reduce rebuild cost without weakening correctness",
+      "priority": "P2",
+      "relative_complexity": "L",
+      "status": "review_required",
+      "depends_on": [
+        "WP07",
+        "WP10",
+        "WP11",
+        "WP12"
+      ],
+      "findings": [
+        "F23"
+      ],
+      "modify_existing": [
+        "breadcrumbs/related.py",
+        "breadcrumbs/lifecycle.py",
+        "breadcrumbs/searchindex.py",
+        "breadcrumbs/inbox.py"
+      ],
+      "create_proposed": [
+        "tests/test_incremental_equivalence.py",
+        "benchmarks/continuity_scale.py"
+      ],
+      "implementation_steps": [
+        "Profile the correct snapshot/retrieval path before optimizing it. Reuse parsed records and avoid repeated whole-store hashing/reading within one operation.",
+        "Generate related/conflict candidate pairs from postings; maintain full-oracle equivalence for incremental updates and removals.",
+        "Decouple local candidate acknowledgment from expensive shared enrichment using explicit invalidation/pending generations. Coalesce rebuilds opportunistically without a mandatory daemon.",
+        "Replace hard feature cutoffs with measured, visible behavior at larger scales; publish workload-specific timing and quality results."
+      ],
+      "acceptance_tests": [
+        "`test_incremental_related_and_conflict_results_match_full_oracle`",
+        "`test_local_capture_does_not_rebuild_unaffected_shared_views`",
+        "`test_1000_and_10000_record_quality_does_not_collapse`",
+        "Performance evidence includes latency, parse count, memory, and write amplification."
+      ],
+      "done_when": "The system meets its qualified capture/retrieval budgets without silently omitting work or weakening strict cache correctness.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "9a28ed4",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp15/README.md",
+          "summary": "cli.operation(): one parse per record bytes per operation (key: path, type, sha1), op_memo keyed by exact record content, thread-local, nothing kept across operations; every CLI command, hook, MCP call and publication runs inside one. _base_stem memoized. related: pairs from shared-feature postings (exactly the all-pairs oracle), bounded top-3 per item (memory linear), no corpus cutoff, RELATED_PAIR_BUDGET with a visible `degraded` report and an audit `related-degraded` finding. lifecycle: contradictions and the near-duplicate sweep pair records by exact prefix filtering (pairwise oracles kept); the sweep's silent 2,000-item skip removed; contradictions memoized per operation. A machine-local jot publishes nothing. benchmarks/continuity_scale.py (latency, parses, input hashes, bytes written, peak memory; fails on non-zero exits).",
+          "tests": "tests/test_incremental_equivalence.py: 6 tests (oracle equivalence across add/edit/remove rounds; local capture leaves shared views byte- and mtime-identical; 1,000 and 10,000 record quality; parse cache never stale; budget degrades visibly and audit reports it; sweep covers >2,000 items).",
+          "results": "Suite 1332 run, 0 failures, 7 skipped (3.11); 3.9 subset 129 OK; MCP SDK 57 OK; evals identical to WP14 apart from timings; --release 20 critical pass; probes unchanged (3 signals, 3 errors); CI fixture steps 7/7; ruff clean. Behavior (2,052 records): 5 defects before, 0 after. Benchmark at 1,000 records: reindex 2,751 -> 857 ms and 7,200 -> 1,000 parses; local jot 2,909 -> 147 ms and 288,562 -> 600 bytes written; peak reindex memory 22.8 -> 11.5 MB. 10,000 records (after only): reindex 20.0 s, peak 116 MB; hooks 1.2-1.5 s.",
+          "limits": "Every write still runs one whole-store validate (WP01 gate), so capture is linear (0.15 s at 1k, 1.4 s at 10k). Hooks remain linear in the store. No cross-operation coalescing or pending generations. The pair budget is a count. Synthetic stores only."
+        }
+      ]
+    },
+    {
+      "id": "WP16",
+      "title": "Finish extracting the application layer from the CLI",
+      "priority": "P2",
+      "relative_complexity": "L",
+      "status": "review_required",
+      "depends_on": [
+        "WP06",
+        "WP07",
+        "WP10",
+        "WP14"
+      ],
+      "findings": [
+        "F21"
+      ],
+      "modify_existing": [
+        "breadcrumbs/cli.py",
+        "breadcrumbs/mcp_core.py",
+        "breadcrumbs/hooks_prompt.py",
+        "breadcrumbs/hooks_compact.py"
+      ],
+      "create_proposed": [
+        "breadcrumbs/service.py",
+        "tests/test_application_parity.py"
+      ],
+      "implementation_steps": [
+        "Move ownership of repaired domain operations out of cli.py while retaining compatible forwarding names where needed.",
+        "Introduce an explicit per-operation context for root, clock, policy, and consumer; remove reliance on shared mutable store-specific globals from the new path.",
+        "Route CLI, MCP, and hooks through the same application methods. Keep transport output, argument parsing, and host payload mapping at the edges.",
+        "Use import-direction tests and before/after serialized-output parity rather than a cosmetic file-size target."
+      ],
+      "acceptance_tests": [
+        "`test_service_import_does_not_import_cli_parser`",
+        "`test_cli_mcp_and_hook_admission_parity`",
+        "`test_two_store_contexts_do_not_share_alias_or_policy_state`",
+        "`test_refactor_preserves_ids_scores_and_wire_contracts`"
+      ],
+      "done_when": "The CLI is an adapter for the repaired operations rather than the dependency every internal module must import.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "fa2df0e",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp16/README.md",
+          "summary": "breadcrumbs/service.py: explicit Context (root, store, channel, clock, agent) and active(ctx) (admission channel, clock, per-thread store aliases, one parse cache); service.record is the one decision/attempt write both `crumb remember` and `memory_record` use (they duplicated the pipeline); mark_status, search, guard, resume_packet, prompt_lookup and admit; ServiceError kinds worded by the adapters. CLI remember/mark-status/search/guard/resume, the MCP tools and _admit, the guard hook and the prompt hook call it; `crumb hook` runs each firing in a hook-channel context. The argparse layer moved to breadcrumbs/cli_parser.py (43 nodes, AST-driven; names forwarded; crumb.py shim re-exports). Store aliases and the clock are scoped per-thread state (cli.store_aliases, cli.clock) instead of module globals.",
+          "tests": "tests/test_application_parity.py: 5 tests. The parity golden (tests/fixtures/application_parity.json) was captured and committed (83628b3) from the pre-extraction code and still matches after (ids, scores, verdicts, packets, envelopes, exit codes, hook output, generated files); service import loads neither the parser nor argparse and prints nothing; CLI/MCP/hook admission parity across 4 policies x 4 payloads x 3 channels, spied through service.admit; two store contexts in two threads keep their own aliases, policy and clock.",
+          "results": "Suite 1337 run, 0 failures, 7 skipped (3.11); 3.9 subset 236 OK; MCP SDK 62 OK; evals identical to WP15 apart from timings; --release 20 critical pass; probes unchanged (3 signals, 3 errors); CI fixture steps 7/7; ruff clean. Behavior: 4 defects before (parser loaded by the domain import; two record-write implementations; aliases shared across stores in two threads: 'payments' stemmed to 'bill' in the store without aliases; no operation-scoped clock), 0 after.",
+          "limits": "F21 is not finished: cli.py still holds most domain functions (13,915 lines, from 15,025) and 18 modules, service.py included, still import it. note/verify/jot/inbox/promote/review/policy/capture/lifecycle commands still call domain functions directly (admission already channel-keyed). Hooks have no guidance-writing transport; hook-channel guidance writes are tested through service.record in the hook context."
+        }
+      ]
+    },
+    {
+      "id": "WP17",
+      "title": "Qualify adapters, MCP contracts, and native platforms",
+      "priority": "P1",
+      "relative_complexity": "L",
+      "status": "review_required",
+      "depends_on": [
+        "WP04",
+        "WP05",
+        "WP08",
+        "WP09",
+        "WP11",
+        "WP13"
+      ],
+      "findings": [
+        "F22",
+        "F25"
+      ],
+      "modify_existing": [
+        "breadcrumbs/mcp_server.py",
+        "breadcrumbs/cli.py",
+        ".github/workflows/ci.yml",
+        "docs/mcp-spec.md"
+      ],
+      "create_proposed": [
+        "breadcrumbs/adapters/claude.py",
+        "tests/test_adapter_contracts.py",
+        "docs/compatibility-matrix.md"
+      ],
+      "implementation_steps": [
+        "Create normalized host payload fixtures and versioned capability declarations. Add supported PowerShell/NotebookEdit handling rather than relying on accidental regex matching.",
+        "Test native Windows and macOS package install, quoting, Unicode output, path replacement, locks, and replay cleanup; retain the Linux/Python/MCP matrix.",
+        "Verify actual MCP tools/resources/errors across the supported SDK versions and add appropriate advisory annotations without treating them as access control.",
+        "Publish which harnesses support files, CLI, MCP, capture hooks, prompt retrieval, and guard hooks. Use documented mechanisms for each host; do not invent unsupported hook parity."
+      ],
+      "acceptance_tests": [
+        "`test_supported_tool_names_normalize_expected_actions`",
+        "`test_mcp_errors_and_resources_match_versioned_contract`",
+        "Native platform smoke jobs include installed-wheel execution.",
+        "A cross-harness resume uses the same canonical record IDs and effective rules."
+      ],
+      "done_when": "Advertised capabilities correspond to tested host/platform/version combinations, and unsupported surfaces are clearly identified.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-28",
+          "starting_commit": "e2b769c",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp17/README.md",
+          "summary": "breadcrumbs/adapters/claude.py (contract version 2): declared guarded tools (Bash, PowerShell, Edit, Write, MultiEdit, NotebookEdit, Task, Agent) and ignored ones, normalization of each documented input into an Action, unknown tools reported unsupported, GUARD_MATCHER built from the declaration and installed by init --with-hooks. Versioned MCP contract (mcp_core.contract(), version 1: tools, parameters, advisory annotations, resources, prompts, error and refusal envelopes) pinned by a fixture; annotations attached where the SDK accepts them, documented as hints. Native CI job on Windows and macOS (3.9, 3.13): wheel build, tools/platform_smoke.py against the installed binary and the contract tests (gating), the full suite (reported). Windows replay containment: Job Object plus process-tree tracking while a check runs. The first native full-suite runs found defects Linux could not show; fixed in 48bc814 and f528a24 (journal bytes vs text on Windows, CRLF in hashes and digests, absolute-path stat fingerprint, POSIX store-relative paths, check-ignore -z, cmd.exe missing-program detection, Windows lock byte, hook-log append/rotation, console marker probe, lenient reader newlines, cross-platform absolute evidence paths). docs/compatibility-matrix.md.",
+          "tests": "tests/test_adapter_contracts.py: 6 tests (test_supported_tool_names_normalize_expected_actions over 16 payload fixtures; installed matcher = declared tool set; PowerShell and notebook edits reach the guard end to end; test_mcp_errors_and_resources_match_versioned_contract; live server matches the contract on SDK 1.x and 2.x; cross-harness resume uses the same record ids and rules). tests/test_platform_portability.py: 8 tests (7 fail on e835448; the path-rendering AST guard fails on 68c8075). test_mutation_recovery.WindowsLineSeparatorTests reruns the truthful-failure cases under a CRLF separator (6 fail on e835448).",
+          "results": "CI run 246 (e835448), native full suite: macOS 3.9 10 failures, 3.13 6; Windows 3.9 and 3.13 49 failures and 1 error each (docs/reviews/2026-09-27-breadcrumbs-wp17/native-run-246.txt). Run 247 (68c8075): macOS 1,364 run 0 failures on both; Windows 16 failures on both, none among run 246's, all from one site 48bc814 missed (native-run-247.txt), fixed in f528a24. Smoke and contract steps (gating) green on every native combination in both runs. Local on f528a24: suite 1,365 OK; symlinked TMPDIR 1,364 OK (68c8075); CRLF simulation 1 known simulation artifact; MCP SDK 2.2.0 full and 1.30.0 contract OK; evals pass, --release 20/20; probes exit 2 (2 recorded false positives, 3 recorded errors; powershell_translation cleared). Behavior: 6 defects before (e2b769c), 0 after. Run 248 (9b55822, includes f528a24): native full suite 1,365 run, 0 failures on Windows and macOS, Python 3.9 and 3.13.",
+          "limits": "Hooks are Claude Code only; payload fixtures follow documented field names, not captures of every host version. Windows tree tracking polls every 100 ms. The native full suite is reported, not gating. Two causes are inferred (hook-log race, cmd.exe exit 1 for a missing program). After run 248 the native full suite runs on main, weekly and on demand only (operator's request, a8c3960)."
+        }
+      ],
+      "priority_note": "P1 coverage / P2 expansion"
+    },
+    {
+      "id": "WP18",
+      "title": "Add delivered-context evaluation and non-negotiable critical gates",
+      "priority": "P1",
+      "relative_complexity": "M",
+      "status": "completed",
+      "depends_on": [
+        "WP00"
+      ],
+      "findings": [
+        "F19"
+      ],
+      "modify_existing": [
+        "evals/run.py",
+        "evals/README.md",
+        "evals/baseline.json",
+        "tests/test_evals.py",
+        ".github/workflows/ci.yml"
+      ],
+      "create_proposed": [
+        "evals/critical/",
+        "evals/delivery/"
+      ],
+      "implementation_steps": [
+        "Preserve old ranking diagnostics and their definitions; add separate actual-delivery evaluation instead of silently changing metric meanings.",
+        "Invoke complete hooks and serialize packets in real order. Score emitted revisions, exclusions, budget cost, and negative controls.",
+        "Create critical assertions independent of aggregate baselines. Keep unresolved critical failures visible during the repair program; require all supported critical cases to pass at release.",
+        "Require reviewed task-level deltas for baseline updates, with fixed holdout scenarios and explicit waivers for unsupported capabilities rather than laundering a known bug into the baseline."
+      ],
+      "acceptance_tests": [
+        "`test_baseline_cannot_approve_critical_false_safe`",
+        "`test_delivery_metric_includes_recency_noise_and_wrappers`",
+        "`test_hook_length_dedupe_and_render_paths_are_evaluated`",
+        "`test_metric_definitions_and_denominators_are_serialized`"
+      ],
+      "done_when": "A green release gate means the stated critical scenarios pass, not only that averages did not fall below previously accepted failures.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "f75716d",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp18/README.md",
+          "summary": "evals/run.py keeps the ranking diagnostics unchanged and adds delivery systems (prompt_delivered: the real prompt hook incl. length gate, dedupe repeat and rendering; packet_delivered: `crumb resume --task` as printed, reading order, token cost, declared budget; hook_guard_accuracy: the real guard hook), METRIC_DEFINITIONS with denominators (n) serialized in --json and baseline.json, evals/critical/cases.yml (19 cases, 6 checks; unmarked failures fail regardless of baseline, `known:` visible but fails --release, stale markers fail, waivers reported), reviewed baseline writes (--reason, task-level deltas, --accept-regressions, change log, per-task snapshot), and a fixed holdout suite reported apart from overall. Delivery evals found and fixed a hooks_common.write_state tie-break that evicted the just-written session. 3 critical cases known F10; 16 pass. Full suite 1275 OK; old ranking baseline values identical.",
+          "compatibility": "--write-baseline needs --reason and refuses regressions without --accept-regressions or while a critical case fails; evals exit 1 on critical failures; baseline.json gains definitions/tasks/changes and delivery/holdout scopes; JSON output gains definitions, critical, task_deltas; --critical defaults only with default suites; hooks_common.write_state(current=).",
+          "limitations": "Release gate (--release) built but not wired into release.yml: crumb guard returned ASK_HUMAN and release.yml is outside the package's files — awaiting operator decision (wiring now would block releases until F10/WP10); delivery runs in-process with a mocked clock; delivered ids are printed entries only; holdout is small and same-author; token cost is approx_tokens and ungated."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"WP18 approved, wire the release gate after WP10, start WP10\"). The release gate was wired in the WP10 round, once the known F10 cases passed."
+        }
+      ]
+    },
+    {
+      "id": "WP19",
+      "title": "Demonstrate real continuity value with controlled task replays",
+      "priority": "P2",
+      "relative_complexity": "L",
+      "status": "review_required",
+      "depends_on": [
+        "WP15",
+        "WP17",
+        "WP18"
+      ],
+      "findings": [
+        "F26"
+      ],
+      "modify_existing": [],
+      "create_proposed": [
+        "evals/task_replays/",
+        "docs/benchmarks/continuity-results.md",
+        "docs/demos/two-session-handoff.md"
+      ],
+      "implementation_steps": [
+        "Build the three-baseline experiment described in Section 7 with independent task oracles and at least three real repositories.",
+        "Include repeated-failure, changed-decision, compaction, branch-switch, and cross-harness scenarios; count capture/maintenance overhead.",
+        "Publish scripts, sanitized inputs, versions, denominators, uncertainty, failure examples, and limitations. Avoid unverifiable adoption or savings claims.",
+        "Produce a small repeatable demo showing one specific mistake avoided by a later session, with the memory/evidence trail visible."
+      ],
+      "acceptance_tests": [
+        "An independent rerun can reproduce the task oracle and inspect the surfaced record revision.",
+        "No-memory and minimal-Markdown baselines use comparable task/harness conditions.",
+        "All reported cost includes maintenance and retries."
+      ],
+      "done_when": "The project has defensible task-level evidence and an understandable demonstration, not only a large feature list.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "5e01027",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp19/README.md",
+          "summary": "evals/task_replays/: five two-session scenarios (repeated failure, changed decision, compaction, branch switch, cross-harness) as sanitized hand-written inputs; oracle.py scores delivered text and imports nothing from breadcrumbs; run.py runs three baselines (none, a hand-kept NOTES.md, breadcrumbs through the real Claude Code hooks and, for cross-harness, the real MCP tools) on a fresh repository and a local clone of this repository; results.json records per run the delivered text's digest, facts and pointer at start and at the action, stale presentation, tokens, commands/bytes/prose (setup separate), and each surfaced record's id, file and sha256. docs/benchmarks/continuity-results.md and docs/demos/two-session-handoff.md (demo.py). No product code changed.",
+          "tests": "tests/test_task_replays.py: test_rerun_reproduces_the_published_verdicts (reruns the fresh-host replays and holds every oracle verdict to results.json; every surfaced record carries a file and a hash) and test_the_oracle_needs_nothing_from_breadcrumbs.",
+          "results": "10 runs per baseline: facts@start none 2/10, notes 10/10, breadcrumbs 6/10; pointer@action 2/10, 2/10, 10/10; stale guidance presented as current 0/10, 4/10, 0/10; tokens 0, 1,398, 22,614; commands 0, 0, 97. Reproduced by the test on 68c8075 (local, and Python 3.9).",
+          "limits": "F26 is met in part. Delivery, not outcomes: no agent was run. One real repository, not the three the roadmap asks for (this session's access is scoped to this repository). Hand-written inputs with diligent authors on both sides; no uncertainty interval (each cell is one deterministic run); cross-harness assumes the MCP client calls the resume and guard tools. Follow-up finding: the packet's failed-attempt line omits why the attempt failed."
+        }
+      ]
+    },
+    {
+      "id": "WP20",
+      "title": "Make onboarding and ongoing operation understandable",
+      "priority": "P2",
+      "relative_complexity": "M",
+      "status": "review_required",
+      "depends_on": [
+        "WP08",
+        "WP14",
+        "WP17",
+        "WP21"
+      ],
+      "findings": [
+        "F24",
+        "F26"
+      ],
+      "modify_existing": [
+        "README.md",
+        "docs/cli-spec.md",
+        "docs/security.md",
+        "CONTRIBUTING.md",
+        ".project-memory/handoff.md"
+      ],
+      "create_proposed": [
+        "docs/quickstart.md",
+        "docs/operator-guide.md",
+        "docs/continuity-contract.md"
+      ],
+      "implementation_steps": [
+        "Create a short golden path: install, init, record one decision, resume, inspect evidence, and recover from a deliberate stale/invalid state. Move detailed reference material without deleting it.",
+        "Explain capture versus durable memory versus standing rules; clarify supported profiles, privacy, budgets, unsupported platforms, and what guard does not authorize.",
+        "Improve doctor/recovery guidance for degraded indexes, pending operations, unsupported hooks, and invalid legacy records. Reconcile the default handoff after merged/released work.",
+        "Document a contributor path for one failing scenario, one regression, and one evidence-backed fix."
+      ],
+      "acceptance_tests": [
+        "Clean-checkout quickstart works with the installed package.",
+        "A reader can identify why a memory surfaced and how to retire or correct it.",
+        "Default-branch handoff does not direct the next agent to redo completed phases."
+      ],
+      "done_when": "New users can get value and understand limitations without reading a 13,000-line implementation or an entire command catalog.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "e835448",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp20/README.md",
+          "summary": "docs/quickstart.md (install, init with an AGENTS.md signpost, record, resume, why it surfaced, supersede/retire, break and recover), executed line by line with exit codes by tools/quickstart_check.py, which the CI package job runs against the installed wheel; docs/operator-guide.md (kinds of memory, profiles/privacy/budgets, what guard does not authorize, platforms, one recovery row per doctor finding, handoff reconciliation); docs/continuity-contract.md (seven promises with their tests, non-promises, what to do when a memory is wrong). crumb doctor gains compatibility, records, related_map (when degraded) and hook_matcher (when hooks are installed) rows naming their fixes, without changing the exit code. The default handoff.md is reconciled. CONTRIBUTING first-contribution path; README pointer; security.md 'what a guard verdict is not'; cli-spec doctor rows.",
+          "tests": "tests/test_operator_path.py: 6 tests (the quickstart works as written; doctor names a record failing validation with `crumb validate`, a store it may not write, an outdated guard matcher with `crumb init --with-hooks` and clears once fixed, a degraded related map; the default handoff is not older than the latest CHANGELOG release, which failed before reconciliation).",
+          "results": "On 68c8075: suite 1,364 run, 0 failures, 8 skipped; symlinked TMPDIR 1,364 OK; Python 3.9 subsets OK; MCP SDK 2.2.0 full suite and SDK 1.30.0 contract tests OK; evals pass, --release 20/20 critical; quickstart works as written (source and, in CI run 247's package job, the installed wheel); CI fixture steps 7/7; probes exit 2 (2 recorded false positives, 3 recorded probe errors). Behavior: 7 defects before (e835448), 0 after.",
+          "limits": "The README is still long (it points new readers elsewhere first; deriving the reference from the parser is follow-up). The handoff check is a date check, not a content check. doctor's records row runs a full validate (about 0.15 s per 1,000 records). Hooks for hosts other than Claude Code are named, not shown."
+        }
+      ]
+    },
+    {
+      "id": "WP21",
+      "title": "Approve and test the compatibility and migration policy",
+      "priority": "P1",
+      "relative_complexity": "M",
+      "status": "completed",
+      "depends_on": [
+        "WP01",
+        "WP06"
+      ],
+      "findings": [
+        "F05",
+        "F18",
+        "F24"
+      ],
+      "modify_existing": [
+        "breadcrumbs/migrate.py",
+        "docs/record-schema.md",
+        "RELEASING.md",
+        "tests/test_migrate.py"
+      ],
+      "create_proposed": [
+        "docs/compatibility.md",
+        "tests/test_store_upgrade_contract.py"
+      ],
+      "implementation_steps": [
+        "Reconcile package, canonical schema, projection, index, and wire versions. Decide the pre-1.0 breaking-change policy before shipping stricter semantics.",
+        "Classify legacy free scopes, invalid metadata, reviewed-state enforcement, archived links, and unknown fields. Determine which changes need migration versus a rebuild.",
+        "Implement only the approved migrations with preview, verified backup, interruption recovery, stable IDs, and explicit reader requirements.",
+        "Test upgrade/downgrade boundaries and preserve the existing release workflow rather than inventing a second tagging/publishing process."
+      ],
+      "acceptance_tests": [
+        "`test_upgrade_preserves_content_ids_scope_and_unknown_fields`",
+        "`test_interrupted_migration_is_resumable_and_backup_restores`",
+        "`test_old_reader_cannot_silently_misinterpret_new_authority_semantics`",
+        "Documentation/version policy matches actual emitted manifests and package behavior."
+      ],
+      "done_when": "An operator can predict what an upgrade changes, recover safely, and distinguish compatible metadata additions from changes that old readers must not ignore.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "9064d2e",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp21/README.md",
+          "approvals": "Operator decisions in session on 2026-09-27: pre-1.0 policy 'Minor = breaking' (next release 0.4.0); newer store 'Refuse writes, warn reads'; 'Merge main in now' (v0.3.1).",
+          "summary": "Merged origin/main (v0.3.1) with a merge commit (751283f). docs/compatibility.md: version policy, machine-checked surface and release tables, two-versions-one-store rules, compatibility surfaces, legacy classification, upgrade guarantees. breadcrumbs/compat.py + lock.IncompatibleStore: a store with a newer schema_version or an unknown requires: feature is refused at the write lock (CLI exit 1, MCP ok:false, hooks skip, resume prints without publishing); reads warn (packet, guard, guard hook, stderr); migrate --restore is the one repair write. migrate: verified backup (backup-manifest.json), in-progress marker with resume against the original backup, --restore with verification, dry-run backup size and legacy report. get_version returns __version__ (stale metadata reported 0.3.0 from a 0.3.1 checkout). RELEASING.md: number policy, compatibility row at release, stray 0.1.13 tag recorded. tests/test_store_upgrade_contract.py (9 incl. the 3 named + documentation check). Before/after (behavior.txt): 7 defects -> 0 (same 7 on released v0.3.1). Full suite 1319 OK; evals identical to WP13; --release passes; probes unchanged.",
+          "compatibility": "Newer stores are read with a warning and never written (only migrate --restore); new manifest key requires:; new migrate --restore and backup/in-progress files; packet/guard gain compatibility only when relevant; pre-0.3.2 backups (no manifest) are not auto-restored; get_version reports __version__; releases add a row to docs/compatibility.md section 3; branch now at 0.3.1, next release 0.4.0.",
+          "limitations": "Released readers (<=0.3.1) run no check; protection for them is design guidance in compatibility.md section 4; compatibility surfaces other than the version tables are enforced by review; restore replaces the committed store wholesale; the interruption marker is machine-local; no migration step was needed so SCHEMA_VERSION stays 4."
+        },
+        {
+          "recorded_on": "2026-09-27",
+          "review": "Approved by the operator in session on 2026-09-27 (\"I approve, continue with the remaining work, whatever needs to be done\")."
+        }
+      ],
+      "priority_note": "P1 prerequisite for semantic changes"
+    },
+    {
+      "id": "WP22",
+      "title": "Apply release gates and publish an evidence-backed release",
+      "priority": "P2",
+      "relative_complexity": "M",
+      "status": "review_required",
+      "depends_on": [
+        "WP14",
+        "WP16",
+        "WP17",
+        "WP19",
+        "WP20",
+        "WP21"
+      ],
+      "findings": [
+        "F26"
+      ],
+      "modify_existing": [
+        "RELEASING.md",
+        ".github/workflows/ci.yml"
+      ],
+      "create_proposed": [
+        "docs/releases/reliability-release-checklist.md"
+      ],
+      "implementation_steps": [
+        "Run the complete acceptance matrix and collect the exact build/source hashes, supported platforms/harnesses, migrations, and known limitations.",
+        "Require critical correctness/security gates to pass. Review baseline changes, dependency changes, sensitive memory changes, and publication artifacts separately.",
+        "Publish the bounded demo, reproducible benchmark report, contribution instructions, and a plain statement of what remains experimental.",
+        "Use the existing reviewed release process. Public communication should report demonstrated outcomes and AI-assisted development honestly, without invented novelty, adoption, or reliability claims."
+      ],
+      "acceptance_tests": [
+        "Release artifact installs and passes the supported-platform smoke tests.",
+        "Every supported critical scenario is green and every unresolved exclusion is explicit.",
+        "Published results identify source revision, methodology, and reproducible artifacts."
+      ],
+      "done_when": "The public release is supported by verifiable behavior, a clear operating contract, and evidence that another developer can inspect and reproduce.",
+      "evidence": [
+        {
+          "recorded_on": "2026-09-28",
+          "starting_commit": "529356e",
+          "record": "docs/reviews/2026-09-28-breadcrumbs-wp22/README.md",
+          "summary": "docs/releases/reliability-release-checklist.md: source revision and commits since v0.3.1 (66), why the next version is 0.4.0 (a `requires: review-profiles` feature and the OS-lock protocol change), reference build hashes, the acceptance matrix with the CI run behind each gate, separate reviews (evaluation baselines changed twice via the reviewed path, no dependency changes, repository memory scanned, publication artifacts, audit evidence unchanged), explicit exclusions (seven packages review_required, F21 unfinished, WP19 limits, native full suite non-gating, recorded probe false positives and errors, hooks Claude Code only), published material, draft release notes stating AI-assisted development, and the operator's ordered steps. RELEASING.md points to it. ci.yml (a8c3960, operator's request): the native full suite moved to a native-full job on main, weekly and on demand; every push still gates on the native installed-wheel smoke and contract tests.",
+          "tests": "No new tests: the checklist cites existing gates. test_release_process and test_store_upgrade_contract still hold the version/CHANGELOG/compatibility agreement the operator's bump must satisfy.",
+          "results": "CI run 249 (529356e): 23 jobs green, native-full skipped on the branch push as designed. CI run 248 (9b55822): native full suite 1,365 run, 0 failures on Windows and macOS, Python 3.9 and 3.13. Local on 529356e: evals --release 20/20 critical; wheel and sdist built (hashes in the checklist). Audit evidence unchanged since 31e56da.",
+          "limits": "Not done until the operator releases: no merge, version bump, tag, GitHub Release or upload was made (version still 0.3.1). The build hashes are reference only (0.3.1-versioned, not byte-reproducible). The native full suite is reported, not gating; the checklist asks the operator to read the native-full jobs on the merge commit before publishing."
+        }
+      ]
+    }
+  ]
+}

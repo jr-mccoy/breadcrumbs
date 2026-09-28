@@ -1,0 +1,123 @@
+{
+  "python": "3.13.5 (main, Jul 15 2026, 20:25:40) [GCC 14.2.0]",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "scope": "synthetic no-git in-process smoke timings, not production SLO qualification",
+  "rows": [
+    {
+      "records": 100,
+      "index": {
+        "built": false,
+        "records": 100,
+        "reason": "below threshold"
+      },
+      "search": {
+        "median_ms": 11.2,
+        "max_ms": 14.72,
+        "samples": 5
+      },
+      "prompt_retrieve": {
+        "median_ms": 21.76,
+        "max_ms": 30.08,
+        "samples": 5
+      },
+      "prompt_hit_count": 1,
+      "packet": {
+        "median_ms": 31.92,
+        "max_ms": 37.9,
+        "samples": 3
+      },
+      "reindex": {
+        "median_ms": 89.82,
+        "max_ms": 89.82,
+        "samples": 1
+      }
+    },
+    {
+      "records": 500,
+      "index": {
+        "built": true,
+        "records": 500,
+        "reason": null
+      },
+      "search": {
+        "median_ms": 4.92,
+        "max_ms": 7.64,
+        "samples": 5
+      },
+      "prompt_retrieve": {
+        "median_ms": 58.97,
+        "max_ms": 61.25,
+        "samples": 5
+      },
+      "prompt_hit_count": 1,
+      "packet": {
+        "median_ms": 280.92,
+        "max_ms": 284.55,
+        "samples": 3
+      },
+      "reindex": {
+        "median_ms": 816.57,
+        "max_ms": 816.57,
+        "samples": 1
+      }
+    },
+    {
+      "records": 501,
+      "index": {
+        "built": true,
+        "records": 501,
+        "reason": null
+      },
+      "search": {
+        "median_ms": 4.93,
+        "max_ms": 5.23,
+        "samples": 5
+      },
+      "prompt_retrieve": {
+        "median_ms": 51.43,
+        "max_ms": 55.88,
+        "samples": 5
+      },
+      "prompt_hit_count": 0,
+      "packet": {
+        "median_ms": 273.78,
+        "max_ms": 290.25,
+        "samples": 3
+      },
+      "reindex": {
+        "median_ms": 934.01,
+        "max_ms": 934.01,
+        "samples": 1
+      }
+    },
+    {
+      "records": 1000,
+      "index": {
+        "built": true,
+        "records": 1000,
+        "reason": null
+      },
+      "search": {
+        "median_ms": 9.71,
+        "max_ms": 10.66,
+        "samples": 5
+      },
+      "prompt_retrieve": {
+        "median_ms": 104.34,
+        "max_ms": 121.99,
+        "samples": 5
+      },
+      "prompt_hit_count": 0,
+      "packet": {
+        "median_ms": 957.21,
+        "max_ms": 963.14,
+        "samples": 3
+      },
+      "reindex": {
+        "median_ms": 2770.83,
+        "max_ms": 2770.83,
+        "samples": 1
+      }
+    }
+  ]
+}

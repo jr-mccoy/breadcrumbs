@@ -33,6 +33,7 @@ import re
 from pathlib import Path
 
 from breadcrumbs import cli
+from breadcrumbs import path_policy
 
 FILES_SCHEMA = 3
 TRAP_DIR = "traps"
@@ -213,7 +214,7 @@ def _write(
     """
     memory_dir = Path(memory_dir)
     directory = memory_dir / cli.TYPE_DIR[rtype]
-    directory.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(directory)
     path = directory / f"{stem}.md"
     if path.exists():
         return {"ok": False, "error": f"{cli.UNDATED_ID_PREFIX[rtype]}{stem} already exists"}
@@ -244,7 +245,7 @@ def _write(
         "dirty_files": derived["dirty_files"],
         "confidence": defaults["confidence"],
         "privacy": defaults["privacy"],
-        "review_status": defaults["review_status"],
+        "review_status": cli._admission_review_status(memory_dir, rtype),
         "reviewed_by": defaults["reviewed_by"],
         "supersedes": defaults["supersedes"],
         "superseded_by": defaults["superseded_by"],
@@ -304,7 +305,10 @@ def write_trap(
     promoted_to: str | None = None,
     superseded_by: str | None = None,
     validate: bool = True,
+    meta_extra: dict | None = None,
 ) -> dict:
+    """Write one trap file. `meta_extra` sets further frontmatter (scope,
+    confidence, promotion provenance); a None value leaves the default."""
     sections = {
         "Area / files": area or "",
         "Symptom": symptom or "",
@@ -324,6 +328,7 @@ def write_trap(
         agent=agent,
         created_at=created_at,
         extra={
+            **(meta_extra or {}),
             "last_confirmed": last_confirmed,
             "superseded_by": superseded_by,
             "promoted_to": promoted_to,
@@ -345,7 +350,9 @@ def write_question(
     created_at: str | None = None,
     superseded_by: str | None = None,
     validate: bool = True,
+    meta_extra: dict | None = None,
 ) -> dict:
+    """Write one question file. `meta_extra` as on `write_trap`."""
     sections = {
         "Question": text,
         "Why it matters": why or "",
@@ -362,7 +369,7 @@ def write_question(
         status=status or "open",
         agent=agent,
         created_at=created_at,
-        extra={"superseded_by": superseded_by},
+        extra={**(meta_extra or {}), "superseded_by": superseded_by},
         validate=validate,
     )
 
@@ -373,7 +380,7 @@ def set_last_confirmed(memory_dir: Path, rid: str, stamp: str) -> dict:
     rec = cli.find_record_by_id(memory_dir, rid)
     if rec is None or rec.rtype != "trap" or rec.error:
         return {"ok": False, "error": f"no trap with id {rid!r}"}
-    original = rec.path.read_text(encoding="utf-8")
+    original = path_policy.read_text(rec.path)
     meta, body = cli.parse_frontmatter(original)
     meta["last_confirmed"] = stamp
     meta["updated_at"] = cli.now_iso()
@@ -381,8 +388,13 @@ def set_last_confirmed(memory_dir: Path, rid: str, stamp: str) -> dict:
         rendered = cli.render_frontmatter(meta)
     except ValueError as exc:
         return {"ok": False, "id": rid, "error": f"cannot re-render frontmatter: {exc}"}
-    cli.write_text_atomic(rec.path, rendered + "\n" + body.lstrip("\n"))
-    fails = cli._validate_new_file(memory_dir, rec.path)
+    from breadcrumbs import mutations as _mutations
+
+    try:
+        cli.write_text_atomic(rec.path, rendered + "\n" + body.lstrip("\n"), expected=original)
+    except _mutations.RevisionConflict as exc:
+        return {"ok": False, "id": rid, "error": str(exc)}
+    fails = cli._validate_new_file(memory_dir, rec.path, original)
     if fails:
         cli.write_text_atomic(rec.path, original)
         return {
@@ -482,7 +494,7 @@ def _write_index_files(
         ("open-questions.md", render_question_index(memory_dir, unadopted_questions)),
     ):
         path = memory_dir / name
-        current = path.read_text(encoding="utf-8") if path.is_file() else None
+        current = path_policy.read_text(path) if path.is_file() else None
         if current != text:
             cli.write_text_atomic(path, text)
 
@@ -683,7 +695,7 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
         # One validate pass over everything just written. A failure removes
         # those files and raises: the singletons have not been rewritten, so the
         # store still reads exactly as it did.
-        written = {str(p.relative_to(memory_dir)) for p in new_paths}
+        written = {p.relative_to(memory_dir).as_posix() for p in new_paths}
         fails = [
             f
             for f in cli.run_validate(memory_dir)
@@ -712,11 +724,11 @@ def migrate_blocks_to_files(memory_dir: Path, project_root: Path) -> list[str]:
     for dirname in (TRAP_DIR, QUESTION_DIR):
         d = memory_dir / dirname
         if not d.is_dir():
-            d.mkdir(parents=True, exist_ok=True)
+            path_policy.mkdirs(d)
             changed.append(f"created {dirname}/")
         keep = d / ".gitkeep"
         if not keep.exists():
-            keep.write_text("", encoding="utf-8")
+            cli.write_text_atomic(keep, "")
     _write_index_files(memory_dir, result["unadopted_traps"], result["unadopted_questions"])
     changed.append("rewrote known-traps.md and open-questions.md as generated indexes")
     return changed

@@ -21,11 +21,16 @@ received: `silent` (`{}`), `context` (additionalContext injected), `ask` (a
 permission prompt), `block` (the Stop hook's extraction turn), or `locked` (a
 writing hook skipped because another writer held the store).
 
-Bounded to `HOOK_LOG_MAX_LINES`. When it grows past that it is cut back to
-`HOOK_LOG_TRIM_TO`, so a busy session does not rewrite the file on every tool
-call. Best-effort throughout: logging never fails, slows or changes a hook.
-Two hooks trimming at the same moment can drop a few lines, which is acceptable
-for a log that only counts.
+Bounded to about `HOOK_LOG_MAX_LINES`, by rotation (audit WP12). When the
+current file reaches half the bound it is renamed to `hook-log.1.jsonl`,
+replacing the previous one, and readers read both. Every line is one append to
+whichever file is current; nothing rewrites a file other processes append to,
+so parallel hooks cannot drop each other's lines. A hook whose file was renamed
+under it lands its line in `hook-log.1.jsonl`, which is still read. Rotation
+takes `private/.hook-log.lock` without waiting, and re-checks the size once it
+holds it, so two hooks never rotate the same file twice. Lines leave the log
+only by retention: the oldest, a rotated file at a time. Best-effort
+throughout: logging never fails, slows or changes a hook.
 """
 
 from __future__ import annotations
@@ -38,9 +43,15 @@ import sys
 import time
 from pathlib import Path
 from typing import Callable
+from breadcrumbs import path_policy
 
 HOOK_LOG_FILENAME = "hook-log.jsonl"
+HOOK_LOG_ROTATED_FILENAME = "hook-log.1.jsonl"
+HOOK_LOG_LOCK_FILENAME = ".hook-log.lock"
 HOOK_LOG_MAX_LINES = 5000
+# Before audit WP12 the log was cut back to this many lines by rewriting it,
+# which could drop lines a parallel hook appended meanwhile. Rotation replaced
+# it; kept for importers.
 HOOK_LOG_TRIM_TO = 4000
 # A line is at least this long, so a file under MAX_LINES * this cannot be over
 # the bound and needs no counting.
@@ -79,29 +90,50 @@ def outcome_of(output: str) -> str:
     return "other"
 
 
+def rotated_path(memory_dir: Path) -> Path:
+    return Path(memory_dir) / "private" / HOOK_LOG_ROTATED_FILENAME
+
+
+def _rotate_at() -> int:
+    """Lines the current file may hold before it is rotated."""
+    return max(1, HOOK_LOG_MAX_LINES // 2)
+
+
 def append(memory_dir: Path, entry: dict) -> None:
-    """Append one line, then trim if the log is over its bound. Never raises."""
+    """Append one line, then rotate if the file holds half the bound. Never raises.
+
+    The append and the rotation happen under one hold of the log's side lock.
+    An append racing a rotation's rename could fail to open the file (Windows
+    refuses to open a file mid-rename) and the line was silently lost; the
+    parallel-telemetry test lost one or two of 180 on macOS and Windows (audit
+    WP17). If the lock cannot be had in time, the line is written anyway,
+    uncoordinated: a log line is never dropped for want of a lock.
+    """
     try:
         path = log_path(memory_dir)
         if not path.parent.is_dir():
             return  # no store here, or not one this hook should create
         line = json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n"
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(line)
-        if path.stat().st_size > HOOK_LOG_MAX_LINES * _MIN_LINE_BYTES:
-            _trim(path)
+        from breadcrumbs import lock as _lock
+
+        with _lock.side_lock(path.parent / HOOK_LOG_LOCK_FILENAME) as state:
+            # One write of the whole line to a file opened for appending, so
+            # the line lands whole at the end whatever else is appending.
+            # Never through a link (audit F17): the log is store content.
+            fd = path_policy.open_file(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT)
+            with os.fdopen(fd, "ab") as fh:
+                fh.write(line.encode("utf-8"))
+            if state == _lock.HELD and path.stat().st_size >= _rotate_at() * _MIN_LINE_BYTES:
+                _rotate(memory_dir, path)
     except Exception:  # pragma: no cover - logging never breaks a hook
         pass
 
 
-def _trim(path: Path) -> None:
-    raw = path.read_bytes()
-    if raw.count(b"\n") <= HOOK_LOG_MAX_LINES:
+def _rotate(memory_dir: Path, path: Path) -> None:
+    """Move a full log aside. The caller holds the log's side lock."""
+    if path_policy.read_bytes(path).count(b"\n") < _rotate_at():
         return
-    keep = raw.splitlines(keepends=True)[-HOOK_LOG_TRIM_TO:]
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    tmp.write_bytes(b"".join(keep))
-    os.replace(tmp, path)
+    os.replace(path, rotated_path(memory_dir))
 
 
 def run_logged(
@@ -142,11 +174,16 @@ def run_logged(
 
 
 def read_log(memory_dir: Path) -> list[dict]:
-    """Every parseable line, oldest first. A bad line is skipped, not fatal."""
-    try:
-        text = log_path(memory_dir).read_text(encoding="utf-8")
-    except OSError:
-        return []
+    """Every parseable line, oldest first (the rotated file, then the current
+    one). A bad line is skipped, not fatal."""
+    text = ""
+    for path in (rotated_path(memory_dir), log_path(memory_dir)):
+        try:
+            text += path_policy.read_text(path)
+        except OSError:
+            continue
+        if text and not text.endswith("\n"):
+            text += "\n"
     out = []
     for line in text.splitlines():
         try:

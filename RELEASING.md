@@ -7,6 +7,12 @@ how to publish it.
 There are two supported paths. **Trusted Publishing (recommended)** stores no
 secrets; **manual token upload** is the fallback if you want to publish by hand.
 
+**A release that carries a remediation program** (like the 2026-09 audit)
+also has a checklist: the acceptance matrix, the separate reviews, and what is
+explicitly not claimed. The one for the audit's release is
+[`docs/releases/reliability-release-checklist.md`](docs/releases/reliability-release-checklist.md).
+It does not replace the steps below; it says what they stand on.
+
 ---
 
 ## Path A — Trusted Publishing via GitHub Actions (recommended)
@@ -44,9 +50,24 @@ checking PyPI, cutting the GitHub Release). You do exactly two things:
 
 The version lives in **exactly one place**: `__version__` in
 [`breadcrumbs/__init__.py`](breadcrumbs/__init__.py). `pyproject.toml` reads it
-dynamically at build time, and `breadcrumbs/cli.py` reads it as its
-source-checkout fallback — so there is **nothing to hand-sync**. Bump that one
-line, add a `CHANGELOG.md` entry, and merge to `main`.
+dynamically at build time, and `breadcrumbs/cli.py` returns it from
+`get_version()`, so there is **nothing to hand-sync**. Bump that one line, add a
+`CHANGELOG.md` entry, add the release's row to
+[`docs/compatibility.md`](docs/compatibility.md) §3 (version and
+`schema_version`), and merge to `main`.
+
+**Which number** (the pre-1.0 policy, `docs/compatibility.md` §1):
+- **`0.MINOR`** when compatibility breaks: `SCHEMA_VERSION` changes, the
+  manifest gains a `requires` feature, or a compatibility surface (exit codes,
+  `--json` keys, ids, managed blocks, MCP names, hook I/O) changes
+  incompatibly.
+- **`0.x.PATCH`** for fixes and compatible additions.
+
+`tests/test_store_upgrade_contract.py` fails when `SCHEMA_VERSION` differs from
+the schema recorded for the current version, when a schema change arrives in a
+patch release, or when the §3 table and the CHANGELOG's released sections
+disagree. The release workflow runs the suite before it builds, so the policy
+is enforced where releases already happen, with no second process.
 
 > A PyPI version is **permanent**. If you forget to bump, the workflow stops up
 > front with *"already released — bump the version"* rather than a cryptic
@@ -58,9 +79,12 @@ line, add a `CHANGELOG.md` entry, and merge to `main`.
 
 *Actions → release → Run workflow*, with the `main` branch selected:
 
-- **`mode: dry-run`** (default) — runs the full test suite, builds, and runs
-  every packaging check (`twine check`, bundled-template identity, an
-  installed-binary smoke test), but publishes nothing. Use it to confirm the
+- **`mode: dry-run`** (default) — runs the full test suite and the **critical
+  eval gate** (`python evals/run.py --release`: every case in
+  `evals/critical/cases.yml` must pass, including any marked `known:`, which
+  ordinary CI only reports), builds, and runs every packaging check
+  (`twine check`, bundled-template identity, an installed-binary smoke test),
+  but publishes nothing. Use it to confirm the
   artifact is clean. It does **not** re-run the fixture/guard/MCP checks or the
   Python matrix — those live in the `ci` workflow, which `publish` gates on.
 - **`mode: publish`** — everything dry-run does, plus: requires the `ci` workflow
@@ -134,7 +158,7 @@ crumb --version
 
 ### Tag / PyPI history
 
-The intended invariant is **one git tag per published PyPI version**. Three
+The intended invariant is **one git tag per published PyPI version**. Four
 historical entries break it, from before the workflow owned tagging. They are
 recorded here rather than papered over, because `pipx install git+…@vX` resolves
 tags and will happily install a version PyPI never shipped:
@@ -144,19 +168,25 @@ tags and will happily install a version PyPI never shipped:
 | 0.1.2 | **none** | none | **published** | Published, then never tagged — the exact shape the old pre-flight made permanent (any re-run of that version hit "already on PyPI" and stopped). Deliberately left untagged: hand-tagging it now would put a `v0.1.2` tag on a commit that has nothing to do with the published 0.1.2 artifact. Fixed for the future — see the recovery bullet above. |
 | 0.1.5 | `v0.1.5` | none | **never** | Tagged, never published, no Release. **Dead tag.** |
 | 0.1.6 | `v0.1.6` | `v0.1.6` | **never** | Tagged and released, never published. **Dead tag and a dead Release.** 0.1.7 is the next real PyPI release after 0.1.4. |
+| 0.1.13 | `0.1.13` (no `v`) | none | **never** | A stray tag on `abd2bfd` (2026-09-04), whose `__version__` is 0.1.12. Never published. Found and checked against the PyPI JSON API on 2026-09-27 (audit WP21). The workflow only reads `v`-prefixed tags, so it neither blocks nor is blocked by it. |
 
-All three predate `release.yml` owning the tag: 0.1.7 was the first release the
-workflow tagged itself. Verified against the GitHub tag and release lists and the
-PyPI JSON API on 2026-07-25, and re-verified unchanged on 2026-08-02.
+The first three predate `release.yml` owning the tag: 0.1.7 was the first
+release the workflow tagged itself. They were verified against the GitHub tag
+and release lists and the PyPI JSON API on 2026-07-25, and re-verified
+unchanged on 2026-08-02. The fourth, `0.1.13`, was created by hand after the
+workflow took over. The workflow cannot stop a hand-made tag; the rule against
+them is what does.
 
 Everything else (`v0.1.0`, `v0.1.1`, `v0.1.3`, `v0.1.4`, `v0.1.7`, and every
-release cut after them) is tagged, released, and on PyPI — the workflow now owns
-all three, so a release it completes cannot add a fourth row to the table above.
+release cut after them, through `v0.3.1`) is tagged, released, and on PyPI. The
+workflow owns all three of those steps, so a release it completes cannot add a
+row to the table above.
 
-Deleting `v0.1.5`/`v0.1.6` and the `v0.1.6` Release would restore the invariant
-and is safe (nothing depends on a version that was never published); it is left as
-the maintainer's call, since a deleted tag breaks any link that referenced it. The
-release workflow refuses to re-use either tag in the meantime.
+Deleting `v0.1.5`/`v0.1.6`, the `v0.1.6` Release and the stray `0.1.13` would
+restore the invariant, and is safe (nothing depends on a version that was never
+published). It is left as the maintainer's call, since a deleted tag breaks any
+link that referenced it. The release workflow refuses to re-use `v0.1.5` or
+`v0.1.6` in the meantime.
 
 ---
 

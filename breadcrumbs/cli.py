@@ -20,8 +20,8 @@ Design constraints (see docs/):
 
 from __future__ import annotations
 
-import argparse
 import contextlib
+import functools
 import hashlib
 import io
 import json
@@ -31,9 +31,21 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
+import threading
 from datetime import date, datetime
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # annotations only; the parser lives in `cli_parser`
+    import argparse
+
+# The record contract. Stdlib-only and import-free, so importing it here costs
+# the hook pre-filter nothing (see StartupCostTests).
+from breadcrumbs import validation as _validation
+
+# What the store may read and write on disk (audit F17). Stdlib-only too.
+from breadcrumbs import path_policy
+from breadcrumbs.adapters import claude as _claude
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -88,8 +100,10 @@ NO_GIT_COMMIT = "(no-git)"
 #     reads as `[x]` / `[ok]` rather than a row of `?`.
 #
 # A tool must never lose its diagnostic payload to a decorative glyph.
-MARK_PASS = "✓"
-MARK_FAIL = "✗"
+_GLYPH_MARK_PASS = "✓"
+_GLYPH_MARK_FAIL = "✗"
+MARK_PASS = _GLYPH_MARK_PASS
+MARK_FAIL = _GLYPH_MARK_FAIL
 _ASCII_MARK_PASS = "[ok]"
 _ASCII_MARK_FAIL = "[x]"
 
@@ -125,8 +139,11 @@ def configure_output(stream=None) -> None:
             reconfigure(errors="replace")
         except (ValueError, OSError, TypeError):  # pragma: no cover - stream-dependent
             pass
-    if _stream_encodes(stream, MARK_PASS + MARK_FAIL):
-        MARK_PASS, MARK_FAIL = "✓", "✗"
+    # Probe the glyphs, not the current markers: after an ASCII choice the
+    # current ones always encode, so a second call switched back to glyphs the
+    # stream cannot print (a cp1252 console after any earlier call; WP17).
+    if _stream_encodes(stream, _GLYPH_MARK_PASS + _GLYPH_MARK_FAIL):
+        MARK_PASS, MARK_FAIL = _GLYPH_MARK_PASS, _GLYPH_MARK_FAIL
     else:
         MARK_PASS, MARK_FAIL = _ASCII_MARK_PASS, _ASCII_MARK_FAIL
 
@@ -305,23 +322,44 @@ SESSION_DONE_MARKERS = ("converged", "session complete", "no next action", "done
 # --------------------------------------------------------------------------- #
 
 
-def write_text_atomic(path: Path, text: str) -> None:
+def write_text_atomic(path: Path, text: str, *, expected: str | None = None) -> None:
     """Write text via tmp-file + rename in the destination directory.
 
     A plain `write_text` interrupted mid-write leaves a truncated record that
     validate then reports as corrupt; `os.replace` is atomic on
     the same filesystem, so readers see either the old file or the new one.
+
+    `expected` is the text the caller read before computing this rewrite. If
+    the file no longer holds it, another editor changed it in between, and
+    `mutations.RevisionConflict` is raised instead of discarding that edit
+    (audit F20). Inside a `mutations.transaction`, the file's before-image is
+    journaled first so the whole operation can be rolled back.
+
+    A store path is written under `path_policy` (audit F17): a link at the
+    leaf, or on any directory from the store down, refuses the write.
     """
+    from breadcrumbs import mutations as _mutations
+
     path = Path(path)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+    if expected is not None:
+        try:
+            if path_policy.read_text(path) != expected:
+                raise _mutations.RevisionConflict(path)
+        except (FileNotFoundError, UnicodeDecodeError):
+            raise _mutations.RevisionConflict(path) from None
+    # Under the store's path policy (audit F17): never through a link. Text
+    # mode translated "\n" to the platform's line separator; so does this.
+    data = _platform_bytes(text)
+    # The journal holds the bytes that land on disk. It held the text before
+    # translation, so on Windows every file a failed operation had written
+    # looked changed by someone else, and rollback left it (audit WP17).
+    _mutations.before_write(path, data)
+    path_policy.write_atomic(path, data)
+
+
+def _platform_bytes(text: str) -> bytes:
+    """`text` as UTF-8 with the platform's line separator, as text mode writes it."""
+    return (text.replace("\n", os.linesep) if os.linesep != "\n" else text).encode("utf-8")
 
 
 def read_text_lenient(path: Path) -> tuple[str, str | None]:
@@ -340,13 +378,16 @@ def read_text_lenient(path: Path) -> tuple[str, str | None]:
     """
     p = Path(path)
     try:
-        raw = p.read_bytes()
+        raw = path_policy.read_bytes(p)
     except OSError as exc:
         return "", f"unreadable file: {exc}"
+    # Universal newlines, like every other store read: a CRLF file (a Windows
+    # writer, a checkout under autocrlf) compared unequal to the same text read
+    # anywhere else, so audit missed an adapter copying a record (audit WP17).
     try:
-        return raw.decode("utf-8-sig"), None
+        return path_policy.decode(raw, "utf-8-sig"), None
     except UnicodeDecodeError as exc:
-        return raw.decode("utf-8-sig", errors="replace"), (
+        return path_policy.decode(raw, "utf-8-sig", errors="replace"), (
             f"invalid UTF-8 at byte {exc.start} ({exc.reason}) — read with replacement "
             "characters, so anything derived from it is unreliable"
         )
@@ -359,7 +400,24 @@ def _now() -> datetime:
     `breadcrumbs.lifecycle` — reads the time through here, so a test can move
     the clock by patching one function.
     """
-    return datetime.now().astimezone()
+    fn = getattr(_CLOCK, "fn", None)
+    return fn() if fn is not None else datetime.now().astimezone()
+
+
+# A clock set for one operation (audit WP16), per thread; `service.Context`
+# carries it. Patching `_now` itself still works for tests.
+_CLOCK = threading.local()
+
+
+@contextlib.contextmanager
+def clock(fn):
+    """Read the time from `fn` in this thread for the block (None: the real clock)."""
+    saved = getattr(_CLOCK, "fn", None)
+    _CLOCK.fn = fn
+    try:
+        yield
+    finally:
+        _CLOCK.fn = saved
 
 
 def now_iso() -> str:
@@ -405,6 +463,22 @@ def derive_project_name(root: Path) -> str:
 def resolve_root(project_arg: str | None) -> Path:
     """Resolve the project root: --project overrides cwd."""
     return (Path(project_arg) if project_arg else Path.cwd()).resolve()
+
+
+def _service_context(args, root: Path | None = None):
+    """`(service module, Context)` for a CLI command (audit WP16).
+
+    The channel is whatever transport is running the command (`cli`, or `hook`
+    when a hook drives a CLI command), and the author is `--agent` when given.
+    """
+    from breadcrumbs import admission, service
+
+    ctx = service.open_context(
+        root if root is not None else getattr(args, "project", None),
+        channel=admission.current_channel(),
+        agent=getattr(args, "agent", None),
+    )
+    return service, ctx
 
 
 # --------------------------------------------------------------------------- #
@@ -459,7 +533,9 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
-def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -> bool:
+def rewrite_managed_block(
+    path: Path, begin: str, end: str, block: str | None, *, root: Path | None = None
+) -> bool:
     """Insert, replace, or remove a fenced managed block in a text file.
 
     Idempotent. `block` (when given) must contain the `begin` and `end` marker
@@ -471,8 +547,13 @@ def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -
     Returns True iff the file's content actually changed — an already-current
     block is a no-op (no write, no mtime churn), and callers report it as such
     instead of claiming an update they did not make (P2-12).
+
+    `root` is the project the file belongs to (default: its directory). A file
+    that is a link, or under one, resolving outside it is refused before it is
+    read or written (audit F17).
     """
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    path_policy.check_project_target(path, root if root is not None else path.parent)
+    existing = path_policy.read_text(path) if path.exists() else ""
 
     if begin in existing and end in existing:
         head, _, rest = existing.partition(begin)
@@ -500,7 +581,11 @@ def rewrite_managed_block(path: Path, begin: str, end: str, block: str | None) -
 
     if path.exists() and new_content == existing:
         return False
-    path.write_text(new_content, encoding="utf-8")
+    from breadcrumbs import mutations as _mutations
+
+    data = _platform_bytes(new_content)
+    _mutations.before_write(path, data)  # an adapter file is part of the operation
+    path.write_bytes(data)
     return True
 
 
@@ -510,19 +595,23 @@ def write_gitignore(root: Path, block: str) -> None:
     Idempotent: re-running init rewrites only the managed block and leaves any
     user content intact. Thin wrapper over `rewrite_managed_block`.
     """
-    rewrite_managed_block(root / ".gitignore", GITIGNORE_BEGIN, GITIGNORE_END, block)
+    rewrite_managed_block(root / ".gitignore", GITIGNORE_BEGIN, GITIGNORE_END, block, root=root)
 
 
-def merge_json_file(path: Path, mutate) -> None:
+def merge_json_file(path: Path, mutate, *, root: Path | None = None) -> None:
     """Load a JSON object (or {} if absent/empty), apply `mutate` in place, write back.
 
     Used for `.mcp.json` and `.claude/settings.json`, which cannot carry comment
     markers. Sibling keys are preserved; output is 2-space-indented with a trailing
     newline. Raises ValueError on unparseable or non-object JSON rather than
     clobbering a file we do not understand.
+
+    `root` is the project the file belongs to (default: its directory); a
+    target resolving outside it is refused (audit F17).
     """
+    path_policy.check_project_target(path, root if root is not None else path.parent)
     if path.exists():
-        text = path.read_text(encoding="utf-8")
+        text = path_policy.read_text(path)
         try:
             data = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError as exc:
@@ -538,7 +627,7 @@ def merge_json_file(path: Path, mutate) -> None:
     mutate(data)
     if path.exists() and json.dumps(data, sort_keys=True) == before:
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(path.parent)
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
@@ -551,21 +640,36 @@ def _replace_store_contents(memory_dir: Path, staging: Path) -> None:
     """`init --force`: replace everything in the store with `staging`'s contents,
     except the write lock this very command is holding (WM-51).
 
-    Deleting the directory wholesale took `private/.write-lock` with it and left
+    Deleting the directory wholesale took the lock file with it and left
     the rest of `init` — the new scaffold, the integrations, the reindex —
     running unlocked. The command holds the lock throughout, so the swap does
     not need to be a single rename to be safe from other writers.
     """
     from breadcrumbs import lock as _lock
 
-    keep = _lock.lock_path(memory_dir)
+    # Never delete through a link: a store that is one is refused, not
+    # emptied of whatever it points at (audit F17).
+    path_policy.check(memory_dir)
+    # Both lock files stay: this command's own (an OS lock lives on the file's
+    # inode, so replacing the file would let a second writer lock a new one while
+    # this one still runs), and an older version's, which is not ours to remove.
+    keep = {_lock.lock_path(memory_dir), _lock.legacy_lock_path(memory_dir)}
+    private = _lock.lock_path(memory_dir).parent
+
+    # A link is removed as a link, never followed (audit F17).
+    def remove(entry: Path) -> None:
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+
     for entry in list(memory_dir.iterdir()):
-        if entry == keep.parent:
+        if entry == private and not entry.is_symlink():
             for sub in list(entry.iterdir()):
-                if sub != keep:
-                    shutil.rmtree(sub) if sub.is_dir() else sub.unlink()
+                if sub not in keep:
+                    remove(sub)
             continue
-        shutil.rmtree(entry) if entry.is_dir() else entry.unlink()
+        remove(entry)
     for entry in list(staging.iterdir()):
         target = memory_dir / entry.name
         if entry.is_dir() and target.is_dir():
@@ -729,7 +833,9 @@ def cmd_init(args: argparse.Namespace) -> int:
     project = derive_project_name(root)
     created_at = now_iso()
     staging = root / (MEMORY_DIRNAME + ".new")
-    if staging.exists():
+    if staging.is_symlink():
+        staging.unlink()  # a leftover link is removed, never followed (audit F17)
+    elif staging.exists():
         shutil.rmtree(staging)
     try:
         copy_template_tree(staging)
@@ -888,6 +994,17 @@ def _print_json(
     is always present — an empty list when the command has no item list — so a
     consumer can read it without knowing which command it is talking to.
     """
+    print(json.dumps(_json_document(args, payload, ok=ok, summary=summary), indent=2))
+
+
+def _json_document(
+    args: argparse.Namespace,
+    payload: dict,
+    *,
+    ok: bool | None = None,
+    summary: dict | None = None,
+) -> dict:
+    """The document `_print_json` prints: `payload` inside the shared envelope."""
     payload = dict(payload)
     items = payload.get("items")
     if not isinstance(items, list):
@@ -904,7 +1021,7 @@ def _print_json(
     doc["items"] = items
     payload.pop("items", None)
     doc.update(payload)
-    print(json.dumps(doc, indent=2))
+    return doc
 
 
 def _emit_warning(args: argparse.Namespace, message: str) -> None:
@@ -942,23 +1059,6 @@ def _emit_duplicate(args: argparse.Namespace, result: dict) -> int:
     else:
         print(f"{ERROR_PREFIX} {command_label(args)}: {result.get('message')}", file=sys.stderr)
     return EXIT_NEAR_DUPLICATE
-
-
-def _add_duplicate_flags(parser: argparse.ArgumentParser, *, supersede: bool = True) -> None:
-    """`--allow-duplicate` (and `--supersedes ID`) for a writer that gates duplicates."""
-    parser.add_argument(
-        "--allow-duplicate",
-        action="store_true",
-        help="write even if a live record of this type says nearly the same thing",
-    )
-    if supersede:
-        parser.add_argument(
-            "--supersedes",
-            metavar="ID",
-            default=None,
-            help="replace this live record of the same type: it is marked superseded by "
-            "the new one (also answers a near-duplicate refusal)",
-        )
 
 
 def _emit_error(args: argparse.Namespace, message: str) -> None:
@@ -1208,6 +1308,56 @@ def derive_identity(stem: str, rtype: str) -> tuple[str, str] | None:
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# One operation's parsed snapshot (audit WP15)
+# --------------------------------------------------------------------------- #
+#
+# One command, hook, MCP call or publication used to parse every record several
+# times (7,200 parses for a 1,000-record reindex) and compute the conflict
+# report twice. Inside `operation()` a record's bytes are parsed once, and a
+# derived result can be memoized under a key that names the exact content it
+# was computed from. Nothing is cached across operations, so a long-lived MCP
+# server never serves a stale view.
+
+_OP = threading.local()
+
+
+@contextlib.contextmanager
+def operation():
+    """Share parses and derived results for the duration of one operation."""
+    depth = getattr(_OP, "depth", 0)
+    if depth == 0:
+        _OP.state = {"parses": {}, "memo": {}}
+    _OP.depth = depth + 1
+    try:
+        yield
+    finally:
+        _OP.depth = depth
+        if depth == 0:
+            _OP.state = None
+
+
+def _op_state(name: str):
+    state = getattr(_OP, "state", None)
+    return state.get(name) if state else None
+
+
+def op_memo(key, compute):
+    """`compute()`, memoized for this operation under `key` (which must name
+    every input the result depends on); outside an operation, just `compute()`."""
+    memo = _op_state("memo")
+    if memo is None:
+        return compute()
+    if key not in memo:
+        memo[key] = compute()
+    return memo[key]
+
+
+def content_key(records) -> tuple:
+    """A key naming exactly these records' contents (path and bytes digest)."""
+    return tuple(sorted((str(r.path), getattr(r, "digest", None) or "") for r in records))
+
+
 class Record:
     """A loaded `.md` record: path, type, frontmatter, body, parse error (if any)."""
 
@@ -1224,6 +1374,8 @@ class Record:
         self.meta = meta or {}
         self.body = body
         self.error = error
+        # sha1 of the bytes it was parsed from (`from_bytes`), for `content_key`.
+        self.digest: str | None = None
 
     @classmethod
     def from_file(cls, path: Path, rtype: str) -> "Record":
@@ -1232,8 +1384,54 @@ class Record:
         # as a Record error — never raised — so a single bad file can't crash the
         # walk that load_records()/validate run over the whole store.
         try:
-            text = Path(path).read_text(encoding="utf-8-sig")
-        except (OSError, UnicodeDecodeError) as exc:
+            data = path_policy.read_bytes(Path(path))
+        except OSError as exc:
+            data = exc
+        return cls.from_bytes(path, rtype, data)
+
+    @classmethod
+    def from_bytes(cls, path: Path, rtype: str, data: "bytes | OSError") -> "Record":
+        """A record from bytes already read (or the error reading them).
+
+        Inside an `operation()`, a file whose bytes were already parsed in the
+        same operation is not parsed again (audit WP15). The key is the path,
+        the type and a digest of the exact bytes, so a changed file always
+        re-parses; the caller gets its own frontmatter dict.
+        """
+        if isinstance(data, path_policy.Refused):
+            return cls(path, rtype, meta=None, body="", error=str(data))
+        if isinstance(data, OSError):
+            return cls(path, rtype, meta=None, body="", error=f"unreadable file: {data}")
+        digest = hashlib.sha1(data).hexdigest()
+        cache = _op_state("parses")
+        if cache is not None:
+            key = (str(path), rtype, digest)
+            hit = cache.get(key)
+            if hit is None:
+                parsed = cls._parse(path, rtype, data)
+                hit = (parsed.meta, parsed.body, parsed.error)
+                cache[key] = hit
+            meta, body, error = hit
+            rec = cls(
+                path,
+                rtype,
+                # Its own top-level dict: every writer that edits a loaded
+                # record's frontmatter replaces top-level keys on a copy, and
+                # none edits a nested list in place.
+                meta=dict(meta) if meta is not None else None,
+                body=body,
+                error=error,
+            )
+        else:
+            rec = cls._parse(path, rtype, data)
+        rec.digest = digest
+        return rec
+
+    @classmethod
+    def _parse(cls, path: Path, rtype: str, data: bytes) -> "Record":
+        try:
+            text = path_policy.decode(data, "utf-8-sig")
+        except UnicodeDecodeError as exc:
             return cls(path, rtype, meta=None, body="", error=f"unreadable file: {exc}")
         try:
             meta, body = parse_frontmatter(text)
@@ -1277,12 +1475,21 @@ def load_records(memory_dir: Path, types: tuple[str, ...] | None = None) -> list
     for dirname, rtype in list(DIR_TYPES.items()) + list(LOCAL_DIR_TYPES.items()):
         if types and rtype not in types:
             continue
-        d = Path(memory_dir) / dirname
-        if not d.is_dir():
-            continue
-        for p in sorted(d.glob("*.md")):
-            records.append(Record.from_file(p, rtype))
+        records += records_in(Path(memory_dir) / dirname, rtype)
     return records
+
+
+def records_in(directory: Path, rtype: str) -> list[Record]:
+    """Every `*.md` record in one directory, read in one pass under the path
+    policy (audit F17). `[]` when the directory does not exist; one error
+    record, not a walk of whatever it points at, when it is a link."""
+    if not directory.is_dir():
+        return []
+    try:
+        entries = path_policy.read_dir(directory, ".md")
+    except path_policy.Refused as exc:
+        return [Record(directory, rtype, meta=None, body="", error=str(exc))]
+    return [Record.from_bytes(p, rtype, data) for p, data in entries]
 
 
 # --------------------------------------------------------------------------- #
@@ -1494,6 +1701,12 @@ def derive_fields(
     }
 
 
+def _admission_review_status(memory_dir: Path, rtype: str) -> str:
+    from breadcrumbs import admission as _admission
+
+    return _admission.review_status_for(memory_dir, rtype)
+
+
 def default_fields() -> dict:
     """Defaulted, overridable frontmatter fields (constants)."""
     return {
@@ -1542,8 +1755,97 @@ def load_manifest(memory_dir: Path) -> dict | None:
 # --------------------------------------------------------------------------- #
 
 
-def _finding(check: str, status: str, path: str | None, message: str) -> dict:
-    return {"check": check, "status": status, "path": path, "message": message}
+def _finding(
+    check: str, status: str, path: str | None, message: str, code: str | None = None
+) -> dict:
+    """One validate result. `code` is the stable identifier (defaults to `check`)."""
+    return {
+        "check": check,
+        "status": status,
+        "path": path,
+        "message": message,
+        "code": code or check,
+    }
+
+
+# The validate `check` each record-contract code reports under.
+_CONTRACT_CHECK = {
+    _validation.CONFIDENCE_INVALID: "confidence",
+    _validation.REVIEW_STATUS_INVALID: "review",
+    _validation.SCOPE_UNSUPPORTED: "scope",
+    _validation.EVIDENCE_MALFORMED: "evidence",
+    _validation.TIMESTAMP_INVALID: "timestamp",
+    _validation.SUPERSEDED_BY_MALFORMED: "superseded",
+    _validation.SUPERSESSION_SELF: "superseded",
+    _validation.SUPERSEDED_BY_MISSING: "superseded",
+    _validation.SUPERSESSION_CYCLE: "superseded",
+}
+
+
+def _contract_finding(rel: str, issue: dict) -> dict:
+    return _finding(
+        _CONTRACT_CHECK.get(issue["code"], "contract"),
+        "fail",
+        rel,
+        issue["message"],
+        code=issue["code"],
+    )
+
+
+CONTRACT_WARNING_EXAMPLES = 3
+
+
+def record_contract_warnings(memory_dir: Path) -> list[str]:
+    """The packet's one-line notice that some records break the record contract.
+
+    Readers tolerate a malformed record — it never takes a hook or the packet
+    down — but tolerating it silently is how a `confidence: certainly` or an
+    `expires_at` nothing can parse goes unnoticed for months. This says so where
+    every session looks. Committed directories only: the packet is a committed
+    projection, and a machine-local jot must not make it differ between checkouts.
+    """
+    memory_dir = Path(memory_dir)
+    records = [
+        rec
+        for dirname, rtype in DIR_TYPES.items()
+        for rec in records_in(memory_dir / dirname, rtype)
+    ]
+    entries = record_contract_entries(records, memory_dir)
+    linked = _validation.store_issues(entries)
+    problems: dict[str, list[str]] = {}
+    for rec, (rel, rid, meta) in zip(records, entries):
+        codes = ["frontmatter-malformed"] if rec.error else []
+        codes += [i["code"] for i in _validation.record_issues(meta, rec.rtype, rid)]
+        codes += [i["code"] for i in linked.get(rel, [])]
+        if codes:
+            problems[rid or rel] = codes
+    if not problems:
+        return []
+    shown = [
+        f"{rid} ({', '.join(dict.fromkeys(codes))})"
+        for rid, codes in sorted(problems.items())[:CONTRACT_WARNING_EXAMPLES]
+    ]
+    more = len(problems) - len(shown)
+    return [
+        f"⚠ {len(problems)} record(s) break the record contract: {'; '.join(shown)}"
+        + (f"; +{more} more" if more > 0 else "")
+        + " — they are still read; run `crumb validate`."
+    ]
+
+
+def record_contract_entries(records: list["Record"], memory_dir: Path) -> list[tuple]:
+    """`(relative path, derived id, meta)` per record, for `validation.store_issues`.
+
+    A record whose frontmatter did not parse is still a link target: its id comes
+    from its filename, so a replacement pointing at it is not reported missing.
+    """
+    out = []
+    for rec in records:
+        ident = derive_identity(rec.stem, rec.rtype)
+        out.append(
+            (rec.path.relative_to(memory_dir).as_posix(), ident[0] if ident else None, rec.meta)
+        )
+    return out
 
 
 def run_validate(memory_dir: Path) -> list[dict]:
@@ -1555,6 +1857,21 @@ def run_validate(memory_dir: Path) -> list[dict]:
     """
     memory_dir = Path(memory_dir)
     findings: list[dict] = []
+
+    # Containment (audit F17): nothing in the store may be a link. Every reader
+    # already refuses one; this says where they are.
+    for rel in path_policy.find_links(memory_dir):
+        findings.append(
+            _finding(
+                "containment",
+                "fail",
+                rel,
+                "is a symbolic link or junction; memory files and directories must be the "
+                "real thing inside the store (readers refuse it; replace it with the file "
+                "or directory itself)",
+                code="path-link",
+            )
+        )
 
     # 16.1 — manifest exists + supported schema_version.
     manifest = load_manifest(memory_dir)
@@ -1624,7 +1941,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
     seen_ids: dict[str, str] = {}
 
     for rec in records:
-        rel = str(rec.path.relative_to(memory_dir))
+        rel = rec.path.relative_to(memory_dir).as_posix()
 
         # 16.3 — valid frontmatter (parses + required keys present).
         if rec.error:
@@ -1746,10 +2063,16 @@ def run_validate(memory_dir: Path) -> list[dict]:
                 )
             )
 
+        # 16.8b — the record contract: vocabularies, evidence shape, timestamps,
+        # scope and self-links (breadcrumbs/validation.py; audit F05).
+        for issue in _validation.record_issues(rec.meta, rec.rtype, ident[0] if ident else None):
+            findings.append(_contract_finding(rel, issue))
+
         # 16.9 — decisions/attempts/verifications need evidence OR confidence: low.
+        # Only a well-formed pointer counts: any non-empty `evidence` used to
+        # satisfy this, so `[{nonsense: x}]` let a claim stand at medium.
         if rec.rtype in ("decision", "attempt", "verification"):
-            evidence = rec.meta.get("evidence")
-            has_evidence = bool(evidence) if evidence is not None else False
+            has_evidence = bool(_validation.well_formed_evidence(rec.meta.get("evidence")))
             if not has_evidence and rec.meta.get("confidence") != "low":
                 findings.append(
                     _finding(
@@ -1828,11 +2151,18 @@ def run_validate(memory_dir: Path) -> list[dict]:
                     )
                 )
 
+    # 16.10b — links between records: a `superseded_by` must name a record in
+    # this store, and a replacement chain must not loop back on itself.
+    for rel, issues in _validation.store_issues(
+        record_contract_entries(records, memory_dir)
+    ).items():
+        findings.extend(_contract_finding(rel, issue) for issue in issues)
+
     # 16.11 — handoff has branch, commit, next action, stale conditions.
     handoff = memory_dir / "handoff.md"
     if handoff.is_file():
         try:
-            htext = handoff.read_text(encoding="utf-8")
+            htext = path_policy.read_text(handoff)
         except (OSError, UnicodeDecodeError) as exc:
             # A finding, not a crash.
             findings.append(_finding("handoff", "fail", "handoff.md", f"unreadable file: {exc}"))
@@ -1862,9 +2192,9 @@ def run_validate(memory_dir: Path) -> list[dict]:
         for p in sorted(gen_dir.glob("*.md")):
             if p.name == "README.md":
                 continue
-            rel = str(p.relative_to(memory_dir))
+            rel = p.relative_to(memory_dir).as_posix()
             try:
-                head = "\n".join(p.read_text(encoding="utf-8").splitlines()[:5])
+                head = "\n".join(path_policy.read_text(p).splitlines()[:5])
             except (OSError, UnicodeDecodeError) as exc:
                 # A finding, not a crash.
                 findings.append(_finding("generated", "fail", rel, f"unreadable file: {exc}"))
@@ -2510,7 +2840,7 @@ def write_record(
     # `private/inbox/` — and which one it lands in is the caller's privacy
     # decision, not a property of the type.
     directory = Path(memory_dir) / (subdir or TYPE_DIR[rtype])
-    directory.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(directory)
     path, slug = _unique_record_path(
         directory,
         date,
@@ -2540,7 +2870,9 @@ def write_record(
         "dirty_files": derived["dirty_files"],
         "confidence": confidence or defaults["confidence"],
         "privacy": privacy or defaults["privacy"],
-        "review_status": defaults["review_status"],
+        # A proposal (`needs-review`) when the store's policy says this channel
+        # writes guidance for a person to review (audit F18, `admission.py`).
+        "review_status": _admission_review_status(memory_dir, rtype),
         "reviewed_by": defaults["reviewed_by"],
         "supersedes": defaults["supersedes"],
         "superseded_by": defaults["superseded_by"],
@@ -2551,15 +2883,46 @@ def write_record(
     for k, v in (extra or {}).items():
         if v is not None:
             meta[k] = v
+    # The record contract, before anything touches disk. Every writer already
+    # reverts on the post-write `validate` gate; checking first means a bad value
+    # from any surface (a free-text `--scope`, an MCP evidence item with no ref)
+    # is refused with the same ValueError the renderer uses, and no invalid file
+    # exists even briefly. A new write is held to the contract; a legacy record is
+    # only reported by `validate`, never rewritten.
+    issues = _validation.record_issues(meta, rtype, rid)
+    if issues:
+        raise ValueError("; ".join(i["message"] for i in issues))
     text = render_frontmatter(meta) + "\n\n" + render_body(rtype, sections)
     write_text_atomic(path, text)
     return path, meta
 
 
-def _validate_new_file(memory_dir: Path, path: Path) -> list[dict]:
-    """Run the deterministic checks and return failures that touch `path`."""
-    rel = str(Path(path).relative_to(memory_dir))
-    return [f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel]
+def _validate_new_file(memory_dir: Path, path: Path, original: str | None = None) -> list[dict]:
+    """Run the deterministic checks and return failures that touch `path`.
+
+    `original` is the file's text before a rewrite of an existing record. Then
+    only failures the rewrite *introduced* are returned: a record that was
+    already invalid when a check was added (a legacy scalar evidence item, a
+    free-text scope) must stay retirable — refusing `mark-status stale` on it
+    would leave the bad record live. Found by re-checking the original, which is
+    only done when the new text fails, so the common path costs nothing extra.
+    """
+    rel = Path(path).relative_to(memory_dir).as_posix()
+
+    def fails_here() -> list[dict]:
+        return [f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel]
+
+    fails = fails_here()
+    if not fails or original is None:
+        return fails
+    path = Path(path)
+    current = path_policy.read_text(path)
+    write_text_atomic(path, original)
+    try:
+        already = {(f["code"], f["message"]) for f in fails_here()}
+    finally:
+        write_text_atomic(path, current)
+    return [f for f in fails if (f["code"], f["message"]) not in already]
 
 
 # ---- record lookup + status mutation (shared by MCP `memory_mark_status`) --- #
@@ -2654,7 +3017,7 @@ def find_item(memory_dir: Path, rid: str) -> dict | None:
     rec = find_record_by_id(memory_dir, rid)
     if rec is not None and not rec.error:
         try:
-            text = rec.path.read_text(encoding="utf-8")
+            text = path_policy.read_text(rec.path)
         except OSError:
             return None
         return {
@@ -2686,7 +3049,7 @@ def _block_item(memory_dir: Path, block: dict, kind: str, singleton: str, headin
     if record_path:
         path = Path(record_path)
         try:
-            text = path.read_text(encoding="utf-8")
+            text = path_policy.read_text(path)
         except OSError:
             text = heading + "\n" + (block.get("body") or "")
     else:
@@ -2718,16 +3081,32 @@ def set_record_status(
     session loads, and "retire it here, then remember to delete the line there"
     is the two-step nobody completes.
     """
-    result = _set_record_status(
-        memory_dir, rid, status, reason, agent=agent, superseded_by=superseded_by
-    )
-    if result.get("ok"):
-        from breadcrumbs import promote as _promote
+    from breadcrumbs import mutations as _mutations
+    from breadcrumbs import promote as _promote
 
-        demoted = _promote.auto_demote(Path(memory_dir), result.get("id") or rid, status)
-        if demoted and demoted.get("ok"):
-            result["demoted"] = demoted
-    return result
+    # One operation (audit F20): a retirement whose promoted rule could not be
+    # removed is not a retirement — the rule would stay in the file every
+    # session loads — so both happen or neither does.
+    try:
+        with _mutations.transaction(memory_dir, "mark-status"):
+            result = _set_record_status(
+                memory_dir, rid, status, reason, agent=agent, superseded_by=superseded_by
+            )
+            if not result.get("ok"):
+                return result
+            demoted = _promote.auto_demote(Path(memory_dir), result.get("id") or rid, status)
+            if demoted is not None and not demoted.get("ok"):
+                raise _mutations.MutationFailed(
+                    f"{result.get('id') or rid} is promoted, and its rule could not be "
+                    f"removed: {demoted.get('error')}"
+                )
+            if demoted:
+                result["demoted"] = demoted
+            return result
+    except _mutations.RevisionConflict as exc:
+        return {"ok": False, "id": rid, "error": str(exc)}
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "id": rid, "error": _mutations.describe(exc)}
 
 
 def _set_record_status(
@@ -2788,7 +3167,7 @@ def _set_record_status(
             "error": f"invalid {what} {status!r}; valid: {', '.join(vocab)}",
         }
 
-    original = rec.path.read_text(encoding="utf-8")
+    original = path_policy.read_text(rec.path)
     meta, body = parse_frontmatter(original)
     prev = meta.get("status")
     meta["status"] = status
@@ -2820,9 +3199,9 @@ def _set_record_status(
             "fix the record by hand or simplify the offending value",
         }
     new_text = rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n"
-    write_text_atomic(rec.path, new_text)
+    write_text_atomic(rec.path, new_text, expected=original)
 
-    fails = _validate_new_file(memory_dir, rec.path)
+    fails = _validate_new_file(memory_dir, rec.path, original)
     if fails:
         write_text_atomic(rec.path, original)  # revert
         return {
@@ -2863,7 +3242,7 @@ def set_record_title(memory_dir: Path, rid: str, title: str, *, agent: str | Non
     if not title:
         return {"ok": False, "id": rid, "error": "a title cannot be empty"}
 
-    original = rec.path.read_text(encoding="utf-8")
+    original = path_policy.read_text(rec.path)
     meta, body = parse_frontmatter(original)
     previous = meta.get("title")
     if previous == title:
@@ -2884,9 +3263,18 @@ def set_record_title(memory_dir: Path, rid: str, title: str, *, agent: str | Non
             "error": "retitle refused: frontmatter would not survive a re-render "
             "round-trip; simplify the title",
         }
-    write_text_atomic(rec.path, rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n")
+    from breadcrumbs import mutations as _mutations
 
-    fails = _validate_new_file(memory_dir, rec.path)
+    try:
+        write_text_atomic(
+            rec.path,
+            rendered + "\n" + body.rstrip("\n") + "\n\n" + note + "\n",
+            expected=original,
+        )
+    except _mutations.RevisionConflict as exc:
+        return {"ok": False, "id": rid, "error": str(exc)}
+
+    fails = _validate_new_file(memory_dir, rec.path, original)
     if fails:
         write_text_atomic(rec.path, original)  # revert
         return {
@@ -3012,7 +3400,7 @@ def set_trap_confirmed(memory_dir: Path, rid: str, *, when: str | None = None) -
         return result
     path = memory_dir / "known-traps.md"
     try:
-        original = path.read_text(encoding="utf-8")
+        original = path_policy.read_text(path)
     except OSError as exc:
         return {"ok": False, "id": tid, "error": f"cannot read known-traps.md: {exc}"}
     span = next(
@@ -3032,8 +3420,8 @@ def set_trap_confirmed(memory_dir: Path, rid: str, *, when: str | None = None) -
         + _set_block_bullet(original[start:end], TRAP_CONFIRMED_KEY, stamp)
         + original[end:]
     )
-    write_text_atomic(path, new_text)
-    fails = _validate_new_file(memory_dir, path)
+    write_text_atomic(path, new_text, expected=original)
+    fails = _validate_new_file(memory_dir, path, original)
     if fails:
         write_text_atomic(path, original)  # revert
         return {
@@ -3094,7 +3482,7 @@ def set_trap_status(
 
     path = memory_dir / "known-traps.md"
     try:
-        original = path.read_text(encoding="utf-8")
+        original = path_policy.read_text(path)
     except OSError as exc:
         return {"ok": False, "id": tid, "error": f"cannot read known-traps.md: {exc}"}
 
@@ -3120,13 +3508,13 @@ def set_trap_status(
         + _apply_block_status(original[start:end], status, superseded_by, note_line)
         + original[end:]
     )
-    write_text_atomic(path, new_text)
+    write_text_atomic(path, new_text, expected=original)
 
     after = find_trap_by_id(memory_dir, tid)
     if after is None or after["status"] != status:
         write_text_atomic(path, original)  # revert
         return {"ok": False, "id": tid, "error": "edited trap did not parse back; reverted"}
-    fails = _validate_new_file(memory_dir, path)
+    fails = _validate_new_file(memory_dir, path, original)
     if fails:
         write_text_atomic(path, original)  # revert
         return {
@@ -3201,7 +3589,7 @@ def set_question_status(
 
     path = memory_dir / "open-questions.md"
     try:
-        original = path.read_text(encoding="utf-8")
+        original = path_policy.read_text(path)
     except OSError as exc:
         return {"ok": False, "id": qid, "error": f"cannot read open-questions.md: {exc}"}
 
@@ -3228,13 +3616,13 @@ def set_question_status(
         + _apply_block_status(original[start:end], status, superseded_by, note_line)
         + original[end:]
     )
-    write_text_atomic(path, new_text)
+    write_text_atomic(path, new_text, expected=original)
 
     after = find_questions_by_id(memory_dir, qid)
     if len(after) != 1 or after[0]["status"] != status:
         write_text_atomic(path, original)  # revert
         return {"ok": False, "id": qid, "error": "edited question did not parse back; reverted"}
-    fails = _validate_new_file(memory_dir, path)
+    fails = _validate_new_file(memory_dir, path, original)
     if fails:
         write_text_atomic(path, original)  # revert
         return {
@@ -3366,66 +3754,39 @@ def cmd_remember(args: argparse.Namespace) -> int:
             )
             return 2
 
-    # WM-32: refuse a near-duplicate of a live record of the same type, unless
-    # the author said which one this replaces or that they want both.
-    from breadcrumbs import lifecycle as _lifecycle
-
+    # The write itself — admission, the supersede check, the near-duplicate
+    # gate (WM-32), the validate gate, retirement as one change (audit F20) and
+    # the reindex — is the application layer's (audit WP16); this adapter keeps
+    # the prompts above, the wording and the exit codes.
+    svc, ctx = _service_context(args, root)
     supersedes = getattr(args, "supersedes", None)
-    problem = _lifecycle.check_supersedes(memory_dir, rtype, supersedes)
-    if problem:
-        _emit_error(args, problem)
-        return 2
-    if not supersedes and not getattr(args, "allow_duplicate", False):
-        dups = _lifecycle.find_near_duplicates(
-            memory_dir,
-            rtype,
-            title,
-            "\n".join(str(v) for v in sections.values()),
-            files=[e["ref"] for e in evidence if e.get("type") in ("file", "path")],
-            tags=tags or (),
-        )
-        if dups:
-            return _emit_duplicate(
-                args,
-                {"duplicates": dups, "message": _lifecycle.duplicate_message(dups)},
-            )
-
+    payload = {
+        "title": title,
+        "sections": sections,
+        "evidence": evidence,
+        "tags": tags,
+        "confidence": confidence,
+        "privacy": args.privacy,
+        "scope": args.scope,
+        "status": args.status,
+        "agent": args.agent,
+        "supersedes": supersedes,
+        "allow_duplicate": getattr(args, "allow_duplicate", False),
+    }
     try:
-        path, meta = write_record(
-            memory_dir,
-            root,
-            rtype,
-            title,
-            sections,
-            tags=tags,
-            evidence=evidence,
-            confidence=confidence,
-            privacy=args.privacy,
-            scope=args.scope,
-            status=args.status,
-            agent=args.agent,
-            extra={"supersedes": [supersedes]} if supersedes else None,
-        )
-    except ValueError as exc:
-        # e.g. a newline in a frontmatter field — rendering refuses to corrupt.
-        _emit_error(args, str(exc))
-        return 2
-
-    # Post-write validate gate (defense in depth — fail fast, don't leave a bad file).
-    fails = _validate_new_file(memory_dir, path)
-    if fails:
-        path.unlink()
-        _emit_error(args, "new record failed validation: " + "; ".join(f["message"] for f in fails))
-        return 1
-
-    demoted: list[str] = []
-    if supersedes:
-        demoted = _lifecycle.demoted_ids(
-            _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=args.agent)
-        )
-
-    # Reindex-on-write: keep generated/ in step with the new record.
-    reindex_projections(memory_dir, root)
+        written = svc.record(ctx, rtype, payload, operation="remember")
+    except svc.ServiceError as exc:
+        if exc.kind == "duplicate":
+            return _emit_duplicate(
+                args, {"duplicates": exc.data["duplicates"], "message": exc.message}
+            )
+        if exc.kind == "rejected":
+            _emit_error(args, "new record failed validation: " + exc.message)
+            return 1
+        _emit_error(args, exc.message)
+        return 1 if exc.kind in ("failed", "refused") else 2
+    path, meta = written["path"], written["meta"]
+    demoted = written.get("demoted") or []
 
     summary = {
         "created": str(path),
@@ -3621,7 +3982,7 @@ def _append_md_block(path: Path, block: str) -> None:
     it, later blocks append after the existing content. Idempotency is the caller's
     concern (notes are additive by nature).
     """
-    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    text = path_policy.read_text(path) if path.exists() else ""
     kept = [ln for ln in text.splitlines() if ln.strip() not in _TEMPLATE_PLACEHOLDER_LINES]
     head = "\n".join(kept).rstrip()
     write_text_atomic(path, (head + "\n\n" if head else "") + block.rstrip() + "\n")
@@ -3686,45 +4047,131 @@ GUARD_PREFILTER_FILENAME = "guard-prefilter.json"
 
 
 def _build_guard_prefilter(memory_dir: Path) -> dict:
-    """Specific tokens + path tokens from traps and do-not-retry attempts.
+    """What the `PreToolUse` hook checks before it runs the full guard.
 
-    This is what lets `crumb hook guard` escalate a trap-shaped but
-    routine-looking command (`pytest -n auto`) to full guard scoring without
-    hardcoding any particular trap in a regex and without record I/O on the
-    common hook path — the near-miss class that motivated hooks in the first place.
+    The hook runs full guard scoring only for an action this says may match.
+    Since audit WP11 it is a strict *superset* of what full guard can surface:
+    it covers every record that could drive a verdict (live decisions,
+    attempts, verifications, traps, open questions), not only traps and
+    do-not-retry attempts. It holds, for each way `_score_item` lets a match
+    through:
+
+    - **`tokens`**: every specific stem of those records. A keyword match
+      needs 2 query stems in one record; any record's stems are in the union.
+      A stem guard discounts as ubiquitous is in it too, which is why no
+      ubiquity is applied here.
+    - **`titles`**: every title stem. The short-query title rule needs a
+      single-stem action in a title (a longer action whose other stems guard
+      discounted still shares 2 stems with `tokens`).
+    - **`tags`**: every tag stem. One shared tag opens the gate.
+    - **`paths`**: every declared or mentioned file, and every path in a trap
+      or do-not-retry attempt's text. One shared path opens the gate.
+    - **`commands`**: the commands live traps name (audit F10).
+
+    It can admit an action full guard then passes over (that costs a full
+    guard run, never a warning). It cannot drop one full guard would surface:
+    `tests/test_guard_delivery.py` checks it against full guard on every eval
+    suite.
     """
     activate_store_aliases(memory_dir)
     tokens: set[str] = set()
+    titles: set[str] = set()
+    tags: set[str] = set()
     paths: set[str] = set()
+    commands: list[list[str]] = []
+    for it in _candidate_items(memory_dir, include_ideas=False):
+        if not _may_drive_verdict(it):
+            continue
+        tokens |= set(it["specific"])
+        titles |= set(it.get("title_specific") or ())
+        tags |= set(it.get("tag_stems") or {t: t for t in it.get("tags") or ()})
+        paths |= set(it.get("files") or ()) | set(it.get("mentioned_files") or ())
+        for head in it.get("command_heads") or ():
+            if len(head) > _COMMAND_MIN_TOKENS and head[:9] not in commands:
+                commands.append(head[:9])  # the kind, then up to 8 tokens
     for trap in active_traps(memory_dir):
-        text = trap["heading"] + "\n" + trap["content"]
-        tokens |= _specific(text)
-        paths |= _paths_from_text(text)
+        paths |= _paths_from_text(trap["heading"] + "\n" + trap["content"])
     for rec in active_attempts(memory_dir):
         if _attempt_has_do_not_retry(rec):
             text = (
                 (rec.meta.get("title") or "") + "\n" + rec.sections.get("Do Not Retry Unless", "")
             )
-            tokens |= _specific(text)
             paths |= _paths_from_text(text)
-            # Evidence file refs count as paths too. Scraping prose alone meant
-            # `--evidence file src/billing.py` — the documented way to attach a
-            # file — contributed nothing here, so an Edit to that exact file
-            # sailed past the hook while `crumb guard "edit src/billing.py"`
-            # said PAUSE. Full scoring already reads these (see _item_from_record);
-            # the pre-filter must see the same files or it gates them out.
             paths |= set(_evidence_refs(rec, ("file", "path")))
-    return {"tokens": sorted(tokens), "paths": sorted(paths)}
+    return {
+        "format": GUARD_PREFILTER_FORMAT,
+        "tokens": sorted(tokens),
+        "titles": sorted(titles),
+        "tags": sorted(tags),
+        "paths": sorted(paths),
+        "commands": sorted(commands),
+    }
+
+
+def _may_drive_verdict(item: dict) -> bool:
+    """Could this item be a live match in guard? (Expiry and branch scope are
+    judged at guard time, so both are kept here: the superset errs wide.)"""
+    status = item.get("status") or "active"
+    if item["kind"] == "question":
+        return status == "open"
+    if item["kind"] == "verification":
+        return (
+            item.get("lifecycle", "active") == "active"
+            and status in ACTIONABLE_VERIFICATION_OUTCOMES
+        )
+    return status == "active"
+
+
+# 2: `commands` added (audit F10). 3: every record that could drive a verdict,
+# with `titles` and `tags` (audit WP11). A pre-filter of another format is not
+# trusted: the hook runs the full guard instead.
+GUARD_PREFILTER_FORMAT = 3
+
+
+# Written when a projection rebuild raised, removed by the next one that works.
+# Machine-local (private/), so it can never make a committed file differ.
+PROJECTIONS_PENDING_RELPATH = Path("private") / "projections-pending"
 
 
 def try_reindex_projections(
-    memory_dir: Path, project_root: Path | None = None
+    memory_dir: Path, project_root: Path | None = None, *, lock_timeout: float | None = None
 ) -> tuple[bool, str | None]:
     """`reindex_projections` plus the reason it failed, for callers that report it.
 
     The bool-only form swallowed the exception, so `crumb reindex` could only say
     "Reindex failed" with no cause while projections silently stopped refreshing.
+
+    **Publication is a write, so it takes the store lock (audit F06).** Every
+    writer already holds it and re-enters for free. A caller that does not — a
+    `resume`, which only meant to show a packet — waits at most `lock_timeout`
+    (default: the CLI's wait) and otherwise publishes nothing, saying why. Four
+    files and an index replaced one by one are each atomic but not together, so
+    they must not interleave with another writer's.
     """
+    from breadcrumbs import lock as _lock
+
+    memory_dir = Path(memory_dir)
+    if not memory_dir.is_dir() or _lock.holds_lock(memory_dir):
+        return _publish_projections(memory_dir, project_root)
+    wait = _lock.CLI_TIMEOUT if lock_timeout is None else lock_timeout
+    try:
+        with _lock.store_lock(memory_dir, timeout=wait):
+            return _publish_projections(memory_dir, project_root)
+    except _lock.StoreLocked as exc:
+        return False, f"not published: {exc}"
+
+
+def _publish_projections(
+    memory_dir: Path, project_root: Path | None = None
+) -> tuple[bool, str | None]:
+    """Build and write every generated projection and the search index. Caller locks."""
+    with operation():  # one parse per record for the whole generation (WP15)
+        return _publish_projections_inner(memory_dir, project_root)
+
+
+def _publish_projections_inner(
+    memory_dir: Path, project_root: Path | None = None
+) -> tuple[bool, str | None]:
     memory_dir = Path(memory_dir)
     project_root = Path(project_root) if project_root is not None else memory_dir.parent
     try:
@@ -3735,41 +4182,111 @@ def try_reindex_projections(
 
         if blockfiles.uses_files(memory_dir):
             blockfiles.write_indexes(memory_dir, project_root)
-        packet = build_resume_packet(memory_dir, project_root, stale_days=STALE_AGE_DAYS)
-        gen = memory_dir / "generated"
-        gen.mkdir(parents=True, exist_ok=True)
-        write_text_atomic(gen / "resume-packet.md", render_packet_markdown(packet))
-        # Guard pre-filter index: a token/path index over traps and
-        # do-not-retry attempts, so the PreToolUse hook can spot trap-shaped
-        # *routine* commands with one small-file read instead of walking records.
-        write_text_atomic(
-            gen / GUARD_PREFILTER_FILENAME,
-            json.dumps(_build_guard_prefilter(memory_dir), indent=0, sort_keys=True) + "\n",
-        )
-        # "See also" for every live item (WM-25). Stamped like the packet, so
-        # drift detection covers it.
-        from breadcrumbs import related as _related
-
-        write_text_atomic(
-            gen / _related.RELATED_FILENAME, _related.render_related(memory_dir, project_root)
-        )
-        # Records that may argue with each other (WM-34). Same stamp, same drift
-        # detection; the packet renders the first few as warnings.
         from breadcrumbs import lifecycle as _lifecycle
-
-        write_text_atomic(
-            gen / _lifecycle.CONFLICTS_FILENAME,
-            _lifecycle.render_conflicts(memory_dir, project_root),
-        )
-        # The disposable search index (WM-23). Built last, so it is stamped with
-        # the same inputs as everything above; its own failures are swallowed
-        # inside, because a missing index only means the full scan.
+        from breadcrumbs import projections as _projections
+        from breadcrumbs import related as _related
         from breadcrumbs import searchindex as _searchindex
+        from breadcrumbs import snapshots as _snapshots
 
-        _searchindex.build_index(memory_dir, project_root)
+        gen = memory_dir / "generated"
+        path_policy.mkdirs(gen)
+
+        # One snapshot for the whole generation (audit F07). Every output is
+        # built and stamped with the digest taken before anything was read, and
+        # the digest is re-checked after (`snapshots.stable_build`), so no
+        # output claims inputs it did not see. The search index is staged, not
+        # published, until the snapshot is known to be stable.
+        staged: list[str] = []
+
+        def build(digest: str, *, with_index: bool = True):
+            unstable = digest == _snapshots.UNSTABLE
+            packet = _build_resume_packet_once(
+                memory_dir,
+                project_root,
+                stale_days=STALE_AGE_DAYS,
+                inputs_hash=digest,
+                lead_warnings=[_snapshots.UNSTABLE_WARNING] if unstable else None,
+            )
+            # The guard pre-filter: a token/path index over traps and
+            # do-not-retry attempts, so the PreToolUse hook can spot trap-shaped
+            # *routine* commands with one small-file read instead of walking
+            # records. Stamped like every other projection.
+            prefilter = {**_build_guard_prefilter(memory_dir), "inputs_hash": digest}
+            outputs = {
+                "resume-packet.md": render_packet_markdown(packet),
+                GUARD_PREFILTER_FILENAME: json.dumps(prefilter, indent=0, sort_keys=True) + "\n",
+                # "See also" for every live item (WM-25).
+                _related.RELATED_FILENAME: _related.render_related(
+                    memory_dir, project_root, inputs_hash=digest
+                ),
+                # Records that may argue with each other (WM-34).
+                _lifecycle.CONFLICTS_FILENAME: _lifecycle.render_conflicts(
+                    memory_dir, project_root, inputs_hash=digest
+                ),
+            }
+            index = None
+            if with_index:
+                # The disposable search index (WM-23); its own failures are
+                # swallowed inside, because a missing index only means the full scan.
+                index = _searchindex.build_index(
+                    memory_dir, project_root, inputs_hash=digest, publish=False
+                )
+                if index.get("staged"):
+                    staged.append(index["staged"])
+            # Taken inside the verified window: the second digest check would
+            # catch a change that landed before this line.
+            fingerprint = _searchindex._stat_fingerprint(memory_dir, project_root)
+            return outputs, index, fingerprint
+
+        published_index = None
+        try:
+            (outputs, index, fingerprint), digest = _snapshots.stable_build(
+                memory_dir, project_root, build
+            )
+            live_index = (index or {}).get("staged") if digest is not None else None
+            if digest is None:
+                # Never stamp a changing store as current: publish the views
+                # marked `unstable` (validate reports them stale), no index.
+                outputs, _index, fingerprint = build(_snapshots.UNSTABLE, with_index=False)
+            # The old manifest goes first. Until the new one is written, a
+            # half-replaced set has no manifest, so no reader trusts it.
+            with contextlib.suppress(FileNotFoundError):
+                _projections.manifest_path(memory_dir).unlink()
+            for name, text in outputs.items():
+                write_text_atomic(gen / name, text)
+            _searchindex.publish_index(memory_dir, live_index)
+            published_index = live_index
+        finally:
+            # Staged indexes from unstable attempts, or from a publication that
+            # failed, are unique temp files; none may be left behind.
+            for path in staged:
+                if path != published_index:
+                    _searchindex.discard_index(path)
+        # Last: the manifest that says these files are one generation.
+        from breadcrumbs import retrieval as _retrieval
+
+        _projections.write_manifest(
+            memory_dir,
+            digest or _snapshots.UNSTABLE,
+            stable=digest is not None,
+            files={name: text.encode("utf-8") for name, text in outputs.items()},
+            fingerprint=fingerprint,
+            corpus={"records": _retrieval.count_records(memory_dir)},
+        )
+        if digest is None:
+            return False, "the store kept changing during publication; projections stamped unstable"
+        with contextlib.suppress(OSError):
+            (memory_dir / PROJECTIONS_PENDING_RELPATH).unlink()
         return True, None
-    except Exception as exc:  # pragma: no cover - defensive; never block a write
-        return False, f"{type(exc).__name__}: {exc}"
+    except Exception as exc:  # never block a write; say so where doctor looks
+        reason = f"{type(exc).__name__}: {exc}"
+        # The canonical write stands; the derived views did not follow it. That
+        # is recoverable (`crumb reindex`) but must not be invisible (audit F20).
+        with contextlib.suppress(OSError):
+            marker = memory_dir / PROJECTIONS_PENDING_RELPATH
+            path_policy.mkdirs(marker.parent)
+            write_text_atomic(marker, f"{now_iso()} {reason}\n")
+        return False, reason
 
 
 def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> bool:
@@ -3824,8 +4341,10 @@ def _note_as_file(
             text,
             why=fields.get("why"),
             needs=fields.get("needs"),
+            notes=fields.get("notes"),
             status=qstatus,
             agent=agent,
+            meta_extra=fields.get("meta"),
         )
         if not written.get("ok"):
             return written
@@ -3859,7 +4378,9 @@ def _note_as_file(
             why=fields.get("why"),
             safe=fields.get("safe"),
             verify=fields.get("verify"),
+            notes=fields.get("notes"),
             agent=agent,
+            meta_extra=fields.get("meta"),
         )
         if not written.get("ok"):
             return written
@@ -3955,21 +4476,27 @@ def note(
                 "duplicates": dups,
                 "message": _lifecycle.duplicate_message(dups),
             }
-    result = _note_write(
-        memory_dir,
-        project_root,
-        kind,
-        text,
-        fields=fields,
-        tags=tags,
-        agent=agent,
-        supersedes=supersedes,
-    )
-    if result.get("ok") and supersedes:
-        results = _lifecycle.mark_superseded(memory_dir, [supersedes], result["id"], agent=agent)
-        result["supersedes"] = [supersedes]
-        if _lifecycle.demoted_ids(results):
-            result["demoted"] = _lifecycle.demoted_ids(results)
+    from breadcrumbs import mutations as _mutations
+
+    try:
+        with _mutations.transaction(memory_dir, f"note-{kind}"):
+            result = _note_write(
+                memory_dir,
+                project_root,
+                kind,
+                text,
+                fields=fields,
+                tags=tags,
+                agent=agent,
+                supersedes=supersedes,
+            )
+            if result.get("ok") and supersedes:
+                results = _lifecycle.retire_all(memory_dir, [supersedes], result["id"], agent=agent)
+                result["supersedes"] = [supersedes]
+                if _lifecycle.demoted_ids(results):
+                    result["demoted"] = _lifecycle.demoted_ids(results)
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "error": _mutations.describe(exc)}
     return result
 
 
@@ -4030,7 +4557,7 @@ def _note_write(
                 "error": f"question already recorded: {text!r} (reopen it with "
                 "`crumb mark-status <id> open`)",
             }
-        before = path.read_text(encoding="utf-8") if path.exists() else ""
+        before = path_policy.read_text(path) if path.exists() else ""
         _append_md_block(
             path,
             _question_block(
@@ -4074,7 +4601,7 @@ def _note_write(
                 f"`crumb mark-status trap_{slug} active`, or pass a distinct "
                 "slug (--slug / fields.slug) to record a separate trap",
             }
-        before = path.read_text(encoding="utf-8") if path.exists() else ""
+        before = path_policy.read_text(path) if path.exists() else ""
         _append_md_block(
             path,
             _trap_block(
@@ -4262,6 +4789,7 @@ def verify(
     dedupe: bool = False,
     supersedes: str | None = None,
     scope: str | None = None,
+    extra: dict | None = None,
 ) -> dict:
     """Record a verification result — a finding about reality.
 
@@ -4319,8 +4847,12 @@ def verify(
             }
 
     # WM-30: a settled verification (fixed / not_applicable) is the kind that
-    # silently goes stale, so it expires; an actionable one never does.
-    expires_at = _lifecycle.verification_expiry(memory_dir, status, now_iso())
+    # silently goes stale, so it expires; an actionable one never does. The
+    # expiry and the record's `created_at` (and its dated filename) are one
+    # instant: two clock reads straddling a second made a 90-day TTL 89 days.
+    instant = _now()
+    with clock(lambda: instant):
+        expires_at = _lifecycle.verification_expiry(memory_dir, status, now_iso())
 
     sections = {"Subject": subject, "Outcome": status}
     if method:
@@ -4328,42 +4860,52 @@ def verify(
     if note:
         sections["Notes"] = note
 
+    from breadcrumbs import mutations as _mutations
+
+    # The new result and the retirement of the one it replaces are one change
+    # (audit F20).
     try:
-        path, meta = write_record(
-            memory_dir,
-            project_root,
-            "verification",
-            f"{subject} — {status}",
-            sections,
-            tags=tags,
-            evidence=evidence,
-            confidence=confidence,
-            agent=agent,
-            scope=scope,
-            extra={
-                "subject": subject,
-                "outcome": status,
-                "method": method,
-                "expires_at": expires_at,
-                "supersedes": [supersedes] if supersedes else None,
-            },
-        )
-    except ValueError as exc:
-        return {"ok": False, "error": str(exc)}
+        with _mutations.transaction(memory_dir, "verify"), clock(lambda: instant):
+            try:
+                path, meta = write_record(
+                    memory_dir,
+                    project_root,
+                    "verification",
+                    f"{subject} — {status}",
+                    sections,
+                    tags=tags,
+                    evidence=evidence,
+                    confidence=confidence,
+                    agent=agent,
+                    scope=scope,
+                    extra={
+                        **(extra or {}),
+                        "subject": subject,
+                        "outcome": status,
+                        "method": method,
+                        "expires_at": expires_at,
+                        "supersedes": [supersedes] if supersedes else None,
+                    },
+                )
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
 
-    fails = _validate_new_file(memory_dir, path)
-    if fails:
-        path.unlink()  # revert
-        return {
-            "ok": False,
-            "error": "verification rejected by validate: " + "; ".join(f["message"] for f in fails),
-        }
+            fails = _validate_new_file(memory_dir, path)
+            if fails:
+                path.unlink()  # revert
+                return {
+                    "ok": False,
+                    "error": "verification rejected by validate: "
+                    + "; ".join(f["message"] for f in fails),
+                }
 
-    demoted: list[str] = []
-    if supersedes:
-        demoted = _lifecycle.demoted_ids(
-            _lifecycle.mark_superseded(memory_dir, [supersedes], meta["id"], agent=agent)
-        )
+            demoted: list[str] = []
+            if supersedes:
+                demoted = _lifecycle.demoted_ids(
+                    _lifecycle.retire_all(memory_dir, [supersedes], meta["id"], agent=agent)
+                )
+    except _mutations.MutationFailed as exc:
+        return {"ok": False, "error": _mutations.describe(exc)}
     reindex_projections(memory_dir, project_root)
     out = {
         "ok": True,
@@ -4387,6 +4929,12 @@ def verify(
     if hint:
         out["hint"] = hint
     return out
+
+
+def _checks_mod():
+    from breadcrumbs import checks
+
+    return checks
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
@@ -4418,7 +4966,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
         status=args.status,
         method=args.method,
         note=args.note,
-        evidence=_parse_evidence_pairs(args.evidence),
+        evidence=_parse_evidence_pairs(args.evidence)
+        + [_checks_mod().assertion_item(c) for c in (getattr(args, "assertions", None) or [])],
         tags=_split_tags(args.tags),
         confidence=args.confidence,
         agent=getattr(args, "agent", None),
@@ -4595,7 +5144,11 @@ def cmd_show(args: argparse.Namespace) -> int:
             },
         )
         return 0
-    print(item["text"].rstrip())
+    from breadcrumbs import safetext
+
+    # As data (audit F17): an escape sequence in a record never reaches the
+    # terminal as one. `--json` carries the text exactly (JSON-escaped).
+    print(safetext.block(item["text"].rstrip()))
     if related:
         print()
         print("See also: " + ", ".join(f"`{r}`" for r in related))
@@ -4632,14 +5185,18 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
         )
         return 2
 
-    result = set_record_status(
-        memory_dir,
-        args.record_id,
-        status,
-        args.reason or "",
-        agent=getattr(args, "agent", None),
-        superseded_by=args.superseded_by,
-    )
+    svc, ctx = _service_context(args, root)
+    try:
+        result = svc.mark_status(
+            ctx,
+            args.record_id,
+            status,
+            args.reason or "",
+            agent=getattr(args, "agent", None),
+            superseded_by=args.superseded_by,
+        )
+    except svc.ServiceError as exc:
+        result = {"ok": False, "error": exc.message}
     if not result.get("ok"):
         _emit_error(args, result.get("error", "status change failed"))
         return 1
@@ -5048,10 +5605,10 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
 
     title = args.title or _derive_session_title(sections, args.focus) or SESSION_TITLE_FALLBACK
     if coalesce is not None:
-        before = coalesce.path.read_text(encoding="utf-8")
+        before = path_policy.read_text(coalesce.path)
         path = _coalesce_into(coalesce, sections, root, args.agent, include_memory=include_memory)
         meta = dict(coalesce.meta)
-        fails = _validate_new_file(memory_dir, path)
+        fails = _validate_new_file(memory_dir, path, before)
         if fails:
             write_text_atomic(path, before)  # revert — never leave a broken snapshot
             _emit_error(
@@ -5060,16 +5617,20 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
             return 1
     else:
         extra = {"host_session": host_session} if host_session else None
-        path, meta = write_record(
-            memory_dir,
-            root,
-            "session",
-            title,
-            sections,
-            agent=args.agent,
-            extra=extra,
-            include_memory=include_memory,
-        )
+        try:
+            path, meta = write_record(
+                memory_dir,
+                root,
+                "session",
+                title,
+                sections,
+                agent=args.agent,
+                extra=extra,
+                include_memory=include_memory,
+            )
+        except ValueError as exc:
+            _emit_error(args, str(exc))
+            return 2
 
         fails = _validate_new_file(memory_dir, path)
         if fails:
@@ -5362,7 +5923,7 @@ def update_handoff(
     from breadcrumbs import handoffs as _handoffs
 
     path = Path(path) if path is not None else Path(memory_dir) / "handoff.md"
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path_policy.mkdirs(path.parent)
     existing = _handoffs.seed_text(memory_dir, path)
     preamble, ordered = split_md_ordered(existing)
     sec = split_md_sections(existing)
@@ -5401,7 +5962,7 @@ def update_handoff(
 
 def update_current(memory_dir: Path, focus: str, recently: str) -> None:
     path = Path(memory_dir) / "current.md"
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    existing = path_policy.read_text(path) if path.exists() else ""
     preamble, ordered = split_md_ordered(existing)
     sec = split_md_sections(existing)
     focus = "" if _is_placeholder(focus) else focus
@@ -5454,8 +6015,29 @@ def update_current(memory_dir: Path, focus: str, recently: str) -> None:
 # load_open_questions / parse_handoff_meta) are the reusable surface `guard`
 # ranks against — keep them deterministic and side-effect-free.
 
-# Hard token ceiling for the packet (§12: "3,000 to 5,000 tokens").
+# Hard token ceiling for the packet (§12: "3,000 to 5,000 tokens"). Since audit
+# WP08 it bounds the *final serialized view* — every heading, warning, protected
+# section and wrapper of the Markdown or JSON a consumer receives — in the unit
+# `approx_tokens` measures (see TOKEN_ESTIMATOR).
 TOKEN_BUDGET_MAX = 5000
+
+# The `--fast` view's own ceiling: a reorientation glance, not a briefing.
+FAST_TOKEN_BUDGET = 1500
+
+# The smallest budget each view can honour: its own framing (headings, the
+# source header, one omission note per section) with every field reduced to a
+# pointer. A smaller request is raised to this and the packet says so
+# (`budget.requested`); `crumb resume --budget` refuses it outright. Each is
+# at least 30% above the floor measured for a worst-case store (non-ASCII names,
+# task and fields, every section overfull, every field reduced to its pointer):
+# markdown 375, markdown-fast 282, json 528, json-fast 504.
+# tests/test_packet_delivery.py holds every view to its limit.
+PACKET_MIN_BUDGET = {
+    "markdown": 500,
+    "markdown-fast": 400,
+    "json": 700,
+    "json-fast": 700,
+}
 
 # Default aged-unresolved threshold in days (§12; configurable via --stale-days).
 STALE_AGE_DAYS = 21
@@ -5503,13 +6085,40 @@ TRIM_ORDER = [
     "known_traps",
     "failed_attempts",
     "active_decisions",
+    # What landed since the handoff makes the focus falsifiable; it goes after
+    # every record section, and before the warnings.
+    "commits_since_handoff",
     "warnings",
 ]
 
+# Free-text caps (audit F14). No single field may take the packet over: past its
+# cap a field becomes a marked excerpt with a pointer to the full text. The
+# canonical files are never changed.
+PROTECTED_EXCERPT_CHARS = 2000  # Current Focus, Next Action
+TASK_EXCERPT_CHARS = 500  # Requested Task
+ITEM_EXCERPT_CHARS = 300  # one entry of any list section, one warning
+NAME_EXCERPT_CHARS = 120  # project name, branch, handoff path
+# Still over budget once every list is empty: the protected fields shrink
+# through these caps, down to a bare pointer.
+_PROTECTED_SHRINK = (1000, 500, 250, 120, 0)
+
+# How `approx_tokens` counts, named wherever a budget is reported (audit F14).
+TOKEN_ESTIMATOR = "approx-tokens/2"
+TOKEN_ESTIMATOR_RULE = (
+    "ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer"
+)
+
 
 def approx_tokens(text: str) -> int:
-    """Cheap token estimate (chars/4, rounded up). Heuristic, not a real BPE count."""
-    return (len(text) + 3) // 4
+    """Cheap token estimate: ASCII chars/4 (rounded up), plus one per other char.
+
+    Plain chars/4 badly undercounts text outside ASCII: a CJK character or an
+    emoji is usually one or more tokens by itself, not a quarter of one. This
+    is still a heuristic, not any model's tokenizer; budgets reported in this
+    unit say so (TOKEN_ESTIMATOR). For ASCII text it equals the old chars/4.
+    """
+    ascii_chars = len(text.encode("ascii", "ignore"))
+    return (ascii_chars + 3) // 4 + (len(text) - ascii_chars)
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -5517,7 +6126,12 @@ def _parse_iso(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.strip())
+        text = value.strip()
+        # `fromisoformat` learned `Z` only in 3.11. The record contract accepts
+        # it, so every supported interpreter must read it the same way.
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
     except (ValueError, TypeError):
         return None
 
@@ -5550,8 +6164,9 @@ def record_expired(meta: dict) -> bool:
 # `scope` values (WM-52). `project` is every record's default; `branch` says the
 # record describes this branch's state — a verification of work in progress, an
 # observation a hook mined mid-session — and applies only while that branch is
-# checked out. The branch is the record's existing `branch` key.
-RECORD_SCOPES = ("project", "branch")
+# checked out. The branch is the record's existing `branch` key. Owned by the
+# record contract, which rejects any other value on write.
+RECORD_SCOPES = _validation.RECORD_SCOPES
 
 
 def branch_scoped_elsewhere(meta: dict, current_branch: str) -> bool:
@@ -6314,7 +6929,8 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
     clone, and folding one developer's personal excludes into it would recreate
     the very ping-pong this exists to stop.
 
-    `git check-ignore -v` prints `<source>:<line>:<pattern>\\t<path>`; run from
+    `git check-ignore -v -z` prints `<source>`, `<line>`, `<pattern>` and
+    `<path>` per match; run from
     the project root, the source of a worktree `.gitignore` is a relative path,
     while both machine-local sources are absolute. That is the whole filter.
     """
@@ -6326,32 +6942,33 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
             rels.append(d.resolve().relative_to(Path(project_root).resolve()).as_posix())
         except ValueError:  # pragma: no cover - store outside the project root
             return set()
+    # `-z`: NUL-separated bytes both ways. Text-mode stdin sent each path with
+    # "\r\n" on Windows, git read `ideas\r`, and nothing ever matched there
+    # (audit WP17); `-z` also leaves unusual names unquoted.
     try:
         r = subprocess.run(
-            ["git", "check-ignore", "-v", "--no-index", "--stdin"],
+            ["git", "check-ignore", "-v", "-z", "--no-index", "--stdin"],
             cwd=str(project_root),
-            input="\n".join(rels) + "\n",
+            input=b"".join(rel.encode("utf-8") + b"\0" for rel in rels),
             capture_output=True,
-            text=True,
             check=False,
         )
     except (FileNotFoundError, OSError):
         return set()
     if r.returncode not in (0, 1):  # 1 = nothing ignored; anything else is an error
         return set()
+    fields = r.stdout.decode("utf-8", errors="replace").split("\0")
     out: set[str] = set()
-    for line in r.stdout.splitlines():
-        m = re.match(r"^(?P<source>.*):(?P<line>\d+):(?P<pattern>.*)\t(?P<path>.+)$", line)
-        if not m:
-            continue
-        source, pattern = m.group("source"), m.group("pattern")
+    # Each match is four fields: source, line number, pattern, path.
+    for i in range(0, len(fields) - 3, 4):
+        source, _line, pattern, path = fields[i : i + 4]
         # A negation (`!fixtures/**/…`) is reported as the deciding pattern too,
         # and it means the opposite of ignored.
-        if pattern.startswith("!"):
+        if not path or pattern.startswith("!"):
             continue
         if not source or Path(source).is_absolute() or ".git/" in source.replace("\\", "/"):
             continue
-        out.add(Path(m.group("path").strip()).name)
+        out.add(Path(path.strip()).name)
     return out
 
 
@@ -6442,25 +7059,48 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     # The alias table changes what every stem means, so it is an input to every
     # projection built from stems (the guard prefilter most of all).
     paths.append(memory_dir / ALIASES_FILENAME)
-    for d in dirs:
-        dd = memory_dir / d
-        if dd.is_dir():
-            paths.extend(sorted(dd.glob("*.md")))
+    # Read once per directory under the path policy (audit F17). A link is
+    # hashed as a marker, never through; `validate` reports it.
+    refused = b"\0refused-link\0"
+    blobs: dict[Path, bytes] = {}
+    for p in paths:
+        if p.is_file() or p.is_symlink():
+            try:
+                blobs[p] = path_policy.read_bytes(p)
+            except path_policy.Refused:
+                blobs[p] = refused
+            except OSError:
+                continue
     # Branch handoffs (WM-50) are packet inputs like handoff.md.
-    handoffs_dir = memory_dir / "handoffs"
-    if handoffs_dir.is_dir():
-        paths.extend(sorted(handoffs_dir.glob("*.md")))
-    for p in sorted(set(paths)):
-        if p.is_file():
-            # Path *and* separators, not bare contents: record ids
-            # are filename-derived, so a rename changes every id in the packet
-            # while leaving a contents-only hash untouched — the freshness gate
-            # then certifies a projection full of ids that no longer exist.
-            rel = p.relative_to(memory_dir).as_posix()
-            h.update(rel.encode())
-            h.update(b"\0")
-            h.update(p.read_bytes())
-            h.update(b"\0")
+    for dd in [memory_dir / d for d in dirs] + [memory_dir / "handoffs"]:
+        if not dd.is_dir():
+            continue
+        try:
+            entries = path_policy.read_dir(dd, ".md")
+        except path_policy.Refused:
+            blobs[dd] = refused
+            continue
+        for p, data in entries:
+            if isinstance(data, path_policy.Refused):
+                blobs[p] = refused
+            elif not isinstance(data, OSError):
+                blobs[p] = data
+    # Ordered by store-relative parts, which is the old `sorted(Path)` order on
+    # POSIX; a Windows path sorts case-insensitively, a different order.
+    for p in sorted(blobs, key=lambda q: q.relative_to(memory_dir).parts):
+        # Path *and* separators, not bare contents: record ids
+        # are filename-derived, so a rename changes every id in the packet
+        # while leaving a contents-only hash untouched — the freshness gate
+        # then certifies a projection full of ids that no longer exist.
+        rel = p.relative_to(memory_dir).as_posix()
+        h.update(rel.encode())
+        h.update(b"\0")
+        # Line endings are not content: git's autocrlf checks a store out with
+        # CRLF on Windows, and Windows writers use CRLF, so the same records
+        # hashed differently per machine and every stamp read as stale there
+        # (audit WP17). An LF-only file hashes exactly as it did before.
+        h.update(blobs[p].replace(b"\r\n", b"\n"))
+        h.update(b"\0")
     return h.hexdigest()[:12]
 
 
@@ -6487,11 +7127,13 @@ def _packet_record_ids(packet: dict) -> list[str]:
     return [i for i in ids if i]
 
 
-def _record_packet_surfacings(memory_dir: Path, packet: dict, source: str = "resume") -> None:
+def _record_packet_surfacings(
+    memory_dir: Path, packet: dict, source: str = "resume", session_id: str | None = None
+) -> None:
     """Best-effort usage counts for a packet that was just shown to somebody."""
     from breadcrumbs import usage as _usage
 
-    _usage.record_surfaced(memory_dir, _packet_record_ids(packet), source)
+    _usage.record_surfaced(memory_dir, _packet_record_ids(packet), source, session_id=session_id)
 
 
 def _packet_inbox(memory_dir: Path) -> list[dict]:
@@ -6525,6 +7167,11 @@ def build_resume_packet(
     stale_days: int = STALE_AGE_DAYS,
     fast: bool = False,
     task: str | None = None,
+    view: str = "markdown",
+    budget: int | None = None,
+    render=None,
+    loaded_rules: dict[str, str] | None = None,
+    loaded_rules_from: tuple[str, ...] | None = None,
 ) -> dict:
     """Assemble the structured resume packet (the source of both MD and JSON output).
 
@@ -6532,7 +7179,64 @@ def build_resume_packet(
     is scoped to it: `requested_task` is echoed and `likely_files` is derived from
     the records that actually match the task instead of the store-global default
     that misdirects on off-domain work. With no task, behavior is unchanged.
+
+    Its `inputs_hash` stamp is the snapshot it was built from, verified
+    unchanged across the build, or `unstable` with a warning (audit F07; see
+    `breadcrumbs/snapshots.py`).
+
+    Audit WP08. `view` ("markdown" or "json") and `budget` say which serialized
+    view the packet is bounded for; `render` is that view's exact text, when the
+    caller wraps it (default: `render_packet_markdown` / `packet_json_text`).
+    The packet is portable unless `loaded_rules` (`promote.loaded_rules`) says
+    which standing rules its consumer has loaded, from `loaded_rules_from`;
+    only those promoted records are left out.
     """
+    from breadcrumbs import snapshots as _snapshots
+
+    options = {
+        "stale_days": stale_days,
+        "fast": fast,
+        "task": task,
+        "view": view,
+        "budget": budget,
+        "render": render,
+        "loaded_rules": loaded_rules,
+        "loaded_rules_from": loaded_rules_from,
+    }
+    packet, digest = _snapshots.stable_build(
+        memory_dir,
+        root,
+        lambda h: _build_resume_packet_once(memory_dir, root, inputs_hash=h, **options),
+    )
+    if digest is None:
+        # Built once more, stamped and warned as unstable before it is bounded,
+        # so the warning counts against the budget like any other line.
+        packet = _build_resume_packet_once(
+            memory_dir,
+            root,
+            inputs_hash=_snapshots.UNSTABLE,
+            lead_warnings=[_snapshots.UNSTABLE_WARNING],
+            **options,
+        )
+    return packet
+
+
+def _build_resume_packet_once(
+    memory_dir: Path,
+    root: Path,
+    *,
+    stale_days: int = STALE_AGE_DAYS,
+    fast: bool = False,
+    task: str | None = None,
+    inputs_hash: str,
+    view: str = "markdown",
+    budget: int | None = None,
+    render=None,
+    loaded_rules: dict[str, str] | None = None,
+    loaded_rules_from: tuple[str, ...] | None = None,
+    lead_warnings: list[str] | None = None,
+) -> dict:
+    """One build of the packet, stamped with the digest the caller verifies."""
     memory_dir = Path(memory_dir)
     manifest = load_manifest(memory_dir) or {}
 
@@ -6583,21 +7287,58 @@ def build_resume_packet(
     listed_verifications = [
         r for r in listed_verifications if not branch_scoped_elsewhere(r.meta, current_branch)
     ]
-    # WM-40: a promoted record is already in the model's context through the
-    # instruction file; listing it again spends the packet's budget twice. Only
-    # the list sections drop it — guard, search and the warnings still see it.
+    # WM-40 / audit F13: a promoted record is a standing rule in an instruction
+    # file. The packet is portable by default: it keeps the record, and carries
+    # the rule in force, because its reader may not load that file (another
+    # harness, a read-only clone) or the file may no longer hold the rule. Only a
+    # consumer that has verifiably loaded the rule (`loaded_rules`, read from
+    # the files it loads, at the moment it loads them) gets the record elided,
+    # so the same rule is not spent twice in its context. Guard, search and the
+    # warnings see every promoted record either way.
     from breadcrumbs import promote as _promote
 
-    promoted_counts = {
-        "active_decisions": sum(1 for r in listed_decisions if _promote.is_promoted_record(r)),
-        "failed_attempts": sum(1 for r in listed_attempts if _promote.is_promoted_record(r)),
-        "known_traps": sum(1 for t in traps if _promote.is_promoted_trap(t)),
-    }
+    rule_files = _promote.rules_in_files(root)
+    rules: dict[str, dict] = {}
+
+    def _standing(rid: str, target: str | None) -> dict:
+        if rid not in rules:
+            text, in_file = _promote.effective_rule(memory_dir, rid, target, rule_files)
+            rules[rid] = {"promoted_to": target, "rule": text, "rule_in_file": in_file}
+        return rules[rid]
+
+    def _elided(rid: str, promoted: bool) -> bool:
+        return promoted and loaded_rules is not None and rid in loaded_rules
+
+    promoted_counts = {"active_decisions": 0, "failed_attempts": 0, "known_traps": 0}
     listed_decisions_all = listed_decisions
     listed_attempts_all = listed_attempts
-    listed_decisions = [r for r in listed_decisions if not _promote.is_promoted_record(r)]
-    listed_attempts = [r for r in listed_attempts if not _promote.is_promoted_record(r)]
-    listed_traps = [t for t in traps if not _promote.is_promoted_trap(t)]
+    for key, recs in (("active_decisions", listed_decisions), ("failed_attempts", listed_attempts)):
+        for r in recs:
+            rid = r.meta.get("id", r.stem)
+            if _promote.is_promoted_record(r):
+                _standing(rid, str(r.meta["promoted_to"]))
+                promoted_counts[key] += _elided(rid, True)
+    for t in traps:
+        if _promote.is_promoted_trap(t):
+            _standing(t["id"], _promote.promoted_to(t))
+            promoted_counts["known_traps"] += _elided(t["id"], True)
+    listed_decisions = [
+        r
+        for r in listed_decisions
+        if not _elided(r.meta.get("id", r.stem), _promote.is_promoted_record(r))
+    ]
+    listed_attempts = [
+        r
+        for r in listed_attempts
+        if not _elided(r.meta.get("id", r.stem), _promote.is_promoted_record(r))
+    ]
+    listed_traps = [t for t in traps if not _elided(t["id"], _promote.is_promoted_trap(t))]
+
+    def _trap_line(t: dict) -> str:
+        rule = rules.get(t["id"])
+        if not rule or not rule["rule"]:
+            return t["heading"]
+        return f"{t['id']}: {_standing_label(rule)} {rule['rule']}"
 
     # Project snapshot (git is the live source; handoff metadata is advisory).
     dirty = git_dirty_files(root)
@@ -6617,12 +7358,14 @@ def build_resume_packet(
         "handoff": handoff_label,
     }
 
-    def _focus() -> str:
+    def _focus() -> tuple[str, str]:
         cf = current_sections.get("Current Focus", "")
         if not _is_placeholder(cf):
-            return cf.strip()
+            return cf.strip(), "current.md → Current Focus"
         hf = handoff_sections.get("Current Focus", "")
-        return "" if _is_placeholder(hf) else hf.strip()
+        return ("" if _is_placeholder(hf) else hf.strip()), f"{handoff_label} → Current Focus"
+
+    focus, focus_source = _focus()
 
     next_action = handoff_sections.get("Next Action", "")
     next_action = "" if _is_placeholder(next_action) else next_action.strip()
@@ -6630,7 +7373,7 @@ def build_resume_packet(
     packet: dict = {
         "source": {
             "commit": git_commit(root),
-            "inputs_hash": _inputs_hash(memory_dir, root),
+            "inputs_hash": inputs_hash,
             "generated_at": now_iso(),
         },
         "fast": bool(fast),
@@ -6645,13 +7388,14 @@ def build_resume_packet(
         "handoff_age_days": _age_days(handoff_meta.get("updated_at")),
         "handoff_commit_distance": git_commit_distance(root, handoff_meta.get("commit")),
         "project": project,
-        "current_focus": _focus(),
+        "current_focus": focus,
         "next_action": next_action,
         "active_decisions": [
             {
                 "id": r.meta.get("id", r.stem),
                 "title": r.meta.get("title", ""),
                 "rationale": _decision_rationale(r),
+                **rules.get(r.meta.get("id", r.stem), {}),
             }
             for r in listed_decisions
         ],
@@ -6660,11 +7404,23 @@ def build_resume_packet(
                 "id": r.meta.get("id", r.stem),
                 "title": r.meta.get("title", ""),
                 "do_not_retry": _attempt_do_not_retry(r),
+                **rules.get(r.meta.get("id", r.stem), {}),
             }
             for r in listed_attempts
         ],
-        "known_traps": [t["heading"] for t in listed_traps],
+        "known_traps": [_trap_line(t) for t in listed_traps],
+        # Standing rules this packet left out because its consumer has loaded
+        # them (only ever non-empty for such a consumer; see `rules`).
         "promoted": {k: v for k, v in promoted_counts.items() if v},
+        "rules": (
+            {"mode": "portable"}
+            if loaded_rules is None
+            else {
+                "mode": "elided-when-loaded",
+                "loaded_from": list(loaded_rules_from or ()),
+                "elided": sum(promoted_counts.values()),
+            }
+        ),
         "open_questions": [q["question"] for q in questions if q["status"] == "open"],
         # Committed jots only. A machine-local jot in this list would make the
         # committed packet differ between two checkouts of one store while
@@ -6686,7 +7442,9 @@ def build_resume_packet(
             root, handoff_meta.get("commit"), PACKET_COMMITS_SINCE_HANDOFF_MAX
         ),
         "warnings": (
-            [f"⚠ {u}" for u in unreadable]
+            list(lead_warnings or [])
+            + [f"⚠ {u}" for u in unreadable]
+            + record_contract_warnings(memory_dir)
             + compute_staleness(
                 root,
                 handoff_meta,
@@ -6719,6 +7477,14 @@ def build_resume_packet(
     )
     # WM-34: memory that argues with itself, worded as a question.
     packet["warnings"] += _lifecycle.conflict_warnings(memory_dir)
+    # Its own field, never trimmed: a store written by a newer crumb-kit is
+    # read, but its records may mean something this build does not know
+    # (audit WP21).
+    from breadcrumbs import compat as _compat
+
+    compat_note = _compat.warning(memory_dir)
+    if compat_note:
+        packet["compatibility"] = compat_note
 
     # Likely files: handoff section + file-type evidence refs (deduped, order-stable).
     files = _section_lines(handoff_sections, "Likely Relevant Files")
@@ -6746,7 +7512,18 @@ def build_resume_packet(
             packet["likely_files_note"] = note
         _order_by_relevance(packet, memory_dir, root, task, stale_days=stale_days)
 
-    _bound_packet(packet, fast=fast)
+    _bound_packet(
+        packet,
+        fast=fast,
+        view=view,
+        budget=budget,
+        render=render,
+        sources={
+            "current_focus": focus_source,
+            "next_action": f"{handoff_label} → Next Action",
+            "requested_task": "the task you passed",
+        },
+    )
     return packet
 
 
@@ -6874,13 +7651,172 @@ _FAST_DROP = (
 )
 
 
-def _bound_packet(packet: dict, *, fast: bool) -> None:
-    """Apply --fast pruning, per-section caps, then trim to the token budget."""
+def _excerpt(text: str, limit: int, source: str | None = None) -> tuple[str, bool]:
+    """`(text, excerpted)`: `text` cut to `limit` chars, visibly, with a pointer.
+
+    The mark says how much is shown and where the whole is, so a shortened
+    field can never be mistaken for the full one. At `limit` 0 only the pointer
+    is left.
+    """
+    text = text or ""
+    if len(text) <= limit:
+        return text, False
+    where = f"; full text: {source}" if source else ""
+    shown = text[:limit].rstrip() if limit > 0 else ""
+    if shown:
+        return f"{shown}… [excerpt: {len(shown)} of {len(text)} chars{where}]", True
+    return f"[omitted: {len(text)} chars{where}]", True
+
+
+def _entry_source(section: str, entry) -> str | None:
+    if isinstance(entry, dict) and entry.get("id"):
+        return f"crumb show {entry['id']}"
+    if section == "known_traps":
+        return f"crumb show {str(entry).split(':', 1)[0].strip()}"
+    if section == "open_questions":
+        return f"crumb show {question_item_id(str(entry))}"
+    return None
+
+
+# The text fields of each list section's entries (dict entries) that can grow
+# without limit; string entries are excerpted whole.
+_ENTRY_TEXT_FIELDS = {
+    "active_decisions": ("title", "rationale", "rule"),
+    "failed_attempts": ("title", "do_not_retry", "rule"),
+    "verifications": ("subject",),
+    "inbox": ("text",),
+}
+
+
+def _excerpt_entries(packet: dict) -> None:
+    """Cap every list entry and warning at ITEM_EXCERPT_CHARS (audit F14)."""
+    excerpted = packet.setdefault("excerpted", {})
+    for key in [*SECTION_CAPS, "commits_since_handoff"]:
+        entries = packet.get(key) or []
+        out = []
+        for entry in entries:
+            source = _entry_source(key, entry)
+            hit = False
+            if isinstance(entry, dict):
+                entry = dict(entry)
+                for field in _ENTRY_TEXT_FIELDS.get(key, ()):
+                    if isinstance(entry.get(field), str):
+                        entry[field], cut = _excerpt(entry[field], ITEM_EXCERPT_CHARS, source)
+                        hit = hit or cut
+            elif isinstance(entry, str):
+                entry, hit = _excerpt(entry, ITEM_EXCERPT_CHARS, source)
+            if hit:
+                excerpted[key] = excerpted.get(key, 0) + 1
+            out.append(entry)
+        if key in packet:
+            packet[key] = out
+
+
+# Project names shrink with the protected fields, but never below this.
+_NAME_FLOOR_CHARS = 40
+
+
+def _excerpt_protected(packet: dict, originals: dict, sources: dict, cap: int) -> None:
+    """Set the protected fields from their full text at `cap` chars each."""
+    excerpted = packet.setdefault("excerpted", {})
+    same = originals["current_focus"] and (
+        originals["current_focus"].strip() == originals["next_action"].strip()
+    )
+    proj = packet.get("project") or {}
+    name_cap = min(NAME_EXCERPT_CHARS, max(cap, _NAME_FLOOR_CHARS))
+    for field in ("name", "branch", "handoff"):
+        full = originals.get(f"project.{field}")
+        if isinstance(full, str):
+            proj[field], cut = _excerpt(full, name_cap)
+            if cut:
+                excerpted[f"project.{field}"] = {"shown_chars": name_cap, "total_chars": len(full)}
+    for field, limit in (
+        ("next_action", cap),
+        ("current_focus", cap),
+        ("requested_task", min(cap, TASK_EXCERPT_CHARS)),
+    ):
+        if originals.get(field) is None:
+            continue
+        if field == "current_focus" and same:
+            # Rendered as "same as Next Action": keep the two strings equal.
+            packet[field] = packet["next_action"]
+            continue
+        packet[field], cut = _excerpt(originals[field], limit, sources.get(field))
+        if cut:
+            excerpted[field] = {
+                "shown_chars": min(limit, len(originals[field])),
+                "total_chars": len(originals[field]),
+                "source": sources.get(field),
+            }
+        else:
+            excerpted.pop(field, None)
+
+
+def packet_json_text(packet: dict) -> str:
+    """The JSON view as the MCP tool and library callers serialize it."""
+    return json.dumps(packet, indent=2)
+
+
+def _bound_packet(
+    packet: dict,
+    *,
+    fast: bool,
+    view: str = "markdown",
+    budget: int | None = None,
+    render=None,
+    sources: dict | None = None,
+) -> None:
+    """Fit the packet into its view's budget, measured on the final text (audit F14).
+
+    In order: --fast pruning; per-entry and per-field excerpts; per-section caps;
+    list trimming (TRIM_ORDER); then the protected fields shrink to pointers.
+    Every step removes something, so it terminates. Everything left out or
+    shortened is disclosed (`omitted`, `excerpted`, the inline marks), and
+    `budget` names the view, the unit, the estimator, the limit and what the
+    view actually used.
+    """
+    if view not in ("markdown", "json"):
+        raise ValueError(f"unknown packet view: {view!r}")
+    view_name = f"{view}-fast" if fast else view
+    requested = budget
+    if requested is None:
+        requested = FAST_TOKEN_BUDGET if fast else TOKEN_BUDGET_MAX
+    limit = max(int(requested), PACKET_MIN_BUDGET[view_name])
+    if render is None:
+        render = render_packet_markdown if view == "markdown" else packet_json_text
+
+    def measure() -> int:
+        return approx_tokens(render(packet))
+
+    packet["budget"] = {
+        "view": view_name,
+        "unit": "approx_tokens",
+        "estimator": TOKEN_ESTIMATOR,
+        "estimator_rule": TOKEN_ESTIMATOR_RULE,
+        "limit": limit,
+        # Placeholders at least as wide as the final values, so the text
+        # measured below is never shorter than the text emitted.
+        "used": limit,
+        "within": False,
+    }
+    if limit != requested:
+        packet["budget"]["requested"] = int(requested)
+
     if fast:
         for key in _FAST_DROP:
             packet[key] = []
         packet["omitted"] = {}
         packet["omitted_reason"] = {}
+
+    sources = sources or {}
+    originals = {
+        "current_focus": packet.get("current_focus") or "",
+        "next_action": packet.get("next_action") or "",
+        "requested_task": packet.get("requested_task"),
+        **{f"project.{k}": v for k, v in (packet.get("project") or {}).items()},
+    }
+    _excerpt_entries(packet)
+    _excerpt_protected(packet, originals, sources, PROTECTED_EXCERPT_CHARS)
 
     # Per-section caps (record how many we hid, and why). Applied in --fast mode
     # too: warnings survive the fast prune and must stay bounded.
@@ -6892,11 +7828,9 @@ def _bound_packet(packet: dict, *, fast: bool) -> None:
             packet["omitted"][key] = packet["omitted"].get(key, 0) + (len(items) - cap)
             packet["omitted_reason"][key] = "the per-section cap"
             packet[key] = items[:cap]
-    if fast:
-        return
 
     # Budget trim, lowest-priority section first, until within the ceiling.
-    while approx_tokens(render_packet_markdown(packet)) > TOKEN_BUDGET_MAX:
+    while measure() > limit:
         for key in TRIM_ORDER:
             if packet.get(key):
                 packet[key].pop()
@@ -6910,10 +7844,31 @@ def _bound_packet(packet: dict, *, fast: bool) -> None:
                 )
                 break
         else:
-            break  # nothing left to trim; emit slightly over rather than loop forever
+            break
+
+    # Every list is empty and it is still over: the protected fields give way,
+    # as marked excerpts and finally bare pointers.
+    for cap in _PROTECTED_SHRINK:
+        if measure() <= limit:
+            break
+        _excerpt_protected(packet, originals, sources, cap)
+
+    if not packet["excerpted"]:
+        packet.pop("excerpted")
+    used = measure()
+    packet["budget"]["used"] = used
+    packet["budget"]["within"] = used <= limit
 
 
 # ---- rendering ------------------------------------------------------------- #
+
+
+def _standing_label(rule: dict) -> str:
+    """How a promoted entry introduces its rule, saying where the rule lives."""
+    target = rule.get("promoted_to") or "the instruction file"
+    if rule.get("rule_in_file"):
+        return f"standing rule in {target}:"
+    return f"standing rule (promoted to {target}, not found there):"
 
 
 def _omitted_note(packet: dict, key: str) -> list[str]:
@@ -6924,11 +7879,32 @@ def _omitted_note(packet: dict, key: str) -> list[str]:
         out.append(f"_(… {n} more omitted to stay within {reason})_")
     promoted = (packet.get("promoted") or {}).get(key, 0)
     if promoted:
+        loaded = ", ".join((packet.get("rules") or {}).get("loaded_from") or []) or (
+            "the instruction file"
+        )
         out.append(
-            f"_({promoted} promoted to the instruction file — see its "
-            '"Project rules promoted from memory")_'
+            f"_({promoted} standing rule(s) left out — already loaded from {loaded} "
+            'this session, under "Project rules promoted from memory")_'
         )
     return out
+
+
+def _view_header(packet: dict) -> str | None:
+    """The line that says which view this is, its budget and its rule mode."""
+    budget = packet.get("budget")
+    if not budget:
+        return None
+    rules = packet.get("rules") or {}
+    if rules.get("mode") == "elided-when-loaded":
+        mode = f"rules: elided when loaded from {', '.join(rules.get('loaded_from') or [])}"
+    else:
+        mode = "rules: portable"
+    asked = f", raised from {budget['requested']}" if "requested" in budget else ""
+    return (
+        f"<!-- view: {budget['view']} | budget: {budget['used']}/{budget['limit']} "
+        f"{budget['unit']}{asked} ({budget['estimator']}: {budget['estimator_rule']}) "
+        f"| {mode} -->"
+    )
 
 
 def render_packet_markdown(packet: dict) -> str:
@@ -6939,10 +7915,17 @@ def render_packet_markdown(packet: dict) -> str:
         f"<!-- {GENERATED_MARKER} — do not edit by hand. Rebuilt by `crumb resume`. -->",
         f"<!-- source_commit: {src['commit']} | inputs_hash: {src['inputs_hash']} "
         f"| generated_at: {src['generated_at']} -->",
+    ]
+    header = _view_header(packet)
+    if header:
+        out.append(header)
+    out += [
         "",
         "# Resume Packet",
         "",
     ]
+    if packet.get("compatibility"):
+        out += [f"> ⚠ {packet['compatibility']}", ""]
     if packet.get("requested_task"):
         out += [
             "## Requested Task",
@@ -6966,9 +7949,10 @@ def render_packet_markdown(packet: dict) -> str:
     ]
     # Say which order the reader is looking at. A relevance-ordered list read as
     # if it were newest-first would suggest a year-old decision is the latest.
+    # The task itself is printed once, under Requested Task, not again here.
     if packet.get("ordering") == "relevance" and packet.get("requested_task"):
         out.append(
-            f"_(sections ordered by relevance to: {packet['requested_task']}; "
+            f"_(sections ordered by relevance to the Requested Task above; "
             f"the {RECENCY_FLOOR} newest in each stay first)_"
         )
     out += [
@@ -7000,7 +7984,10 @@ def render_packet_markdown(packet: dict) -> str:
         out += ["## Active Decisions"]
         if packet["active_decisions"]:
             for d in packet["active_decisions"]:
-                out.append(f"- `{d['id']}` — {d['rationale']}")
+                if d.get("rule"):
+                    out.append(f"- `{d['id']}` — {_standing_label(d)} {d['rule']}")
+                else:
+                    out.append(f"- `{d['id']}` — {d['rationale']}")
         else:
             out.append("_(none active)_")
         out += _omitted_note(packet, "active_decisions")
@@ -7009,7 +7996,10 @@ def render_packet_markdown(packet: dict) -> str:
         out += ["## Failed Attempts To Avoid"]
         if packet["failed_attempts"]:
             for a in packet["failed_attempts"]:
-                out.append(f"- `{a['id']}` — do not retry: {a['do_not_retry']}")
+                if a.get("rule"):
+                    out.append(f"- `{a['id']}` — {_standing_label(a)} {a['rule']}")
+                else:
+                    out.append(f"- `{a['id']}` — do not retry: {a['do_not_retry']}")
         else:
             out.append("_(none recorded)_")
         out += _omitted_note(packet, "failed_attempts")
@@ -7089,7 +8079,24 @@ def render_packet_markdown(packet: dict) -> str:
     out += _omitted_note(packet, "warnings")
     out.append("")
 
-    return "\n".join(out).rstrip() + "\n"
+    # Record text rendered as data (audit F17): control and invisible
+    # characters escaped, framing tags neutralized. Clean text is unchanged.
+    from breadcrumbs import safetext
+
+    return safetext.block("\n".join(out).rstrip() + "\n")
+
+
+# The publication reason `resume --json` reports is clipped to this many ASCII
+# chars, so the JSON view can reserve its exact width in the budget.
+_PUBLICATION_REASON_CHARS = 200
+
+
+def _ascii_clip(text: str | None, limit: int) -> str | None:
+    """`text` as ASCII (non-ASCII escaped), at most `limit` chars, cut visibly."""
+    if text is None:
+        return None
+    flat = text.encode("ascii", "backslashreplace").decode("ascii")
+    return flat if len(flat) <= limit else flat[: limit - 3] + "..."
 
 
 def cmd_resume(args: argparse.Namespace) -> int:
@@ -7101,9 +8108,42 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
     task = getattr(args, "task", None)
-    packet = build_resume_packet(memory_dir, root, stale_days=stale_days, fast=args.fast, task=task)
+    budget = getattr(args, "budget", None)
+    view = "json" if args.json else "markdown"
+    view_name = f"{view}-fast" if args.fast else view
+    if budget is not None and budget < PACKET_MIN_BUDGET[view_name]:
+        _emit_error(
+            args,
+            f"--budget {budget} is below the smallest the {view_name} view can honour "
+            f"({PACKET_MIN_BUDGET[view_name]} {TOKEN_ESTIMATOR} tokens)",
+        )
+        return 2
+
+    # The JSON view is bounded on the exact document printed below (audit
+    # F14): the shared envelope, the publication report (at its widest) and
+    # `approx_tokens` all count against the budget.
+    def json_view(p: dict) -> str:
+        placeholder = {
+            "published": False,
+            "reason": "x" * _PUBLICATION_REASON_CHARS,
+            "unfinished_operations": 10**6,
+        }
+        wide = {**p, "approx_tokens": p["budget"]["limit"], "publication": placeholder}
+        return json.dumps(_json_document(args, wide), indent=2)
+
+    svc, ctx = _service_context(args, root)
+    packet = svc.resume_packet(
+        ctx,
+        stale_days=stale_days,
+        fast=args.fast,
+        task=task,
+        view=view,
+        budget=budget,
+        render=json_view if args.json else None,
+    )
     md = render_packet_markdown(packet)
-    packet["approx_tokens"] = approx_tokens(md)
+    # The size of the view actually emitted, in the budget's unit.
+    packet["approx_tokens"] = packet["budget"]["used"]
     # Telemetry goes here, not inside `build_resume_packet`: every write
     # reindexes, and every reindex builds a packet, so counting there would
     # measure how often the store was *written* rather than how often a record
@@ -7121,16 +8161,36 @@ def cmd_resume(args: argparse.Namespace) -> int:
     # while the fresh `inputs_hash` stamp made `audit` report zero packet drift,
     # hiding the staleness until the next mutation. It is also the only atomic
     # write path; the direct `write_text` here was the last torn-file risk.
+    #
+    # Publishing is a write and takes the store lock (audit F06), but a session
+    # must not fail to start because another one is capturing: resume waits
+    # only the hook's short time, then prints the packet it built anyway and
+    # reports that the files on disk were left to the writer that holds them.
+    publication = {"published": False, "reason": "a --fast or --task view is never published"}
     if not args.fast and not task:
-        ok, problem = try_reindex_projections(memory_dir, root)
+        from breadcrumbs import lock as _lock
+
+        ok, problem = try_reindex_projections(memory_dir, root, lock_timeout=_lock.HOOK_TIMEOUT)
+        publication = {"published": ok, "reason": _ascii_clip(problem, _PUBLICATION_REASON_CHARS)}
         if not ok:
             print(
                 f"warning: generated projections not refreshed: {problem}",
                 file=sys.stderr,
             )
 
+    from breadcrumbs import mutations as _mutations
+
+    unfinished = len(_mutations.pending_operations(memory_dir))
+    if unfinished:
+        print(
+            f"warning: {unfinished} unfinished operation(s) from a writer that stopped "
+            "midway — run `crumb recover`",
+            file=sys.stderr,
+        )
+    publication["unfinished_operations"] = unfinished
+
     if args.json:
-        _print_json(args, packet)
+        _print_json(args, {**packet, "publication": publication})
     else:
         print(md)
     return 0
@@ -7251,7 +8311,7 @@ GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
 # specificity that lets a match raise a verdict ({file, tag}) — being worth
 # showing and being worth escalating are different bars.
 GUARD_SURFACING_SIGNALS = frozenset(
-    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker"}
+    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker", "command"}
 )
 
 # recency / branch de-weighting (reuses the staleness signals above)
@@ -7614,14 +8674,22 @@ GUARD_STEM_ALIASES = {
 # (it changes what the guard prefilter contains).
 #
 # `_stem` is a pure function called from everywhere, with no store in scope, so
-# the table is module state that the store-scoped entry points *activate*
+# the table is state that the store-scoped entry points *activate*
 # (`_candidate_items`, the prefilter builder and reader). Activation is keyed on
 # the file's path, mtime and size, so it is one `stat` when nothing changed — and
-# a store with no file resets the table, so one store's aliases never leak into
-# another's results in a process that touches both.
+# a store with no file resets the table.
+#
+# The table is per thread (audit WP16): an MCP server answering two stores from
+# worker threads, or two service contexts, never sees the other's aliases.
+# `store_aliases(memory_dir)` scopes an activation and restores the previous
+# table afterwards.
 ALIASES_FILENAME = "aliases.txt"
-_STORE_ALIASES: dict[str, str] = {}
-_STORE_ALIASES_KEY: tuple | None = None
+_ALIASES = threading.local()
+
+
+def active_store_aliases() -> dict[str, str]:
+    """The alias table `_stem` applies in this thread (empty when none)."""
+    return getattr(_ALIASES, "table", None) or {}
 
 
 def parse_store_aliases(text: str) -> tuple[dict[str, str], list[dict]]:
@@ -7666,34 +8734,51 @@ def parse_store_aliases(text: str) -> tuple[dict[str, str], list[dict]]:
 
 
 def activate_store_aliases(memory_dir: Path) -> None:
-    """Make `_stem` use this store's aliases. Cheap when nothing changed."""
-    global _STORE_ALIASES, _STORE_ALIASES_KEY
+    """Make `_stem` use this store's aliases in this thread. Cheap when nothing changed."""
     path = Path(memory_dir) / ALIASES_FILENAME
     try:
         st = path.stat()
         key = (str(path), st.st_mtime_ns, st.st_size)
     except OSError:
         key = None
-    if key == _STORE_ALIASES_KEY:
+    if key == getattr(_ALIASES, "key", None) and hasattr(_ALIASES, "table"):
         return
-    _STORE_ALIASES_KEY = key
+    _ALIASES.key = key
     if key is None:
-        _STORE_ALIASES = {}
+        _ALIASES.table = {}
         return
     try:
-        _STORE_ALIASES = parse_store_aliases(read_text_lenient(path)[0])[0]
+        _ALIASES.table = parse_store_aliases(read_text_lenient(path)[0])[0]
     except Exception:  # pragma: no cover - aliases must never break a search
-        _STORE_ALIASES = {}
+        _ALIASES.table = {}
+
+
+@contextlib.contextmanager
+def store_aliases(memory_dir: Path):
+    """Activate `memory_dir`'s aliases for the block, then restore the previous table."""
+    saved = (getattr(_ALIASES, "table", None), getattr(_ALIASES, "key", None))
+    activate_store_aliases(memory_dir)
+    try:
+        yield
+    finally:
+        _ALIASES.table, _ALIASES.key = saved
 
 
 def _stem(token: str) -> str:
     """Fold a token to its stem, then apply the active store's aliases."""
     stem = _base_stem(token)
-    return _STORE_ALIASES.get(stem, stem) if _STORE_ALIASES else stem
+    table = getattr(_ALIASES, "table", None)
+    return table.get(stem, stem) if table else stem
 
 
+@functools.lru_cache(maxsize=65536)
 def _base_stem(token: str) -> str:
-    """Fold a token to its morphological stem (deterministic, idempotent)."""
+    """Fold a token to its morphological stem (deterministic, idempotent).
+
+    A pure function of the token and module constants, so memoizing it is
+    exact; a 1,000-record publication stemmed the same words 84,000 times
+    (audit WP15). Store aliases are applied after it, in `_stem`.
+    """
     word = token
     for _ in range(4):  # fixpoint: families collapse in <=4 strips
         if word.isdigit():
@@ -7967,6 +9052,87 @@ def _item_from_record(rec: Record) -> dict:
     }
 
 
+# ---- exact command hazards (audit F10) ------------------------------------- #
+#
+# A trap that names the very command about to run is the strongest evidence
+# memory can give, and it used to score like one shared word: `npm test`
+# against "npm test truncates the database" matched on the title alone (3 points)
+# and came out PROCEED, while the pre-filter's two-specific-token rule let the
+# hook skip the check entirely. The rule here is deliberately narrow:
+#
+# - a *head* is the command a trap names: the leading words of its summary, or
+#   a backticked span anywhere in it;
+# - the action names it when their longest common token prefix is at least two
+#   tokens and covers the whole action, or stops at a flag (`npm test --watch`);
+# - a match gets the `command` signal and, for a live trap, a READ_FIRST floor
+#   (advisory: the reader is told, the permission flow is untouched).
+#
+# One shared word ("make sure …" against `make`) is never enough, and a hazard's
+# documented remedy (`npm run test:unit`) does not share the prefix.
+
+_BACKTICK_SPAN_RE = re.compile(r"`([^`\n]{2,160})`")
+_COMMAND_MIN_TOKENS = 2
+
+
+def _command_tokens(text: str) -> list[str]:
+    """A command as lowercase tokens: `cd x &&` prefixes, pipes and quotes folded."""
+    from breadcrumbs import transcript as _transcript
+
+    flat = _transcript.normalize_command(str(text or ""))
+    return [t.strip("\"'`.,;:").lower() for t in flat.split() if t.strip("\"'`.,;:")]
+
+
+# A head is `[kind, *tokens]`. A `title` head is the leading words of a trap's
+# summary, so the action need only match its start; a `span` head is a whole
+# backticked command, so the action must contain all of it. The kind travels
+# with the head (into the pre-filter too), never inferred from its position.
+_HEAD_TITLE = "title"
+_HEAD_SPAN = "span"
+# A summary that opens with one of these describes running the command after it
+# ("Running npm test truncates …").
+_RUN_VERBS = ("run", "running", "runs", "calling", "executing")
+
+
+def _trap_command_heads(heading: str, body: str) -> list[list[str]]:
+    """The commands a trap names: its summary's head, then each backticked span."""
+    summary = heading
+    if heading.startswith("trap_") and ":" in heading:
+        summary = heading.split(":", 1)[1]
+    tokens = _command_tokens(summary)
+    heads = [[_HEAD_TITLE, *tokens]]
+    if tokens and tokens[0] in _RUN_VERBS:
+        heads.append([_HEAD_TITLE, *tokens[1:]])
+    # The hazard half only: a backticked command in the remedy ("use
+    # `npm run test:unit`") is what to run instead, never the hazard.
+    for span in _BACKTICK_SPAN_RE.findall(heading + "\n" + _trap_hazard_text(body or "")):
+        tokens = _command_tokens(span)
+        if len(tokens) >= _COMMAND_MIN_TOKENS:
+            heads.append([_HEAD_SPAN, *tokens])
+    return heads
+
+
+def _names_command(action_tokens: list[str], heads) -> bool:
+    """Does the action run a command one of these heads names? See above."""
+    if len(action_tokens) < _COMMAND_MIN_TOKENS:
+        return False
+    for head in heads or ():
+        if not head or head[0] not in (_HEAD_TITLE, _HEAD_SPAN):
+            continue
+        kind, tokens = head[0], head[1:]
+        n = 0
+        for a, b in zip(action_tokens, tokens):
+            if a != b:
+                break
+            n += 1
+        if n < _COMMAND_MIN_TOKENS:
+            continue
+        if kind == _HEAD_SPAN and n < len(tokens):
+            continue  # a backticked command must be named whole
+        if n == len(action_tokens) or action_tokens[n].startswith("-"):
+            return True
+    return False
+
+
 def _item_from_trap(trap: dict) -> dict:
     heading, body = trap["heading"], trap.get("content", trap.get("body", ""))
     text = heading + "\n" + body
@@ -7985,6 +9151,7 @@ def _item_from_trap(trap: dict) -> dict:
         ),
         "specific": _specific(text),
         "title_specific": _specific(heading),
+        "command_heads": _trap_command_heads(heading, body),
         "branch": None,
         "record": None,
         "do_not_retry": False,
@@ -8354,6 +9521,8 @@ def search(
     min_keyword: int = 1,
     noise_floor: int = 1,
     include_ideas: bool = False,
+    allow_full_scan: bool = True,
+    info: dict | None = None,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Deterministic search over the canonical records (§20.10).
 
@@ -8364,6 +9533,12 @@ def search(
     `include_ideas` selects the wider, lookup-only corpus — see `_candidate_items`.
     It defaults to False so a caller that forgets it gets guard's corpus, which is
     the safe side of the mistake.
+
+    `info`, when given, is filled with how the lookup ran (audit WP10): `mode`
+    (`indexed`, or `full_scan` with the index's `reason`), and `candidates`, the
+    records scored. With `allow_full_scan=False` a lookup the index cannot
+    serve returns nothing with `mode: "skipped"` instead of scanning, which is
+    a bounded caller's choice; plain search always completes.
     """
     # Aliases before the query is stemmed: both sides of every comparison must
     # fold through the same table (WM-24).
@@ -8372,19 +9547,28 @@ def search(
     q_specific = _specific(query)
     q_words = frozenset(_stem(t) for t in _tokenize(query) if t not in _FUNCTION_WORDS)
     q_files = _norm_files(_paths_from_text(query) | set(files or []))
+    q_command = _command_tokens(query)
     # The search index narrows the corpus to records that could possibly match
     # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
     # the full scan below is then exactly what it always was.
     from breadcrumbs import searchindex as _searchindex
 
+    explain: dict = {}
     narrowed = _searchindex.candidate_items(
-        memory_dir, root, q_specific, q_files, include_ideas=include_ideas
+        memory_dir, root, q_specific, q_files, include_ideas=include_ideas, explain=explain
     )
+    info = info if info is not None else {}
     if narrowed is not None:
         items, ubiquitous = narrowed
+        info.update(mode="indexed", reason=None)
     else:
+        info.update(mode="full_scan", reason=explain.get("reason"))
+        if not allow_full_scan:
+            info.update(mode="skipped", candidates=0)
+            return [], {}
         items = _candidate_items(memory_dir, include_ideas=include_ideas)
         ubiquitous = _ubiquitous_stems(items)
+    info["candidates"] = len(items)
     by_id = {it["id"]: it for it in items}
     cur_branch = git_branch(root)
     # One commit-distance index for the whole pass — see the class.
@@ -8406,6 +9590,8 @@ def search(
             ubiquitous=ubiquitous,
             q_words=q_words,
         )
+        if it.get("command_heads") and _names_command(q_command, it["command_heads"]):
+            m = _with_command_signal(m, it)
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.
             if filters and not q_specific and not q_files:
@@ -8446,6 +9632,36 @@ def search(
 
     matches.sort(key=lambda m: (-m["score"], m["id"]))
     return matches, by_id
+
+
+def _with_command_signal(m: dict | None, item: dict) -> dict:
+    """Mark a match (or make one) for a trap that names the action's command."""
+    if m is None:
+        m = {
+            "id": item["id"],
+            "kind": item["kind"],
+            "status": item["status"],
+            "lifecycle": item.get("lifecycle", item["status"]),
+            "expired": bool(item.get("expired")),
+            "promoted": bool(item.get("promoted")),
+            "title": item["title"],
+            "score": 0.0,
+            "raw_score": 0.0,
+            "suppressed": False,
+            "signals": [],
+            "matched_files": [],
+            "matched_tags": [],
+            "keyword_overlap": [],
+            "branch_mismatch": False,
+            "reason": "",
+        }
+    if "command" not in m["signals"]:
+        m["signals"].append("command")
+        m["reason"] = (m["reason"] + "; " if m["reason"] else "") + "names this exact command"
+    # As strong as READ_FIRST evidence: it ranks and surfaces like it.
+    m["score"] = max(float(m["score"]), float(GUARD_READ_FIRST_SCORE))
+    m["raw_score"] = max(float(m["raw_score"]), float(GUARD_READ_FIRST_SCORE))
+    return m
 
 
 def _passes_filters(item: dict, filters: dict) -> bool:
@@ -8524,6 +9740,9 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
             floor = "PAUSE"  # a failed attempt on these files/component
         elif m["kind"] == "decision" and specific:
             floor = "READ_FIRST"  # an active decision constrains this area
+        elif m["kind"] == "trap" and "command" in sig:
+            # The trap names the exact command (audit F10): advisory, READ_FIRST.
+            floor = "READ_FIRST"
         elif m["kind"] == "trap" and specific:
             # Keyword-only trap matches used to floor READ_FIRST here, bypassing
             # the score bands — in a store whose vocabulary overlaps the codebase
@@ -8605,14 +9824,17 @@ def _recommended_action(verdict: str, top: list[dict], by_id: dict, root: Path) 
         return (
             f"Read {ids} first — they constrain this area — then make a surgical change." + verify
         )
+    # PROCEED says only that memory holds no applicable warning (audit F10). It
+    # is not an authorization and not a safety check of the action itself.
     if top:
         return (
-            "Low-severity overlap only; likely unrelated. Proceed, but skim "
-            f"{ids} if unsure." + verify
+            "No applicable memory warning found (PROCEED is not an authorization or a "
+            f"safety check). Weak overlap only; skim {ids} if unsure." + verify
         )
     return (
-        "No conflicting memory found. Proceed. Capture a new decision or attempt "
-        "record if this turns into one worth remembering."
+        "No applicable memory warning found (PROCEED is not an authorization or a "
+        "safety check). Capture a new decision or attempt record if this turns into "
+        "one worth remembering."
     )
 
 
@@ -8710,7 +9932,7 @@ def guard(
         handoff_path=handoff_path,
     )[:GUARD_MAX_WARNINGS]
 
-    return {
+    result = {
         "verdict": verdict,
         "action": action,
         "action_class": primary,
@@ -8741,14 +9963,31 @@ def guard(
             "max_warnings": GUARD_MAX_WARNINGS,
         },
     }
+    # A store this build does not fully understand (audit WP21): the verdict
+    # is still given, with the warning that it may misread the records.
+    from breadcrumbs import compat as _compat
+
+    note = _compat.warning(memory_dir)
+    if note:
+        result["compatibility"] = note
+    return result
 
 
 # ---- rendering ------------------------------------------------------------- #
 
 
 def render_guard_human(result: dict) -> str:
+    """`_render_guard_human_raw`, with record text rendered as data (audit F17)."""
+    from breadcrumbs import safetext
+
+    return safetext.block(_render_guard_human_raw(result))
+
+
+def _render_guard_human_raw(result: dict) -> str:
     """Render the §11 example shape (human format)."""
     out = [result["verdict"], "", f"Proposed action: {result['action']}"]
+    if result.get("compatibility"):
+        out += ["", f"⚠ {result['compatibility']}"]
     cls = result["action_class"]
     if cls != "routine_edit":
         out.append(f"Action class: {cls}")
@@ -8786,6 +10025,13 @@ def render_guard_human(result: dict) -> str:
 
 
 def render_search_human(matches: list[dict], query: str) -> str:
+    """`_render_search_human_raw`, with record text rendered as data (audit F17)."""
+    from breadcrumbs import safetext
+
+    return safetext.block(_render_search_human_raw(matches, query))
+
+
+def _render_search_human_raw(matches: list[dict], query: str) -> str:
     if not matches:
         return f"search: no records matched {query!r}.\n"
     out = [f"search: {len(matches)} record(s) matched {query!r}", ""]
@@ -8825,18 +10071,22 @@ def cmd_search(args: argparse.Namespace) -> int:
     # works. Search can and should return zero — one generic shared token
     # ("version") is not a match.
     min_kw = max(1, min(GUARD_MIN_KEYWORD_OVERLAP, len(_specific(query)))) if query else 1
-    matches, _ = search(
-        memory_dir,
-        root,
+    lookup: dict = {}
+    svc, ctx = _service_context(args, root)
+    matches, _ = svc.search(
+        ctx,
         query,
         filters=filters,
         stale_days=stale_days,
         min_keyword=min_kw,
         include_ideas=True,
+        info=lookup,
     )
 
     if args.json:
-        payload = {"query": query, "filters": filters, "matches": matches}
+        # How the lookup ran (audit WP10): `indexed`, or `full_scan` and why the
+        # index could not serve it. `crumb search` is always complete.
+        payload = {"query": query, "filters": filters, "matches": matches, "lookup": lookup}
         if getattr(args, "explain", False):
             payload["query_stems"] = sorted(_specific(query))
         _print_json(args, payload)
@@ -8848,8 +10098,10 @@ def cmd_search(args: argparse.Namespace) -> int:
         # aliases.txt; this is how you find out you need one.
         stems = sorted(_specific(query))
         print(f"query stems: {', '.join(stems) if stems else '(none — every word was a stopword)'}")
-        if _STORE_ALIASES:
-            print(f"store aliases active: {len(_STORE_ALIASES)} ({ALIASES_FILENAME})")
+        if active_store_aliases():
+            print(f"store aliases active: {len(active_store_aliases())} ({ALIASES_FILENAME})")
+        why = f" ({lookup['reason']})" if lookup.get("reason") else ""
+        print(f"lookup: {lookup.get('mode')}{why}, {lookup.get('candidates', 0)} record(s) scored")
         print()
     print(render_search_human(matches, query or "(filters only)"))
     return 0
@@ -8884,7 +10136,8 @@ def cmd_guard(args: argparse.Namespace) -> int:
         return 2
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
-    result = guard(memory_dir, root, action, files=args.files, stale_days=stale_days)
+    svc, ctx = _service_context(args, root)
+    result = svc.guard(ctx, action, files=args.files, stale_days=stale_days)
     # Counted at the call sites rather than inside `guard()`: the hook path runs
     # the same function but shows a filtered subset, and counting in both places
     # would double-count every hook advisory.
@@ -8899,6 +10152,14 @@ def cmd_guard(args: argparse.Namespace) -> int:
     # and documented; 2 stays the usage-error code, and none of these can be
     # mistaken for a crash (1) or an unhandled error (255). The hook path
     # (`crumb hook guard`) is unaffected — hooks must exit 0.
+    #
+    # `--exit-zero` (audit WP11) is a transport convenience for a caller that
+    # cannot tolerate a non-zero status, such as a CI step under `set -e`
+    # (trap_guard-exit-code-in-ci). It is opt-in and changes only the status:
+    # the verdict is still printed and in `--json`. The mapping itself is
+    # unchanged.
+    if getattr(args, "exit_zero", False):
+        return 0
     return GUARD_VERDICT_EXIT_CODES[result["verdict"]]
 
 
@@ -9276,7 +10537,7 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
         )
 
     for p in _iter_committed_memory_files(memory_dir):
-        rel = str(p.relative_to(memory_dir))
+        rel = p.relative_to(memory_dir).as_posix()
         text, problem = read_text_lenient(p)
         if problem:
             record("unscannable-file", rel, 0, detail=problem)
@@ -9316,7 +10577,7 @@ def scan_instruction_like(memory_dir: Path) -> list[dict]:
         if p in seen or not p.is_file():
             continue
         seen.add(p)
-        rel = str(p.relative_to(memory_dir))
+        rel = p.relative_to(memory_dir).as_posix()
         # Lenient: scan_secrets already reports the unreadable
         # file; this pass just must not abort audit on it.
         text = _strip_html_comments(read_text_lenient(p)[0])
@@ -9336,7 +10597,9 @@ def _stamped_inputs_hash(text: str) -> str | None:
     # Anchor to the generated source-header comment (written by render_packet_*
     # as `<!-- source_commit: … | inputs_hash: <hash> | … -->`) rather than the
     # whole file, so a stray `inputs_hash:` in copied body text isn't picked up.
-    m = re.search(r"<!--\s*source_commit:.*?\binputs_hash:\s*([0-9a-f]+)", text)
+    # `unstable` (audit F07) is a stamp too: it never equals a digest, so a
+    # projection built while the store was changing always reads as stale.
+    m = re.search(r"<!--\s*source_commit:.*?\binputs_hash:\s*([0-9a-f]+|unstable)", text)
     return m.group(1) if m else None
 
 
@@ -9358,7 +10621,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
         if p.name == "README.md":
             continue
         try:
-            text = p.read_text(encoding="utf-8")
+            text = path_policy.read_text(p)
         except (OSError, UnicodeDecodeError):
             continue  # undecodable projection — validate 16.12 reports it
         stamped = _stamped_inputs_hash(text)
@@ -9366,20 +10629,29 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
             continue  # an un-stamped projection (older format) — nothing to compare
         if stamped != current:
             findings.append(
-                {"path": str(p.relative_to(memory_dir)), "stamped": stamped, "current": current}
+                {
+                    "path": p.relative_to(memory_dir).as_posix(),
+                    "stamped": stamped,
+                    "current": current,
+                }
             )
-    # JSON projections that carry a top-level `inputs_hash` (related.json).
-    # One without the key — guard-prefilter.json — is unstamped by design and
-    # skipped, exactly like an unstamped markdown projection above.
+    # JSON projections that carry a top-level `inputs_hash` (related.json,
+    # conflicts.json and, since audit WP07, guard-prefilter.json). One without
+    # the key — a pre-filter written by an older version — is skipped, exactly
+    # like an unstamped markdown projection above.
     for p in sorted(gen.glob("*.json")):
         try:
-            doc = json.loads(p.read_text(encoding="utf-8"))
+            doc = json.loads(path_policy.read_text(p))
         except (OSError, UnicodeDecodeError, ValueError):
             continue
         stamped = doc.get("inputs_hash") if isinstance(doc, dict) else None
         if isinstance(stamped, str) and stamped != current:
             findings.append(
-                {"path": str(p.relative_to(memory_dir)), "stamped": stamped, "current": current}
+                {
+                    "path": p.relative_to(memory_dir).as_posix(),
+                    "stamped": stamped,
+                    "current": current,
+                }
             )
     return findings
 
@@ -9419,7 +10691,7 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
     canon: list[tuple[str, str]] = []
     for rec in load_records(memory_dir):
         if not rec.error and rec.body.strip():
-            canon.append((str(rec.path.relative_to(memory_dir)), rec.body.strip()))
+            canon.append((rec.path.relative_to(memory_dir).as_posix(), rec.body.strip()))
     for name in ADAPTER_FILENAMES:
         ap = Path(root) / name
         if not ap.is_file():
@@ -9741,7 +11013,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
             _audit_finding(
                 "unreachable",
                 AUDIT_WARN,
-                str(rec.path.relative_to(memory_dir)),
+                rec.path.relative_to(memory_dir).as_posix(),
                 "no tags and no file references — guard can reach this record "
                 "only through generic keyword overlap; add tags or file/path "
                 "evidence so it can drive a verdict",
@@ -9972,9 +11244,10 @@ def register_mcp(root: Path) -> tuple[Path, bool]:
     """
     path = root / ".mcp.json"
     entry = mcp_server_entry()
+    path_policy.check_project_target(path, root)
 
     if path.exists():
-        text = path.read_text(encoding="utf-8")
+        text = path_policy.read_text(path)
         try:
             data = json.loads(text) if text.strip() else {}
         except json.JSONDecodeError:
@@ -10000,7 +11273,7 @@ def register_mcp(root: Path) -> tuple[Path, bool]:
         servers = data.setdefault("mcpServers", {})
         servers[MCP_SERVER_NAME] = mcp_server_entry()
 
-    merge_json_file(path, _mut)
+    merge_json_file(path, _mut, root=root)
     return path, True
 
 
@@ -10019,7 +11292,7 @@ def unregister_mcp(root: Path) -> bool:
             if not servers:
                 data.pop("mcpServers", None)
 
-    merge_json_file(path, _mut)
+    merge_json_file(path, _mut, root=root)
     return state["present"]
 
 
@@ -10086,7 +11359,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         if mcp_path.is_file():
             try:
                 registered = MCP_SERVER_NAME in (
-                    json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {}
+                    json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
                 )
             except (json.JSONDecodeError, OSError):
                 registered = False
@@ -10206,8 +11479,8 @@ def write_adapter_block(root: Path, name: str) -> bool:
     the file changed (an already-current block is a no-op).
     """
     path = root / name
-    path.parent.mkdir(parents=True, exist_ok=True)
-    return rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, adapter_block())
+    path_policy.mkdirs(path.parent)
+    return rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, adapter_block(), root=root)
 
 
 def remove_adapter_block(root: Path, name: str) -> bool:
@@ -10215,8 +11488,9 @@ def remove_adapter_block(root: Path, name: str) -> bool:
     path = root / name
     if not path.exists():
         return False
-    had = ADAPTER_BEGIN in path.read_text(encoding="utf-8")
-    rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, None)
+    path_policy.check_project_target(path, root)
+    had = ADAPTER_BEGIN in path_policy.read_text(path)
+    rewrite_managed_block(path, ADAPTER_BEGIN, ADAPTER_END, None, root=root)
     return had
 
 
@@ -10233,6 +11507,8 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         return 2
     from breadcrumbs import migrate as _migrate
 
+    if args.restore is not None:
+        return _cmd_migrate_restore(args, memory_dir)
     result = _migrate.migrate(memory_dir, root, dry_run=args.dry_run)
     if args.json:
         _print_json(args, {**result, "items": result.get("steps", [])}, ok=result["ok"])
@@ -10247,14 +11523,60 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         return 0
     verb = "would apply" if args.dry_run else "applied"
     print(f"migrate: {verb} {len(result['steps'])} step(s), {result['from']} -> {result['target']}")
+    if result.get("resumed"):
+        print(
+            f"  resuming a migration that stopped at schema_version {result['resumed'].get('at')}"
+        )
     for step in result["steps"]:
         print(f"  schema_version {step['version']}: {step['summary']}")
         for line in step["changed"]:
             print(f"      {line}")
     if args.dry_run:
+        if result.get("resumes"):
+            print(
+                f"\nA migration stopped part-way at schema_version {result['resumes'].get('at')}; "
+                f"this run resumes it against its backup ({result['resumes']['backup']})."
+            )
+        else:
+            print(
+                f"\nFirst, the committed store ({result.get('backup_files', 0)} files) is copied "
+                f"to {MEMORY_DIRNAME}/private/migrations/<timestamp>/ and verified."
+            )
+        legacy = result.get("legacy") or {}
+        if legacy:
+            print("Left as they are for you to fix (migration never rewrites them):")
+            for code, n in legacy.items():
+                print(f"  {code}: {n}")
         print("\nRe-run without --dry-run to apply.")
     else:
         print(f"\nBackup of the pre-migration store: {result['backup']}")
+        print("To undo: crumb migrate --restore")
+    return 0
+
+
+def _cmd_migrate_restore(args: argparse.Namespace, memory_dir: Path) -> int:
+    """`crumb migrate --restore [BACKUP]` (audit WP21)."""
+    from breadcrumbs import migrate as _migrate
+
+    backup = None if args.restore == "latest" else Path(args.restore)
+    result = _migrate.restore(memory_dir, backup, dry_run=args.dry_run)
+    if args.json:
+        _print_json(args, {**result, "items": result.get("changed", [])}, ok=result["ok"])
+        return 0 if result["ok"] else 1
+    if not result["ok"]:
+        _emit_error(args, result["error"] or "restore failed")
+        return 1
+    n = len(result["changed"])
+    if args.dry_run:
+        print(f"migrate --restore: would restore {result['backup']} ({n} file(s) differ)")
+        for rel in result["changed"]:
+            print(f"  {rel}")
+        print("\nRe-run without --dry-run to restore.")
+        return 0
+    print(
+        f"migrate --restore: restored {result['backup']} ({n} file(s) changed); "
+        f"the store is schema_version {result['schema_version']}."
+    )
     return 0
 
 
@@ -10294,8 +11616,14 @@ def cmd_usage(args: argparse.Namespace) -> int:
         return 0
 
     rows = _usage.usage_rows(memory_dir, by_sessions=args.sessions)
+    # What a count means and how complete the counts are (audit F16).
+    acc = _usage.accounting(memory_dir)
     if args.json:
-        _print_json(args, {"usage": rows, "items": rows}, summary={"records": len(rows)})
+        _print_json(
+            args,
+            {"usage": rows, "items": rows, "accounting": acc},
+            summary={"records": len(rows)},
+        )
         return 0
     if not rows:
         print(
@@ -10316,6 +11644,18 @@ def cmd_usage(args: argparse.Namespace) -> int:
         "\nCounts are local to this machine "
         f"({MEMORY_DIRNAME}/private/usage.json, never committed)."
     )
+    print(f"Accounting: {acc['model']}")
+    gaps = [
+        f"{acc[k]} {label}"
+        for k, label in (
+            ("pending_events", "event(s) not yet folded (already counted)"),
+            ("unreadable_events", "unreadable event(s) dropped"),
+            ("evicted_records", "record(s) evicted by the cap"),
+        )
+        if acc.get(k)
+    ]
+    if gaps:
+        print("Completeness: " + "; ".join(gaps) + ".")
     return 0
 
 
@@ -10441,7 +11781,12 @@ def cmd_inbox(args: argparse.Namespace) -> int:
             method=args.method,
             fields={"why": args.why, "area": args.area, "safe": args.safe},
             agent=args.agent,
+            scope=args.scope,
+            allow_duplicate=args.allow_duplicate,
+            supersedes=args.supersedes,
         )
+        if result.get("error") == "near-duplicate":
+            return _emit_duplicate(args, result)
         if not result.get("ok"):
             _emit_error(args, result.get("error", "promote failed"))
             return 1
@@ -10451,6 +11796,10 @@ def cmd_inbox(args: argparse.Namespace) -> int:
             print(f"Promoted {result['jot']} -> {result['promoted_to']} ({result['type']})")
             if result.get("path"):
                 print(f"  file: {result['path']}")
+            widened = " (widened from branch)" if result.get("scope_widened") else ""
+            print(f"  scope: {result['scope']}{widened} · confidence: {result['confidence']}")
+            if result.get("from_private"):
+                print("  note: the jot was private; its text is now in committed memory")
             if result.get("warning"):
                 print(f"  warning: {result['warning']}")
         return 0
@@ -10506,13 +11855,13 @@ def cmd_inbox(args: argparse.Namespace) -> int:
 HOOK_EVENTS = ("session", "guard", "capture", "prompt", "compact", "subagent")
 # breadcrumbs event -> (Claude Code event name, matcher or None)
 #
-# `Task|Agent` is on the guard matcher because a subagent launch is the best
-# description of an action a session produces and the guard never saw it. Both
-# names are listed because the subagent tool has carried both across harness
-# versions; matching a name that does not exist costs nothing.
+# The guard's matcher is every tool the Claude Code adapter guards
+# (`adapters.claude.GUARDED_TOOLS`): shells (Bash, PowerShell), edits (Edit,
+# Write, MultiEdit, NotebookEdit) and subagent launches (Task, Agent). A
+# reinstall brings an owned entry's matcher up to date.
 _HOOK_SPECS: dict[str, tuple[str, str | None]] = {
     "session": ("SessionStart", None),
-    "guard": ("PreToolUse", "Bash|Edit|Write|MultiEdit|Task|Agent"),
+    "guard": ("PreToolUse", _claude.GUARD_MATCHER),
     "capture": ("Stop", None),
     "prompt": ("UserPromptSubmit", None),
     "compact": ("PreCompact", None),
@@ -10747,7 +12096,7 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
                 entry = {"matcher": matcher, **entry}
             arr.append(entry)
 
-    merge_json_file(path, _mut)
+    merge_json_file(path, _mut, root=root)
     return path
 
 
@@ -10808,7 +12157,7 @@ def remove_claude_hooks(root: Path) -> dict:
         if not hooks:
             data.pop("hooks", None)
 
-    merge_json_file(path, _mut)
+    merge_json_file(path, _mut, root=root)
     return out
 
 
@@ -11127,7 +12476,7 @@ def doctor_report(root: Path) -> dict:
     if mcp_path.is_file():
         try:
             registered = MCP_SERVER_NAME in (
-                json.loads(mcp_path.read_text(encoding="utf-8")).get("mcpServers") or {}
+                json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
             )
         except (json.JSONDecodeError, OSError):
             registered = False
@@ -11216,8 +12565,112 @@ def doctor_report(root: Path) -> dict:
                 where,
             )
 
+    if store:
+        # Audit WP06: a writer killed midway leaves its journal; a projection
+        # rebuild that raised leaves a marker. Neither is visible anywhere else.
+        from breadcrumbs import mutations as _mutations
+
+        pending = _mutations.pending_operations(memory_dir)
+        add(
+            "operations",
+            not pending,
+            "no unfinished multi-record operations"
+            if not pending
+            else f"{len(pending)} unfinished operation(s) ({', '.join(o['id'] for o in pending[:3])}) "
+            "— run `crumb recover`",
+        )
+        marker = memory_dir / PROJECTIONS_PENDING_RELPATH
+        problem = None
+        if marker.is_file():
+            problem = read_text_lenient(marker)[0].strip() or "unknown failure"
+        add(
+            "projections",
+            problem is None,
+            "the last projection rebuild succeeded"
+            if problem is None
+            else f"the last projection rebuild failed ({problem}) — run `crumb reindex`",
+        )
+        # Audit WP09: what the transcript miner has not written yet, and what
+        # it gave up on, so a backlog or a drop is never invisible.
+        from breadcrumbs import hooks_common as _hooks_common
+
+        miners = _hooks_common.miner_states(memory_dir)
+        if miners:
+            waiting = sum(len(m.get("backlog") or []) for m in miners)
+            unread = sum(int(m.get("unread_bytes") or 0) for m in miners)
+            stats = [m.get("stats") or {} for m in miners]
+            dropped = sum(int(s.get("dropped_backlog") or 0) for s in stats)
+            capped = sum(int(s.get("policy_capped") or 0) for s in stats)
+            add(
+                "miner",
+                dropped == 0,
+                f"{len(miners)} session(s): {waiting} candidate(s) waiting to be written, "
+                f"{unread} transcript byte(s) not yet read, {capped} held back by the rule "
+                f"caps, {dropped} dropped",
+            )
+
+    if store:
+        # Audit WP20: the states an operator must recover from, each with its fix.
+        from breadcrumbs import compat as _compat
+        from breadcrumbs import related as _related
+
+        compatibility = _compat.check(memory_dir)
+        add(
+            "compatibility",
+            compatibility.writable,
+            f"schema_version {compatibility.store_version or '(new)'}; this build writes it"
+            if compatibility.writable
+            else f"{compatibility.message} (reads still work; writes are refused)",
+        )
+        failures = [f for f in run_validate(memory_dir) if f.get("status") == "fail"]
+        add(
+            "records",
+            not failures,
+            "every record passes `crumb validate`"
+            if not failures
+            else f"{len(failures)} validation failure(s) (first: {failures[0]['message']}) "
+            "— run `crumb validate`; an older store layout is fixed by `crumb migrate`",
+        )
+        degraded = _related.load_degraded(memory_dir)
+        if degraded:
+            add(
+                "related_map",
+                False,
+                f"generated/related.json is incomplete ({degraded.get('reason', 'pair budget')}); "
+                "`crumb audit` names it",
+            )
+    if hook_cmds:
+        outdated = _outdated_guard_matchers(root)
+        add(
+            "hook_matcher",
+            not outdated,
+            f"the guard hook covers {_claude.GUARD_MATCHER}"
+            if not outdated
+            else f"the installed guard hook matches {outdated[0]}, not {_claude.GUARD_MATCHER} "
+            "(PowerShell and notebook edits go unguarded) — run `crumb init --with-hooks`",
+        )
+
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))
     return {"checks": checks, "integrated": integrated, "store": store}
+
+
+def _outdated_guard_matchers(root: Path) -> list[str]:
+    """Matchers of installed breadcrumbs guard entries that differ from the
+    adapter's current `GUARD_MATCHER` (audit WP17/WP20)."""
+    path = root / ".claude" / "settings.json"
+    try:
+        data = json.loads(path_policy.read_text(path))
+    except (json.JSONDecodeError, OSError, path_policy.Refused):
+        return []
+    out = []
+    for group in (data.get("hooks") or {}).get("PreToolUse") or []:
+        if not isinstance(group, dict):
+            continue
+        if any(_hook_entry_event(h) == "guard" for h in _group_entries(group)):
+            matcher = str(group.get("matcher") or "")
+            if matcher != _claude.GUARD_MATCHER:
+                out.append(matcher or "(no matcher)")
+    return out
 
 
 def _installed_hook_commands(root: Path) -> list[str]:
@@ -11231,7 +12684,7 @@ def _installed_hook_commands(root: Path) -> list[str]:
     if not path.is_file():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path_policy.read_text(path))
     except (json.JSONDecodeError, OSError):
         return []
     cmds: list[str] = []
@@ -11250,7 +12703,7 @@ def _packet_is_stale(memory_dir: Path, root: Path) -> bool:
     try:
         packet = build_resume_packet(memory_dir, root)
         current = render_packet_markdown(packet)
-        on_disk = (memory_dir / "generated" / "resume-packet.md").read_text(encoding="utf-8")
+        on_disk = path_policy.read_text(memory_dir / "generated" / "resume-packet.md")
         return _strip_packet_volatile(current) != _strip_packet_volatile(on_disk)
     except Exception:  # pragma: no cover - defensive
         return False
@@ -11369,84 +12822,64 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     One small generated-file read — no record walk — keeping the pre-filter's
     "cheap on the common path" promise while closing the near-miss class where a
     routine-looking command (`pytest -n auto`) matches a recorded trap that the
-    keyword classifier and the destructive-op regex are both blind to. Absent or
-    unreadable index ⇒ not risky (the index is rebuilt on every reindex).
+    keyword classifier and the destructive-op regex are both blind to.
+
+    The index is used only when the current generation vouches for it
+    (`projections.verified`). A missing, corrupt, replaced or out-of-date one —
+    or one written before the manifest existed — is not evidence that the store
+    holds no hazard (audit F11). Such an index counts as "possibly risky", so the
+    caller runs the full guard against the records and a real trap is still
+    found. Only a verified index can keep the hook quiet.
     """
+    from breadcrumbs import hooklog as _hooklog
+    from breadcrumbs import projections as _projections
+
     activate_store_aliases(memory_dir)
-    p = memory_dir / "generated" / GUARD_PREFILTER_FILENAME
+    raw = _projections.verified(memory_dir, Path(memory_dir).parent, GUARD_PREFILTER_FILENAME)
     try:
-        idx = json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    if not isinstance(idx, dict):
-        return False
-    # Two specific shared tokens, mirroring the guard anti-noise floor — a single
-    # generic word never escalates (§19b.8). Index tokens are re-stemmed at read
-    # time: a prefilter written by an older version holds raw tokens, and _stem
-    # is idempotent, so fresh and stale files compare identically.
+        idx = json.loads(raw.decode("utf-8")) if raw is not None else None
+    except ValueError:
+        idx = None
+    if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
+        _hooklog.note(prefilter="unverified")
+        return True
+    # Each test mirrors one way `_score_item` lets a match through (see
+    # `_build_guard_prefilter`), so this can only admit more than full guard
+    # would surface, never less (audit WP11). Stems are re-stemmed at read time
+    # under the store's aliases: `_stem` is idempotent.
+    if _names_command(_command_tokens(action), idx.get("commands") or ()):
+        return True
+    q_specific = _specific(action)
     idx_tokens = {_stem(str(t)) for t in (idx.get("tokens") or ())}
-    if len(_specific(action) & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
+    if len(q_specific & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
+        return True
+    if len(q_specific) == 1 and q_specific <= {_stem(str(t)) for t in (idx.get("titles") or ())}:
+        return True
+    if q_specific & {_stem(str(t)) for t in (idx.get("tags") or ())}:
         return True
     action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
     index_paths = _norm_files(idx.get("paths") or ())
     return bool(action_paths & index_paths)
 
 
-# How much of an edit's new content feeds the guard action string. Tokens are
-# what matter, not prose, so a modest window is enough to let a content-level
-# trap match ("flexTimeInterval", a banned API) while keeping the scoring pass
-# cheap and the risk-regex scan bounded.
-_HOOK_CONTENT_SNIPPET_CHARS = 400
-
-# The tools that launch a subagent. Both names, because the tool has carried
-# both across harness versions and a name that never fires costs nothing.
-SUBAGENT_TOOLS = ("Task", "Agent")
-
-# How much of a subagent's launch prompt feeds the guard. Longer than an edit
-# snippet because the prompt *is* the description of the work, not a sample of
-# it; bounded because a prompt can be an essay.
-_HOOK_SUBAGENT_PROMPT_CHARS = 1200
+# How much of an edit's new content, and of a subagent's launch prompt, feeds
+# the guard; and which tools launch a subagent. The Claude Code adapter owns
+# these (audit WP17); the names stay here as the compatibility surface.
+_HOOK_CONTENT_SNIPPET_CHARS = _claude.CONTENT_SNIPPET_CHARS
+SUBAGENT_TOOLS = _claude.SUBAGENT_TOOLS
+_HOOK_SUBAGENT_PROMPT_CHARS = _claude.SUBAGENT_PROMPT_CHARS
 
 
 def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] | None]:
     """Derive a guard action string + affected files from a PreToolUse payload.
 
-    For file edits the action carries a bounded snippet of the *new* content
-    (P0-3): with only `edit <path>` every edit of one file produced byte-identical
-    guard output, and the store could never match on what the edit actually says —
-    the exact signal a content-shaped trap needs.
+    Normalized by the Claude Code adapter (`breadcrumbs.adapters.claude`),
+    which declares every tool it guards. For file edits the action carries a
+    bounded snippet of the *new* content (P0-3). An unknown tool yields no
+    action.
     """
-    if tool == "Bash":
-        return (tool_input.get("command") or "").strip(), None
-    if tool in ("Edit", "Write", "MultiEdit"):
-        fp = tool_input.get("file_path") or tool_input.get("path") or ""
-        if tool == "Write":
-            new = tool_input.get("content") or ""
-        elif tool == "MultiEdit":
-            edits = tool_input.get("edits")
-            parts = []
-            if isinstance(edits, list):
-                for e in edits:
-                    if isinstance(e, dict) and e.get("new_string"):
-                        parts.append(str(e["new_string"]))
-            new = "\n".join(parts)
-        else:
-            new = tool_input.get("new_string") or ""
-        snippet = " ".join(str(new).split())[:_HOOK_CONTENT_SNIPPET_CHARS]
-        action = f"edit {fp}: {snippet}" if snippet else f"edit {fp}"
-        return action.strip(), [fp] if fp else None
-    if tool in SUBAGENT_TOOLS:
-        # A subagent starts cold: it does not read the resume packet and has
-        # none of this session's context. Its launch prompt is the best
-        # description of a proposed action the session produces, and until now
-        # the guard never saw it. Paths named in the prompt are mined the same
-        # way a record's prose is, so "rewrite src/auth/session.py" reaches a
-        # trap about that file.
-        prompt = tool_input.get("prompt") or tool_input.get("description") or ""
-        action = " ".join(str(prompt).split())[:_HOOK_SUBAGENT_PROMPT_CHARS]
-        files = sorted(_paths_from_text(action))
-        return action.strip(), files or None
-    return "", None
+    action = _claude.normalize_tool(tool, tool_input, paths_from_text=_paths_from_text)
+    return action.text, action.files or None
 
 
 # Advisory-dedupe state for the PreToolUse guard, keyed by host session. Lives
@@ -11530,12 +12963,25 @@ def _hook_surfacing_matches(result: dict) -> list[dict]:
     ]
 
 
+# Matches the guard hook's reason names. Only these are emitted, so only these
+# are counted as surfaced (audit F16).
+_HOOK_GUARD_REASON_MATCHES = 3
+
+
 def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
+    from breadcrumbs import safetext
+
     lines = [f"breadcrumbs guard: {result['verdict']} for this action."]
-    for m in (result.get("matches", []) if matches is None else matches)[:3]:
-        title = m.get("title") or m.get("id") or "record"
-        why = m.get("reason") or ""
+    for m in (result.get("matches", []) if matches is None else matches)[
+        :_HOOK_GUARD_REASON_MATCHES
+    ]:
+        # One line per record, as data: a title cannot start a line of its
+        # own or close the envelope the host wraps this in (audit F17).
+        title = safetext.inline(m.get("title") or m.get("id") or "record", 200)
+        why = safetext.inline(m.get("reason") or "", 200)
         lines.append(f"- {title}" + (f" ({why})" if why else ""))
+    if result.get("compatibility"):
+        lines.append(f"⚠ {result['compatibility']}")
     return "\n".join(lines)
 
 
@@ -11560,7 +13006,7 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
     Empty when there is no marker for this session, which is the normal case:
     every other `source` value means no compaction happened.
     """
-    from breadcrumbs import hooks_common
+    from breadcrumbs import hooks_common, safetext
 
     marker = hooks_common.compaction_marker(memory_dir, session_id)
     if not marker:
@@ -11571,10 +13017,29 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
         "",
     ]
     state = hooks_common.prompt_state(memory_dir, session_id)
+    # The latest substantive task, whether or not memory matched it (audit
+    # F15): acknowledgements and slash commands do not replace it. What memory
+    # matched is listed only when it was matched for *that* task; an earlier
+    # task's hits are not passed off as this one's.
+    task = state.get("task") if isinstance(state.get("task"), dict) else {}
     if state.get("last_prompt"):
-        lines.append(f"Last prompt before compaction: {state['last_prompt']}")
+        lines.append(
+            "Latest task before compaction (the user's words): "
+            + safetext.inline(state["last_prompt"], hooks_common.SESSION_PROMPT_CHARS + 40)
+        )
+    elif task.get("withheld"):
+        why = (
+            "retain_prompt_text is false"
+            if task["withheld"] == "policy"
+            else "it contained a credential"
+        )
+        lines.append(f"Latest task before compaction: not retained ({why}).")
     if state.get("matched"):
-        lines.append("Records surfaced for it: " + ", ".join(f"`{i}`" for i in state["matched"]))
+        lines.append(
+            "Records memory matched for it: " + ", ".join(f"`{i}`" for i in state["matched"])
+        )
+    elif task and state.get("last_prompt"):
+        lines.append("Memory matched nothing for it.")
     # Everything this session has waiting, not only what the last firing mined.
     # A compaction that found nothing new — because the Stop hook already mined
     # the same range — would otherwise report "nothing salvaged" while the
@@ -11588,7 +13053,10 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
             "Mined from this session so far (unconfirmed — promote with "
             "`crumb inbox promote <id> <type>`, or drop with `crumb inbox drop <id>`):",
         ]
-        lines += [f"- `{r['id']}` [{r.get('kind', 'note')}] {r['text']}" for r in shown]
+        lines += [
+            f"- `{r['id']}` [{r.get('kind', 'note')}] {safetext.inline(r['text'], 300)}"
+            for r in shown
+        ]
         if len(rows) > len(shown):
             lines.append(f"- … and {len(rows) - len(shown)} more in `crumb inbox`")
     else:
@@ -11615,11 +13083,25 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
                 from breadcrumbs import hooks_common
 
                 session_id = hooks_common.session_id_of(payload)
-                # The last prompt before the compaction is the best statement of
-                # what this session is doing, so the rebuilt packet is ordered by
-                # relevance to it (WM-20) rather than by recency.
+                # The latest substantive task before the compaction is the best
+                # statement of what this session is doing, so the rebuilt packet
+                # is ordered by relevance to it (WM-20) rather than by recency.
+                # It is the latest task whether or not memory matched it (audit
+                # F15), and absent when its text was not retained.
                 task = hooks_common.prompt_state(memory_dir, session_id).get("last_prompt")
-            packet = build_resume_packet(memory_dir, root, task=task or None)
+            # This hook is Claude Code's, which loads the project's CLAUDE.md
+            # itself. A promoted record whose rule is in that file right now is
+            # already in the session's context, so only those are left out
+            # (audit F13); everything else stays, rule text included.
+            from breadcrumbs import promote as _promote
+
+            packet = build_resume_packet(
+                memory_dir,
+                root,
+                task=task or None,
+                loaded_rules=_promote.loaded_rules(root, ("CLAUDE.md",)),
+                loaded_rules_from=("CLAUDE.md",),
+            )
             context = render_packet_markdown(packet)
             if compacted:
                 context = _compaction_preamble(memory_dir, session_id) + context
@@ -11630,8 +13112,12 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
                 }
             }
             # The packet is about to be injected into a session: this is the
-            # single most load-bearing surfacing the tool performs.
-            _record_packet_surfacings(memory_dir, packet)
+            # single most load-bearing surfacing the tool performs. The ids are
+            # read off the packet after its budget trimming, and the promoted
+            # records left out for CLAUDE.md are not in it.
+            _record_packet_surfacings(
+                memory_dir, packet, session_id=str(payload.get("session_id") or "") or None
+            )
         except Exception:  # pragma: no cover - never fail a session start on memory
             out = {}
     print(json.dumps(out))
@@ -11668,7 +13154,9 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         _hooklog.note(skipped="prefilter")
         print(json.dumps({}))
         return 0
-    result = guard(memory_dir, root, action, files=files)
+    from breadcrumbs import service as _service
+
+    result = _service.guard(_service.Context(root, memory_dir, "hook"), action, files=files)
     verdict = result["verdict"]
     # Launching a subagent is not itself irreversible — the subagent's own tool
     # calls hit this same guard, where the blast radius actually is. So a launch
@@ -11692,12 +13180,22 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     # deliberate behaviour of this tool, not something to silence from here.
     shown = _hook_surfacing_matches(result) or result.get("matches", [])
     reason = _hook_guard_reason(result, shown)
-    # Only what the agent is shown, and keyed by host session so WM-42 can ask
-    # "how many *sessions* did this record reach" rather than "how many times
-    # did one session fire the hook".
-    _record_guard_surfacings(
-        memory_dir, shown, "hook-guard", session_id=str(payload.get("session_id") or "") or None
-    )
+    # Only what the reason names is emitted (audit F16): it lists the first
+    # `_HOOK_GUARD_REASON_MATCHES`. Counted just before each non-empty output,
+    # keyed by host session so WM-42 can ask "how many *sessions* did this
+    # record reach" rather than "how many times did one session fire the hook".
+    emitted = shown[:_HOOK_GUARD_REASON_MATCHES]
+    _hooklog.note(candidates=len(result.get("matches", [])), matches=len(shown), emitted=0)
+
+    def count_emitted() -> None:
+        _record_guard_surfacings(
+            memory_dir,
+            emitted,
+            "hook-guard",
+            session_id=str(payload.get("session_id") or "") or None,
+        )
+        _hooklog.note(emitted=len(emitted))
+
     if verdict == "READ_FIRST":
         # Dedupe within the host session: the same records surfacing for the
         # same file is information exactly once (P0-2b/P0-3). Keyed on the
@@ -11727,6 +13225,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
                 "additionalContext": reason,
             }
         }
+        count_emitted()
         print(json.dumps(out))
         return 0
     # PAUSE / ASK_HUMAN — hand the call to the human with the reason attached,
@@ -11753,6 +13252,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
                 "permissionDecisionReason": reason,
             }
         }
+        count_emitted()
         print(json.dumps(out))
         return 0
     out = {
@@ -11761,6 +13261,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
             "additionalContext": reason,
         }
     }
+    count_emitted()
     print(json.dumps(out))
     return 0
 
@@ -11954,6 +13455,8 @@ def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> None:
     `host_session` is the harness's session id from the Stop payload. It is what
     lets the second and later firings of one session update the first firing's
     snapshot instead of stacking a new record beside it (F-6)."""
+    import argparse
+
     ns = argparse.Namespace(
         project=str(root),
         json=True,
@@ -11998,7 +13501,7 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
         session_id=session_key,
         use_cursor=True,
     )
-    _hooklog.note(mined=len(mined.get("written") or []))
+    _transcript.note_report(mined)
     try:
         redundant = _hook_capture_is_redundant(memory_dir, root)
     except Exception:  # pragma: no cover - a dedupe failure must not block Stop
@@ -12059,10 +13562,16 @@ def cmd_hook(args: argparse.Namespace) -> int:
     # WM-62: one line per firing in private/hook-log.jsonl — what the hook did,
     # never what it read. The handler's output reaches the host unchanged.
     from breadcrumbs import hooklog as _hooklog
+    from breadcrumbs import service as _service
 
-    return _hooklog.run_logged(
-        event, memory_dir, payload, lambda: _run_hook(event, memory_dir, root, payload), now_iso
-    )
+    def handler() -> int:
+        # Everything a hook does runs in one application context on the hook
+        # channel (audit F18, WP16): admission, the store's aliases, one parse
+        # cache for the firing.
+        with _service.active(_service.Context(root, memory_dir, "hook")):
+            return _run_hook(event, memory_dir, root, payload)
+
+    return _hooklog.run_logged(event, memory_dir, payload, handler, now_iso)
 
 
 def _run_hook(event: str, memory_dir: Path, root: Path, payload: dict) -> int:
@@ -12111,1079 +13620,161 @@ def _dispatch_writing_hook(event: str, memory_dir: Path, root: Path, payload: di
 
 
 def get_version() -> str:
-    """Resolve the distribution version.
+    """The version of the code that is running: `breadcrumbs.__version__`.
 
-    Installed (pipx/pip): authoritative version from package metadata.
-    Source checkout (no metadata): the in-tree __version__ (single source).
+    A built distribution's metadata is generated from that same line, so the
+    two agree for every normal install. They disagree only when the metadata
+    is stale: an editable install after a version bump, or a leftover
+    `*.egg-info` in a source checkout. This used to prefer the metadata, and
+    then reported a version the running code was not (audit WP21).
     """
+    from breadcrumbs import __version__
 
-    def _fallback() -> str:
-        from breadcrumbs import __version__
-
-        return __version__
-
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-
-        try:
-            return version("crumb-kit")
-        except PackageNotFoundError:
-            return _fallback()
-    except Exception:  # pragma: no cover - importlib.metadata always present on 3.8+
-        return _fallback()
+    return __version__
 
 
-# Global flags live on a shared parent parser inherited by every subparser, so
-# they can be passed either before or after the subcommand. The catch: argparse's
-# subparser action (_SubParsersAction.__call__) parses the subcommand into a
-# *fresh* namespace and copies its keys back over the parent namespace — which
-# clobbers any global a user set before the subcommand (issue #3). Two-part fix:
-#   1. The shared globals default to SUPPRESS, so an absent flag never lands in
-#      the sub-namespace and therefore never overwrites the parent's value.
-#   2. The top-level parser backfills the real defaults once, after parsing.
-# Subparsers stay plain argparse.ArgumentParser (see add_subparsers below) so the
-# backfill happens exactly once, at the top — never inside a sub-namespace that
-# would then be copied back.
-_GLOBAL_FLAG_DEFAULTS = {"project": None, "json": False, "plain": False, "verbose": False}
+def cmd_recover(args: argparse.Namespace) -> int:
+    """`crumb recover [--apply]`: finish what a killed writer left half done.
 
-
-# One wording for every `--agent` flag. The default is deliberately *not* `human`:
-# an omitted flag is an absence of evidence, so it resolves to the
-# detected harness or to `unknown`, and a person asserts authorship explicitly.
-_AGENT_FLAG_HELP = "{what} label (default: detected agent harness, else 'unknown')"
-
-
-class _LazyVersionAction(argparse.Action):
-    """`--version`, without charging every *other* command for it.
-
-    argparse's built-in `version` action wants the finished string at parser
-    construction time, so `build_parser()` called `get_version()` — which imports
-    `importlib.metadata`, and with it `email`, `zipfile`, `csv`, `socket`,
-    `typing`, … That was ~24 ms of a ~30 ms `build_parser()`, paid on every
-    invocation including the `hook guard` pre-filter that fires on every tool
-    call, for a flag almost nothing passes. Resolving the version inside
-    `__call__` moves that cost to the one command that asked for it.
+    A multi-record change (a replacement, a merge, a promotion) journals every
+    file it touches under `private/operations/` before touching it; a clean
+    finish removes the journal. One still there means the writer died midway.
+    Recovery rolls it back, restoring each file that still holds the before- or
+    an in-operation state and leaving anything changed since for a person
+    (`breadcrumbs/mutations.py`). Without `--apply` it only lists them.
     """
+    from breadcrumbs import mutations as _mutations
 
-    def __init__(
-        self, option_strings, dest=argparse.SUPPRESS, default=argparse.SUPPRESS, help=None
-    ):
-        super().__init__(
-            option_strings=option_strings, dest=dest, default=default, nargs=0, help=help
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    report = _mutations.recover(memory_dir, apply=args.apply)
+    ops = report["operations"]
+    # Listing: every operation shown is unfinished. Applying: those it could not
+    # roll back (a file changed since, an unreadable journal) still are.
+    unresolved = [o for o in ops if o.get("error") or o.get("conflicts") or not args.apply]
+    if args.json:
+        _print_json(
+            args,
+            {**report, "items": ops},
+            ok=not unresolved,
+            summary={"operations": len(ops), "unresolved": len(unresolved)},
         )
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        print(f"breadcrumbs {get_version()} (record schema_version {SCHEMA_VERSION})")
-        parser.exit()
-
-
-class _CrumbParser(argparse.ArgumentParser):
-    """An argparse parser whose usage errors lead with `CRUMB-ERROR:` (C2).
-
-    argparse prints the usage block first and the reason last, so a caller that
-    bounds output with `head` keeps the usage and drops the reason — and one that
-    bounds it with `tail` keeps a line that ends in the author's own prose
-    (`unrecognized arguments: --body some long text`), which reads like output,
-    not like a rejection. Leading with the marker puts the fact that this failed
-    on the first line either way, and `self.prog` names the exact subcommand.
-    """
-
-    def error(self, message: str):  # noqa: D102 - argparse contract
-        self.exit(2, f"{ERROR_PREFIX} {self.prog}: {message}\n{self.format_usage()}")
-
-
-class _BreadcrumbsParser(_CrumbParser):
-    """Top-level parser that keeps global flags working in any position."""
-
-    def parse_known_args(self, args=None, namespace=None):
-        ns, argv = super().parse_known_args(args, namespace)
-        for dest, default in _GLOBAL_FLAG_DEFAULTS.items():
-            if not hasattr(ns, dest):
-                setattr(ns, dest, default)
-        return ns, argv
-
-    def parse_args(self, args=None, namespace=None):
-        """As argparse, but the leftover-argument error names the subcommand.
-
-        argparse checks for unconsumed argv at the *top* level, so the stock
-        message is prefixed `crumb:` however deep the rejected flag was — the
-        caller is told a flag is unknown without being told which of twenty
-        subcommands does not know it, and is then handed the top-level usage,
-        which cannot list the flags the subcommand does accept.
-        """
-        ns, argv = self.parse_known_args(args, namespace)
-        if argv:
-            label = command_label(ns)
-            self.exit(
-                2,
-                f"{ERROR_PREFIX} {label}: unrecognized arguments: {' '.join(argv)}\n"
-                f"try `{label} --help` for the flags this subcommand accepts.\n",
-            )
-        return ns
+        return 1 if unresolved else 0
+    if not ops:
+        print("recover: no unfinished operations.")
+        return 0
+    verb = "rolled back" if args.apply else "unfinished"
+    print(f"recover: {len(ops)} {verb} operation(s)\n")
+    for op in ops:
+        print(f"  {op['id']} ({op['kind']})")
+        for f in op["files"]:
+            print(f"    {f['action']:9} {f['path']}")
+        for kept in op.get("kept", []):
+            print(f"    kept a copy of a removed file: {kept}")
+        if op.get("conflicts"):
+            print(f"    NOT restored (changed since): {', '.join(op['conflicts'])}")
+        if op.get("error"):
+            print(f"    {op['error']}")
+    if not args.apply:
+        print("\nRun `crumb recover --apply` to roll them back.")
+    return 1 if unresolved else 0
 
 
-# init
-def _add_init(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_init = sub.add_parser(
-        "init",
-        parents=[global_parser],
-        help="install the .project-memory/ layout into a project",
-    )
-    p_init.add_argument(
-        "--session-tracking",
-        choices=VALID_SESSION_TRACKING,
-        help="session record policy (default: prompt, then 'full')",
-    )
-    p_init.add_argument(
-        "--no-commit-generated",
-        action="store_true",
-        help="keep generated/*.md projections local (gitignored)",
-    )
-    p_init.add_argument(
-        "--force",
-        action="store_true",
-        help="overwrite an existing .project-memory/ scaffold",
-    )
-    # Integration flags. Tri-state: unset -> prompt on a TTY / off when
-    # non-interactive; --with-* enables; --no-* disables. set_defaults keeps all three
-    # at None so default `crumb init` is byte-identical to before.
-    p_init.add_argument(
-        "--with-adapter",
-        dest="adapter",
-        nargs="?",
-        const="*",
-        metavar="FILES",
-        help="inject the signpost block into detected agent-guidance "
-        "files (optional: comma-separated list)",
-    )
-    p_init.add_argument(
-        "--no-adapter",
-        dest="adapter",
-        action="store_const",
-        const=False,
-        help="do not touch agent-guidance files",
-    )
-    p_init.add_argument(
-        "--with-mcp",
-        dest="mcp",
-        action="store_const",
-        const=True,
-        help="register the MCP server in .mcp.json",
-    )
-    p_init.add_argument(
-        "--no-mcp",
-        dest="mcp",
-        action="store_const",
-        const=False,
-        help="do not register the MCP server",
-    )
-    p_init.add_argument(
-        "--with-hooks",
-        dest="hooks",
-        nargs="?",
-        const="*",
-        metavar="EVENTS",
-        help="install Claude Code hooks (bare: all of them; or a comma list of "
-        + ",".join(HOOK_EVENTS)
-        + ")",
-    )
-    p_init.add_argument(
-        "--no-hooks", dest="hooks", action="store_const", const=False, help="do not install hooks"
-    )
-    p_init.add_argument(
-        "--print-integrations",
-        action="store_true",
-        help="show which integrations would be applied, then exit",
-    )
-    p_init.add_argument(
-        "--remove-integrations",
-        action="store_true",
-        help="reverse every breadcrumbs integration, then exit",
-    )
-    p_init.set_defaults(func=cmd_init, adapter=None, mcp=None, hooks=None)
+def cmd_review(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import admission as _admission
 
-
-# validate
-def _add_validate(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_validate = sub.add_parser(
-        "validate",
-        parents=[global_parser],
-        help="deterministically check the .project-memory/ store ",
-    )
-    p_validate.set_defaults(func=cmd_validate)
-
-
-# remember decision | attempt
-def _set_flag_help(rtype: str, verb: str = "set") -> str:
-    """`--set` help that names the vocabulary (C1).
-
-    The section list was reachable only through `crumb schema <type>` — which is
-    excellent, and is not where anyone looks — or by being rejected. Both facts a
-    caller needs (the headings, and where the full contract lives) go in the
-    help text of the flag that takes them.
-    """
-    return (
-        f"{verb} a body section (repeatable). HEADING is one of: "
-        f"{', '.join(BODY_SECTIONS[rtype])}. Matching ignores case, spacing and "
-        f"punctuation; anything else is kept under `## {UNSORTED_SECTION}` with a "
-        f"warning. Full contract: `crumb schema {rtype}`"
-    )
-
-
-def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_remember = sub.add_parser(
-        "remember",
-        parents=[global_parser],
-        help="record a durable decision or attempt",
-    )
-    p_remember.set_defaults(func=cmd_remember, record_type=None)
-    rem_sub = p_remember.add_subparsers(dest="record_type", metavar="<type>")
-    for rtype in ("decision", "attempt"):
-        pr = rem_sub.add_parser(
-            rtype,
-            parents=[global_parser],
-            help=f"record a durable {rtype}",
+    result = _admission.review_record(memory_dir, root, args.id, args.reviewer)
+    if args.json:
+        _print_json(
+            args, {**result, "items": [result] if result.get("ok") else []}, ok=result["ok"]
         )
-        pr.add_argument("--title", help="record title (prompted if omitted in a TTY)")
-        pr.add_argument(
-            "--set",
-            nargs=2,
-            action="append",
-            metavar=("HEADING", "TEXT"),
-            help=_set_flag_help(rtype),
+        return 0 if result["ok"] else 1
+    if not result["ok"]:
+        _emit_error(args, result["error"])
+        return 1
+    try_reindex_projections(memory_dir, root)
+    print(
+        f"review: {result['id']} reviewed by {result['reviewed_by']} "
+        f"(stamp {result['reviewed_hash']}; an edit to the record makes it stale)"
+    )
+    return 0
+
+
+def cmd_policy(args: argparse.Namespace) -> int:
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import admission as _admission
+
+    if args.action == "set":
+        if not args.profile:
+            _emit_error(args, "policy set needs a profile: solo or team")
+            return 2
+        result = _admission.set_policy(memory_dir, args.profile, args.mcp_mode)
+        if not result["ok"]:
+            _emit_error(args, result["error"])
+            return 1
+    pol = _admission.policy(memory_dir)
+    doc = {"profile": pol.profile, "mcp_mode": pol.mcp_mode}
+    if args.json:
+        _print_json(args, {**doc, "items": [doc]})
+        return 0
+    print(f"policy: profile {pol.profile}, mcp_mode {pol.mcp_mode}")
+    if pol.profile == "team":
+        print(
+            "  guidance written through MCP, hooks or an agent session is a proposal "
+            "(needs-review); promotion needs `crumb review`; see docs/security.md §4"
         )
-        pr.add_argument(
-            "--evidence",
-            nargs=2,
-            action="append",
-            metavar=("TYPE", "REF"),
-            help="add an evidence pointer, e.g. --evidence commit abc1234 (repeatable)",
-        )
-        pr.add_argument("--tags", help="comma-separated tags")
-        pr.add_argument("--confidence", choices=("low", "medium", "high"))
-        pr.add_argument("--privacy", choices=VALID_PRIVACY)
-        pr.add_argument("--scope")
-        pr.add_argument("--status", choices=VALID_STATUS)
-        pr.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author"))
-        _add_duplicate_flags(pr)
-        if rtype == "attempt":
-            # The fixed attempt vocabulary as named flags; each
-            # overrides the matching --set heading.
-            pr.add_argument("--problem", help="Problem section")
-            pr.add_argument("--tried", help="Tried section")
-            pr.add_argument("--result", help="Result section")
-            pr.add_argument("--why", help="'Why It Failed / Succeeded' section")
-            pr.add_argument(
-                "--do-not-retry", dest="do_not_retry", help="'Do Not Retry Unless' section"
-            )
-            pr.add_argument("--related", help="'Related Records' section")
-        pr.set_defaults(func=cmd_remember)
-
-
-# schema introspection
-def _add_schema(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_schema = sub.add_parser(
-        "schema",
-        parents=[global_parser],
-        help="print the record schema contract (or a fill-in template)",
-    )
-    p_schema.add_argument(
-        "schema_type",
-        nargs="?",
-        metavar="<type>",
-        help="limit to one record type (decision|attempt|verification|session|idea|"
-        "jot|trap|question)",
-    )
-    p_schema.add_argument(
-        "--template",
-        action="store_true",
-        help="emit a copy-pasteable command skeleton for <type> "
-        "(`crumb remember`, `crumb note`, `crumb verify` or `crumb jot`)",
-    )
-    p_schema.set_defaults(func=cmd_schema)
-
-
-# note question|trap|idea
-def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_note = sub.add_parser(
-        "note",
-        parents=[global_parser],
-        help="leave an open question, known trap, or idea for the next agent",
-    )
-    p_note.set_defaults(func=cmd_note, note_kind=None)
-    note_sub = p_note.add_subparsers(dest="note_kind", metavar="<kind>")
-
-    pq = note_sub.add_parser("question", parents=[global_parser], help="record an open question")
-    pq.add_argument("text", nargs="?", help="the question, in one line")
-    pq.add_argument("--title", help="the question (alias for the positional, as on `remember`)")
-    pq.add_argument("--why", help="why it matters / what is blocked")
-    pq.add_argument("--needs", help="human input | investigation | a decision")
-    pq.add_argument(
-        "--status",
-        default="open",
-        choices=VALID_QUESTION_STATUS,
-        help="status (default: open); retire one later with `crumb mark-status <id> answered`",
-    )
-    _add_duplicate_flags(pq)
-    pq.set_defaults(func=cmd_note)
-
-    pt = note_sub.add_parser("trap", parents=[global_parser], help="record a reusable known trap")
-    pt.add_argument("text", nargs="?", help="one-line trap summary")
-    pt.add_argument("--title", help="trap summary (alias for the positional, as on `remember`)")
-    pt.add_argument("--slug", help="short slug (derived from the summary if omitted)")
-    pt.add_argument("--area", help="where this bites (files / area)")
-    pt.add_argument("--symptom", help="what goes wrong")
-    pt.add_argument("--why", help="the mechanism, not vibes")
-    pt.add_argument("--safe", help="the safe approach to use instead")
-    pt.add_argument("--verify", help="a command that proves it is OK")
-    _add_duplicate_flags(pt)
-    pt.set_defaults(func=cmd_note)
-
-    pi = note_sub.add_parser("idea", parents=[global_parser], help="record a speculative idea")
-    pi.add_argument("text", nargs="?", help="the idea title")
-    pi.add_argument("--title", help="the idea title (alias for the positional, as on `remember`)")
-    pi.add_argument(
-        "--set",
-        nargs=2,
-        action="append",
-        metavar=("HEADING", "TEXT"),
-        help=_set_flag_help("idea"),
-    )
-    pi.add_argument("--tags", help="comma-separated tags")
-    pi.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
-    _add_duplicate_flags(pi)
-    pi.set_defaults(func=cmd_note)
-
-
-# verify — record a verification result (a finding about reality)
-def _add_verify(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_verify = sub.add_parser(
-        "verify",
-        parents=[global_parser],
-        help="record a verification result (checked X; status fixed/open/regressed/…)",
-    )
-    p_verify.add_argument(
-        "subject",
-        nargs="?",
-        default=None,
-        metavar="SUBJECT",
-        help="what was checked — a finding id, file, or claim (prompted if omitted in a TTY)",
-    )
-    p_verify.add_argument(
-        "--status",
-        choices=VALID_VERIFICATION_OUTCOME,
-        help="the verification outcome (required unless --recheck / --all)",
-    )
-    p_verify.add_argument(
-        "--method",
-        choices=VALID_VERIFICATION_METHOD,
-        help="how it was checked (static|runtime|test)",
-    )
-    p_verify.add_argument("--note", help="free-text notes / what the evidence shows")
-    p_verify.add_argument(
-        "--evidence",
-        nargs=2,
-        action="append",
-        metavar=("TYPE", "REF"),
-        help="add an evidence pointer, e.g. --evidence file path/to/file.py:170 (repeatable)",
-    )
-    p_verify.add_argument("--tags", help="comma-separated tags")
-    p_verify.add_argument("--confidence", choices=("low", "medium", "high"))
-    p_verify.add_argument(
-        "--agent", default=None, help=_AGENT_FLAG_HELP.format(what="record author")
-    )
-    _add_duplicate_flags(p_verify)
-    p_verify.add_argument(
-        "--scope",
-        choices=RECORD_SCOPES,
-        default=None,
-        help="branch: this result applies only while the current branch is checked out "
-        "(default: project)",
-    )
-    p_verify.add_argument(
-        "--recheck",
-        metavar="ID",
-        action="append",
-        default=None,
-        help="rerun the command evidence of this verification and record the result as a "
-        "new verification that supersedes it (repeatable; asks before running anything)",
-    )
-    p_verify.add_argument(
-        "--all",
-        dest="recheck_all",
-        action="store_true",
-        help="with --recheck semantics: every active verification that names a command",
-    )
-    p_verify.add_argument(
-        "--yes",
-        action="store_true",
-        help="run the commands without asking (required when there is no terminal)",
-    )
-    p_verify.set_defaults(func=cmd_verify)
-
-
-# mark-status — record lifecycle mutation from the CLI
-def _add_mark_status(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_mark = sub.add_parser(
-        "mark-status",
-        parents=[global_parser],
-        help="change a record's, trap's or question's status, validate-gated",
-    )
-    p_mark.add_argument(
-        "record_id",
-        metavar="ID",
-        help="record id (e.g. dec_20260510_markdown-source-of-truth), trap id "
-        "(e.g. trap_hand-tagged-releases) or question id (e.g. q:should-we-shard) — "
-        "retiring a trap or answering a question stops it raising guard",
-    )
-    # Positional STATUS, with `--status` accepted for the same value (C3). This
-    # is the only place in the CLI where a vocabulary value is positional —
-    # `crumb verify` takes the same words as `--status` — and that inconsistency
-    # is the whole trap: `--status superseded` exited 2 with an argparse error
-    # naming no subcommand. Accepting both costs nothing and removes the class.
-    p_mark.add_argument(
-        "new_status",
-        metavar="STATUS",
-        nargs="?",
-        choices=MARK_STATUS_CHOICES,
-        help=f"new status — records and traps: {', '.join(VALID_STATUS)}; "
-        f"questions: {', '.join(VALID_QUESTION_STATUS)}",
-    )
-    p_mark.add_argument(
-        "--status",
-        dest="status_flag",
-        default=None,
-        choices=MARK_STATUS_CHOICES,
-        help="the same value as the positional STATUS, spelled as `crumb verify` spells it",
-    )
-    p_mark.add_argument(
-        "--reason", default="", help="why the status changed (recorded as a trailing comment)"
-    )
-    p_mark.add_argument(
-        "--superseded-by",
-        dest="superseded_by",
-        default=None,
-        metavar="ID",
-        help="the replacing record's id (required by validate when marking superseded)",
-    )
-    p_mark.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
-    p_mark.set_defaults(func=cmd_mark_status)
-
-
-# traps — what the always-on context costs, and what can be retired
-def _add_traps(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_traps = sub.add_parser(
-        "traps",
-        parents=[global_parser],
-        help="list known traps with their staleness and context cost",
-    )
-    p_traps.add_argument(
-        "--stale",
-        nargs="?",
-        type=int,
-        const=-1,  # "no DAYS given": the store's ttl_trap_days (WM-30)
-        default=None,
-        metavar="DAYS",
-        help=f"only traps not confirmed in DAYS (default: the store's ttl_trap_days, "
-        f"{TRAPS_STALE_DAYS_DEFAULT} unless set); never-confirmed traps always qualify",
-    )
-    p_traps.add_argument(
-        "--status", choices=VALID_STATUS, default=None, help="only traps with this status"
-    )
-    p_traps.add_argument(
-        "--confirm",
-        metavar="ID",
-        default=None,
-        help=f"stamp a trap's `- {TRAP_CONFIRMED_KEY}:` bullet with today's date",
-    )
-    p_traps.set_defaults(func=cmd_traps)
-
-
-# show — the body behind a one-line mention
-def _add_show(sub, global_parser: argparse.ArgumentParser) -> None:
-    p = sub.add_parser(
-        "show",
-        parents=[global_parser],
-        help="print one record, trap, question or jot by id (the body behind a one-line mention)",
-    )
-    p.add_argument(
-        "record_id",
-        metavar="ID",
-        help="any id the tool prints: dec_…, att_…, ver_…, idea_…, ses_…, jot_…, trap_…, q_…",
-    )
-    p.set_defaults(func=cmd_show)
-
-
-# Phase 3 lifecycle commands — implemented in `breadcrumbs.lifecycle_cmds`,
-# imported only when one of them runs.
-def _add_expired(sub, global_parser: argparse.ArgumentParser) -> None:
-    from breadcrumbs import lifecycle_cmds
-
-    lifecycle_cmds.add_expired(sub, global_parser)
-
-
-def _add_questions(sub, global_parser: argparse.ArgumentParser) -> None:
-    from breadcrumbs import lifecycle_cmds
-
-    lifecycle_cmds.add_questions(sub, global_parser)
-
-
-def _add_promote(sub, global_parser: argparse.ArgumentParser) -> None:
-    from breadcrumbs import promote
-
-    promote.add_promote(sub, global_parser)
-
-
-def _add_demote(sub, global_parser: argparse.ArgumentParser) -> None:
-    from breadcrumbs import promote
-
-    promote.add_demote(sub, global_parser)
-
-
-def _add_consolidate(sub, global_parser: argparse.ArgumentParser) -> None:
-    from breadcrumbs import lifecycle_cmds
-
-    lifecycle_cmds.add_consolidate(sub, global_parser)
-
-
-def _add_rollup(sub, global_parser: argparse.ArgumentParser) -> None:
-    from breadcrumbs import lifecycle_cmds
-
-    lifecycle_cmds.add_rollup(sub, global_parser)
-
-
-# retitle — repair a record whose title carries no information
-def _add_retitle(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_retitle = sub.add_parser(
-        "retitle",
-        parents=[global_parser],
-        help="rewrite a record's title (id, slug and filename are left alone)",
-    )
-    p_retitle.add_argument(
-        "record_id",
-        metavar="ID",
-        help="record id, e.g. ses_20260904_session-8",
-    )
-    p_retitle.add_argument("title", metavar="TITLE", help="the new title")
-    p_retitle.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
-    p_retitle.set_defaults(func=cmd_retitle)
-
-
-# prune — explicit retention for machine session snapshots
-def _add_prune(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_prune = sub.add_parser(
-        "prune",
-        parents=[global_parser],
-        help="delete old machine session snapshots, expired jots, or branch handoffs "
-        "whose branch is gone",
-    )
-    p_prune.add_argument(
-        "what",
-        choices=("sessions", "jots", "handoffs"),
-        help="what to prune: machine session snapshots, expired/retired jots, or branch "
-        "handoffs whose branch is gone",
-    )
-    p_prune.add_argument(
-        "--keep",
-        type=int,
-        default=PRUNE_SESSIONS_KEEP_DEFAULT,
-        metavar="N",
-        help=f"newest sessions never pruned (default: {PRUNE_SESSIONS_KEEP_DEFAULT})",
-    )
-    p_prune.add_argument(
-        "--dry-run", action="store_true", help="list what would be deleted; delete nothing"
-    )
-    p_prune.set_defaults(func=cmd_prune)
-
-
-# reindex — explicit projection refresh (mutations reindex automatically)
-def _add_reindex(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_reindex = sub.add_parser(
-        "reindex",
-        parents=[global_parser],
-        help="rebuild generated/ projections from the canonical records",
-    )
-    p_reindex.add_argument(
-        "--search-index",
-        action="store_true",
-        help="also build index/search.sqlite even if the store is under the size threshold",
-    )
-    p_reindex.set_defaults(func=cmd_reindex)
-
-
-# capture session
-def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_capture = sub.add_parser(
-        "capture",
-        parents=[global_parser],
-        help="capture a work session (git-prefilled); updates handoff + current",
-    )
-    p_capture.set_defaults(func=_capture_dispatch, capture_what=None)
-    cap_sub = p_capture.add_subparsers(dest="capture_what", metavar="<what>")
-    p_session = cap_sub.add_parser(
-        "session",
-        parents=[global_parser],
-        help="record session end; auto-fills work/files/commands from git",
-    )
-    p_session.add_argument(
-        "--fast", action="store_true", help="git snapshot + --next only; no prompts, no LLM"
-    )
-    p_session.add_argument(
-        "--next", dest="next_action", help="the Next Action (required on --fast)"
-    )
-    p_session.add_argument("--title", help="session topic (default: 'session')")
-    p_session.add_argument(
-        "--set",
-        nargs=2,
-        action="append",
-        metavar=("HEADING", "TEXT"),
-        help=_set_flag_help("session", verb="override"),
-    )
-    p_session.add_argument(
-        "--include-memory",
-        dest="include_memory",
-        action="store_true",
-        help=f"keep {MEMORY_DIRNAME}/ paths in dirty_files (default: excluded — every "
-        "capture rewrites the store, and in a shared tree it also sees other sessions')",
-    )
-    p_session.add_argument(
-        "--focus", help="Current Focus for handoff/current (default: keep the previous focus)"
-    )
-    p_session.add_argument(
-        "--agent", default=None, help=_AGENT_FLAG_HELP.format(what="session author")
-    )
-    p_session.set_defaults(func=cmd_capture_session)
-
-
-# resume
-def _add_resume(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_resume = sub.add_parser(
-        "resume",
-        parents=[global_parser],
-        help="print a bounded resume packet with computed staleness",
-    )
-    p_resume.add_argument(
-        "--fast",
-        action="store_true",
-        help="git snapshot + current focus + next action + staleness only (print-only)",
-    )
-    p_resume.add_argument(
-        "--stale-days",
-        type=int,
-        default=None,
-        metavar="N",
-        help=f"{STALE_DAYS_HELP}; aged questions/decisions raise a staleness warning",
-    )
-    p_resume.add_argument(
-        "--task",
-        default=None,
-        metavar="TEXT",
-        help="resume FOR this task: order every section by relevance to it (the "
-        "3 newest per section stay first) and scope likely-files to matching records; "
-        "a task-scoped packet prints only and does not overwrite the committed snapshot",
-    )
-    p_resume.set_defaults(func=cmd_resume)
-
-
-# search — deterministic exact/keyword/tag/file lookup
-def _add_search(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_search = sub.add_parser(
-        "search",
-        parents=[global_parser],
-        help="deterministic keyword/tag/file search over records (no embeddings)",
-    )
-    p_search.add_argument(
-        "query", nargs="?", default="", help="search text (optional with filters)"
-    )
-    p_search.add_argument(
-        "--type",
-        choices=("decision", "attempt", "verification", "idea", "trap", "question", "jot"),
-        help="narrow the corpus to one record type ('idea' and 'jot' are searchable "
-        "but never reach a guard verdict)",
-    )
-    p_search.add_argument(
-        "--explain",
-        action="store_true",
-        help=f"print the stems the query became (and whether {ALIASES_FILENAME} is active)",
-    )
-    p_search.add_argument(
-        "--status",
-        help="filter by record status (e.g. active, superseded; "
-        "for verifications: the outcome, e.g. open/fixed)",
-    )
-    p_search.add_argument("--tag", help="filter by tag/component")
-    p_search.add_argument("--file", help="filter by file path referenced in a record")
-    p_search.add_argument(
-        "--stale-days",
-        type=int,
-        default=None,
-        metavar="N",
-        help=f"{STALE_DAYS_HELP}; aged records score lower",
-    )
-    p_search.set_defaults(func=cmd_search)
-
-
-# guard — guard-before-action: warn before repeating a mistake
-def _add_guard(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_guard = sub.add_parser(
-        "guard",
-        parents=[global_parser],
-        help="warn before an action that conflicts with memory (§11)",
-    )
-    p_guard.add_argument("action", help='the proposed action, e.g. "rewrite the auth middleware"')
-    p_guard.add_argument(
-        "--files",
-        nargs="*",
-        default=None,
-        metavar="PATH",
-        help="explicit file paths the action will touch (sharpens file-overlap scoring)",
-    )
-    p_guard.add_argument(
-        "--stale-days",
-        type=int,
-        default=None,
-        metavar="N",
-        help=f"{STALE_DAYS_HELP}; aged records score lower",
-    )
-    p_guard.set_defaults(func=cmd_guard)
-
-
-# audit — heuristic stale/unsafe/bloated detection (does NOT gate validate)
-def _add_audit(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_audit = sub.add_parser(
-        "audit",
-        parents=[global_parser],
-        help="heuristic health/safety audit: stale, unsafe (secrets), instruction-like, drift, bloat",
-    )
-    p_audit.add_argument(
-        "--stale-days",
-        type=int,
-        default=None,
-        metavar="N",
-        help=f"{STALE_DAYS_HELP}; aged questions/decisions become warn findings",
-    )
-    p_audit.set_defaults(func=cmd_audit)
-
-
-# scan-secrets — the secret sub-check as a standalone command
-def _add_scan_secrets(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_scan = sub.add_parser(
-        "scan-secrets",
-        parents=[global_parser],
-        help="scan committed memory for secret-like strings (run before committing memory)",
-        description=(
-            "Scan committed memory for secret-like strings. A structured credential "
-            "shape (AWS key, PEM block, bearer token, …) exits non-zero; the "
-            "high-entropy heuristic warns without blocking. Add one regex per line to "
-            f"{MEMORY_DIRNAME}/{CRUMBIGNORE_FILENAME} to silence a shape this project "
-            "has already decided is not a secret."
-        ),
-    )
-    p_scan.set_defaults(func=cmd_scan_secrets)
-
-
-# mcp serve|register — surface the optional MCP server from the CLI
-def _add_mcp(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_mcp = sub.add_parser(
-        "mcp",
-        parents=[global_parser],
-        help="run or register the optional breadcrumbs MCP server",
-    )
-    p_mcp.set_defaults(func=cmd_mcp, mcp_what=None)
-    mcp_sub = p_mcp.add_subparsers(dest="mcp_what", metavar="<what>")
-    p_mcp_serve = mcp_sub.add_parser(
-        "serve",
-        parents=[global_parser],
-        help="run the MCP server over stdio (needs the [mcp] extra)",
-    )
-    p_mcp_serve.set_defaults(func=cmd_mcp, mcp_what="serve")
-    p_mcp_register = mcp_sub.add_parser(
-        "register",
-        parents=[global_parser],
-        help="add the breadcrumbs server to .mcp.json (preserves other servers)",
-    )
-    p_mcp_register.set_defaults(func=cmd_mcp, mcp_what="register")
-    p_mcp_doctor = mcp_sub.add_parser(
-        "doctor",
-        parents=[global_parser],
-        help="report MCP wiring: [mcp] extra, .mcp.json registration",
-    )
-    p_mcp_doctor.set_defaults(func=cmd_mcp, mcp_what="doctor")
-
-
-# doctor — integration health
-# migrate — bring a store's on-disk format up to this build
-def _add_migrate(sub, global_parser: argparse.ArgumentParser) -> None:
-    p = sub.add_parser(
-        "migrate",
-        parents=[global_parser],
-        help=f"upgrade the store's on-disk format to schema_version {SCHEMA_VERSION}",
-    )
-    p.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="list the steps that would run; change nothing",
-    )
-    p.set_defaults(func=cmd_migrate)
-
-
-# usage — local surfacing counts
-def _add_usage(sub, global_parser: argparse.ArgumentParser) -> None:
-    p = sub.add_parser(
-        "usage",
-        parents=[global_parser],
-        help="which records actually get surfaced (local counts, never committed)",
-    )
-    mode = p.add_mutually_exclusive_group()
-    mode.add_argument(
-        "--never",
-        action="store_true",
-        help="instead list active records that have never been surfaced, oldest first",
-    )
-    mode.add_argument(
-        "--sessions",
-        action="store_true",
-        help="order by distinct sessions that surfaced a record, not raw count",
-    )
-    mode.add_argument(
-        "--decay",
-        nargs="?",
-        type=int,
-        const=DECAY_DAYS_DEFAULT,
-        default=None,
-        metavar="DAYS",
-        help="list active decisions, attempts and traps at least DAYS old (default 180) "
-        "that nothing surfaced in the last DAYS, with the mark-status command for "
-        "each; prints commands, never runs them",
-    )
-    p.add_argument("--top", type=int, default=25, metavar="N", help="rows to print (default: 25)")
-    p.set_defaults(func=cmd_usage)
-
-
-# jot — one observation, no ceremony
-def _add_jot(sub, global_parser: argparse.ArgumentParser) -> None:
-    p = sub.add_parser(
-        "jot",
-        parents=[global_parser],
-        help="leave a short-term note with a TTL (promote it later, or let it expire)",
-    )
-    p.add_argument("text", help="the observation, in a line or two")
-    p.add_argument("--tags", help="comma-separated tags")
-    p.add_argument(
-        "--file",
-        action="append",
-        metavar="PATH",
-        help="a file this is about (repeatable); recorded as file evidence so "
-        "`search --file` and the guard's file signal can reach it",
-    )
-    p.add_argument(
-        "--local",
-        action="store_true",
-        help=f"write to {MEMORY_DIRNAME}/private/inbox/ instead — never committed",
-    )
-    p.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="note author"))
-    _add_duplicate_flags(p, supersede=False)
-    p.add_argument(
-        "--scope",
-        choices=RECORD_SCOPES,
-        default=None,
-        help="branch: the note applies only while the current branch is checked out "
-        "(default: project for a jot you write; hooks write branch-scoped jots)",
-    )
-    p.set_defaults(func=cmd_jot)
-
-
-# inbox — list / promote / drop
-def _add_inbox(sub, global_parser: argparse.ArgumentParser) -> None:
-    p = sub.add_parser(
-        "inbox",
-        parents=[global_parser],
-        help="list short-term jots; promote the durable ones, drop the noise",
-    )
-    p.add_argument("--all", action="store_true", help="include expired and retired jots")
-    p.add_argument("--expired", action="store_true", help="only jots past their TTL")
-    p.set_defaults(func=cmd_inbox, inbox_what=None)
-    inbox_sub = p.add_subparsers(dest="inbox_what", metavar="<what>")
-
-    pp = inbox_sub.add_parser(
-        "promote",
-        parents=[global_parser],
-        help="turn a jot into a durable record (same validate gate as writing one by hand)",
-    )
-    pp.add_argument("jot_id", metavar="ID", help="the jot id, e.g. jot_20260922_flaky-test-a3f2")
-    pp.add_argument("target", choices=INBOX_PROMOTE_TARGETS, help="the record type to create")
-    pp.add_argument("--title", help="override the record title (default: the jot's text)")
-    pp.add_argument(
-        "--set",
-        nargs=2,
-        action="append",
-        metavar=("HEADING", "TEXT"),
-        help="body section on the new record (repeatable)",
-    )
-    pp.add_argument(
-        "--evidence",
-        nargs=2,
-        action="append",
-        metavar=("TYPE", "REF"),
-        help="evidence on the new record (repeatable); the jot's own file evidence carries over",
-    )
-    pp.add_argument("--tags", help="comma-separated tags to add")
-    pp.add_argument("--confidence", choices=("low", "medium", "high"), default=None)
-    pp.add_argument(
-        "--status",
-        default=None,
-        choices=VALID_VERIFICATION_OUTCOME,
-        help="verification outcome (only with `promote <id> verification`)",
-    )
-    pp.add_argument(
-        "--method",
-        default=None,
-        choices=VALID_VERIFICATION_METHOD,
-        help="verification method (only with `promote <id> verification`)",
-    )
-    pp.add_argument("--why", default=None, help="trap/question: the mechanism, or why it matters")
-    pp.add_argument("--area", default=None, help="trap: where this bites (files / area)")
-    pp.add_argument("--safe", default=None, help="trap: the safe approach to use instead")
-    pp.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
-    pp.set_defaults(func=cmd_inbox, all=False, expired=False)
-
-    pd = inbox_sub.add_parser(
-        "drop", parents=[global_parser], help="retire a jot as noise (kept as history)"
-    )
-    pd.add_argument("jot_id", metavar="ID", help="the jot id")
-    pd.add_argument("--reason", default=None, help="why it is noise")
-    pd.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
-    pd.set_defaults(func=cmd_inbox, all=False, expired=False)
-
-
-def _add_doctor(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_doctor = sub.add_parser(
-        "doctor",
-        parents=[global_parser],
-        help="report whether memory is actually wired up (adapter/mcp/hooks/packet)",
-    )
-    p_doctor.add_argument(
-        "--hook-log",
-        action="store_true",
-        help="instead summarise private/hook-log.jsonl: firings, outcomes and timings "
-        "per hook (the field-test report, docs/field-test.md)",
-    )
-    p_doctor.set_defaults(func=cmd_doctor)
-
-
-# hook session|guard|capture — harness translation layer
-def _add_hook(sub, global_parser: argparse.ArgumentParser) -> None:
-    p_hook = sub.add_parser(
-        "hook",
-        parents=[global_parser],
-        help="Claude Code hook entry points (read stdin payload, emit hook JSON)",
-    )
-    p_hook.set_defaults(func=cmd_hook, hook_event=None)
-    hook_sub = p_hook.add_subparsers(dest="hook_event", metavar="<event>")
-    for ev, _help in (
-        ("session", "SessionStart: emit the resume packet as additional context"),
-        ("guard", "PreToolUse: cost-aware guard verdict for the proposed tool call"),
-        ("capture", "Stop: snapshot a session record, mine the transcript, maybe extract"),
-        ("prompt", "UserPromptSubmit: inject memory relevant to this prompt; capture corrections"),
-        ("compact", "PreCompact: mine the transcript before the context is destroyed"),
-        ("subagent", "SubagentStop: mine the finished subagent's transcript"),
-    ):
-        ph = hook_sub.add_parser(ev, parents=[global_parser], help=_help)
-        ph.set_defaults(func=cmd_hook, hook_event=ev)
-
-
-# Every subcommand's parser, built on demand. `build_parser()` used to
-# construct all of these up front — ~5 ms before argparse had even looked at
-# argv — on every invocation, including the `hook guard` pre-filter that fires
-# on every tool call and usually returns `{}` without touching memory. `main()`
-# now names the one command argv asks for and only that parser is built; the
-# full set is still built for `--help`, for an unrecognised command (so the
-# "invalid choice" message lists everything), and for any caller that wants the
-# whole parser. Insertion order is the order `--help` lists them in.
-_SUBCOMMAND_BUILDERS: dict[str, object] = {
-    "init": _add_init,
-    "validate": _add_validate,
-    "remember": _add_remember,
-    "schema": _add_schema,
-    "note": _add_note,
-    "jot": _add_jot,
-    "inbox": _add_inbox,
-    "verify": _add_verify,
-    "mark-status": _add_mark_status,
-    "show": _add_show,
-    "retitle": _add_retitle,
-    "traps": _add_traps,
-    "questions": _add_questions,
-    "expired": _add_expired,
-    "consolidate": _add_consolidate,
-    "promote": _add_promote,
-    "demote": _add_demote,
-    "prune": _add_prune,
-    "rollup": _add_rollup,
-    "migrate": _add_migrate,
-    "usage": _add_usage,
-    "reindex": _add_reindex,
-    "capture": _add_capture,
-    "resume": _add_resume,
-    "search": _add_search,
-    "guard": _add_guard,
-    "audit": _add_audit,
-    "scan-secrets": _add_scan_secrets,
-    "mcp": _add_mcp,
-    "doctor": _add_doctor,
-    "hook": _add_hook,
-}
+    return 0
+
+
+# --------------------------------------------------------------------------- #
+# The argument parser lives in `breadcrumbs.cli_parser` (audit WP16)
+# --------------------------------------------------------------------------- #
+#
+# Importing this module no longer defines or builds it, so the application layer
+# (`breadcrumbs.service`) and the domain modules import without it. The names
+# that moved are still readable here (`cli.build_parser`, `cli._CrumbParser`, …).
+
+_PARSER_NAMES = frozenset(
+    {
+        "_AGENT_FLAG_HELP",
+        "_BreadcrumbsParser",
+        "_CrumbParser",
+        "_GLOBAL_FLAG_DEFAULTS",
+        "_LazyVersionAction",
+        "_SUBCOMMAND_BUILDERS",
+        "_add_duplicate_flags",
+        "_set_flag_help",
+    }
+)
+
+
+def _parser():
+    from breadcrumbs import cli_parser
+
+    return cli_parser
 
 
 def build_parser(only: str | None = None) -> argparse.ArgumentParser:
-    """The `crumb` parser. `only` builds just that one subcommand's parser.
+    """The `crumb` parser; see `cli_parser.build_parser`."""
+    return _parser().build_parser(only)
 
-    `only` is an optimisation, never a behaviour change: pass a name from
-    `_SUBCOMMAND_BUILDERS` and the returned parser handles exactly that command;
-    pass nothing (every caller that needs help text, or an unknown command) and
-    the full parser is built as before.
-    """
-    # Parent parser holds the global flags so every subcommand inherits them.
-    # default=SUPPRESS is load-bearing — see _BreadcrumbsParser above.
-    global_parser = argparse.ArgumentParser(add_help=False)
-    global_parser.add_argument(
-        "--json",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="machine-readable JSON output",
-    )
-    global_parser.add_argument(
-        "--plain",
-        action="store_true",
-        default=argparse.SUPPRESS,
-        help="plain-text output (no decoration)",
-    )
-    global_parser.add_argument(
-        "--verbose", action="store_true", default=argparse.SUPPRESS, help="verbose output"
-    )
-    global_parser.add_argument(
-        "--project", metavar="PATH", default=argparse.SUPPRESS, help="project root (default: cwd)"
-    )
 
-    parser = _BreadcrumbsParser(
-        prog="crumb",
-        description="Breadcrumbs — a repo-local ledger of durable project state you and your agents can follow back.",
-        parents=[global_parser],
-    )
-    parser.add_argument(
-        "--version",
-        action=_LazyVersionAction,
-        help="show version and record schema_version, then exit",
-    )
-    # Subparsers are _CrumbParser (not _BreadcrumbsParser) so the global backfill
-    # runs only once, at the top level — never in a copied-back sub-namespace —
-    # while every usage error still leads with the CRUMB-ERROR marker.
-    sub = parser.add_subparsers(dest="command", metavar="<command>", parser_class=_CrumbParser)
-    for name, add_subcommand in _SUBCOMMAND_BUILDERS.items():
-        if only is None or name == only:
-            add_subcommand(sub, global_parser)
-
-    return parser
+def __getattr__(name: str):
+    if name in _PARSER_NAMES or name.startswith("_add_"):
+        return getattr(_parser(), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _capture_dispatch(args: argparse.Namespace) -> int:
@@ -13224,7 +13815,7 @@ def requested_command(argv: list[str]) -> str | None:
             if _consumes_next_token(token):
                 next(it, None)
             continue
-        return token if token in _SUBCOMMAND_BUILDERS else None
+        return token if token in _parser()._SUBCOMMAND_BUILDERS else None
     return None
 
 
@@ -13246,9 +13837,12 @@ LOCKED_COMMANDS = frozenset(
         "prune",
         "migrate",
         "reindex",
+        "recover",
+        "policy",
         "capture",
         "promote",
         "demote",
+        "review",
         "consolidate",
         "rollup",
     }
@@ -13272,20 +13866,49 @@ def _needs_lock(args: argparse.Namespace) -> bool:
         return bool(getattr(args, "confirm", None))
     if args.command == "consolidate":
         return bool(getattr(args, "merge", None))
-    return True
+    return True if args.command != "policy" else getattr(args, "action", None) == "set"
+
+
+# Read commands that show the compatibility warning in their own output.
+_SHOWS_COMPATIBILITY = frozenset({"resume", "guard", "validate", "migrate", "hook", "mcp", "init"})
+
+
+def _warn_incompatible_store(args: argparse.Namespace) -> None:
+    """A read of a store this build does not fully understand says so, on
+    stderr, once (audit WP21). Writes are refused at the lock instead."""
+    if getattr(args, "command", None) in _SHOWS_COMPATIBILITY:
+        return
+    try:
+        memory_dir = resolve_root(getattr(args, "project", None)) / MEMORY_DIRNAME
+        if not memory_dir.is_dir():
+            return
+        from breadcrumbs import compat as _compat
+
+        note = _compat.warning(memory_dir)
+    except Exception:  # pragma: no cover - a warning never breaks a read
+        return
+    if note:
+        print(note, file=sys.stderr)
 
 
 def _run_command(args: argparse.Namespace) -> int:
     """Run the parsed command, under the store's write lock when it writes."""
     if not _needs_lock(args):
-        return args.func(args)
+        _warn_incompatible_store(args)
+        with operation():
+            return args.func(args)
     memory_dir = resolve_root(getattr(args, "project", None)) / MEMORY_DIRNAME
     if not memory_dir.is_dir():
         return args.func(args)  # the command reports the missing store itself
     from breadcrumbs import lock as _lock
 
+    # Restoring a backup is how a store this build cannot write gets repaired.
+    repairing = args.command == "migrate" and getattr(args, "restore", None) is not None
     try:
-        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+        with (
+            _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT, compatible_only=not repairing),
+            operation(),
+        ):
             return args.func(args)
     except _lock.StoreLocked as exc:
         _emit_error(args, str(exc))
@@ -13330,7 +13953,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print("{}")
             return 0
-    parser = build_parser(requested_command(raw))
+    parser = _parser().build_parser(requested_command(raw))
     args = parser.parse_args(argv)
     if not getattr(args, "command", None):
         parser.print_help()

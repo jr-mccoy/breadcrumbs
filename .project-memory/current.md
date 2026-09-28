@@ -3,16 +3,15 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Release 0.3.0 (working-memory phases 0-6)
+Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Recently Changed
-- 30e41f6 Merge pull request #53 from jr-mccoy/claude/release-prep-publish-dw1xzf
-- f646ef1 memory: record the mcp CI count fix
-- a5de654 ci: fix the mcp job's stale tool and resource counts
-- ac03e26 Merge pull request #52 from jr-mccoy/claude/release-prep-publish-dw1xzf
-- 2adeee0 memory: hand off the 0.3.0 release
-- bbe567b release: 0.3.0
+- 22907a1 WP21: a version policy, and a store this build does not understand is never written
+- 751283f Merge origin/main (v0.3.1) into the audit branch
+- 9064d2e Project memory: WP13 decision and session capture
+- 4ce315b Merge pull request #54 from jr-mccoy/claude/focused-sagan-axv5ru
+- a09d94d fix(hooks): a stale crumb on PATH can no longer block every prompt (0.3.1)
 
-_Prefill window: `7a4a07f`..HEAD — 6 commit(s) since the last session record._
+_Prefill window: `a3e3f19`..HEAD — 5 commit(s) since the last session record._
 
 ## Watch Out For

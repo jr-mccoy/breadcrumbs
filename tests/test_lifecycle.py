@@ -101,6 +101,33 @@ class TtlTests(unittest.TestCase):
             expires = _cli._parse_iso(fixed["expires_at"])
             self.assertEqual((expires - created).days, lifecycle.TTL_DEFAULTS["verification"])
 
+    def test_expiry_and_created_at_are_one_instant(self):
+        """A clock read twice across a second boundary made the 90-day TTL 89
+        days (CI, run 245). The expiry and `created_at` now share one instant."""
+        import itertools
+        from datetime import datetime, timezone
+
+        base = datetime(2026, 9, 27, 23, 59, 58, tzinfo=timezone.utc)
+        ticks = itertools.count()
+
+        class Ticking(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                t = base + timedelta(seconds=next(ticks))  # one second per read
+                return t if tz else t.replace(tzinfo=None)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            with mock.patch.object(_cli, "datetime", Ticking):
+                fixed = crumb.verify(mem, Path(tmp), "cache eviction works", status="fixed")
+            rec = crumb.find_record_by_id(mem, fixed["id"])
+            created = _cli._parse_iso(rec.meta["created_at"])
+            expires = _cli._parse_iso(fixed["expires_at"])
+            self.assertEqual(
+                expires - created, timedelta(days=lifecycle.TTL_DEFAULTS["verification"])
+            )
+            self.assertTrue(rec.path.name.startswith(rec.meta["created_at"][:10]))
+
     def test_manifest_overrides_the_lifespan(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
@@ -232,7 +259,13 @@ class EvidenceStalenessTests(unittest.TestCase):
             self.assertEqual([f["id"] for f in findings], [rid])
 
     def test_urls_globs_and_absolute_paths_are_not_checked(self):
-        for ref in ("https://example.com/x", "src/*.py", "/etc/hosts", "~/notes.md"):
+        for ref in (
+            "https://example.com/x",
+            "src/*.py",
+            "/etc/hosts",
+            "C:\\work\\x.py",
+            "~/notes.md",
+        ):
             with self.subTest(ref=ref):
                 self.assertIsNone(lifecycle._evidence_path(ref))
         self.assertEqual(lifecycle._evidence_path("src/x.py:12-20"), "src/x.py")
@@ -260,10 +293,24 @@ class RecheckTests(unittest.TestCase):
         )["id"]
         return mem, vid
 
-    def test_a_passing_command_records_fixed_and_supersedes(self):
+    def test_a_plain_command_is_a_diagnostic_and_settles_nothing(self):
+        # Audit F04: a command that exits 0 has not proven the subject fixed.
         with tempfile.TemporaryDirectory() as tmp:
             mem, vid = self._verified(tmp, "true")
             code, out = run(["verify", "--recheck", vid, "--yes", "--project", tmp, "--json"])
+            self.assertEqual(code, 0, out)
+            res = json.loads(out)["items"][0]
+            self.assertFalse(res["settled"])
+            self.assertIsNone(res["new_id"])
+            self.assertEqual(res["runs"][0]["status"], "passed")
+            self.assertEqual(crumb.find_record_by_id(mem, vid).meta["status"], "active")
+
+    def test_a_bound_passing_command_records_fixed_and_supersedes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem, vid = self._verified(tmp, "true")
+            code, out = run(
+                ["verify", "--recheck", vid, "--bind-commands", "--yes", "--project", tmp, "--json"]
+            )
             self.assertEqual(code, 0, out)
             res = json.loads(out)["items"][0]
             self.assertEqual(res["outcome"], "fixed")
@@ -274,13 +321,20 @@ class RecheckTests(unittest.TestCase):
             self.assertEqual(old.meta["status"], "superseded")
             self.assertEqual(old.meta["superseded_by"], res["new_id"])
 
-    def test_a_failing_command_records_open(self):
+    def test_a_bound_failing_command_records_a_regression(self):
         with tempfile.TemporaryDirectory() as tmp:
-            mem, vid = self._verified(tmp, "echo broken >&2; false")
-            code, out = run(["verify", "--recheck", vid, "--yes", "--project", tmp, "--json"])
+            # A failing command both `sh` and `cmd.exe` run the same way.
+            failing = (
+                f'"{sys.executable}" -c "import sys; sys.stderr.write(\'broken\'); sys.exit(1)"'
+            )
+            mem, vid = self._verified(tmp, failing)
+            code, out = run(
+                ["verify", "--recheck", vid, "--bind-commands", "--yes", "--project", tmp, "--json"]
+            )
             self.assertEqual(code, 0, out)
             res = json.loads(out)["items"][0]
-            self.assertEqual(res["outcome"], "open")
+            # The claim was recorded as fixed, so a failing assertion is a regression.
+            self.assertEqual(res["outcome"], "regressed")
             text = crumb.find_record_by_id(mem, res["new_id"]).path.read_text("utf-8")
             self.assertIn("exit 1", text)
             self.assertIn("broken", text)

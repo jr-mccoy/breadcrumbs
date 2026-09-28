@@ -750,7 +750,9 @@ class RelevanceOrderingTests(unittest.TestCase):
             self._store(tmp)
             code, out = run(["resume", "--project", tmp, "--task", "payments ledger rounding"])
             self.assertEqual(code, 0)
-            self.assertIn("ordered by relevance to: payments ledger rounding", out)
+            # The task is printed once, under Requested Task (audit WP08).
+            self.assertIn("## Requested Task\npayments ledger rounding", out)
+            self.assertIn("ordered by relevance to the Requested Task above", out)
             code, out = run(["resume", "--project", tmp])
             self.assertNotIn("ordered by relevance", out)
 

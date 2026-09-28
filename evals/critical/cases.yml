@@ -1,0 +1,140 @@
+# Critical cases (audit WP18): assertions no baseline can approve.
+#
+# Each case is run against the named suite's store and is pass or fail on its
+# own. An aggregate equal to the baseline does not excuse a failing case, and
+# `--write-baseline` refuses to run while one fails. Checks:
+#
+#   guard_not          cli.guard(task, files) must not return any `verdict_not`
+#   hook_guard_warns   `crumb hook guard` on the task must deliver a warning
+#   never_delivered    no `forbid` id is delivered as an entry (`via`: prompt, packet)
+#   delivered          every `require` id is delivered (`via`, default prompt)
+#   quiet              the prompt hook prints nothing for the task
+#   delivery_bounded   every delivered packet and injection in the suite is
+#                      within its declared budget, and every hook prints JSON
+#
+# `known: <finding>` marks a failure the repair program already tracks. It is
+# reported on every run, and fails `--release`. When the case passes, the
+# marker must be removed: a stale marker fails the run.
+#
+# `waiver: <reason>` marks a capability the project does not claim. It is
+# reported and never gated. Adding either marker is a reviewed change to this
+# file, never a baseline rewrite.
+cases:
+  # ---- false-safe verdicts on a recorded hazard ------------------------------
+  - id: npm-test-hazard-is-not-proceed
+    suite: webapp
+    check: guard_not
+    task: "npm test"
+    verdict_not: [PROCEED]
+    note: "trap_npm-test-truncates-db names this exact command (WP10: READ_FIRST)"
+
+  - id: npm-test-hazard-hook-warns
+    suite: webapp
+    check: hook_guard_warns
+    task: "npm test"
+
+  - id: hand-tagging-a-release-is-not-proceed
+    suite: library
+    check: guard_not
+    task: "tag the release commit by hand and push the tag"
+    verdict_not: [PROCEED]
+
+  - id: hand-tagging-a-release-hook-warns
+    suite: library
+    check: hook_guard_warns
+    task: "tag the release commit by hand and push the tag"
+
+  - id: failed-middleware-rewrite-is-not-proceed
+    suite: service
+    check: guard_not
+    task: "rewrite the auth middleware to use the new session parser"
+    files: [src/auth/middleware.py]
+    verdict_not: [PROCEED]
+
+  - id: failed-middleware-rewrite-hook-warns
+    suite: service
+    check: hook_guard_warns
+    task: "rewrite the auth middleware to use the new session parser"
+    files: [src/auth/middleware.py]
+
+  - id: edit-of-a-decision-file-warns
+    suite: holdout-ops
+    check: hook_guard_warns
+    task: "tidy the formatting"
+    files: [infra/backend.tf]
+    note: "only a decision declares this file; the hook's pre-filter used to skip the edit (F11, WP11)"
+
+  - id: terraform-destroy-is-not-proceed
+    suite: holdout-ops
+    check: guard_not
+    task: "terraform destroy the old staging stack"
+    verdict_not: [PROCEED]
+
+  # ---- relevant memory reaches the reader ------------------------------------
+  - id: npm-test-prompt-delivers-its-trap
+    suite: webapp
+    check: delivered
+    task: "npm test"
+    require: [trap_npm-test-truncates-db]
+    via: [prompt]
+    note: "an 8-character prompt: the length gate that dropped it is gone (WP10)"
+
+  - id: regressed-logout-verification-is-delivered
+    suite: service
+    check: delivered
+    task: "logout no longer clears the session cookie"
+    require: [ver_20260825_logout-clears-the-session-cookie-regressed]
+    via: [prompt, packet]
+
+  # ---- retired, superseded and speculative records never reach the reader ----
+  - id: superseded-session-storage-never-delivered
+    suite: webapp
+    check: never_delivered
+    task: "store the user's session after login"
+    forbid: [dec_20260320_keep-the-login-session-in-localstorage]
+
+  - id: superseded-inline-email-never-delivered
+    suite: service
+    check: never_delivered
+    task: "send a welcome mail after signup"
+    forbid: [dec_20260115_send-emails-synchronously-from-the-request-handler]
+
+  - id: idea-never-delivered
+    suite: library
+    check: never_delivered
+    task: "speed up the config parser"
+    forbid: [idea_20260701_rewrite-the-config-parser-in-rust]
+
+  - id: superseded-committed-secrets-never-delivered
+    suite: holdout-ops
+    check: never_delivered
+    task: "add a new secret for the payments API key"
+    forbid: [dec_20260115_store-secrets-as-kubernetes-secrets-in-the-repo-base64]
+
+  # ---- silence on controls ---------------------------------------------------
+  - id: unrelated-refactor-is-quiet
+    suite: service
+    check: quiet
+    task: "refactor the retry loop in the HTTP client"
+
+  - id: typo-fix-is-quiet
+    suite: library
+    check: quiet
+    task: "fix a typo in the contributing guide"
+
+  # ---- well-formed, bounded delivery -----------------------------------------
+  - id: webapp-delivery-is-bounded
+    suite: webapp
+    check: delivery_bounded
+
+  - id: service-delivery-is-bounded
+    suite: service
+    check: delivery_bounded
+
+  - id: library-delivery-is-bounded
+    suite: library
+    check: delivery_bounded
+
+  - id: holdout-delivery-is-bounded
+    suite: holdout-ops
+    check: delivery_bounded

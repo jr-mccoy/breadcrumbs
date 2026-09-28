@@ -1,0 +1,51 @@
+{
+  "checked_on": "2026-09-26",
+  "commit": "30e41f6a36195faffdc197d0565abc7caf7c78da",
+  "source": "GitHub connector workflow run/job reads; this is an observation summary, not a copy of the full logs",
+  "ci": {
+    "run": 36083137724,
+    "url": "https://github.com/jr-mccoy/breadcrumbs/actions/runs/36083137724",
+    "conclusion": "success",
+    "event": "push",
+    "updated_at": "2026-09-25T01:44:58Z",
+    "jobs_returned": 19,
+    "job_conclusions": "all 19 returned jobs success",
+    "platform": "ubuntu-latest in workflow",
+    "python_matrix": [
+      "3.9",
+      "3.10",
+      "3.11",
+      "3.12",
+      "3.13",
+      "3.14"
+    ]
+  },
+  "release": {
+    "run": 36083177179,
+    "url": "https://github.com/jr-mccoy/breadcrumbs/actions/runs/36083177179",
+    "conclusion": "success",
+    "attempt": 2,
+    "updated_at": "2026-09-25T01:47:03Z"
+  },
+  "eval_job": {
+    "job": 107909193816,
+    "url": "https://github.com/jr-mccoy/breadcrumbs/actions/runs/36083137724/job/107909193816",
+    "tasks": 39,
+    "rounded_log_summary": {
+      "prompt_precision": 0.66,
+      "prompt_recall": 0.87,
+      "prompt_reject_hits": 1,
+      "packet_precision": 0.59,
+      "packet_recall": 0.97,
+      "packet_reject_hits": 2,
+      "guard_accuracy": 0.88,
+      "webapp_guard_accuracy": 0.5
+    },
+    "observed_log_failures": [
+      "npm test: guard said PROCEED",
+      "JSON report script: prompt and packet showed rejected screenshot-fonts trap",
+      "refunded order status: packet showed rejected separate static status-page decision",
+      "upgrade ruff: prompt missed pinned-ruff decision"
+    ]
+  }
+}

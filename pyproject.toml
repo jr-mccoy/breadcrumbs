@@ -127,6 +127,10 @@ testpaths = ["tests"]
 # it did not rewrap the whole codebase.
 line-length = 100
 target-version = "py39"   # the documented floor (requires-python >=3.9)
+# The 2026-09-26 audit's diagnostic scripts are kept byte-identical to the
+# checksummed bundle they arrived in (docs/reviews/), so they are evidence, not
+# code this repo formats. Their cases become ordinary tests as work packages land.
+extend-exclude = ["tools/audit"]
 
 [tool.ruff.lint]
 # ruff's default rules (pyflakes + the pycodestyle errors that indicate real

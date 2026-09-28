@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "work_package": "WP00",
+  "recorded_on": "2026-09-26",
+  "audited_commit": "30e41f6a36195faffdc197d0565abc7caf7c78da",
+  "baseline_commit": "30e41f6a36195faffdc197d0565abc7caf7c78da",
+  "baseline_tree": "14bba98b0d56b4e639dd08f11b5683e8ce46a648",
+  "head_vs_audit": "identical: HEAD is the audited commit; 21/21 package modules match the source manifest's git blob and sha256",
+  "crumb_version": "breadcrumbs 0.3.0 (record schema_version 4)",
+  "environment": {
+    "python": "3.11.15 (main, Mar  3 2026, 09:26:23) [GCC 13.3.0]",
+    "platform": "Linux-6.18.44-fc-v37-x86_64-with-glibc2.39",
+    "git": "2.43.0",
+    "checkout": "full git clone (not a source distribution)",
+    "optional_deps_absent": [
+      "mcp",
+      "typing_extensions",
+      "pytest"
+    ],
+    "ruff": "0.16.1 (the version CI pins)"
+  },
+  "runs": [
+    {
+      "command": "python -m unittest discover -s tests -p \"test_*.py\"",
+      "exit_code": 0,
+      "result": {
+        "tests_run": 1147,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 6,
+        "wall_seconds": 87.3
+      },
+      "skips": "5 need the MCP SDK (the CI `mcp` job runs them); 1 needs typing_extensions",
+      "log": "full-tests.log"
+    },
+    {
+      "command": "python evals/run.py --verbose",
+      "exit_code": 0,
+      "result": {
+        "tasks": 39,
+        "overall": {
+          "prompt": {
+            "p_at_5": 0.66,
+            "r_at_5": 0.87,
+            "reject": 1,
+            "quiet": 1.0,
+            "guard": 0.88
+          },
+          "packet": {
+            "p_at_5": 0.59,
+            "r_at_5": 0.97,
+            "reject": 2
+          }
+        },
+        "webapp_guard": 0.5
+      },
+      "matches_ci_observation": true,
+      "log": "evals.log"
+    },
+    {
+      "command": "python tools/audit/regression_probes.py --source . --output <baseline>/probe-results.json --fail-on-observed",
+      "exit_code": 1,
+      "result": {
+        "probes": 19,
+        "defect_signals": 19,
+        "probe_errors": 0,
+        "identical_to_audit_excluding_timings": 19
+      },
+      "note": "Exit 1 is the script's documented 'defect observed' code, not a setup error (that would be 2).",
+      "log": "probe-results.log",
+      "json": "probe-results.json"
+    },
+    {
+      "command": "python tools/audit/run_selected_tests.py --source . --output <baseline>/selected-tests.json",
+      "exit_code": 0,
+      "result": {
+        "tests_run": 243,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "log": "selected-tests.log",
+      "json": "selected-tests.json"
+    },
+    {
+      "command": "python tools/audit/benchmark_smoke.py --source . --output <baseline>/benchmark-smoke.json",
+      "exit_code": 0,
+      "note": "In-process synthetic smoke timings; not a performance claim.",
+      "log": "benchmark-smoke.log",
+      "json": "benchmark-smoke.json"
+    },
+    {
+      "command": "python -m unittest <the 5 tests the audit excluded> (run from tests/)",
+      "exit_code": 0,
+      "result": {
+        "tests_run": 5,
+        "failures": 0,
+        "errors": 0
+      },
+      "note": "All five exclusions were environmental (sdist missing fixtures; a pre-imported interpreter). They pass on a real checkout."
+    },
+    {
+      "command": "ruff check . && ruff format --check .  (ruff 0.16.1)",
+      "exit_code": 0,
+      "note": "With tools/audit excluded in pyproject.toml; without the exclusion the unmodified audit scripts fail lint (63 findings) and format (3 files)."
+    },
+    {
+      "command": "python crumb.py scan-secrets",
+      "exit_code": 0
+    }
+  ],
+  "findings": [
+    {
+      "id": "F01",
+      "title": "Incomplete or misread tool results become successful verification candidates",
+      "classification": "still_present",
+      "basis": "probe(s) transcript_results, split_pair re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F02",
+      "title": "The transcript cursor can freeze on a sliding tail and lose cross-window state",
+      "classification": "still_present",
+      "basis": "probe(s) sliding_cursor, split_pair re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F03",
+      "title": "Jot promotion can discard the actual note and silently broaden its meaning",
+      "classification": "still_present",
+      "basis": "probe(s) jot_promotion_loss re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F04",
+      "title": "Verification replay confuses successful execution with proof and loses branch scope",
+      "classification": "still_present",
+      "basis": "probe(s) recheck_scope_and_claim re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F05",
+      "title": "Validation admits malformed evidence and risky metadata defaults",
+      "classification": "still_present",
+      "basis": "probe(s) schema_types re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F06",
+      "title": "Full resume writes despite an existing writer lock",
+      "classification": "still_present",
+      "basis": "probe(s) resume_ignores_lock re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F07",
+      "title": "A projection can be stamped with a current hash for records it did not include",
+      "classification": "still_present",
+      "basis": "probe(s) snapshot_stamp_race re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F08",
+      "title": "Heartbeat age can classify a live lock holder as stale",
+      "classification": "still_present",
+      "basis": "probe(s) live_lock_stale re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F09",
+      "title": "Prompt retrieval stops above 500 candidates, even when nearly all are retired",
+      "classification": "still_present",
+      "basis": "probe(s) prompt_cliff re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F10",
+      "title": "Short meaningful prompts and known hazardous commands can pass through the wrong gates",
+      "classification": "still_present",
+      "basis": "probe(s) guard_prefilter, short_prompt_and_stale_task re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F11",
+      "title": "An absent or unreadable guard prefilter is treated as no memory risk",
+      "classification": "still_present_source_unchanged",
+      "basis": "No product source changed since the audit (identical git tree); the source-confirmed path is unchanged. Not independently exercised in WP00."
+    },
+    {
+      "id": "F12",
+      "title": "The metadata freshness shortcut can miss a valid same-size edit",
+      "classification": "still_present",
+      "basis": "probe(s) index_metadata_collision re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F13",
+      "title": "Promoted records disappear from a packet even when their rule is unavailable to its reader",
+      "classification": "still_present",
+      "basis": "probe(s) promoted_adapter_missing re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F14",
+      "title": "The advertised packet bound does not hold for large protected sections",
+      "classification": "still_present",
+      "basis": "probe(s) packet_bound re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F15",
+      "title": "Compaction can retain an older matched task instead of the latest user task",
+      "classification": "still_present",
+      "basis": "probe(s) short_prompt_and_stale_task re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F16",
+      "title": "Usage counters can count content that was not delivered",
+      "classification": "still_present",
+      "basis": "probe(s) guard_usage_dedupe re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F17",
+      "title": "A memory symlink can expose content outside the configured project",
+      "classification": "still_present",
+      "basis": "probe(s) symlink_read re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F18",
+      "title": "Review metadata and interface separation do not establish an authority boundary",
+      "classification": "still_present_source_unchanged",
+      "basis": "Design finding; source unchanged. Not exercised in WP00."
+    },
+    {
+      "id": "F19",
+      "title": "Evaluation gates do not measure the whole delivered experience or require critical correctness",
+      "classification": "still_present_source_unchanged",
+      "basis": "Re-observed locally: `python evals/run.py --verbose` exits 0 while reporting `[webapp] npm test: guard said PROCEED` and three rejected-record hits, matching the CI observation."
+    },
+    {
+      "id": "F20",
+      "title": "A failed retirement can leave two live decisions while the writer reports success",
+      "classification": "still_present",
+      "basis": "probe(s) partial_supersession re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F21",
+      "title": "The CLI remains the domain kernel, making independent contracts difficult to maintain",
+      "classification": "still_present_source_unchanged",
+      "basis": "Source unchanged (cli.py is still the kernel). Not exercised in WP00."
+    },
+    {
+      "id": "F22",
+      "title": "Platform and harness coverage is narrower than the portability ambition",
+      "classification": "still_present",
+      "basis": "probe(s) powershell_translation re-observed the defect signal; results identical to the audit evidence (timings/timestamps excluded)"
+    },
+    {
+      "id": "F23",
+      "title": "Full rebuilds and pairwise enrichment make capture cost grow unnecessarily",
+      "classification": "still_present_source_unchanged",
+      "basis": "Source unchanged. The rerun smoke benchmark shows the same shape (reindex and packet time grow with record count); timings are environment-specific and are not a performance claim."
+    },
+    {
+      "id": "F24",
+      "title": "Documentation, compatibility rules, and the dogfood handoff need reconciliation",
+      "classification": "still_present_source_unchanged",
+      "basis": "Re-observed locally: on a clean checkout of this commit `crumb resume` reports the Next Action from handoff.md as 'Phase 4 shipped (WM-40..43). Next: cut a release ... or start Phase 5', which is stale after the 0.3.0 release."
+    },
+    {
+      "id": "F25",
+      "title": "Replay execution needs bounded output and process-tree cleanup, not just a timeout",
+      "classification": "still_present_source_unchanged",
+      "basis": "Source unchanged. Not exercised in WP00."
+    },
+    {
+      "id": "F26",
+      "title": "Public credibility needs demonstrated task outcomes, not more feature names",
+      "classification": "still_present_source_unchanged",
+      "basis": "Product/qualification proposal; nothing to reproduce."
+    }
+  ],
+  "deviations_from_report": [
+    "The complete suite and the eval harness were run (the audit ran a 243-test subset and relied on CI for evals). Both pass; the evals pass while still reporting the npm-test PROCEED miss.",
+    "The five tests the audit excluded pass on a full checkout; run_selected_tests.py still hard-codes their exclusion, so its 243 count is unchanged.",
+    "Python 3.11.15 here versus 3.13.5 in the audit; results are identical.",
+    "tools/audit/ is excluded from ruff so the scripts stay byte-identical to the checksummed bundle.",
+    "tests/test_audit_regressions.py was not created. WP00 step 3 converts cases into regressions as each repair package lands; adding 19 failing tests now would turn CI red, and expected-failure wrappers would make known defects look green."
+  ]
+}

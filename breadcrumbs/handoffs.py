@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from breadcrumbs import cli
+from breadcrumbs import path_policy
 
 HANDOFFS_SCHEMA = 4
 HANDOFFS_DIR = "handoffs"
@@ -133,11 +134,11 @@ def seed_text(memory_dir: Path, path: Path) -> str:
     as this one's, and hide it from the age and branch-mismatch checks.
     """
     if path.is_file():
-        return path.read_text(encoding="utf-8")
+        return path_policy.read_text(path)
     single = Path(memory_dir) / "handoff.md"
     if path == single or not single.is_file():
-        return single.read_text(encoding="utf-8") if single.is_file() else ""
-    focus = cli.split_md_sections(single.read_text(encoding="utf-8")).get("Current Focus", "")
+        return path_policy.read_text(single) if single.is_file() else ""
+    focus = cli.split_md_sections(path_policy.read_text(single)).get("Current Focus", "")
     return f"## Current Focus\n{focus}\n" if not cli._is_placeholder(focus) else ""
 
 

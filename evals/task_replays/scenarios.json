@@ -1,0 +1,278 @@
+{
+ "_comment": "Controlled two-session replays (audit WP19). Sanitized, hand-written inputs: each scenario is what session 1 did and learned, what session 2 is asked to do, and an oracle over what session 2 must be handed. `markdown` is the line a diligent person appends to a hand-kept NOTES.md for the same event; `commit` is the commit message every baseline can read in git log. Oracle token groups match case-insensitively; every token of a group must appear. Tokens are specific phrases, never words a packet or note uses as boilerplate (\"stale\" matched a heading in the first run). `pointer` is the record's title: delivered means the fact is one lookup (`crumb show`) away.",
+ "version": 1,
+ "scenarios": [
+  {
+   "id": "repeated-failure",
+   "kind": "repeated failure",
+   "files": {
+    "src/pricing/cache.py": "TTL = 300\n"
+   },
+   "session1": [
+    {
+     "event": "attempt",
+     "title": "Tried an in-process LRU cache for pricing",
+     "problem": "the pricing API is slow",
+     "tried": "an in-process LRU cache in front of the pricing client",
+     "result": "workers served stale prices for up to an hour",
+     "do_not_retry": "all pricing workers share one process",
+     "files": [
+      "src/pricing/cache.py"
+     ],
+     "tags": [
+      "pricing",
+      "cache"
+     ],
+     "markdown": "- Tried an in-process LRU cache for pricing: workers served stale prices. Don't retry unless all workers share one process.",
+     "commit": "Revert pricing LRU cache"
+    }
+   ],
+   "session2": {
+    "prompt": "add an in-process LRU cache to speed up the pricing client",
+    "action": {
+     "tool": "Edit",
+     "file": "src/pricing/cache.py",
+     "new": "from functools import lru_cache  # in-process LRU cache for pricing"
+    }
+   },
+   "oracle": {
+    "must_deliver": [
+     [
+      "stale prices"
+     ],
+     [
+      "one process"
+     ]
+    ],
+    "pointer": [
+     [
+      "in-process lru cache"
+     ]
+    ],
+    "stale_as_current": []
+   }
+  },
+  {
+   "id": "changed-decision",
+   "kind": "changed decision",
+   "files": {
+    "src/billing/webhook.py": "RETRIES = 3\n"
+   },
+   "session1": [
+    {
+     "event": "decision",
+     "title": "Billing webhook retries three times with a fixed delay",
+     "decision": "retry the billing webhook three times, 5 seconds apart",
+     "why": "the provider asked for a fixed schedule",
+     "files": [
+      "src/billing/webhook.py"
+     ],
+     "tags": [
+      "billing",
+      "retry"
+     ],
+     "markdown": "- Billing webhook: retry three times, 5 s apart (provider's request).",
+     "commit": "Billing webhook: fixed retry schedule"
+    },
+    {
+     "event": "decision",
+     "supersedes_previous": true,
+     "title": "Billing webhook retries use exponential backoff with jitter",
+     "decision": "retry the billing webhook with exponential backoff and full jitter, up to 8 attempts",
+     "why": "fixed retries caused a thundering herd during the provider outage",
+     "files": [
+      "src/billing/webhook.py"
+     ],
+     "tags": [
+      "billing",
+      "retry"
+     ],
+     "markdown": "- Billing webhook: now exponential backoff with full jitter, up to 8 attempts (fixed delays caused a thundering herd).",
+     "commit": "Billing webhook: exponential backoff with jitter"
+    }
+   ],
+   "session2": {
+    "prompt": "change the billing webhook retry schedule",
+    "action": {
+     "tool": "Edit",
+     "file": "src/billing/webhook.py",
+     "new": "RETRY_DELAYS = [5, 5, 5]"
+    }
+   },
+   "oracle": {
+    "must_deliver": [
+     [
+      "jitter"
+     ]
+    ],
+    "pointer": [
+     [
+      "backoff with jitter"
+     ]
+    ],
+    "stale_as_current": [
+     [
+      "three times"
+     ]
+    ]
+   }
+  },
+  {
+   "id": "compaction",
+   "kind": "compaction",
+   "files": {
+    "src/search/index.py": "BATCH = 500\n"
+   },
+   "session1": [
+    {
+     "event": "attempt",
+     "title": "Tried rebuilding the search index inside the request thread",
+     "problem": "search results lag behind writes",
+     "tried": "rebuilding the search index synchronously in the request thread",
+     "result": "p99 latency rose to 9 seconds and requests timed out",
+     "do_not_retry": "the index build is incremental and under 50 ms",
+     "files": [
+      "src/search/index.py"
+     ],
+     "tags": [
+      "search",
+      "latency"
+     ],
+     "markdown": "- Tried rebuilding the search index in the request thread: p99 rose to 9 seconds. Don't retry unless the build is incremental and under 50 ms.",
+     "commit": "Move index rebuild back to the worker"
+    },
+    {
+     "event": "noise",
+     "count": 40
+    },
+    {
+     "event": "compaction"
+    }
+   ],
+   "session2": {
+    "prompt": "make search results fresher by rebuilding the index in the request thread",
+    "action": {
+     "tool": "Edit",
+     "file": "src/search/index.py",
+     "new": "rebuild_index_now()  # in the request thread"
+    }
+   },
+   "oracle": {
+    "must_deliver": [
+     [
+      "9 seconds"
+     ],
+     [
+      "incremental"
+     ]
+    ],
+    "pointer": [
+     [
+      "search index inside the request thread"
+     ]
+    ],
+    "stale_as_current": []
+   }
+  },
+  {
+   "id": "branch-switch",
+   "kind": "branch switch",
+   "files": {
+    "src/auth/session.py": "COOKIE_SECURE = True\n"
+   },
+   "session1": [
+    {
+     "event": "branch",
+     "name": "feature/sso"
+    },
+    {
+     "event": "decision",
+     "scope": "branch",
+     "title": "SSO spike disables secure cookies for local testing",
+     "decision": "set COOKIE_SECURE = False while the SSO spike runs on localhost",
+     "why": "the local IdP serves plain HTTP",
+     "files": [
+      "src/auth/session.py"
+     ],
+     "tags": [
+      "auth",
+      "sso"
+     ],
+     "markdown": "- SSO spike: COOKIE_SECURE = False for local testing (local IdP is plain HTTP).",
+     "commit": "SSO spike: insecure cookies for the local IdP"
+    },
+    {
+     "event": "branch",
+     "name": "main"
+    }
+   ],
+   "session2": {
+    "prompt": "review the session cookie settings before the release",
+    "action": {
+     "tool": "Edit",
+     "file": "src/auth/session.py",
+     "new": "COOKIE_SECURE = True  # release"
+    }
+   },
+   "oracle": {
+    "must_deliver": [],
+    "pointer": [],
+    "stale_as_current": [
+     [
+      "cookie_secure = false"
+     ]
+    ]
+   },
+   "memory_committed": false,
+   "_note": "Memory not yet committed when the branch is switched: an untracked NOTES.md, uncommitted records. Both baselines alike. Committed memory would be hidden by git itself, in every baseline."
+  },
+  {
+   "id": "cross-harness",
+   "kind": "cross-harness",
+   "harness": "mcp",
+   "files": {
+    "src/queue/worker.py": "DRAIN = False\n"
+   },
+   "session1": [
+    {
+     "event": "decision",
+     "title": "Queue workers drain before every deploy",
+     "decision": "drain the queue workers before each deploy; never kill them mid-job",
+     "why": "killed workers double-processed payments",
+     "files": [
+      "src/queue/worker.py"
+     ],
+     "tags": [
+      "queue",
+      "deploy"
+     ],
+     "markdown": "- Queue workers must drain before every deploy; never kill mid-job (double-processed payments).",
+     "commit": "Deploy: drain queue workers first"
+    }
+   ],
+   "session2": {
+    "prompt": "speed up deploys by killing queue workers immediately",
+    "action": {
+     "tool": "Bash",
+     "command": "kill -9 $(pgrep queue-worker) && ./deploy.sh"
+    }
+   },
+   "oracle": {
+    "must_deliver": [
+     [
+      "drain"
+     ],
+     [
+      "double-processed"
+     ]
+    ],
+    "pointer": [
+     [
+      "drain before every deploy"
+     ]
+    ],
+    "stale_as_current": []
+   }
+  }
+ ]
+}

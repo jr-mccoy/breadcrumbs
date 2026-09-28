@@ -1114,7 +1114,15 @@ class MediumLowRegressionTests(unittest.TestCase):
                 ["mark-status", rid, "superseded", "--project", tmp, "--reason", "replaced"]
             )
             self.assertEqual(code, 1)
-            # ...and accepted with --superseded-by.
+            # ...so is a pointer to a record that does not exist (audit F05)...
+            argv = ["mark-status", rid, "superseded", "--project", tmp, "--reason", "replaced"]
+            code, _ = self._run(argv + ["--superseded-by", "dec_20260701_new"])
+            self.assertEqual(code, 1)
+            self.assertEqual(crumb.find_record_by_id(mem, rid).meta["status"], "active")
+            # ...and it is accepted with --superseded-by naming a real record.
+            _path, new = crumb.write_record(
+                mem, Path(tmp), "decision", "new", {"Decision": "d"}, confidence="low"
+            )
             code, out = self._run(
                 [
                     "mark-status",
@@ -1125,13 +1133,13 @@ class MediumLowRegressionTests(unittest.TestCase):
                     "--reason",
                     "replaced",
                     "--superseded-by",
-                    "dec_20260701_new",
+                    new["id"],
                 ]
             )
             self.assertEqual(code, 0, out)
             rec = crumb.find_record_by_id(mem, rid)
             self.assertEqual(rec.meta["status"], "superseded")
-            self.assertEqual(rec.meta["superseded_by"], "dec_20260701_new")
+            self.assertEqual(rec.meta["superseded_by"], new["id"])
 
     # ---- R26: heuristics catch natural phrasings ----------------------------- #
     def test_R26_instruction_like_natural_phrasings(self):

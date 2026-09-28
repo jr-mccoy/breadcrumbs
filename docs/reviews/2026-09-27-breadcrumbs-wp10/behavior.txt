@@ -1,0 +1,33 @@
+# before (293a90b)
+PASS prompt hook delivers at 199 records
+PASS prompt hook delivers at 200 records
+PASS prompt hook delivers at 201 records
+PASS prompt hook delivers at 499 records
+PASS prompt hook delivers at 500 records
+FAIL prompt hook delivers at 501 records
+FAIL 'quasar' (6 chars) delivered
+FAIL 'npm test' prompt delivers its trap
+FAIL guard 'npm test' is not PROCEED
+FAIL guard hook warns on 'npm test'
+
+# after
+PASS prompt hook delivers at 199 records
+PASS prompt hook delivers at 200 records
+PASS prompt hook delivers at 201 records
+PASS prompt hook delivers at 499 records
+PASS prompt hook delivers at 500 records
+PASS prompt hook delivers at 501 records
+PASS 'quasar' (6 chars) delivered
+PASS 'npm test' prompt delivers its trap
+PASS guard 'npm test' is not PROCEED
+PASS guard hook warns on 'npm test'
+
+# prompt hook latency, median of 4, one live decision among n records (index current)
+## before
+n=501: 42 ms, delivered=False
+n=2000: 193 ms, delivered=False
+n=5000: 463 ms, delivered=False
+## after
+n=501: 22 ms, delivered=True
+n=2000: 60 ms, delivered=True
+n=5000: 147 ms, delivered=True

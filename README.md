@@ -23,6 +23,19 @@ project's `.project-memory/` directory, so humans and agents can resume work acr
 sessions, tools, devices, branches, and time without re-discovering decisions,
 repeating failed attempts, or trusting stale context.
 
+**New here?** Start with [`docs/quickstart.md`](docs/quickstart.md): ten
+minutes, one project, executed in CI. Then read:
+- [`docs/operator-guide.md`](docs/operator-guide.md) for running it and
+  recovering;
+- [`docs/continuity-contract.md`](docs/continuity-contract.md) for what it
+  promises and what it does not;
+- [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) for which
+  agents and platforms get what;
+- [`docs/benchmarks/continuity-results.md`](docs/benchmarks/continuity-results.md)
+  for measured delivery against no memory and a hand-kept notes file.
+
+The rest of this README is the reference.
+
 - **PyPI package name:** `crumb-kit` (`pip install crumb-kit`)
 - **Import package / GitHub repo:** `breadcrumbs`
 - **CLI binary name:** `crumb`
@@ -125,7 +138,7 @@ crumb retitle "ses_…" "what that session was really about"   # fix a title tha
 crumb traps --stale              # traps nobody has confirmed lately, and what they cost
 crumb expired                    # records past their expires_at (still on disk, out of the packet)
 crumb questions --aging          # open questions older than the question TTL
-crumb verify --recheck "ver_…"   # rerun a verification's commands; record the result (asks first)
+crumb verify --recheck "ver_…"   # rerun its checks; only an --assert can settle it (asks first)
 crumb consolidate                # clusters of near-duplicate records; --merge them into one
 crumb rollup sessions --before 2026-09-01   # fold old machine session snapshots into one record
 crumb prune handoffs --dry-run   # branch handoffs whose branch is gone and which are 30+ days old
@@ -191,7 +204,7 @@ python crumb.py validate --project /path/repo # validate elsewhere
 `validate` is **fully deterministic** — it checks structural invariants only
 (manifest version, core files, record frontmatter, filename-canonical identity,
 status/privacy vocabularies, evidence/handoff/session requirements, generated
-markers). It performs **no** heuristic content scanning; secret and
+markers, and that nothing in the store is a symbolic link: `path-link`). It performs **no** heuristic content scanning; secret and
 instruction-like-text detection live in `audit` / `scan-secrets`. Exit codes: `0`
 clean, `1` problems found, `2` no `.project-memory/` store present.
 
@@ -278,10 +291,18 @@ A `fixed` or `not_applicable` result expires after 90 days
 (`ttl_verification_days`): it leaves the packet's list and `guard`'s live set,
 and stays searchable. An actionable one never expires; after 90 days the packet
 asks for a recheck. `crumb verify --recheck <id>` (repeatable) or `--all`
-reruns the recorded `command`/`test` evidence in the project root and writes the
-result as a new verification (`fixed` if every command exited 0, else `open`,
-with exit codes and the last output lines in its notes) that supersedes the old
-one. It prints each command and asks first; `--yes` skips the question, and
+reruns a verification's checks in the project root. Only an **assertion**
+settles the claim. Declare one with `--assert CMD`: a command that exits 0
+exactly when the subject is fixed.
+
+When every assertion ran, the result is written as a new verification (`fixed`,
+`open` or `regressed`) that supersedes the old one and keeps its scope and
+confidence. A plain `command` is a diagnostic: it runs and is reported, but it
+cannot close or reopen anything unless you bind it with `--bind-commands`. A
+missing tool or a timeout is inconclusive and writes nothing. `test` file paths
+are never executed.
+
+Recheck prints each command and asks first; `--yes` skips the question, and
 without a terminal it refuses (exit 2) unless `--yes` is given. There is no MCP
 equivalent.
 
@@ -443,7 +464,10 @@ A record past its `expires_at` is left out of the packet's lists (it stays on
 disk and in `search`), and so is a `scope: branch` record written on another
 branch. Current/handoff/active-decisions are prioritized over old session observations, and
 sections are capped then trimmed to stay within budget even with hundreds of
-records. The packet carries a source `commit`/`inputs_hash`/`generated_at` header so
+records. The budget holds for the whole view a reader receives: a Current Focus,
+Next Action, title or warning too long for it becomes a marked excerpt that
+points at the full text, which is never changed. Each view says its size,
+limit and estimator; `--budget` sets a different limit for what you print. The packet carries a source `commit`/`inputs_hash`/`generated_at` header so
 both `validate` and `audit` can detect drift. Raw transcripts are never included.
 `--fast` is a print-only reorientation view and does not overwrite the committed
 packet. `--task TEXT` reorders every list section — decisions, failed attempts,
@@ -465,6 +489,15 @@ through that same reindex — every projection (`resume-packet.md`, the hook's
 atomically — and
 `crumb validate` **fails** on a stale projection with a `Run \`crumb reindex\``
 hint, so the trust primitive no longer certifies drift.
+
+Every projection of one reindex is built from **one snapshot** of the store and
+stamped with its digest. The digest is taken before the build and checked again
+after it, so a stamp never claims a record the build did not read. A store that
+kept changing through three attempts is stamped `unstable` and reads as stale.
+A manifest, `index/generation.json` (machine-local), is written last. The guard
+hook relies on its pre-filter only while that manifest vouches for it; a
+missing, corrupt or out-of-date pre-filter makes the hook check the records
+directly, which is slower but never silent.
 
 The committed packet is **machine-independent by construction**: the project path
 is recorded as `.` rather than an absolute host path, and the `inputs_hash` covers
@@ -497,7 +530,8 @@ there; `crumb audit` flags a line it had to ignore.
 Past 200 records, reindex also builds `index/search.sqlite`, a machine-local,
 gitignored index that lets `search` parse only the records that could match. It
 narrows and never ranks: results are identical with and without it, and a stale
-or missing index just means the full scan. `crumb doctor` reports its state.
+or missing index just means the full scan. Freshness is decided by the content
+hash alone, so even a same-size edit with its mtime restored makes it stale. `crumb doctor` reports its state.
 
 ### `crumb guard`
 
@@ -520,6 +554,17 @@ key in `--json`. That is advice this code composed about the action you just
 proposed, and it is never empty. It is **not** the resume packet's `next_action`,
 which is recorded state (the `## Next Action` from a session handoff, `""` when
 nobody set one). Two commands, two meanings, so two names.
+
+`PROCEED` means **no applicable memory warning was found**. It is not an
+authorization and not a safety check of the action. A trap that names the exact
+command being run (`npm test` against "npm test truncates the database") makes
+it at least `READ_FIRST`, and the guard hook always sees such a command, however
+routine it looks. The trap's own remedy (`npm run test:unit`) never counts.
+The guard hook warns whenever `crumb guard` would: its cheap pre-check covers
+every record that could drive a verdict, so it can only add work, never drop a
+warning. Exit codes are verdict-mapped (`PROCEED` 0, `READ_FIRST` 10, `PAUSE`
+15, `ASK_HUMAN` 20); `--exit-zero` opts out for a script that cannot take a
+non-zero status.
 
 **Relevance decides what is surfaced; *stance* decides how far it can escalate.**
 Overlap (same file, same tag, shared keywords) answers "is this record about the
@@ -631,8 +676,9 @@ record survives. `crumb prune jots` deletes expired and dropped jots older than
 ### `crumb migrate` and `crumb usage`
 
 ```bash
-python crumb.py migrate --dry-run        # what would change
-python crumb.py migrate                  # apply; backs the store up first
+python crumb.py migrate --dry-run        # what would change, and what it leaves for you
+python crumb.py migrate                  # apply; a verified backup first
+python crumb.py migrate --restore        # back to that backup, exactly
 python crumb.py usage                    # most-surfaced records
 python crumb.py usage --never            # active records nothing has ever reached
 python crumb.py usage --sessions         # ordered by distinct sessions, not raw count
@@ -645,8 +691,12 @@ failure halts at the last version that actually completed, never at one whose
 step did not finish), and the whole committed store is copied to
 `private/migrations/<timestamp>/` first. `validate` names the remedy in each
 direction: an older store says `run crumb migrate`, a newer one says `upgrade
-crumb-kit` — a build must never write its own format into a store that is ahead
-of it. Schema 3 moves every trap and open question out of `known-traps.md` /
+crumb-kit`. A build never writes into a store that is ahead of it: writes are
+refused and reads carry a warning. The backup is verified before any step, an
+interrupted migration resumes where it stopped, and `migrate --restore` returns
+to the backup. [`docs/compatibility.md`](docs/compatibility.md) has the version
+policy (a schema change is always a minor release) and what an upgrade does
+with legacy values. Schema 3 moves every trap and open question out of `known-traps.md` /
 `open-questions.md` into a file of its own under `traps/` / `questions/`,
 keeping its id and every line, and turns the two files into generated indexes.
 Until a store migrates it keeps reading and writing the blocks. Schema 4 adds
@@ -654,12 +704,19 @@ Until a store migrates it keeps reading and writing the blocks. Schema 4 adds
 `handoff.md`.
 
 `usage` answers the question `audit`'s `[unreachable]` check cannot: not whether
-a record *could* be found, but whether it ever *was*. A record counts when it
-was shown — a packet printed or injected, a guard verdict, a hook advisory —
-and deliberately not when a write triggers a reindex, which would make the
-counts measure writes. The counts live in `private/usage.json` and are never
-committed: in frontmatter they would churn every record on every guard call, and
-in a committed file they would conflict on every merge.
+a record *could* be found, but whether it ever *was*. A record counts when its
+id was in output a host received — a packet printed or injected, a guard
+verdict, a hook advisory — counted after deduplication and budget trimming, so
+a repeat the hook stayed silent on, or a line trimmed to fit, is not a
+surfacing. It never counts when a write triggers a reindex, which would make
+the counts measure writes. A count says a record was shown, not that it was
+read or that it helped, and nothing acts on it by itself: decay and promotion
+only suggest commands. Each emission is one small event file under
+`private/usage-events/`, folded into `private/usage.json`, so parallel hooks
+never lose each other's counts; `crumb usage` prints the accounting model and
+anything not yet folded or dropped. None of it is committed: in frontmatter
+the counts would churn every record on every guard call, and in a committed
+file they would conflict on every merge.
 
 `usage --decay [DAYS]` (default 180) lists active decisions, attempts and traps
 at least DAYS old that nothing has surfaced in the last DAYS, each with the
@@ -682,16 +739,25 @@ repository. Three things keep them apart:
   resume packet's lists, `guard`'s live set and the prompt hook's injections,
   is not held against a similar record as a near-duplicate, and stays
   searchable.
-- **One writer at a time.** Commands that write the store take a lock file,
-  `.project-memory/private/.write-lock`. A second writer waits up to 2 seconds
-  and then exits 1 with `store is locked by pid N; try again, or remove a stale
-  lock`; a hook waits 0.5 seconds and then skips its write rather than stall
-  the agent (the prompt hook still injects records); an MCP writer returns
-  `{ok: false, error}`. The holder refreshes the lock every 15 seconds; one
-  untouched for 60 seconds, or (on POSIX) whose process on this machine is
-  gone, is broken automatically. Only invocations that write wait: `resume`,
-  listings (`inbox`, `traps`, `consolidate` without `--merge`), `search`,
-  `guard`, `show`, `validate` and `audit` never do.
+- **One writer at a time.** Commands that write the store, and the rebuild of
+  `generated/`, take an operating-system lock on
+  `.project-memory/private/.store.lock`. A second writer waits up to 2 seconds
+  and then exits 1 with `store is locked by pid N; try again shortly`; a hook
+  waits 0.5 seconds and then skips its write rather than stall the agent (the
+  prompt hook still injects records); an MCP writer returns
+  `{ok: false, error}`. The kernel releases the lock when its holder exits,
+  however it exits, so nothing is ever judged "stale". `resume` always prints
+  its packet, but only writes the projections when it can take the lock within
+  0.5 seconds (`--json` reports `publication`). Listings (`inbox`, `traps`,
+  `consolidate` without `--merge`), `search`, `guard`, `show`, `validate` and
+  `audit` never wait. The store should live on a local filesystem.
+- **All or nothing.** A change that touches several files is one operation. A
+  replacement (`--supersedes`), a promotion from the inbox, a merge, a rollup,
+  retiring a promoted rule, and `promote`/`demote` all work this way. If a step
+  fails, every file is put back and the command says `nothing was changed`.
+  If a writer is killed midway, `crumb doctor` reports it and
+  `crumb recover --apply` rolls it back; it keeps a copy of anything it
+  removes and never overwrites an edit made since.
 
 ### `crumb scan-secrets` and `crumb traps`
 
@@ -790,9 +856,24 @@ a managed block of its own, separate from the `init` signpost:
 The rule is rendered from the record (a decision's title, an attempt's "do
 not retry … unless …", a trap's summary and safe approach), or given with
 `--rule`. A record that is not active, or is `confidence: low`, is refused.
-The record stays `active`; the resume packet leaves it out of its lists (the
-instruction file already carries it) and says how many it left out, `guard`
-still uses it, and `search` marks it `promoted`. Promoting again re-renders
+
+**Review profiles.** A store is `solo` by default: review is a convention, as
+it always was.
+- `crumb policy set team` is for shared memory whose authority needs a person.
+  Guidance written through MCP, a hook or an agent session becomes a proposal
+  (`review_status: needs-review`), and is still written unattended.
+  Superseding, rejecting or quarantining through MCP is left to a person.
+- `crumb promote` then needs a review that still matches the record: a person
+  runs `crumb review <id>`, and an edit afterwards makes the review stale.
+- `--mcp-mode read-only` or `propose` narrows MCP further.
+- This binds MCP clients and hooks. An agent with a shell can still edit files
+  directly, so for those the boundary is Git review of what they commit
+  ([`docs/security.md`](docs/security.md) §4).
+The record stays `active`, `guard` still uses it, and `search` marks it
+`promoted`. The resume packet keeps it, shown as the rule in force
+(`` `<id>` — standing rule in CLAUDE.md: … ``), because the packet's reader may
+be a harness that never loads that file. Only Claude Code's `SessionStart` hook
+leaves out the rules its `CLAUDE.md` already carries, and says how many. Promoting again re-renders
 the line; there is only ever one per record.
 
 `crumb demote <id>` removes the line; so does retiring the record with
@@ -868,7 +949,10 @@ piece is independent:
     `crumb show <id>` (or `memory://records/{id}`) for the full text. It
     injects current records only: a superseded, stale or expired record, or
     an answered question, stays out, because the injected line does not show
-    status. It **never
+    status. Any prompt that is not a plain acknowledgement ("ok", "go on") is
+    looked up, however short (`npm test`, `ruff`), and there is no store-size
+    cutoff. Without a current search index on a very large store, it says the
+    lookup was skipped rather than staying silent. It **never
     blocks**: that decision is available on this event and it erases the
     prompt, which is the worst thing a memory tool could do.
 
@@ -877,11 +961,19 @@ piece is independent:
     write it down, so the next session re-violated it. Captured to
     `private/inbox/` only, after a secret scan; `capture_corrections: false` in
     `manifest.yml` turns it off.
+
+    It keeps the session's **latest task** for the compaction handoff: every
+    prompt that is not an acknowledgement or a slash command replaces it,
+    whether or not memory matched it, and what memory matched is kept apart,
+    labelled with the prompt it was for. The text stays local, capped at 300
+    characters, and is withheld if it carries a credential;
+    `retain_prompt_text: false` keeps only a digest.
   - `PreCompact → crumb hook compact` mines the transcript just before the
     context is destroyed. Compaction is the biggest memory-loss event in a long
     session and this hook cannot speak to the model at all (its stdout goes to
     the debug log), so it writes candidates to `private/inbox/` and leaves a
-    marker that the next `SessionStart` reads.
+    marker that the next `SessionStart` reads. That `SessionStart` names the
+    latest task and builds the packet around it.
   - `SubagentStop → crumb hook subagent` mines a finished subagent's transcript.
     Its findings otherwise vanish: the parent only ever sees the final message.
     It does not hold the subagent — that is a prompt-fatigue question awaiting a
@@ -894,6 +986,12 @@ piece is independent:
     It also **mines the transcript** on every firing, which is a side effect
     and not a decision: even a firing that stays silent should salvage what the
     transcript shows, because nothing reads it again.
+
+    Mining is incremental. Each firing reads only what was appended since the
+    last one, joins a result to a call made a firing earlier, and keeps any
+    candidate it could not write yet in a backlog for the next firing. So a
+    long session stays mineable, and nothing is written twice. `crumb doctor`
+    shows the backlog.
 
     When the ending turn produced **new commits** — or the miner found a
     failed-then-fixed command, or three candidates of any kind — the hook does
@@ -947,7 +1045,8 @@ Every hook firing also appends one line to `private/hook-log.jsonl`: the
 event, how long it took and what the host received (silent, context, a
 permission prompt, a held stop, or skipped on the store lock), plus counts and
 verdicts. It never records a prompt, command, path or transcript text, and it
-is capped at 5000 lines. `crumb doctor --hook-log` summarises it per hook, and
+is kept to about 5000 lines by rotation into `private/hook-log.1.jsonl`, which
+never drops a line a parallel hook is writing. `crumb doctor --hook-log` summarises it per hook, and
 [`docs/field-test.md`](docs/field-test.md) is the protocol for reading it after
 a real session.
 
@@ -1064,3 +1163,10 @@ Current user instruction, source code, tests, build output, current authoritativ
 docs, and security policy **outrank** anything stored in `.project-memory/`.
 If memory conflicts with reality, mark it `disputed` or `stale` and link evidence —
 do not let it override the present.
+
+The store is also held to its own directory. Nothing inside `.project-memory/`
+may be a symbolic link or junction: the tool refuses to read or write through
+one rather than follow it outside the project. And record text reaches agents
+rendered as data, with control characters and invisible formatting escaped and
+envelope-like tags neutralized, so a record cannot pose as the tool's own
+output. See [`docs/security.md`](docs/security.md) §2.

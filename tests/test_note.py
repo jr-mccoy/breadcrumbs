@@ -340,7 +340,11 @@ class TrapLifecycleTests(unittest.TestCase):
 
             # Gone from the packet and the hook pre-filter...
             self.assertEqual(crumb.build_resume_packet(mem, root)["known_traps"], [])
-            self.assertEqual(crumb._build_guard_prefilter(mem), {"tokens": [], "paths": []})
+            pre = crumb._build_guard_prefilter(mem)
+            self.assertEqual(
+                {k: pre[k] for k in ("tokens", "paths", "commands")},
+                {"tokens": [], "paths": [], "commands": []},
+            )
             # ...and demoted out of the set that drives a guard verdict.
             result = crumb.guard(
                 mem, root, "tune the WorkManager flex window", files=["app/work/Sync.kt"]
@@ -453,6 +457,14 @@ class TrapLifecycleTests(unittest.TestCase):
                 ["mark-status", "trap_old", "superseded", "--project", tmp, "--reason", "replaced"]
             )
             self.assertEqual(code, 1)
+            # ...and so does a pointer to a trap that does not exist (audit F05):
+            # retiring a record in favour of nothing leaves no live advice.
+            argv = ["mark-status", "trap_old", "superseded", "--project", tmp]
+            argv += ["--reason", "replaced", "--superseded-by", "trap_new"]
+            code, _ = run(argv)
+            self.assertEqual(code, 1)
+            self.assertEqual(crumb.find_trap_by_id(mem, "trap_old")["status"], "active")
+            self._trap(tmp, "Rotate the signing key before deploys", "new")
             self.assertEqual(crumb.find_trap_by_id(mem, "trap_old")["status"], "active")
             code, _ = run(
                 [

@@ -58,6 +58,41 @@ neighbours. The `fixtures/` tree holds whole example stores that CI walks with
 `validate` and `audit`; a new behaviour that is easier to show than to unit-test
 usually wants a fixture.
 
+## Your first contribution: a failing scenario, a regression, a fix
+
+You do not need to read the implementation to contribute something useful.
+The path that helps most:
+
+1. **A failing scenario.** Describe a continuity failure you have seen: a
+   later session was not told something, or was told something stale. Add it
+   as data, without changing any code:
+   - to `evals/task_replays/scenarios.json`: what session 1 did, what session
+     2 is asked, and the oracle (the facts that must reach it, and the stale
+     guidance that must not);
+   - or as a case in `evals/critical/cases.yml`.
+
+   Run `python evals/task_replays/run.py` or `python evals/run.py --release`,
+   and open a PR with the failing result. A reproducible failure is a
+   contribution on its own.
+2. **A regression test.** Pin the failure as a unit test next to its
+   neighbours in `tests/`. It fails now, and says in its docstring what should
+   happen.
+3. **An evidence-backed fix.**
+   - Make the test pass without weakening it.
+   - Rerun the scenario and the evals, and say in the PR what moved, with the
+     before and after numbers.
+   - A fix that changes a published result regenerates it deliberately and
+     says why:
+     - `evals/baseline.json`: `python evals/run.py --write-baseline --reason …`;
+     - `evals/task_replays/results.json`:
+       `python evals/task_replays/run.py --json evals/task_replays/results.json`.
+
+     Never edit a published result by hand to make CI pass.
+
+The reviews under `docs/reviews/` show the shape a finished change takes:
+cause, change, tests, a before and after comparison, results, compatibility
+and limits.
+
 ## Submitting
 
 1. Branch off `main`.

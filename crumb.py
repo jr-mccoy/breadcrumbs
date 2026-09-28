@@ -22,6 +22,19 @@ import breadcrumbs.cli as _cli
 # stay intact (the __main__ guard below depends on __name__ == "__main__").
 globals().update({k: v for k, v in vars(_cli).items() if not k.startswith("__")})
 
+# The argument parser moved to `breadcrumbs.cli_parser` (audit WP16); its names
+# are re-exported too, so `crumb.build_parser` and `crumb._SUBCOMMAND_BUILDERS`
+# keep working.
+import breadcrumbs.cli_parser as _parser  # noqa: E402
+
+globals().update(
+    {
+        k: v
+        for k, v in vars(_parser).items()
+        if not k.startswith("__") and k not in ("cli", "argparse")
+    }
+)
+
 main = _cli.main
 
 if __name__ == "__main__":

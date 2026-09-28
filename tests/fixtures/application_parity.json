@@ -1,0 +1,1110 @@
+{
+ "cli_guard": [
+  15,
+  {
+   "action": "change the pricing cache ttl",
+   "action_class": "routine_edit",
+   "action_classes": [
+    "routine_edit"
+   ],
+   "command": "crumb guard",
+   "destructive": false,
+   "history": [],
+   "items": [
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "att_20260920_tried-an-in-memory-cache-for-pricing",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "attempt",
+     "lifecycle": "active",
+     "matched_files": [
+      "src/pricing/cache.py"
+     ],
+     "matched_mentions": [],
+     "matched_tags": [
+      "cache",
+      "pricing"
+     ],
+     "promoted": false,
+     "raw_score": 23.0,
+     "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
+     "scope": "project",
+     "score": 23.0,
+     "signals": [
+      "file",
+      "tag",
+      "keyword",
+      "title",
+      "do-not-retry"
+     ],
+     "stance": "blocking",
+     "status": "active",
+     "suppressed": false,
+     "title": "Tried an in-memory cache for pricing"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+     "keyword_overlap": [
+      "cach",
+      "pric",
+      "ttl"
+     ],
+     "kind": "decision",
+     "lifecycle": "active",
+     "matched_files": [
+      "src/pricing/cache.py"
+     ],
+     "matched_mentions": [],
+     "matched_tags": [
+      "cache",
+      "pricing"
+     ],
+     "promoted": false,
+     "raw_score": 21.0,
+     "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +3 shared keyword(s); named in the record's title",
+     "scope": "project",
+     "score": 21.0,
+     "signals": [
+      "file",
+      "tag",
+      "keyword",
+      "title"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "Cache TTL is five minutes for the pricing API"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "trap_pricing-cache-keys-must-include-currency",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "trap",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [],
+     "promoted": false,
+     "raw_score": 5.0,
+     "reason": "2 shared keyword(s); named in the record's title",
+     "scope": "project",
+     "score": 5.0,
+     "signals": [
+      "keyword",
+      "title"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+    }
+   ],
+   "matches": [
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "att_20260920_tried-an-in-memory-cache-for-pricing",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "attempt",
+     "lifecycle": "active",
+     "matched_files": [
+      "src/pricing/cache.py"
+     ],
+     "matched_mentions": [],
+     "matched_tags": [
+      "cache",
+      "pricing"
+     ],
+     "promoted": false,
+     "raw_score": 23.0,
+     "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
+     "scope": "project",
+     "score": 23.0,
+     "signals": [
+      "file",
+      "tag",
+      "keyword",
+      "title",
+      "do-not-retry"
+     ],
+     "stance": "blocking",
+     "status": "active",
+     "suppressed": false,
+     "title": "Tried an in-memory cache for pricing"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+     "keyword_overlap": [
+      "cach",
+      "pric",
+      "ttl"
+     ],
+     "kind": "decision",
+     "lifecycle": "active",
+     "matched_files": [
+      "src/pricing/cache.py"
+     ],
+     "matched_mentions": [],
+     "matched_tags": [
+      "cache",
+      "pricing"
+     ],
+     "promoted": false,
+     "raw_score": 21.0,
+     "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +3 shared keyword(s); named in the record's title",
+     "scope": "project",
+     "score": 21.0,
+     "signals": [
+      "file",
+      "tag",
+      "keyword",
+      "title"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "Cache TTL is five minutes for the pricing API"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "trap_pricing-cache-keys-must-include-currency",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "trap",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [],
+     "promoted": false,
+     "raw_score": 5.0,
+     "reason": "2 shared keyword(s); named in the record's title",
+     "scope": "project",
+     "score": 5.0,
+     "signals": [
+      "keyword",
+      "title"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+    }
+   ],
+   "ok": true,
+   "read_only": false,
+   "recommended_action": "Stop and read these records before acting: att_20260920_tried-an-in-memory-cache-for-pricing, dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api, trap_pricing-cache-keys-must-include-currency. They record an attempt that already failed here, with an explicit do-not-retry condition \u2014 check it still applies before repeating it. Prefer the smallest possible change over a rewrite.",
+   "staleness": [],
+   "thresholds": {
+    "max_warnings": 5,
+    "min_keyword_overlap": 2,
+    "noise_floor": 3,
+    "pause_score": 9,
+    "read_first_score": 5
+   },
+   "verdict": "PAUSE"
+  }
+ ],
+ "cli_jot": [
+  0,
+  {
+   "command": "crumb jot",
+   "expires_at": "2026-10-04T12:00:00+00:00",
+   "id": "jot_20260920_the-billing-webhook-sometimes-double-fires-0001",
+   "items": [],
+   "kind": "jot",
+   "local": false,
+   "ok": true,
+   "path": "<ROOT>/.project-memory/inbox/2026-09-20-the-billing-webhook-sometimes-double-fires-0001.md",
+   "scope": "project",
+   "source": "agent"
+  }
+ ],
+ "cli_note_trap": [
+  0,
+  {
+   "command": "crumb note trap",
+   "id": "trap_pricing-cache-keys-must-include-currency",
+   "items": [],
+   "kind": "trap",
+   "ok": true,
+   "path": "<ROOT>/.project-memory/traps/pricing-cache-keys-must-include-currency.md",
+   "ref": "trap_pricing-cache-keys-must-include-currency"
+  }
+ ],
+ "cli_remember": [
+  [
+   0,
+   {
+    "command": "crumb remember decision",
+    "confidence": "medium",
+    "created": "<ROOT>/.project-memory/decisions/2026-09-20-cache-ttl-is-five-minutes-for-the-pricing-api.md",
+    "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+    "items": [],
+    "ok": true,
+    "slug": "cache-ttl-is-five-minutes-for-the-pricing-api",
+    "type": "decision",
+    "warnings": [
+     "section 'Why' matched 'Rationale'"
+    ]
+   }
+  ],
+  [
+   0,
+   {
+    "command": "crumb remember decision",
+    "confidence": "medium",
+    "created": "<ROOT>/.project-memory/decisions/2026-09-20-retries-use-exponential-backoff-with-jitter.md",
+    "id": "dec_20260920_retries-use-exponential-backoff-with-jitter",
+    "items": [],
+    "ok": true,
+    "slug": "retries-use-exponential-backoff-with-jitter",
+    "type": "decision"
+   }
+  ],
+  [
+   0,
+   {
+    "command": "crumb remember attempt",
+    "confidence": "medium",
+    "created": "<ROOT>/.project-memory/attempts/2026-09-20-tried-an-in-memory-cache-for-pricing.md",
+    "id": "att_20260920_tried-an-in-memory-cache-for-pricing",
+    "items": [],
+    "ok": true,
+    "slug": "tried-an-in-memory-cache-for-pricing",
+    "type": "attempt"
+   }
+  ]
+ ],
+ "cli_remember_duplicate": [
+  3,
+  {
+   "command": "crumb remember decision",
+   "duplicates": [
+    {
+     "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+     "similarity": 0.95,
+     "title": "Cache TTL is five minutes for the pricing API"
+    }
+   ],
+   "error": "near-duplicate",
+   "items": [
+    {
+     "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+     "similarity": 0.95,
+     "title": "Cache TTL is five minutes for the pricing API"
+    }
+   ],
+   "message": "looks like dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api (0.95 similar) \u2014 pass --supersedes dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api to replace it, or --allow-duplicate to write anyway",
+   "ok": false
+  }
+ ],
+ "cli_remember_no_evidence": [
+  2,
+  {
+   "command": "crumb remember decision",
+   "error": "a decision needs evidence or low confidence (validate \u00a716.9): pass --evidence TYPE REF or --confidence low",
+   "items": [],
+   "ok": false
+  }
+ ],
+ "cli_resume": [
+  0,
+  {
+   "active_decisions": [
+    {
+     "id": "dec_20260920_retries-use-exponential-backoff-with-jitter",
+     "rationale": "retry the billing webhook with backoff and jitter",
+     "title": "Retries use exponential backoff with jitter"
+    },
+    {
+     "id": "dec_20260920_queue-workers-drain-before-deploy",
+     "rationale": "drain the queue first",
+     "title": "Queue workers drain before deploy"
+    },
+    {
+     "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+     "rationale": "upstream rate limits",
+     "title": "Cache TTL is five minutes for the pricing API"
+    }
+   ],
+   "approx_tokens": 851,
+   "budget": {
+    "estimator": "approx-tokens/2",
+    "estimator_rule": "ceil(ASCII chars / 4) + 1 per non-ASCII char \u2014 a heuristic, not a model tokenizer",
+    "limit": 5000,
+    "unit": "approx_tokens",
+    "used": 851,
+    "view": "json",
+    "within": true
+   },
+   "command": "crumb resume",
+   "commits_since_handoff": [],
+   "current_focus": "",
+   "failed_attempts": [
+    {
+     "do_not_retry": "the pricing workers share one process",
+     "id": "att_20260920_tried-an-in-memory-cache-for-pricing",
+     "title": "Tried an in-memory cache for pricing"
+    }
+   ],
+   "fast": false,
+   "handoff_age_days": null,
+   "handoff_commit_distance": null,
+   "inbox": [
+    {
+     "age_days": 0,
+     "id": "jot_20260920_the-billing-webhook-sometimes-double-fires-0001",
+     "source": "agent",
+     "text": "the billing webhook sometimes double-fires"
+    },
+    {
+     "age_days": 0,
+     "id": "jot_20260920_pricing-cache-warmed-at-deploy-0002",
+     "source": "agent",
+     "text": "pricing cache warmed at deploy"
+    }
+   ],
+   "items": [],
+   "known_traps": [
+    "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+   ],
+   "likely_files": [
+    "src/pricing/cache.py"
+   ],
+   "next_action": "",
+   "ok": true,
+   "omitted": {},
+   "omitted_reason": {},
+   "open_questions": [],
+   "ordering": "relevance",
+   "project": {
+    "branch": "main",
+    "commit": "<SHA>",
+    "dirty": 2,
+    "dirty_state": "2 uncommitted file(s)",
+    "handoff": "handoff.md",
+    "name": "parity-project",
+    "path": "."
+   },
+   "promoted": {},
+   "publication": {
+    "published": false,
+    "reason": "a --fast or --task view is never published",
+    "unfinished_operations": 0
+   },
+   "requested_task": "pricing cache",
+   "rules": {
+    "mode": "portable"
+   },
+   "source": {
+    "commit": "<SHA>",
+    "generated_at": "2026-09-20T12:00:00+00:00",
+    "inputs_hash": "515ef9caa22c"
+   },
+   "stale_after_days": 21,
+   "verification": [],
+   "verifications": [],
+   "warnings": [
+    "dec_20260920_retries-use-exponential-backoff-with-jitter cites src/billing/webhook.py, which is not in HEAD \u2014 verify the record still applies.",
+    "dec_20260920_queue-workers-drain-before-deploy cites src/queue/worker.py, which is not in HEAD \u2014 verify the record still applies.",
+    "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api cites src/pricing/cache.py, which is not in HEAD \u2014 verify the record still applies.",
+    "att_20260920_tried-an-in-memory-cache-for-pricing cites src/pricing/cache.py, which is not in HEAD \u2014 verify the record still applies."
+   ]
+  }
+ ],
+ "cli_search": [
+  0,
+  {
+   "command": "crumb search",
+   "filters": {},
+   "items": [
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "att_20260920_tried-an-in-memory-cache-for-pricing",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "attempt",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [
+      "cache",
+      "pricing"
+     ],
+     "promoted": false,
+     "raw_score": 17.0,
+     "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
+     "scope": "project",
+     "score": 17.0,
+     "signals": [
+      "tag",
+      "keyword",
+      "title",
+      "do-not-retry"
+     ],
+     "stance": "blocking",
+     "status": "active",
+     "suppressed": false,
+     "title": "Tried an in-memory cache for pricing"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "decision",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [
+      "cache",
+      "pricing"
+     ],
+     "promoted": false,
+     "raw_score": 13.0,
+     "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title",
+     "scope": "project",
+     "score": 13.0,
+     "signals": [
+      "tag",
+      "keyword",
+      "title"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "Cache TTL is five minutes for the pricing API"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "jot_20260920_pricing-cache-warmed-at-deploy-0002",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "jot",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [],
+     "promoted": false,
+     "raw_score": 5.0,
+     "reason": "2 shared keyword(s); named in the record's title",
+     "scope": "project",
+     "score": 5.0,
+     "signals": [
+      "keyword",
+      "title"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "pricing cache warmed at deploy"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "trap_pricing-cache-keys-must-include-currency",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "trap",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [],
+     "promoted": false,
+     "raw_score": 5.0,
+     "reason": "2 shared keyword(s); named in the record's title; names this exact command",
+     "scope": "project",
+     "score": 5.0,
+     "signals": [
+      "keyword",
+      "title",
+      "command"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+    }
+   ],
+   "lookup": {
+    "candidates": 7,
+    "mode": "full_scan",
+    "reason": "no search index"
+   },
+   "matches": [
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "att_20260920_tried-an-in-memory-cache-for-pricing",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "attempt",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [
+      "cache",
+      "pricing"
+     ],
+     "promoted": false,
+     "raw_score": 17.0,
+     "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
+     "scope": "project",
+     "score": 17.0,
+     "signals": [
+      "tag",
+      "keyword",
+      "title",
+      "do-not-retry"
+     ],
+     "stance": "blocking",
+     "status": "active",
+     "suppressed": false,
+     "title": "Tried an in-memory cache for pricing"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "decision",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [
+      "cache",
+      "pricing"
+     ],
+     "promoted": false,
+     "raw_score": 13.0,
+     "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title",
+     "scope": "project",
+     "score": 13.0,
+     "signals": [
+      "tag",
+      "keyword",
+      "title"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "Cache TTL is five minutes for the pricing API"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "jot_20260920_pricing-cache-warmed-at-deploy-0002",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "jot",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [],
+     "promoted": false,
+     "raw_score": 5.0,
+     "reason": "2 shared keyword(s); named in the record's title",
+     "scope": "project",
+     "score": 5.0,
+     "signals": [
+      "keyword",
+      "title"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "pricing cache warmed at deploy"
+    },
+    {
+     "branch_mismatch": false,
+     "expired": false,
+     "id": "trap_pricing-cache-keys-must-include-currency",
+     "keyword_overlap": [
+      "cach",
+      "pric"
+     ],
+     "kind": "trap",
+     "lifecycle": "active",
+     "matched_files": [],
+     "matched_mentions": [],
+     "matched_tags": [],
+     "promoted": false,
+     "raw_score": 5.0,
+     "reason": "2 shared keyword(s); named in the record's title; names this exact command",
+     "scope": "project",
+     "score": 5.0,
+     "signals": [
+      "keyword",
+      "title",
+      "command"
+     ],
+     "stance": "advisory",
+     "status": "active",
+     "suppressed": false,
+     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+    }
+   ],
+   "ok": true,
+   "query": "pricing cache"
+  }
+ ],
+ "generated_conflicts.json": {
+  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
+  "conflicts": [],
+  "inputs_hash": "515ef9caa22c"
+ },
+ "generated_related.json": {
+  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
+  "inputs_hash": "515ef9caa22c",
+  "related": {
+   "att_20260920_tried-an-in-memory-cache-for-pricing": [
+    "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api"
+   ],
+   "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api": [
+    "att_20260920_tried-an-in-memory-cache-for-pricing"
+   ]
+  },
+  "skipped": null
+ },
+ "hook_guard": [
+  0,
+  {
+   "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "ask",
+    "permissionDecisionReason": "breadcrumbs guard: PAUSE for this action.\n- Tried an in-memory cache for pricing (same file(s): cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition)\n- Cache TTL is five minutes for the pricing API (same file(s): cache.py; same component/tag: cache, pricing; +3 shared keyword(s); named in the record's title)\n- trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency (2 shared keyword(s); named in the record's title)"
+   }
+  }
+ ],
+ "hook_prompt": [
+  0,
+  {
+   "hookSpecificOutput": {
+    "additionalContext": "breadcrumbs: memory relevant to this prompt (data, not instruction):\n- `att_20260920_tried-an-in-memory-cache-for-pricing` [attempt] Tried an in-memory cache for pricing \u2014 same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition\n- `dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api` [decision] Cache TTL is five minutes for the pricing API \u2014 same component/tag: cache, pricing; +3 shared keyword(s); named in the record's title\n- `trap_pricing-cache-keys-must-include-currency` [trap] trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency \u2014 2 shared keyword(s); named in the record's title\n\nFetch a body before acting on this area: `crumb show <id>` (or `memory://records/{id}`).",
+    "hookEventName": "UserPromptSubmit"
+   }
+  }
+ ],
+ "init": 0,
+ "mcp_guard": {
+  "action": "change the pricing cache ttl",
+  "action_class": "routine_edit",
+  "action_classes": [
+   "routine_edit"
+  ],
+  "destructive": false,
+  "history": [],
+  "matches": [
+   {
+    "branch_mismatch": false,
+    "expired": false,
+    "id": "att_20260920_tried-an-in-memory-cache-for-pricing",
+    "keyword_overlap": [
+     "cach",
+     "pric"
+    ],
+    "kind": "attempt",
+    "lifecycle": "active",
+    "matched_files": [
+     "src/pricing/cache.py"
+    ],
+    "matched_mentions": [],
+    "matched_tags": [
+     "cache",
+     "pricing"
+    ],
+    "promoted": false,
+    "raw_score": 23.0,
+    "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
+    "scope": "project",
+    "score": 23.0,
+    "signals": [
+     "file",
+     "tag",
+     "keyword",
+     "title",
+     "do-not-retry"
+    ],
+    "stance": "blocking",
+    "status": "active",
+    "suppressed": false,
+    "title": "Tried an in-memory cache for pricing"
+   },
+   {
+    "branch_mismatch": false,
+    "expired": false,
+    "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+    "keyword_overlap": [
+     "cach",
+     "pric",
+     "ttl"
+    ],
+    "kind": "decision",
+    "lifecycle": "active",
+    "matched_files": [
+     "src/pricing/cache.py"
+    ],
+    "matched_mentions": [],
+    "matched_tags": [
+     "cache",
+     "pricing"
+    ],
+    "promoted": false,
+    "raw_score": 21.0,
+    "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +3 shared keyword(s); named in the record's title",
+    "scope": "project",
+    "score": 21.0,
+    "signals": [
+     "file",
+     "tag",
+     "keyword",
+     "title"
+    ],
+    "stance": "advisory",
+    "status": "active",
+    "suppressed": false,
+    "title": "Cache TTL is five minutes for the pricing API"
+   },
+   {
+    "branch_mismatch": false,
+    "expired": false,
+    "id": "trap_pricing-cache-keys-must-include-currency",
+    "keyword_overlap": [
+     "cach",
+     "pric"
+    ],
+    "kind": "trap",
+    "lifecycle": "active",
+    "matched_files": [],
+    "matched_mentions": [],
+    "matched_tags": [],
+    "promoted": false,
+    "raw_score": 5.0,
+    "reason": "2 shared keyword(s); named in the record's title",
+    "scope": "project",
+    "score": 5.0,
+    "signals": [
+     "keyword",
+     "title"
+    ],
+    "stance": "advisory",
+    "status": "active",
+    "suppressed": false,
+    "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+   }
+  ],
+  "ok": true,
+  "read_only": false,
+  "recommended_action": "Stop and read these records before acting: att_20260920_tried-an-in-memory-cache-for-pricing, dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api, trap_pricing-cache-keys-must-include-currency. They record an attempt that already failed here, with an explicit do-not-retry condition \u2014 check it still applies before repeating it. Prefer the smallest possible change over a rewrite.",
+  "staleness": [],
+  "thresholds": {
+   "max_warnings": 5,
+   "min_keyword_overlap": 2,
+   "noise_floor": 3,
+   "pause_score": 9,
+   "read_first_score": 5
+  },
+  "verdict": "PAUSE"
+ },
+ "mcp_jot": {
+  "expires_at": "2026-10-04T12:00:00+00:00",
+  "id": "jot_20260920_pricing-cache-warmed-at-deploy-0002",
+  "kind": "jot",
+  "local": false,
+  "ok": true,
+  "path": "inbox/2026-09-20-pricing-cache-warmed-at-deploy-0002.md",
+  "scope": "project",
+  "source": "agent"
+ },
+ "mcp_record": {
+  "confidence": "medium",
+  "id": "dec_20260920_queue-workers-drain-before-deploy",
+  "ok": true,
+  "path": "decisions/2026-09-20-queue-workers-drain-before-deploy.md",
+  "type": "decision"
+ },
+ "mcp_record_duplicate": {
+  "duplicates": [
+   {
+    "id": "dec_20260920_queue-workers-drain-before-deploy",
+    "similarity": 1.0,
+    "title": "Queue workers drain before deploy"
+   }
+  ],
+  "error": "near-duplicate",
+  "message": "looks like dec_20260920_queue-workers-drain-before-deploy (1.00 similar) \u2014 pass --supersedes dec_20260920_queue-workers-drain-before-deploy to replace it, or --allow-duplicate to write anyway",
+  "ok": false
+ },
+ "mcp_record_human": {
+  "error": "agent: human cannot be claimed through mcp; the channel records who wrote it",
+  "ok": false,
+  "refused_by": "policy"
+ },
+ "mcp_record_no_evidence_confidence": {
+  "error": "a decision needs evidence or low confidence (validate \u00a716.9): add payload.evidence or set payload.confidence to 'low'",
+  "ok": false
+ },
+ "mcp_resume": {
+  "active_decisions": [
+   {
+    "id": "dec_20260920_retries-use-exponential-backoff-with-jitter",
+    "rationale": "retry the billing webhook with backoff and jitter",
+    "title": "Retries use exponential backoff with jitter"
+   },
+   {
+    "id": "dec_20260920_queue-workers-drain-before-deploy",
+    "rationale": "drain the queue first",
+    "title": "Queue workers drain before deploy"
+   },
+   {
+    "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+    "rationale": "upstream rate limits",
+    "title": "Cache TTL is five minutes for the pricing API"
+   }
+  ],
+  "budget": {
+   "estimator": "approx-tokens/2",
+   "estimator_rule": "ceil(ASCII chars / 4) + 1 per non-ASCII char \u2014 a heuristic, not a model tokenizer",
+   "limit": 5000,
+   "unit": "approx_tokens",
+   "used": 758,
+   "view": "json",
+   "within": true
+  },
+  "commits_since_handoff": [],
+  "current_focus": "",
+  "failed_attempts": [
+   {
+    "do_not_retry": "the pricing workers share one process",
+    "id": "att_20260920_tried-an-in-memory-cache-for-pricing",
+    "title": "Tried an in-memory cache for pricing"
+   }
+  ],
+  "fast": false,
+  "handoff_age_days": null,
+  "handoff_commit_distance": null,
+  "inbox": [
+   {
+    "age_days": 0,
+    "id": "jot_20260920_the-billing-webhook-sometimes-double-fires-0001",
+    "source": "agent",
+    "text": "the billing webhook sometimes double-fires"
+   },
+   {
+    "age_days": 0,
+    "id": "jot_20260920_pricing-cache-warmed-at-deploy-0002",
+    "source": "agent",
+    "text": "pricing cache warmed at deploy"
+   }
+  ],
+  "known_traps": [
+   "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+  ],
+  "likely_files": [
+   "src/pricing/cache.py"
+  ],
+  "next_action": "",
+  "ok": true,
+  "omitted": {},
+  "omitted_reason": {},
+  "open_questions": [],
+  "ordering": "relevance",
+  "project": {
+   "branch": "main",
+   "commit": "<SHA>",
+   "dirty": 2,
+   "dirty_state": "2 uncommitted file(s)",
+   "handoff": "handoff.md",
+   "name": "parity-project",
+   "path": "."
+  },
+  "promoted": {},
+  "requested_task": "pricing cache",
+  "rules": {
+   "mode": "portable"
+  },
+  "source": {
+   "commit": "<SHA>",
+   "generated_at": "2026-09-20T12:00:00+00:00",
+   "inputs_hash": "515ef9caa22c"
+  },
+  "stale_after_days": 21,
+  "verification": [],
+  "verifications": [],
+  "warnings": [
+   "dec_20260920_retries-use-exponential-backoff-with-jitter cites src/billing/webhook.py, which is not in HEAD \u2014 verify the record still applies.",
+   "dec_20260920_queue-workers-drain-before-deploy cites src/queue/worker.py, which is not in HEAD \u2014 verify the record still applies.",
+   "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api cites src/pricing/cache.py, which is not in HEAD \u2014 verify the record still applies.",
+   "att_20260920_tried-an-in-memory-cache-for-pricing cites src/pricing/cache.py, which is not in HEAD \u2014 verify the record still applies."
+  ]
+ },
+ "mcp_search": {
+  "count": 4,
+  "filters": {},
+  "matches": [
+   {
+    "branch_mismatch": false,
+    "expired": false,
+    "id": "att_20260920_tried-an-in-memory-cache-for-pricing",
+    "keyword_overlap": [
+     "cach",
+     "pric"
+    ],
+    "kind": "attempt",
+    "lifecycle": "active",
+    "matched_files": [],
+    "matched_mentions": [],
+    "matched_tags": [
+     "cache",
+     "pricing"
+    ],
+    "promoted": false,
+    "raw_score": 17.0,
+    "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
+    "scope": "project",
+    "score": 17.0,
+    "signals": [
+     "tag",
+     "keyword",
+     "title",
+     "do-not-retry"
+    ],
+    "stance": "blocking",
+    "status": "active",
+    "suppressed": false,
+    "title": "Tried an in-memory cache for pricing"
+   },
+   {
+    "branch_mismatch": false,
+    "expired": false,
+    "id": "dec_20260920_cache-ttl-is-five-minutes-for-the-pricing-api",
+    "keyword_overlap": [
+     "cach",
+     "pric"
+    ],
+    "kind": "decision",
+    "lifecycle": "active",
+    "matched_files": [],
+    "matched_mentions": [],
+    "matched_tags": [
+     "cache",
+     "pricing"
+    ],
+    "promoted": false,
+    "raw_score": 13.0,
+    "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title",
+    "scope": "project",
+    "score": 13.0,
+    "signals": [
+     "tag",
+     "keyword",
+     "title"
+    ],
+    "stance": "advisory",
+    "status": "active",
+    "suppressed": false,
+    "title": "Cache TTL is five minutes for the pricing API"
+   },
+   {
+    "branch_mismatch": false,
+    "expired": false,
+    "id": "jot_20260920_pricing-cache-warmed-at-deploy-0002",
+    "keyword_overlap": [
+     "cach",
+     "pric"
+    ],
+    "kind": "jot",
+    "lifecycle": "active",
+    "matched_files": [],
+    "matched_mentions": [],
+    "matched_tags": [],
+    "promoted": false,
+    "raw_score": 5.0,
+    "reason": "2 shared keyword(s); named in the record's title",
+    "scope": "project",
+    "score": 5.0,
+    "signals": [
+     "keyword",
+     "title"
+    ],
+    "stance": "advisory",
+    "status": "active",
+    "suppressed": false,
+    "title": "pricing cache warmed at deploy"
+   },
+   {
+    "branch_mismatch": false,
+    "expired": false,
+    "id": "trap_pricing-cache-keys-must-include-currency",
+    "keyword_overlap": [
+     "cach",
+     "pric"
+    ],
+    "kind": "trap",
+    "lifecycle": "active",
+    "matched_files": [],
+    "matched_mentions": [],
+    "matched_tags": [],
+    "promoted": false,
+    "raw_score": 5.0,
+    "reason": "2 shared keyword(s); named in the record's title; names this exact command",
+    "scope": "project",
+    "score": 5.0,
+    "signals": [
+     "keyword",
+     "title",
+     "command"
+    ],
+    "stance": "advisory",
+    "status": "active",
+    "suppressed": false,
+    "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+   }
+  ],
+  "ok": true,
+  "query": "pricing cache"
+ },
+ "record_ids": [
+  "2026-09-20-cache-ttl-is-five-minutes-for-the-pricing-api",
+  "2026-09-20-queue-workers-drain-before-deploy",
+  "2026-09-20-retries-use-exponential-backoff-with-jitter",
+  "2026-09-20-tried-an-in-memory-cache-for-pricing",
+  "pricing-cache-keys-must-include-currency"
+ ]
+}

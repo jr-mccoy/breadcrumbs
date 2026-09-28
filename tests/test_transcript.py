@@ -125,7 +125,7 @@ class AttemptRuleTests(unittest.TestCase):
         found = [c for c in tr.mine(entries)[0] if c.kind == "attempt"]
         self.assertEqual(len(found), 1)
         c = found[0]
-        self.assertIn("failed until 2 file(s) changed", c.title)
+        self.assertIn("failed, then passed after 2 file(s) changed", c.title)
         self.assertEqual(c.files, ["src/parser.py", "tests/test_parser.py"])
         self.assertEqual(c.command, "python -m pytest tests/test_parser.py")
         self.assertIn({"type": "command", "ref": c.command}, c.evidence)
