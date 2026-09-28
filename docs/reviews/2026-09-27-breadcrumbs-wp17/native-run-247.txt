@@ -1,0 +1,51 @@
+CI run 247 (commit 68c8075, after the fixes in 48bc814): the native job's full unit suite.
+Source: GitHub Actions job logs, run id 36362302927. Summary lines; the Windows failure headers are verbatim.
+
+== macos-latest, Python 3.9 (job 108741747700)
+Ran 1364 tests in 477.378s / OK (skipped=9)
+
+== macos-latest, Python 3.13 (job 108741747687)
+Ran 1364 tests in 409.695s / OK (skipped=9)
+
+== windows-latest, Python 3.9 (job 108741747646)
+Ran 1364 tests in 1157.657s / FAILED (failures=16, skipped=12)
+FAIL: test_promotion_obeys_the_evidence_rule (test_inbox.PromoteTests)
+FAIL: test_mark_status_is_validate_gated (test_mcp.WriteGateTests)
+FAIL: test_superseded_needs_a_pointer (test_note.TrapLifecycleTests)
+FAIL: test_failed_target_leaves_source_live (test_promotion_contract.GateTests) (target='decision')
+FAIL: test_R25_mark_status_cli_supersede_flow (test_regressions.MediumLowRegressionTests)
+FAIL: test_a_legacy_problem_never_blocks_retiring_the_record (test_validation_contract.CompatibilityTests)
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests) (field='confidence')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests) (field='review_status')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests) (field='evidence')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests) (field='expires_at')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests) (field='created_at')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests) (field='last_confirmed')
+FAIL: test_malformed_evidence_does_not_satisfy_the_evidence_rule (test_validation_contract.FieldContractTests)
+FAIL: test_mark_status_cannot_create_a_dangling_replacement (test_validation_contract.LinkContractTests)
+FAIL: test_missing_replacement_self_link_and_cycle_are_reported (test_validation_contract.LinkContractTests)
+FAIL: test_new_write_rejects_unknown_scope_without_widening_legacy_scope (test_validation_contract.ScopeContractTests)
+
+== windows-latest, Python 3.13 (job 108741747679)
+Ran 1364 tests in 1463.683s / FAILED (failures=16, skipped=12)
+FAIL: test_promotion_obeys_the_evidence_rule (test_inbox.PromoteTests.test_promotion_obeys_the_evidence_rule)
+FAIL: test_mark_status_is_validate_gated (test_mcp.WriteGateTests.test_mark_status_is_validate_gated)
+FAIL: test_superseded_needs_a_pointer (test_note.TrapLifecycleTests.test_superseded_needs_a_pointer)
+FAIL: test_failed_target_leaves_source_live (test_promotion_contract.GateTests.test_failed_target_leaves_source_live) (target='decision')
+FAIL: test_R25_mark_status_cli_supersede_flow (test_regressions.MediumLowRegressionTests.test_R25_mark_status_cli_supersede_flow)
+FAIL: test_a_legacy_problem_never_blocks_retiring_the_record (test_validation_contract.CompatibilityTests.test_a_legacy_problem_never_blocks_retiring_the_record)
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests.test_invalid_confidence_evidence_and_dates_are_reported) (field='confidence')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests.test_invalid_confidence_evidence_and_dates_are_reported) (field='review_status')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests.test_invalid_confidence_evidence_and_dates_are_reported) (field='evidence')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests.test_invalid_confidence_evidence_and_dates_are_reported) (field='expires_at')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests.test_invalid_confidence_evidence_and_dates_are_reported) (field='created_at')
+FAIL: test_invalid_confidence_evidence_and_dates_are_reported (test_validation_contract.FieldContractTests.test_invalid_confidence_evidence_and_dates_are_reported) (field='last_confirmed')
+FAIL: test_malformed_evidence_does_not_satisfy_the_evidence_rule (test_validation_contract.FieldContractTests.test_malformed_evidence_does_not_satisfy_the_evidence_rule)
+FAIL: test_mark_status_cannot_create_a_dangling_replacement (test_validation_contract.LinkContractTests.test_mark_status_cannot_create_a_dangling_replacement)
+FAIL: test_missing_replacement_self_link_and_cycle_are_reported (test_validation_contract.LinkContractTests.test_missing_replacement_self_link_and_cycle_are_reported)
+FAIL: test_new_write_rejects_unknown_scope_without_widening_legacy_scope (test_validation_contract.ScopeContractTests.test_new_write_rejects_unknown_scope_without_widening_legacy_scope)
+
+All 16 were new, and all came from one site 48bc814 missed: the write gate's
+match key was str(relative path), backslashed on Windows (6 failures), and a
+test helper did the same (10). Fixed in f528a24. None of the 50 failures of
+run 246 remained.

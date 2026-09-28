@@ -67,7 +67,11 @@ Annotations are advisory; policy is enforced by `admission.py`.
 | Platform | Python | Evidence | Status |
 |---|---|---|---|
 | Linux (Ubuntu, CI) | 3.9–3.14 | the full unit suite, the fixture checks, the installed-wheel smoke test (`package` job), evals, lint | **tested** |
-| Windows, macOS (CI `native` job) | 3.9, 3.13 | installed-wheel smoke test, the adapter and MCP contract tests, the full unit suite (reported) | **being qualified**: results are recorded here when the job's first complete run is in |
+| macOS (CI `native` job) | 3.9, 3.13 | installed-wheel smoke test and adapter/MCP contract tests (gating); the full unit suite (reported): 1,364 run, 0 failures (CI run 247) | **tested** |
+| Windows (CI `native` job) | 3.9, 3.13 | installed-wheel smoke test and adapter/MCP contract tests (gating); the full unit suite (reported) | **tested, full suite being confirmed**: run 246 found 50 failures, 42 of them product defects, all fixed; run 247 found 16 from one regression, fixed in `f528a24`. A confirming run on the fixed revision is pending. |
+
+The first native full-suite runs, and each failure's cause, are in the
+[WP17 review record](reviews/2026-09-27-breadcrumbs-wp17/README.md).
 
 `tools/platform_smoke.py` runs against the *installed* console script, in a
 project whose path has spaces and non-ASCII characters. It checks:

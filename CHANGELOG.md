@@ -639,6 +639,39 @@ Findings F24 and F26.
 - **A new verification's 90-day expiry could be 89 days.** `verify` read the
   clock twice, once for the expiry and once for `created_at`. Both now come
   from one instant. Found by CI.
+- **On Windows, a failed operation could not roll itself back.** Writers put
+  CRLF on disk, but the mutation journal recorded the text before
+  translation. Rollback therefore took every file the operation had written
+  for someone else's edit and left it in place: a failed replacement left two
+  live decisions. The journal now records the bytes written. Found by the
+  first native full-suite run (audit WP17), like the fixes below.
+- **Line endings no longer count as content.** The inputs hash and the
+  generation's file digests normalize CRLF. A store written on Windows, or
+  checked out there with git's autocrlf, read every projection as stale. An
+  LF-only store hashes exactly as before, so no existing stamp changes.
+- **The guard prefilter is trusted through any spelling of the store's
+  path.** The generation's stat fingerprint named files by absolute path. On
+  macOS (`/var` and `/private/var`) and with Windows short names, a reader
+  that spelled the path differently never matched, so the hook always took
+  the slow path.
+- **A missing program is "unavailable" on Windows, not "failed".** `cmd.exe`
+  exits 1, not 9009, when it cannot find a program, so `verify --recheck`
+  recorded a missing runner as a regression. This is decided from the command
+  line, not from the shell's localized message.
+- **Store-relative paths are POSIX everywhere.** `validate`, `audit`,
+  `scan-secrets` and the JSON envelopes printed `generated\resume-packet.md`
+  on Windows.
+- **A record directory excluded by a committed `.gitignore` is excluded on
+  Windows too.** The paths sent to `git check-ignore` ended in `\r\n` there
+  and never matched. It now uses `-z`.
+- **The lock holder's pid is shown on Windows.** The OS lock covered byte 0,
+  where the owner line is, so no waiter could read it.
+- **No hook-log line is lost to a rotation.** The append and the rotation now
+  share one hold of the log's lock.
+- **A second `configure_output` keeps ASCII markers on a cp1252 console.** It
+  probed the current markers, which after an ASCII choice always encode.
+- **`audit` sees a CRLF adapter file copying a record**, and an absolute
+  evidence path in either platform's form is not treated as a local file.
 
 ## [0.3.1] — 2026-09-27
 

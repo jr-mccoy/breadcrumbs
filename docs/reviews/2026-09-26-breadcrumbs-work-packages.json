@@ -1226,7 +1226,7 @@
       "title": "Qualify adapters, MCP contracts, and native platforms",
       "priority": "P1",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP04",
         "WP05",
@@ -1263,7 +1263,17 @@
         "A cross-harness resume uses the same canonical record IDs and effective rules."
       ],
       "done_when": "Advertised capabilities correspond to tested host/platform/version combinations, and unsupported surfaces are clearly identified.",
-      "evidence": [],
+      "evidence": [
+        {
+          "recorded_on": "2026-09-28",
+          "starting_commit": "e2b769c",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp17/README.md",
+          "summary": "breadcrumbs/adapters/claude.py (contract version 2): declared guarded tools (Bash, PowerShell, Edit, Write, MultiEdit, NotebookEdit, Task, Agent) and ignored ones, normalization of each documented input into an Action, unknown tools reported unsupported, GUARD_MATCHER built from the declaration and installed by init --with-hooks. Versioned MCP contract (mcp_core.contract(), version 1: tools, parameters, advisory annotations, resources, prompts, error and refusal envelopes) pinned by a fixture; annotations attached where the SDK accepts them, documented as hints. Native CI job on Windows and macOS (3.9, 3.13): wheel build, tools/platform_smoke.py against the installed binary and the contract tests (gating), the full suite (reported). Windows replay containment: Job Object plus process-tree tracking while a check runs. The first native full-suite runs found defects Linux could not show; fixed in 48bc814 and f528a24 (journal bytes vs text on Windows, CRLF in hashes and digests, absolute-path stat fingerprint, POSIX store-relative paths, check-ignore -z, cmd.exe missing-program detection, Windows lock byte, hook-log append/rotation, console marker probe, lenient reader newlines, cross-platform absolute evidence paths). docs/compatibility-matrix.md.",
+          "tests": "tests/test_adapter_contracts.py: 6 tests (test_supported_tool_names_normalize_expected_actions over 16 payload fixtures; installed matcher = declared tool set; PowerShell and notebook edits reach the guard end to end; test_mcp_errors_and_resources_match_versioned_contract; live server matches the contract on SDK 1.x and 2.x; cross-harness resume uses the same record ids and rules). tests/test_platform_portability.py: 8 tests (7 fail on e835448; the path-rendering AST guard fails on 68c8075). test_mutation_recovery.WindowsLineSeparatorTests reruns the truthful-failure cases under a CRLF separator (6 fail on e835448).",
+          "results": "CI run 246 (e835448), native full suite: macOS 3.9 10 failures, 3.13 6; Windows 3.9 and 3.13 49 failures and 1 error each (docs/reviews/2026-09-27-breadcrumbs-wp17/native-run-246.txt). Run 247 (68c8075): macOS 1,364 run 0 failures on both; Windows 16 failures on both, none among run 246's, all from one site 48bc814 missed (native-run-247.txt), fixed in f528a24. Smoke and contract steps (gating) green on every native combination in both runs. Local on f528a24: suite 1,365 OK; symlinked TMPDIR 1,364 OK (68c8075); CRLF simulation 1 known simulation artifact; MCP SDK 2.2.0 full and 1.30.0 contract OK; evals pass, --release 20/20; probes exit 2 (2 recorded false positives, 3 recorded errors; powershell_translation cleared). Behavior: 6 defects before (e2b769c), 0 after.",
+          "limits": "Hooks are Claude Code only; payload fixtures follow documented field names, not captures of every host version. Windows tree tracking polls every 100 ms. The native full suite is reported, not gating. Two causes are inferred (hook-log race, cmd.exe exit 1 for a missing program). A confirming Windows full-suite run on the fixed revision is pending at the time of this entry."
+        }
+      ],
       "priority_note": "P1 coverage / P2 expansion"
     },
     {
@@ -1322,7 +1332,7 @@
       "title": "Demonstrate real continuity value with controlled task replays",
       "priority": "P2",
       "relative_complexity": "L",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP15",
         "WP17",
@@ -1349,14 +1359,24 @@
         "All reported cost includes maintenance and retries."
       ],
       "done_when": "The project has defensible task-level evidence and an understandable demonstration, not only a large feature list.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "5e01027",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp19/README.md",
+          "summary": "evals/task_replays/: five two-session scenarios (repeated failure, changed decision, compaction, branch switch, cross-harness) as sanitized hand-written inputs; oracle.py scores delivered text and imports nothing from breadcrumbs; run.py runs three baselines (none, a hand-kept NOTES.md, breadcrumbs through the real Claude Code hooks and, for cross-harness, the real MCP tools) on a fresh repository and a local clone of this repository; results.json records per run the delivered text's digest, facts and pointer at start and at the action, stale presentation, tokens, commands/bytes/prose (setup separate), and each surfaced record's id, file and sha256. docs/benchmarks/continuity-results.md and docs/demos/two-session-handoff.md (demo.py). No product code changed.",
+          "tests": "tests/test_task_replays.py: test_rerun_reproduces_the_published_verdicts (reruns the fresh-host replays and holds every oracle verdict to results.json; every surfaced record carries a file and a hash) and test_the_oracle_needs_nothing_from_breadcrumbs.",
+          "results": "10 runs per baseline: facts@start none 2/10, notes 10/10, breadcrumbs 6/10; pointer@action 2/10, 2/10, 10/10; stale guidance presented as current 0/10, 4/10, 0/10; tokens 0, 1,398, 22,614; commands 0, 0, 97. Reproduced by the test on 68c8075 (local, and Python 3.9).",
+          "limits": "F26 is met in part. Delivery, not outcomes: no agent was run. One real repository, not the three the roadmap asks for (this session's access is scoped to this repository). Hand-written inputs with diligent authors on both sides; no uncertainty interval (each cell is one deterministic run); cross-harness assumes the MCP client calls the resume and guard tools. Follow-up finding: the packet's failed-attempt line omits why the attempt failed."
+        }
+      ]
     },
     {
       "id": "WP20",
       "title": "Make onboarding and ongoing operation understandable",
       "priority": "P2",
       "relative_complexity": "M",
-      "status": "not_started",
+      "status": "review_required",
       "depends_on": [
         "WP08",
         "WP14",
@@ -1391,7 +1411,17 @@
         "Default-branch handoff does not direct the next agent to redo completed phases."
       ],
       "done_when": "New users can get value and understand limitations without reading a 13,000-line implementation or an entire command catalog.",
-      "evidence": []
+      "evidence": [
+        {
+          "recorded_on": "2026-09-27",
+          "starting_commit": "e835448",
+          "record": "docs/reviews/2026-09-27-breadcrumbs-wp20/README.md",
+          "summary": "docs/quickstart.md (install, init with an AGENTS.md signpost, record, resume, why it surfaced, supersede/retire, break and recover), executed line by line with exit codes by tools/quickstart_check.py, which the CI package job runs against the installed wheel; docs/operator-guide.md (kinds of memory, profiles/privacy/budgets, what guard does not authorize, platforms, one recovery row per doctor finding, handoff reconciliation); docs/continuity-contract.md (seven promises with their tests, non-promises, what to do when a memory is wrong). crumb doctor gains compatibility, records, related_map (when degraded) and hook_matcher (when hooks are installed) rows naming their fixes, without changing the exit code. The default handoff.md is reconciled. CONTRIBUTING first-contribution path; README pointer; security.md 'what a guard verdict is not'; cli-spec doctor rows.",
+          "tests": "tests/test_operator_path.py: 6 tests (the quickstart works as written; doctor names a record failing validation with `crumb validate`, a store it may not write, an outdated guard matcher with `crumb init --with-hooks` and clears once fixed, a degraded related map; the default handoff is not older than the latest CHANGELOG release, which failed before reconciliation).",
+          "results": "On 68c8075: suite 1,364 run, 0 failures, 8 skipped; symlinked TMPDIR 1,364 OK; Python 3.9 subsets OK; MCP SDK 2.2.0 full suite and SDK 1.30.0 contract tests OK; evals pass, --release 20/20 critical; quickstart works as written (source and, in CI run 247's package job, the installed wheel); CI fixture steps 7/7; probes exit 2 (2 recorded false positives, 3 recorded probe errors). Behavior: 7 defects before (e835448), 0 after.",
+          "limits": "The README is still long (it points new readers elsewhere first; deriving the reference from the parser is follow-up). The handoff check is a date check, not a content check. doctor's records row runs a full validate (about 0.15 s per 1,000 records). Hooks for hosts other than Claude Code are named, not shown."
+        }
+      ]
     },
     {
       "id": "WP21",
