@@ -26,6 +26,22 @@ Fixes from the DoWhat field report on 0.4.0
 
 ### Fixed
 
+- **`migrate --dry-run` runs the real steps on a scratch copy**, so it says
+  "would apply" only when applying would succeed, and names the blocking
+  record and its line (`known-traps.md:41`) when it would not. It also lists
+  each record behind "Left as they are for you to fix", not just counts.
+- **Hand-written trap and question values no longer stop a migration.**
+  Statuses a file may not hold (`fixed`, `resolved 2026-09-18 — …`, `done`)
+  become `stale` for a trap and `answered`/`closed` for a question; a
+  `superseded` with no successor becomes `stale`; a dangling `Superseded by`
+  or an undated `Last confirmed` is dropped. Every original value is kept,
+  verbatim, in the file's Notes (`- Original status: …`). Readers already
+  treated these as settled, so nothing changes what they show.
+- **A duplicate trap or question id is never dropped** by the migration (the
+  second block used to vanish silently); it is kept below the index for a
+  person to merge, and the migration says so. A step's validation failure now
+  lists every file, not the first five, and a hand-added block that cannot be
+  adopted at reindex prints a `CRUMB-WARN` instead of failing silently.
 - **Traps and questions keep their tags.** `note trap|question` and
   `inbox promote … trap|question` wrote `tags: []`, dropping the jot's tags
   and any `--tags` given. `note trap` and `note question` now take `--tags`.

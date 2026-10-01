@@ -11658,6 +11658,12 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         _emit_error(args, result["error"] or "migration failed")
         if result.get("backup"):
             print(f"  the store was backed up first: {result['backup']}", file=sys.stderr)
+        if result.get("dry_run"):
+            print(
+                "  fix each record named above (`crumb mark-status <id> <status> --reason …`"
+                " edits a trap or question block), then preview again.",
+                file=sys.stderr,
+            )
         return 1
     if not result["steps"]:
         print(f"migrate: nothing to do — store is schema_version {result['to']}.")
@@ -11688,6 +11694,11 @@ def cmd_migrate(args: argparse.Namespace) -> int:
             print("Left as they are for you to fix (migration never rewrites them):")
             for code, n in legacy.items():
                 print(f"  {code}: {n}")
+            items = result.get("legacy_items") or []
+            for line in items[:50]:
+                print(f"    {line}")
+            if len(items) > 50:
+                print(f"    … and {len(items) - 50} more (`crumb validate` lists every one)")
         print("\nRe-run without --dry-run to apply.")
     else:
         print(f"\nBackup of the pre-migration store: {result['backup']}")

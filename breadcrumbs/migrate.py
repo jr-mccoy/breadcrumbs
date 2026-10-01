@@ -308,6 +308,14 @@ def verify_backup(backup: Path) -> list[str]:
     return problems
 
 
+def _copytree(src: Path, dst: Path) -> None:
+    shutil.copytree(src, dst, symlinks=True, dirs_exist_ok=True)
+
+
+def _copy2(src: Path, dst: Path) -> None:
+    shutil.copy2(src, dst, follow_symlinks=False)
+
+
 def _rel(path: Path, memory_dir: Path) -> str:
     try:
         return Path(path).relative_to(Path(memory_dir).parent).as_posix()
@@ -421,6 +429,57 @@ def restore(memory_dir: Path, backup: Path | None = None, *, dry_run: bool = Fal
     }
 
 
+def simulate(memory_dir: Path, pending: list[Migration]) -> tuple[list[dict], dict | None]:
+    """Run `pending` against a scratch copy of the store; nothing real is touched.
+
+    Returns `(steps, blocker)`: each step's `{version, summary, changed}` as the
+    real run would report it, and `{version, error}` for the first step that
+    would fail (None when every step would succeed). The copy is made with the
+    same rules as the backup — committed store only, no `private/` or `index/`
+    — so the steps see exactly what they will see for real.
+    """
+    import tempfile
+
+    memory_dir = Path(memory_dir)
+    steps: list[dict] = []
+    with tempfile.TemporaryDirectory(prefix="crumb-migrate-") as td:
+        scratch_root = Path(td)
+        copy = scratch_root / memory_dir.name
+        path_policy.mkdirs(copy)
+        for entry in sorted(memory_dir.iterdir()):
+            if entry.name in _BACKUP_SKIP_DIRS or entry.is_symlink():
+                continue
+            if entry.is_dir():
+                _copytree(entry, copy / entry.name)
+            elif entry.is_file():
+                _copy2(entry, copy / entry.name)
+        for m in pending:
+            try:
+                changed = m.apply(copy, scratch_root)
+            except Exception as exc:  # noqa: BLE001 - reported as the blocker
+                steps.append({"version": m.version, "summary": m.summary, "changed": []})
+                return steps, {"version": m.version, "error": str(exc)}
+            set_manifest_version(copy, m.version)
+            steps.append({"version": m.version, "summary": m.summary, "changed": changed})
+    return steps, None
+
+
+def legacy_findings(memory_dir: Path) -> tuple[dict, list[str]]:
+    """`legacy_report`'s counts plus one `path: message` line per finding, so a
+    preview names each record a person has to fix, not just how many."""
+    counts: dict[str, int] = {}
+    items: list[str] = []
+    for finding in cli.run_validate(Path(memory_dir)):
+        if finding.get("status") != "fail":
+            continue
+        code = finding.get("code") or finding.get("check")
+        if code in ("schema-version", "manifest"):
+            continue
+        counts[code] = counts.get(code, 0) + 1
+        items.append(f"{finding.get('path') or '(store)'}: {finding.get('message')}")
+    return dict(sorted(counts.items())), items
+
+
 def legacy_report(memory_dir: Path) -> dict:
     """What a migration leaves as it is, for a person to decide (audit WP21).
 
@@ -528,19 +587,30 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
 
     marker = in_progress(memory_dir)
     if dry_run:
+        # The preview runs the real steps on a scratch copy, so it can only say
+        # "would apply" when applying would succeed (field report 2026-10-01,
+        # issue 4: a dry run passed, then step 3 failed on two trap statuses).
+        steps, blocker = simulate(memory_dir, pending)
+        legacy, legacy_items = legacy_findings(memory_dir)
         return {
-            "ok": True,
+            "ok": blocker is None,
             "from": current,
             "to": current,
             "target": target,
-            "steps": [{"version": m.version, "summary": m.summary, "changed": []} for m in pending],
+            "steps": steps,
             "backup": None,
             "dry_run": True,
             # What the backup will hold, and what migration leaves for a person.
             "backup_files": len(store_files(memory_dir)),
-            "legacy": legacy_report(memory_dir),
+            "legacy": legacy,
+            "legacy_items": legacy_items,
             "resumes": marker,
-            "error": None,
+            "error": (
+                None
+                if blocker is None
+                else f"the migration would stop at schema_version {blocker['version']}: "
+                f"{blocker['error']}. Nothing was changed."
+            ),
         }
 
     # A migration that stopped part-way resumes against the backup it took

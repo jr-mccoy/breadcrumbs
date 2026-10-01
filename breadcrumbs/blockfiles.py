@@ -522,7 +522,17 @@ def write_indexes(memory_dir: Path, project_root: Path | None = None) -> None:
     if cli._load_trap_blocks(memory_dir) or cli._load_question_blocks(memory_dir):
         try:
             result = adopt_blocks(memory_dir, project_root, agent="adopted")
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - reported, and the singletons kept
+            # Silence here left a hand-added block unadopted with no word why
+            # (field report 2026-10-01, N10). The block stays where it is.
+            import sys
+
+            print(
+                f"CRUMB-WARN: a hand-written trap/question block could not be moved "
+                f"into its own file, so known-traps.md / open-questions.md were left "
+                f"as they are: {exc}",
+                file=sys.stderr,
+            )
             return
         unadopted_traps = result["unadopted_traps"]
         unadopted_questions = result["unadopted_questions"]
@@ -591,6 +601,82 @@ def _same(a: str, b: str) -> bool:
     )
 
 
+# Status words a hand-kept block used for "this no longer applies". Readers
+# already treated any status but `active` / `open` as settled, so mapping them
+# keeps what every reader did; the original wording is kept in Notes
+# (field report 2026-10-01, issue 4).
+_ANSWERED_WORDS = ("resolved", "fixed", "done", "answered", "solved", "complete", "completed")
+
+
+def _legacy_fixes(
+    kind: str, meta: dict[str, str], fallback_status: str, known_ids: set[str]
+) -> tuple[dict[str, str | None], list[str], list[str]]:
+    """Map block values a file may not hold onto ones it may.
+
+    Returns `(values, note_lines, described)`: the status / superseded_by /
+    last_confirmed to write, the lines that keep each original in the file's
+    Notes, and one short description per change for the migration's report.
+    Nothing is dropped: every value replaced is kept, verbatim, in Notes.
+    """
+    from breadcrumbs import validation as _validation
+
+    raw_status = (meta.get("status") or fallback_status or "").strip()
+    status = raw_status.lower() or ("active" if kind == "trap" else "open")
+    superseded_by = (meta.get("superseded_by") or "").strip() or None
+    last_confirmed = (meta.get("last_confirmed") or "").strip() or None
+    notes: list[str] = []
+    described: list[str] = []
+    valid = cli.VALID_STATUS if kind == "trap" else cli.VALID_QUESTION_STATUS
+    if status not in valid:
+        if kind == "trap":
+            new = "stale"
+        else:
+            first = re.split(r"[^a-z]+", status, maxsplit=1)[0]
+            new = "answered" if first in _ANSWERED_WORDS else "closed"
+        notes.append(f"- Original status: {raw_status}")
+        described.append(f"status {raw_status[:60]!r} -> {new}")
+        status = new
+    if superseded_by and superseded_by.lower() not in known_ids:
+        notes.append(f"- Original superseded by: {superseded_by} (names no record in this store)")
+        described.append(f"superseded_by {superseded_by!r} names no record; link kept in Notes")
+        superseded_by = None
+    if status == "superseded" and not superseded_by:
+        new = "stale" if kind == "trap" else "closed"
+        if "- Original status:" not in "\n".join(notes):
+            notes.append(f"- Original status: {raw_status} (no successor named)")
+        described.append(f"status superseded with no successor -> {new}")
+        status = new
+    if last_confirmed and _validation.parse_timestamp(last_confirmed) is None:
+        notes.append(f"- Original last confirmed: {last_confirmed}")
+        described.append(f"last_confirmed {last_confirmed!r} is not a date; kept in Notes")
+        last_confirmed = None
+    values = {"status": status, "superseded_by": superseded_by, "last_confirmed": last_confirmed}
+    return values, notes, described
+
+
+def _block_lines(path: Path) -> dict[str, int]:
+    """`{heading: 1-based line}` of each `## ` block in `path` (first occurrence)."""
+    if not path.is_file():
+        return {}
+    text = cli.read_text_lenient(path)[0]
+    out: dict[str, int] = {}
+    for start, _end, heading in cli._md_heading_spans(text):
+        out.setdefault(heading.strip(), text.count("\n", 0, start) + 1)
+    return out
+
+
+def _known_ids(memory_dir: Path) -> set[str]:
+    """Every id a migrated block may link to: records, trap and question blocks."""
+    ids = {
+        str(r.meta.get("id") or r.stem).lower()
+        for r in cli.load_records(Path(memory_dir))
+        if not r.error
+    }
+    ids |= {t["id"].lower() for t in cli._load_trap_blocks(memory_dir)}
+    ids |= {q["id"].lower() for q in cli._load_question_blocks(memory_dir)}
+    return ids
+
+
 def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migration") -> dict:
     """Write a file for every trap/question block that does not have one yet.
 
@@ -613,13 +699,26 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
     existing_traps = {t["id"].lower(): t for t in load_trap_files(memory_dir)}
     existing_questions = {q["id"].lower(): q for q in load_question_files(memory_dir)}
 
+    known_ids = _known_ids(memory_dir)
+    mapped: list[str] = []
+    trap_lines = _block_lines(memory_dir / "known-traps.md")
     trap_raw = _raw_blocks(
         memory_dir / "known-traps.md",
         lambda h: h.partition(":")[0].strip().lower() if h.lower().startswith("trap") else None,
     )
+    trap_raw_by_heading = _raw_blocks(memory_dir / "known-traps.md", lambda h: h.strip())
+    adopted_here: set[str] = set()
     for trap in cli._load_trap_blocks(memory_dir):
         tid = trap["id"].lower()
-        raw = trap_raw.get(tid, "")
+        raw = trap_raw_by_heading.get(trap["heading"].strip()) or trap_raw.get(tid, "")
+        where = f"known-traps.md:{trap_lines.get(trap['heading'].strip(), '?')}"
+        if tid in adopted_here:
+            # A second block with an id this run already wrote (N2): writing it
+            # failed "already exists" and was dropped silently. Keep it verbatim
+            # below the index, the same as any block that collides with a file.
+            unadopted_traps.append(raw or f"## {trap['heading']}\n{trap.get('body') or ''}")
+            changed.append(f"trap {tid} ({where}) reuses an id; kept below the index to merge")
+            continue
         if tid in existing_traps:
             if not _same(existing_traps[tid]["body"], trap.get("body") or ""):
                 unadopted_traps.append(raw or f"## {trap['heading']}\n{trap.get('body') or ''}")
@@ -628,6 +727,8 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
         if not cli.UNDATED_STEM_RE.match(stem):
             stem = cli.slugify(stem) or "trap"
         content, meta, other = _parse_block(_body_of(raw) if raw else trap.get("body") or "")
+        values, extra_notes, described = _legacy_fixes("trap", meta, trap["status"], known_ids)
+        mapped += [f"trap {tid} ({where}): {d}" for d in described]
         result = write_trap(
             memory_dir,
             project_root,
@@ -638,14 +739,15 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
             why=content.get("Why"),
             safe=content.get("Safe approach"),
             verify=content.get("Verification"),
-            notes="\n".join(other),
-            status=(meta.get("status") or trap["status"] or "active").lower(),
+            notes="\n".join(other + extra_notes),
+            status=values["status"],
             agent=agent,
-            last_confirmed=meta.get("last_confirmed"),
+            last_confirmed=values["last_confirmed"],
             promoted_to=meta.get("promoted_to"),
-            superseded_by=meta.get("superseded_by"),
+            superseded_by=values["superseded_by"],
             validate=False,
         )
+        adopted_here.add(tid)
         if result.get("ok"):
             new_paths.append(Path(result["path"]))
             new_id = result["id"]
@@ -660,14 +762,22 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
                 note = f" (id was {original!r}, not a usable filename)"
             changed.append(f"trap {new_id} -> traps/{stem}.md{note}")
         elif "already exists" not in result.get("error", ""):
-            raise RuntimeError(f"trap {tid}: {result.get('error')}")
+            raise RuntimeError(f"trap {tid} ({where}): {result.get('error')}")
 
     question_raw = _raw_blocks(
         memory_dir / "open-questions.md",
         lambda h: cli.question_item_id(h[2:].strip()) if h.lower().startswith("q:") else None,
     )
+    question_lines = _block_lines(memory_dir / "open-questions.md")
+    question_raw_by_heading = _raw_blocks(memory_dir / "open-questions.md", lambda h: h.strip())
     for q in cli._load_question_blocks(memory_dir):
-        raw = question_raw.get(q["id"], "")
+        heading = f"Q: {q['question']}"
+        raw = question_raw_by_heading.get(heading) or question_raw.get(q["id"], "")
+        where = f"open-questions.md:{question_lines.get(heading, '?')}"
+        if q["id"].lower() in adopted_here:
+            unadopted_questions.append(raw or f"## Q: {q['question']}\n{q.get('body') or ''}")
+            changed.append(f"question {q['id']} ({where}) reuses an id; kept below the index")
+            continue
         if q["id"].lower() in existing_questions:
             if not _same(existing_questions[q["id"].lower()]["body"], q.get("body") or ""):
                 unadopted_questions.append(raw or f"## Q: {q['question']}\n{q.get('body') or ''}")
@@ -679,24 +789,27 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
             if opened and re.match(r"^\d{4}-\d{2}-\d{2}$", opened)
             else None
         )
+        values, extra_notes, described = _legacy_fixes("question", meta, q["status"], known_ids)
+        mapped += [f"question {q['id']} ({where}): {d}" for d in described]
         result = write_question(
             memory_dir,
             project_root,
             q["question"],
             why=content.get("Why it matters"),
             needs=content.get("Needs"),
-            notes="\n".join(other),
-            status=(meta.get("status") or q["status"] or "open").lower(),
+            notes="\n".join(other + extra_notes),
+            status=values["status"],
             agent=agent,
             created_at=created,
-            superseded_by=meta.get("superseded_by"),
+            superseded_by=values["superseded_by"],
             validate=False,
         )
+        adopted_here.add(q["id"].lower())
         if result.get("ok"):
             new_paths.append(Path(result["path"]))
             changed.append(f"question {result['id']} -> questions/{question_stem(result['id'])}.md")
         elif "already exists" not in result.get("error", ""):
-            raise RuntimeError(f"question {q['id']}: {result.get('error')}")
+            raise RuntimeError(f"question {q['id']} ({where}): {result.get('error')}")
 
     if new_paths:
         # One validate pass over everything just written. A failure removes
@@ -713,11 +826,12 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
                 if p.exists():
                     p.unlink()
             raise RuntimeError(
-                "trap/question files failed validation: "
-                + "; ".join(f"{f['path']}: {f['message']}" for f in fails[:5])
+                f"{len(fails)} trap/question file(s) failed validation: "
+                + "; ".join(f"{f['path']}: {f['message']}" for f in fails)
             )
     return {
-        "changed": changed,
+        "changed": changed + mapped,
+        "mapped": mapped,
         "unadopted_traps": unadopted_traps,
         "unadopted_questions": unadopted_questions,
     }
