@@ -529,3 +529,4 @@ class SpeedTests(unittest.TestCase):
             self.assertEqual(out, {})
             last = json.loads((mem / "private" / "hook-log.jsonl").read_text().splitlines()[-1])
             self.assertEqual(last.get("skipped"), "read-only")
+            self.assertIsInstance(last.get("git"), int)  # git processes this firing

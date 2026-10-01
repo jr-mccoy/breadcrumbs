@@ -464,6 +464,7 @@ def is_git_repo(root: Path) -> bool:
     cached = _IS_GIT_REPO_CACHE.get(key)
     if cached is not None:
         return cached
+    GIT_CALLS[0] += 1
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
@@ -1524,7 +1525,14 @@ def records_in(directory: Path, rtype: str) -> list[Record]:
 # separately.
 
 
+# git processes started by this process, for the hook log's `git` count: on
+# Windows each costs tens of milliseconds, and a count says at once whether a
+# slow firing was git or Python (field report 2026-10-01, issue 6).
+GIT_CALLS = [0]
+
+
 def _git_out(root: Path, *args: str) -> str | None:
+    GIT_CALLS[0] += 1
     try:
         r = subprocess.run(
             ["git", *args],
@@ -14454,8 +14462,12 @@ def cmd_hook(args: argparse.Namespace) -> int:
         # Everything a hook does runs in one application context on the hook
         # channel (audit F18, WP16): admission, the store's aliases, one parse
         # cache for the firing.
-        with _service.active(_service.Context(root, memory_dir, "hook")):
-            return _run_hook(event, memory_dir, root, payload)
+        before = GIT_CALLS[0]
+        try:
+            with _service.active(_service.Context(root, memory_dir, "hook")):
+                return _run_hook(event, memory_dir, root, payload)
+        finally:
+            _hooklog.note(git=GIT_CALLS[0] - before)
 
     return _hooklog.run_logged(event, memory_dir, payload, handler, now_iso)
 
