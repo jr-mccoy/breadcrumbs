@@ -420,3 +420,112 @@ class MergedBranchTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpeedTests(unittest.TestCase):
+    """Issue 6: the guard hook took 5 s on Windows, mostly git spawns per record."""
+
+    def _spawns(self, fn) -> int:
+        import subprocess as sp
+        from unittest import mock
+
+        real = sp.Popen.__init__
+        calls = []
+
+        def counting(self_, *a, **k):
+            calls.append(a[0] if a else k.get("args"))
+            return real(self_, *a, **k)
+
+        with mock.patch.object(sp.Popen, "__init__", counting):
+            fn()
+        return len(calls)
+
+    def _store_with_side_branch_records(self, tmp: str, n: int) -> tuple[Path, Path]:
+        root = make_repo(tmp)
+        mem = init_store(root)
+        git(root, "add", "-A")
+        git(root, "commit", "-qm", "store")
+        base = crumb.git_branch(root)
+        git(root, "checkout", "-q", "-b", "side")
+        shas = []
+        for i in range(n):
+            (root / f"s{i}.txt").write_text("x\n")
+            git(root, "add", f"s{i}.txt")
+            git(root, "commit", "-qm", f"side {i}")
+            shas.append(crumb.git_commit(root))
+        git(root, "checkout", "-q", base)
+        for i, sha in enumerate(shas):
+            run(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    f"Billing retry rule {i}",
+                    "--set",
+                    "Decision",
+                    "billing retry backoff",
+                    "--evidence",
+                    "file",
+                    "src/billing/invoice.py",
+                    "--confidence",
+                    "low",
+                ]
+            )
+            rec = sorted((mem / "decisions").glob("*.md"))[-1]
+            text = rec.read_text()
+            rec.write_text(text.replace(f"commit: {crumb.git_commit(root)}", f"commit: {sha}"))
+        return root, mem
+
+    def test_git_spawns_do_not_grow_with_unmerged_record_commits(self):
+        counts = []
+        for n in (3, 25):
+            with tempfile.TemporaryDirectory() as tmp:
+                root, mem = self._store_with_side_branch_records(tmp, n)
+                counts.append(
+                    self._spawns(
+                        lambda: crumb.guard(
+                            mem,
+                            root,
+                            "edit src/billing/invoice.py",
+                            files=["src/billing/invoice.py"],
+                        )
+                    )
+                )
+        self.assertEqual(counts[0], counts[1], counts)
+        self.assertLessEqual(counts[1], 12, counts)
+
+    def test_a_read_only_command_is_skipped_by_the_hook(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            run(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "Cache keys are versioned",
+                    "--set",
+                    "Decision",
+                    "cache keys versioned",
+                    "--confidence",
+                    "low",
+                ]
+            )
+            run(["reindex", "--project", str(root)])
+            out = hook(
+                "guard",
+                {
+                    "cwd": str(root),
+                    "tool_name": "Bash",
+                    "tool_input": {
+                        "command": "cd src && grep -rn 'cache keys' . 2>/dev/null | head"
+                    },
+                },
+            )
+            self.assertEqual(out, {})
+            last = json.loads((mem / "private" / "hook-log.jsonl").read_text().splitlines()[-1])
+            self.assertEqual(last.get("skipped"), "read-only")

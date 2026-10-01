@@ -142,6 +142,18 @@ def _is_fresh(meta: dict, memory_dir: Path, project_root: Path) -> bool:
     """
     if meta.get("format") != INDEX_FORMAT:
         return False
+    # The guard and prompt hooks run on every tool call and prompt, where the
+    # content hash (every record read, plus a `git check-ignore` spawn) was a
+    # large share of the firing (field report 2026-10-01, issue 6). There, an
+    # unchanged path/size/mtime signature taken before the build is accepted.
+    # A same-size edit that also restores the mtime (F12) can make one hook
+    # firing use the previous index; the next write republishes it. Every
+    # other caller keeps the strict content hash.
+    from breadcrumbs import admission
+
+    if admission.current_channel() == "hook" and meta.get("stat_fingerprint"):
+        if meta["stat_fingerprint"] == _stat_fingerprint(memory_dir, project_root):
+            return True
     return meta.get("inputs_hash") == cli._inputs_hash(memory_dir, project_root)
 
 
@@ -175,6 +187,9 @@ def build_index(
     if not available():
         return {"built": False, "records": 0, "reason": "sqlite3 unavailable"}
     own_snapshot = inputs_hash is None
+    # Taken before anything is read: a file that moves during the build then
+    # mismatches, and the hook takes the slow path, never a stale fast one.
+    fingerprint = _stat_fingerprint(memory_dir, project_root)
     if own_snapshot:
         inputs_hash = cli._inputs_hash(memory_dir, project_root)
     try:
@@ -239,6 +254,7 @@ def build_index(
                     ("inputs_hash", inputs_hash),
                     ("format", INDEX_FORMAT),
                     ("dirs", ",".join(dirs)),
+                    ("stat_fingerprint", fingerprint),
                 ],
             )
             conn.commit()

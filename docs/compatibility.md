@@ -46,7 +46,7 @@ stores (this page).
 | `schema_version` | 4 | `cli.SCHEMA_VERSION`, written to `manifest.yml` | on-disk record format | older: read as is, `crumb migrate` upgrades; newer: writes refused, reads warned (§4) |
 | `requires` | review-profiles | `compat.KNOWN_FEATURES`, `manifest.yml` `requires:` | a change old readers must not ignore without a format change | an unknown feature is treated like a newer `schema_version` |
 | `generation-manifest` | 1 | `projections.MANIFEST_FORMAT` (`index/generation.json`) | projection publication format | treated as unverified; the next publication rewrites it |
-| `guard-prefilter` | 3 | `cli.GUARD_PREFILTER_FORMAT` (`generated/guard-prefilter.json`) | pre-filter contents | treated as unverified (the hook runs full guard) until republished |
+| `guard-prefilter` | 4 | `cli.GUARD_PREFILTER_FORMAT` (`generated/guard-prefilter.json`) | pre-filter contents | treated as unverified (the hook runs full guard) until republished |
 | `search-index` | 2 | `searchindex.INDEX_FORMAT` (`index/search.sqlite`) | index schema | ignored (full scan); `crumb reindex` rebuilds it |
 | `miner-state` | 2 | `hooks_common.MINER_STATE_VERSION` (`private/miner/`) | transcript cursor state | started fresh; the acknowledged-event ledger prevents duplicates |
 | `usage-event` | 1 | `usage.py` event `v` (`private/usage-events/`) | usage event shape | an unreadable event is dropped and counted (`accounting`) |

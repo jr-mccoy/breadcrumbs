@@ -46,6 +46,19 @@ Fixes from the DoWhat field report on 0.4.0
 
 ### Fixed
 
+- **The guard hook is fast enough to run on every tool call** (field report
+  issue 6: p50 5.3 s on Windows). Record commits not on HEAD's history (records
+  from squash-merged cloud branches) no longer cost two or three `git`
+  processes each — 127 for one edit in a test store, now a constant 6 —
+  branch and default-branch lookups are asked once per firing, the guard path
+  no longer re-reads every decision for a staleness view that does not use
+  them, and the hook trusts the search index on an unchanged path/size/mtime
+  signature. A read-only command is guarded only when a record names that
+  exact command or a path it touches. The pre-filter tests two shared words per
+  record, not against the union of every record's words (format 4), and
+  `SessionStart` republishes it when a `git pull` left it unverified. On Linux
+  an edit in a 400-record store went from 481 ms to about 200 ms end to end;
+  `doctor --hook-log` notes a guard p50 over 300 ms.
 - **`resume` names the records readers drop or misread.** A record with a
   status outside the vocabulary (a decision marked `fixed`) was silently left
   out of Active Decisions and guard while the packet's contract warning said

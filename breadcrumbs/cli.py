@@ -1522,6 +1522,12 @@ def _git_out(root: Path, *args: str) -> str | None:
 
 
 def git_branch(root: Path) -> str:
+    # The guard path asked this three times per firing; within one operation
+    # the branch cannot change (field report 2026-10-01, issue 6).
+    return op_memo(("git_branch", str(root)), lambda: _git_branch(root))
+
+
+def _git_branch(root: Path) -> str:
     if not is_git_repo(root):
         return NO_GIT_BRANCH
     out = _git_out(root, "rev-parse", "--abbrev-ref", "HEAD")
@@ -4116,10 +4122,12 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     tags: set[str] = set()
     paths: set[str] = set()
     commands: list[list[str]] = []
+    token_sets: list[list[str]] = []
     for it in _candidate_items(memory_dir, include_ideas=False):
         if not _may_drive_verdict(it):
             continue
         tokens |= set(it["specific"])
+        token_sets.append(sorted(it["specific"]))
         titles |= set(it.get("title_specific") or ())
         tags |= set(it.get("tag_stems") or {t: t for t in it.get("tags") or ()})
         paths |= set(it.get("files") or ()) | set(it.get("mentioned_files") or ())
@@ -4142,6 +4150,11 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
         "tags": sorted(tags),
         "paths": sorted(paths),
         "commands": sorted(commands),
+        # Each record's own stems. Guard's keyword gate is per record (two
+        # shared words in *one* record), so the pre-filter is too: against
+        # the union of every record's words, 12 of 20 everyday commands
+        # escalated to a full guard run (field report 2026-10-01, issue 6).
+        "token_sets": token_sets,
     }
 
 
@@ -6387,6 +6400,8 @@ def git_commit_distance(root: Path, commit: str | None) -> int | None:
 # back to the exact per-commit query; a store with records older than this many
 # commits pays one git call for each such distinct sha, which is the old cost.
 _REVLIST_INDEX_CAP = 5000
+# Exact per-commit lookups allowed per pass, for commits older than the index.
+_EXACT_LOOKUPS = 3
 
 
 class CommitDistanceIndex:
@@ -6446,13 +6461,28 @@ class CommitDistanceIndex:
         return by_n.get(commit)
 
     def distance_reaches(self, commit: str | None) -> bool:
-        """Is `commit` at least `threshold` commits behind HEAD? (False when unknown.)"""
+        """Is `commit` at least `threshold` commits behind HEAD? (False when unknown.)
+
+        No git call per commit on this path any more (field report 2026-10-01,
+        issue 6: a store whose records were written on since-squashed cloud
+        branches cost two or three spawns per record — 127 for one Edit, ~5 s
+        on Windows). A commit in the index is judged by its topo position (a
+        lower bound: a near miss can skip one decay factor, never add one). A
+        commit not in a *complete* index is not in HEAD's history at all and
+        has no meaningful distance: unknown, so no decay. Only when the index
+        was cut at `_REVLIST_INDEX_CAP` is a missing commit looked up exactly,
+        and then at most `_EXACT_LOOKUPS` times per pass.
+        """
         if commit in (None, "", NO_GIT_COMMIT):
             return False
         pos = self._position(str(commit))
-        if pos is not None and pos >= self._threshold:
-            return True  # proven by the lower bound — no git call
+        if pos is not None:
+            return pos >= self._threshold
+        if len(self._index()) < _REVLIST_INDEX_CAP:
+            return False
         if commit not in self._exact:
+            if len(self._exact) >= _EXACT_LOOKUPS:
+                return False
             self._exact[str(commit)] = git_commit_distance(self._root, str(commit))
         dist = self._exact[str(commit)]
         return dist is not None and dist >= self._threshold
@@ -9677,6 +9707,7 @@ def _score_item(
         or (title_overlap - matched_tag_stems)
         or matched_writes
         or (matched_tags and kw_beyond_tags >= 1)
+        or len(matched_tag_stems) >= 2
         or kw_beyond_tags >= GUARD_TOPICAL_KEYWORDS
     )
     if item["do_not_retry"] and do_not_retry_boost and topical:
@@ -10267,12 +10298,14 @@ def guard(
     # repeated the same store-wide facts verbatim on every call (P0-4). Only
     # abnormal states — cold handoff, detached HEAD, branch mismatch — belong
     # on the per-action path; the rest lives in resume/doctor/audit.
+    # The risks-only view reads no records (they feed only the full view), so
+    # none are loaded for it: that re-read every decision on each firing (#6).
     staleness = compute_staleness(
         root,
         parse_handoff_meta(handoff_text),
-        active_decisions(memory_dir),
-        active_attempts(memory_dir),
-        load_open_questions(memory_dir),
+        [],
+        [],
+        [],
         stale_days,
         risks_only=True,
         memory_dir=memory_dir,
@@ -13143,6 +13176,13 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
             f"\n{summary['locked']} writing hook firing(s) skipped because another "
             "writer held the store lock."
         )
+    guard_p50 = (summary["events"].get("guard") or {}).get("ms_p50")
+    if isinstance(guard_p50, (int, float)) and guard_p50 > HOOK_GUARD_BUDGET_MS:
+        print(
+            f"\nguard p50 {guard_p50:.0f} ms is over the {HOOK_GUARD_BUDGET_MS} ms budget for a "
+            "hook on every tool call. `prefilter: unverified` above means the pre-filter was "
+            "out of date (run `crumb reindex`); otherwise see docs/field-test.md."
+        )
     if summary.get("incompatible"):
         print(
             f"{summary['incompatible']} writing hook firing(s) refused: the store needs a "
@@ -13222,9 +13262,15 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     if _names_command(_command_tokens(action), idx.get("commands") or ()):
         return True
     q_specific = _specific(action)
-    idx_tokens = {_stem(str(t)) for t in (idx.get("tokens") or ())}
-    if len(q_specific & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
-        return True
+    sets = idx.get("token_sets")
+    if isinstance(sets, list):
+        for words in sets:
+            if len(q_specific & {_stem(str(t)) for t in words}) >= GUARD_MIN_KEYWORD_OVERLAP:
+                return True
+    else:
+        idx_tokens = {_stem(str(t)) for t in (idx.get("tokens") or ())}
+        if len(q_specific & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
+            return True
     if len(q_specific) == 1 and q_specific <= {_stem(str(t)) for t in (idx.get("titles") or ())}:
         return True
     if q_specific & {_stem(str(t)) for t in (idx.get("tags") or ())}:
@@ -13232,6 +13278,24 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
     index_paths = _norm_files(idx.get("paths") or ())
     return bool(action_paths & index_paths)
+
+
+def _prefilter_exact_hit(memory_dir: Path, action: str, files: list[str] | None) -> bool:
+    """Does a verified pre-filter say a record names this exact command or a
+    path it touches? True (run full guard) when the pre-filter is unverified."""
+    from breadcrumbs import projections as _projections
+
+    raw = _projections.verified(memory_dir, Path(memory_dir).parent, GUARD_PREFILTER_FILENAME)
+    try:
+        idx = json.loads(raw.decode("utf-8")) if raw is not None else None
+    except ValueError:
+        idx = None
+    if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
+        return True
+    if _names_command(_command_tokens(action), idx.get("commands") or ()):
+        return True
+    action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
+    return bool(action_paths & _norm_files(idx.get("paths") or ()))
 
 
 # How much of an edit's new content, and of a subagent's launch prompt, feeds
@@ -13456,6 +13520,19 @@ def _record_session_start(memory_dir: Path, root: Path, payload: dict) -> None:
             )
     except Exception:  # pragma: no cover - a SessionStart hook must never fail
         pass
+    # A `git pull` or checkout since the last crumb write leaves the guard
+    # pre-filter unverified, and then every tool call pays a full guard run
+    # until something writes (field report 2026-10-01, issue 6: "prefilter:
+    # unverified" on most firings). Republish once here, where one slow firing
+    # per session is affordable; skip if another writer holds the lock.
+    try:
+        from breadcrumbs import lock as _lock
+        from breadcrumbs import projections as _projections
+
+        if _projections.verified(memory_dir, root, GUARD_PREFILTER_FILENAME) is None:
+            try_reindex_projections(memory_dir, root, lock_timeout=_lock.HOOK_TIMEOUT)
+    except Exception:  # pragma: no cover - best-effort
+        pass
 
 
 def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> int:
@@ -13513,6 +13590,11 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
     return 0
 
 
+# The guard hook's budget for its p50 on the common path (field report
+# 2026-10-01, issue 6). `doctor --hook-log` says when a machine is over it.
+HOOK_GUARD_BUDGET_MS = 300
+
+
 def _outside_project(path: str, root: Path) -> bool:
     """Is `path` (as a tool call names it) outside the project root?"""
     try:
@@ -13556,6 +13638,14 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     # trap-shaped routine commands escalate too. Only a plausibly-risky action
     # escalates to full guard scoring.
     _primary, classes = classify_action(action)
+    # A read-only command (every segment) is guarded only for memory about
+    # *it*: a trap naming the exact command, or a record about a path it
+    # touches. Shared vocabulary alone cannot raise it past READ_FIRST, and
+    # was the bulk of the field's "a warning on every command" (issue 7).
+    if _is_read_only_action(action) and not _prefilter_exact_hit(memory_dir, action, files):
+        _hooklog.note(skipped="read-only")
+        print(json.dumps({}))
+        return 0
     risky = (
         classes != ["routine_edit"]
         or bool(_HOOK_RISK_RE.search(action))

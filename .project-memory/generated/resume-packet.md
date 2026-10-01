@@ -1,18 +1,25 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 7edf192 | inputs_hash: 3982d863357d | generated_at: 2026-10-01T21:38:05+00:00 -->
-<!-- view: markdown | budget: 3558/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 4e58737 | inputs_hash: 231eefa6b960 | generated_at: 2026-10-01T22:07:34+00:00 -->
+<!-- view: markdown | budget: 3671/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/zealous-hamilton-ba7e5m` · commit `7edf192` · 11 uncommitted file(s) · handoff: handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md
+branch `claude/zealous-hamilton-ba7e5m` · commit `4e58737` · 6 uncommitted file(s) · handoff: handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Next Action
 Operator reviews docs/reviews/2026-10-01-dowhat-field-report-plan.md and answers D1b (should the first --next append set requires: next-action-log?). Then start Release 1 item 1 (capture --next appends; --replace saves what it replaced).
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 4e58737 guard: read commands by segment and effect; topical do-not-retry; merged records are history
+- 7593a67 Parity golden: the resume packet gains next_action_earlier
+- dfc9b65 resume: name records readers drop or misread; missing outcome is 'unknown'
+- cc6709b Stop hook: count this session's commits from where it started; ask once
 
 ## Active Decisions
 - `dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand` — Keeps per-push cost low while main and a weekly run still see platform regressions; run it by hand on a branch before merging platform-sensitive changes.
@@ -107,7 +114,7 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 4 commit(s) behind current HEAD.
 - active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 26 days old with no update — is this still true?
 - active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 26 days old with no update — is this still true?
 - active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 26 days old with no update — is this still true?
