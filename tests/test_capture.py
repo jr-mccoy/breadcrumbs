@@ -432,9 +432,7 @@ class NextActionLogTests(unittest.TestCase):
             _handoff_with_next(mem, HAND_LOG)
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
-                code, _ = run(
-                    ["capture", "session", "--project", tmp, "--next", "y", "--replace"]
-                )
+                code, _ = run(["capture", "session", "--project", tmp, "--next", "y", "--replace"])
             self.assertEqual(code, 0)
             sec = crumb.split_md_sections((mem / "handoff.md").read_text())["Next Action"]
             self.assertEqual(crumb.split_next_entries(sec), ["y"])
