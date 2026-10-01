@@ -4312,14 +4312,30 @@ _refresh_resume_packet = reindex_projections
 
 
 def _note_as_file(
-    memory_dir: Path, project_root: Path, kind: str, text: str, fields: dict, *, agent: str | None
+    memory_dir: Path,
+    project_root: Path,
+    kind: str,
+    text: str,
+    fields: dict,
+    *,
+    agent: str | None,
+    tags: list[str] | None = None,
 ) -> dict:
     """`note trap|question` at schema 3: one file per record (WM-22).
 
     Same checks, same result shape and the same hints as the block writer, so a
     caller cannot tell which storage it wrote to — which is the point.
+
+    Tags go into the file's frontmatter. They used to be dropped here, so a
+    trap promoted from a tagged jot (or `--tags` on promote) came out with
+    `tags: []` and could not match on them (field report 2026-10-01, N1).
     """
     from breadcrumbs import blockfiles
+
+    meta_extra = dict(fields.get("meta") or {})
+    if tags:
+        meta_extra["tags"] = sorted({str(t).strip() for t in tags if str(t).strip()})
+    fields = {**fields, "meta": meta_extra or None}
 
     if kind == "question":
         qstatus = (fields.get("status") or "open").strip().lower()
@@ -4534,7 +4550,7 @@ def _note_write(
     from breadcrumbs import blockfiles
 
     if kind in ("question", "trap") and blockfiles.uses_files(memory_dir):
-        return _note_as_file(memory_dir, project_root, kind, text, fields, agent=agent)
+        return _note_as_file(memory_dir, project_root, kind, text, fields, agent=agent, tags=tags)
 
     if kind == "question":
         path = memory_dir / "open-questions.md"
@@ -4738,7 +4754,7 @@ def cmd_note(args: argparse.Namespace) -> int:
         for note_text in section_notes:
             _emit_warning(args, note_text)
         fields = {"sections": idea_sections}
-        tags = _split_tags(args.tags)
+    tags = _split_tags(getattr(args, "tags", None))
 
     result = note(
         memory_dir,

@@ -160,9 +160,15 @@ def load_trap_files(memory_dir: Path) -> list[dict]:
                 "status": (rec.meta.get("status") or "active").lower(),
                 "content": cli._block_content(body),
                 "record_path": rec.path,
+                "tags": _tags_of(rec),
             }
         )
     return out
+
+
+def _tags_of(rec) -> list[str]:
+    tags = rec.meta.get("tags") or []
+    return [str(t) for t in tags] if isinstance(tags, list) else []
 
 
 def load_question_files(memory_dir: Path) -> list[dict]:
@@ -182,6 +188,7 @@ def load_question_files(memory_dir: Path) -> list[dict]:
                 "content": cli._block_content(body),
                 "body": body,
                 "record_path": rec.path,
+                "tags": _tags_of(rec),
             }
         )
     return out

@@ -389,6 +389,50 @@ class PromoteTests(unittest.TestCase):
             )
             self.assertEqual(ibx.find_jot(mem, rid).meta["status"], "superseded")
 
+    def test_promote_to_a_trap_keeps_the_jots_tags_and_adds_new_ones(self):
+        # Field report 2026-10-01, N1: the trap came out with `tags: []`.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            rid = jot(tmp, "robolectric KeyStore init kills the test class", "--tags", "keystore")
+            code, out = run(
+                ["inbox", "promote", rid, "trap", "--project", tmp, "--tags", "robolectric"]
+            )
+            self.assertEqual(code, 0, out)
+            trap = next(t for t in crumb.load_traps(mem) if "keystore" in t["heading"].lower())
+            self.assertEqual(sorted(trap["tags"]), ["keystore", "robolectric"])
+            meta, _ = crumb.parse_frontmatter(trap["record_path"].read_text())
+            self.assertEqual(sorted(meta["tags"]), ["keystore", "robolectric"])
+
+    def test_note_trap_and_question_take_tags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            code, out = run(
+                [
+                    "note",
+                    "trap",
+                    "gradlew stop kills live builds",
+                    "--project",
+                    tmp,
+                    "--tags",
+                    "gradle,daemon",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            code, out = run(
+                [
+                    "note",
+                    "question",
+                    "should the daemon be shared?",
+                    "--project",
+                    tmp,
+                    "--tags",
+                    "gradle",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            self.assertEqual(sorted(crumb.load_traps(mem)[0]["tags"]), ["daemon", "gradle"])
+            self.assertEqual(crumb.load_open_questions(mem)[0]["tags"], ["gradle"])
+
     def test_promote_to_a_verification(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)

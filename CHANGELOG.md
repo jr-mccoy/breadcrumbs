@@ -24,6 +24,12 @@ Fixes from the DoWhat field report on 0.4.0
   by the Stop hook's snapshot (it used to receive the git log, which resume
   already shows as *Landed Since*). `--recent "…"` adds a note above it.
 
+### Fixed
+
+- **Traps and questions keep their tags.** `note trap|question` and
+  `inbox promote … trap|question` wrote `tags: []`, dropping the jot's tags
+  and any `--tags` given. `note trap` and `note question` now take `--tags`.
+
 ## [0.4.0] — 2026-09-28
 
 **The reliability release.** It implements the remediation of an external audit

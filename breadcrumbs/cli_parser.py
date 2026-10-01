@@ -317,6 +317,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pq.add_argument("--title", help="the question (alias for the positional, as on `remember`)")
     pq.add_argument("--why", help="why it matters / what is blocked")
     pq.add_argument("--needs", help="human input | investigation | a decision")
+    pq.add_argument("--tags", help="comma-separated tags")
     pq.add_argument(
         "--status",
         default="open",
@@ -335,6 +336,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pt.add_argument("--why", help="the mechanism, not vibes")
     pt.add_argument("--safe", help="the safe approach to use instead")
     pt.add_argument("--verify", help="a command that proves it is OK")
+    pt.add_argument("--tags", help="comma-separated tags")
     _add_duplicate_flags(pt)
     pt.set_defaults(func=cli.cmd_note)
 
