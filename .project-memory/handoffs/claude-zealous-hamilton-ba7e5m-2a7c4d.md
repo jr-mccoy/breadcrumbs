@@ -1,13 +1,17 @@
 # Project Handoff
 
-_Last updated: 2026-10-01T22:07:34+00:00_
+_Last updated: 2026-10-01T22:29:08+00:00_
 _Branch: claude/zealous-hamilton-ba7e5m_
-_Commit: 7edf192_
+_Commit: 3085c5d_
 
 ## Current Focus
 crumb-kit 0.3.1 is released (2026-09-27). Phases 0–6 of docs/roadmap-working-memory.md shipped in 0.3.0; do not redo them. The audit remediation (docs/reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md, work packages WP00–WP22) is implemented on branch claude/new-session-9f1k6i. The tracker, docs/reviews/2026-09-26-breadcrumbs-work-packages.json, is authoritative for each package's status; each has a review record under docs/reviews/2026-09-27-breadcrumbs-wpNN/.
 
 ## Next Action
+### 2026-10-01 · `3085c5d`
+Review and merge claude/zealous-hamilton-ba7e5m (all DoWhat field-report fixes; docs/reviews/2026-10-01-dowhat-field-report-plan.md → Implementation status). Before releasing 0.5.0, run the native Windows CI job to confirm the \\?\ backup/restore, UTF-8 under Git Bash and mcp register --local.
+
+### Earlier, as written
 Operator reviews docs/reviews/2026-10-01-dowhat-field-report-plan.md and answers D1b (should the first --next append set requires: next-action-log?). Then start Release 1 item 1 (capture --next appends; --replace saves what it replaced).
 
 ## Blockers / Open Questions

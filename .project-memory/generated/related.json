@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "231eefa6b960",
+ "inputs_hash": "ac3c96441279",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -39,13 +39,13 @@
   ],
   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one": [
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
-   "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path"
   ],
   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them": [
    "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
-   "ver_20260816_crumb-mark-status-can-retire-a-trap-fixed",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
+   "ver_20260816_crumb-mark-status-can-retire-a-trap-fixed"
   ],
   "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval": [
    "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
@@ -149,8 +149,8 @@
   ],
   "dec_20260922_usage-telemetry-counts-surfacings-at-the-call-sites": [
    "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
   ],
   "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against": [
    "trap_eval-baseline-after-retrieval-change",
@@ -200,7 +200,7 @@
   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer": [
    "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "trap_a-hand-written-version-literal-in-prose-drifts-silently"
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
   ],
   "dec_20260927_projections-are-stamped-from-a-verified-snapshot": [
    "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
@@ -235,12 +235,22 @@
   "dec_20260928_store-relative-paths-are-posix-and-line-endings": [
    "trap_linux-cannot-show-a-windows-path-separator-bug",
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
-   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand"
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
   ],
   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand": [
    "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
    "trap_guard-exit-code-in-ci",
    "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed"
+  ],
+  "dec_20261001_capture-session-next-adds-a-dated-entry-only-replace": [
+   "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+  ],
+  "dec_20261001_guard-reads-shell-commands-by-segment-and-effect": [
+   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
@@ -373,8 +383,8 @@
    "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35"
   ],
   "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52": [
-   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
    "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
+   "ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25",
    "ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35"
   ],
   "ver_20260923_relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66": [

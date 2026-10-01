@@ -1,27 +1,24 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 4e58737 | inputs_hash: 231eefa6b960 | generated_at: 2026-10-01T22:07:34+00:00 -->
-<!-- view: markdown | budget: 3671/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 3085c5d | inputs_hash: ac3c96441279 | generated_at: 2026-10-01T22:29:08+00:00 -->
+<!-- view: markdown | budget: 3544/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/zealous-hamilton-ba7e5m` · commit `4e58737` · 6 uncommitted file(s) · handoff: handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md
+branch `claude/zealous-hamilton-ba7e5m` · commit `3085c5d` · 8 uncommitted file(s) · handoff: handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Next Action
-Operator reviews docs/reviews/2026-10-01-dowhat-field-report-plan.md and answers D1b (should the first --next append set requires: next-action-log?). Then start Release 1 item 1 (capture --next appends; --replace saves what it replaced).
+Review and merge claude/zealous-hamilton-ba7e5m (all DoWhat field-report fixes; docs/reviews/2026-10-01-dowhat-field-report-plan.md → Implementation status). Before releasing 0.5.0, run the native Windows CI job to confirm the \\?\ backup/restore, UTF-8 under Git Bash and mcp register --local.
 
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- 4e58737 guard: read commands by segment and effect; topical do-not-retry; merged records are history
-- 7593a67 Parity golden: the resume packet gains next_action_earlier
-- dfc9b65 resume: name records readers drop or misread; missing outcome is 'unknown'
-- cc6709b Stop hook: count this session's commits from where it started; ask once
+_(1 earlier entry in handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md)_
 
 ## Active Decisions
+- `dec_20261001_guard-reads-shell-commands-by-segment-and-effect` — Field report issues 7/8/N4: 23 of 23 firings warned, and find | xargs rm -rf was capped as read-only. Operator decision D3 (built-in floor).
+- `dec_20261001_capture-session-next-adds-a-dated-entry-only-replace` — Field report 2026-10-01 issue 1: a one-line --next destroyed a 139-line hand-kept log with no copy. Operator decision D1 (append unless --replace); D1b: no requires: flag.
 - `dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand` — Keeps per-push cost low while main and a weekly run still see platform regressions; run it by hand on a branch before merging platform-sensitive changes.
 - `dec_20260928_store-relative-paths-are-posix-and-line-endings` — A store is shared across machines and platforms; a value that differs by OS makes stamps stale everywhere and made rollback and the write gate silently wrong on Windows.
 - `dec_20260927_transports-reach-the-store-through-breadcrumbs-service` — CLI, MCP and hooks call service functions (record, mark_status, search, guard, resume_packet, prompt_lookup, admit) inside service.active(ctx); wording, exit codes and envelopes stay in the adapters. Parser lives in cli_parser.py. Aliases and clock are per-thread scoped state. Any further move out o… [excerpt: 300 of 379 chars; full text: crumb show dec_20260927_transports-reach-the-store-through-breadcrumbs-service]
@@ -35,9 +32,7 @@ _(check Current Focus / Next Action against these before redoing work)_
 - `dec_20260927_evals-score-delivered-context-and-critical-cases` — Audit F19: a known false-safe (npm test -> PROCEED) sat inside an accepted baseline with CI green, and ranking metrics did not describe what readers receive.
 - `dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls` — Audit F02: an entry count over a sliding 8 MB tail froze once transcripts outgrew it, lost cross-firing call/result pairs, and discarded capped or failed candidates silently.
 - `dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted` — Audit F14: the bound covered lists only (7,333 tokens under a 5,000 ceiling). F13: a promoted decision vanished from every packet when CLAUDE.md was gone or unread by the consumer. Promotion is an extra delivery channel, not a reason for memory to disappear.
-- `dec_20260927_projections-are-stamped-from-a-verified-snapshot` — Audit F07/F11/F12: a stamp taken after the read certified omitted records; an unusable pre-filter silenced real hazards; a size/mtime shortcut made indexed search diverge from the full scan. Re-hashing costs ~17 ms at 1000 records; the unverified hook path costs ~40-90 ms, never silence.
-- `dec_20260927_installed-hook-launchers-never-pass-a-failure-through` — A hook we install must never be able to veto the host by failing; a real veto is JSON on stdout. Version skew between an installed hook config and a CLI on PATH is normal (global pipx vs project venv).
-_(… 33 more omitted to stay within the per-section cap)_
+_(… 35 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -60,6 +55,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (9d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/shellcmd.py
 - .github/workflows/ci.yml
 - tests/test_platform_portability.py
 - breadcrumbs/service.py
@@ -79,8 +75,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - docs/reviews/2026-09-27-breadcrumbs-wp13/README.md
 - breadcrumbs/usage.py
 - breadcrumbs/hooks_prompt.py
-- tests/test_emission_accounting.py
-_(… 36 more omitted to stay within the per-section cap)_
+_(… 37 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -114,7 +109,7 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 4 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
 - active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 26 days old with no update — is this still true?
 - active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 26 days old with no update — is this still true?
 - active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 26 days old with no update — is this still true?
