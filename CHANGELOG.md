@@ -46,6 +46,12 @@ Fixes from the DoWhat field report on 0.4.0
 
 ### Added
 
+- `crumb rename <id> --slug <short>` shortens a record's file name and id,
+  updates every reference to it in the store, and keeps the old id resolvable
+  (`formerly:`); `crumb doctor` reports store paths over 200 characters
+  (field report issue 5).
+- `crumb handoff trim --keep N` moves older Next Action entries to a committed
+  history file; `crumb doctor` reports a Next Action over 8,000 characters.
 - `crumb repair` (field report issue 12): previews, then with `--apply`
   writes, what can be derived honestly for records that fail validation —
   frontmatter for a hand-written file, a legacy status mapped and kept in

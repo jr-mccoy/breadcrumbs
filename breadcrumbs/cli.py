@@ -3060,6 +3060,11 @@ def find_record_by_id(memory_dir: Path, rid: str) -> "Record | None":
         ident = derive_identity(rec.stem, rec.rtype)
         if ident and ident[0] == rid:
             return rec
+    # A record renamed by `crumb rename` keeps its old ids in `formerly`, so a
+    # commit message or note citing one still resolves.
+    for rec in load_records(Path(memory_dir)):
+        if not rec.error and rid in (rec.meta.get("formerly") or []):
+            return rec
     return None
 
 
@@ -6038,6 +6043,9 @@ NEXT_ENTRY_HEADER_RE = re.compile(r"^### (?:\d{4}-\d{2}-\d{2}\b|Earlier, as writ
 NEXT_LEGACY_HEADER = "### Earlier, as written"
 # Past this many characters `doctor` suggests trimming the log by hand.
 NEXT_ACTION_LOG_WARN_CHARS = 8000
+# A store path (from the project root) longer than this leaves under 60
+# characters for a Windows checkout path before the 260 limit (issue 5).
+RECORD_PATH_WARN_CHARS = 200
 
 
 def _next_entry(text: str, commit: str = "") -> str:
@@ -12033,6 +12041,80 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_rename(args: argparse.Namespace) -> int:
+    """`crumb rename <id> --slug <short>` (field report issue 5)."""
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import lock as _lock
+    from breadcrumbs import mutations as _mutations
+    from breadcrumbs import rename as _rename
+
+    try:
+        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+            result = _rename.rename_record(memory_dir, root, args.record_id, args.slug)
+    except _lock.StoreLocked as exc:
+        _emit_error(args, str(exc))
+        return 1
+    except _mutations.MutationFailed as exc:
+        _emit_error(args, _mutations.describe(exc))
+        return 1
+    if not result.get("ok"):
+        _emit_error(args, result.get("error") or "rename failed")
+        return 1
+    if args.json:
+        _print_json(args, {**result, "items": result["updated"]})
+        return 0
+    print(f"Renamed {result['from']} -> {result['to']}")
+    print(f"  file: {result['path']}")
+    for rel in result["updated"]:
+        print(f"  updated a reference in {rel}")
+    print("  the old id still resolves (kept in `formerly`)")
+    return 0
+
+
+def cmd_handoff(args: argparse.Namespace) -> int:
+    """`crumb handoff trim --keep N` (field report issue 1)."""
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    if getattr(args, "handoff_what", None) != "trim":
+        _emit_error(args, "specify: `crumb handoff trim --keep N`")
+        return 2
+    from breadcrumbs import lock as _lock
+    from breadcrumbs import mutations as _mutations
+    from breadcrumbs import rename as _rename
+
+    try:
+        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+            result = _rename.trim_handoff(memory_dir, root, max(1, int(args.keep)))
+    except _lock.StoreLocked as exc:
+        _emit_error(args, str(exc))
+        return 1
+    except _mutations.MutationFailed as exc:
+        _emit_error(args, _mutations.describe(exc))
+        return 1
+    if not result.get("ok"):
+        _emit_error(args, result.get("error") or "trim failed")
+        return 1
+    if args.json:
+        _print_json(args, result)
+    elif not result["moved"]:
+        print(f"handoff trim: {result['kept']} entr(ies); nothing to move.")
+    else:
+        print(
+            f"handoff trim: kept the newest {result['kept']}; moved {result['moved']} to "
+            f"{result['history']} (nothing deleted)."
+        )
+    if result.get("moved"):
+        reindex_projections(memory_dir, root)
+    return 0
+
+
 def cmd_repair(args: argparse.Namespace) -> int:
     """`crumb repair [--apply] [--set ID.FIELD=VALUE]` (field report issue 12)."""
     root = resolve_root(args.project)
@@ -13185,6 +13267,29 @@ def doctor_report(root: Path) -> dict:
             else f"{len(failures)} validation failure(s) (first: {failures[0]['message']}) "
             "— run `crumb validate`; an older store layout is fixed by `crumb migrate`",
         )
+        from breadcrumbs import handoffs as _handoffs
+        from breadcrumbs import rename as _rename
+
+        too_long = _rename.long_record_paths(root, memory_dir, RECORD_PATH_WARN_CHARS)
+        if too_long:
+            rel, n = too_long[0]
+            add(
+                "path_length",
+                False,
+                f"{len(too_long)} store path(s) longer than {RECORD_PATH_WARN_CHARS} characters "
+                f"(longest {n}: {rel}); with a Windows checkout path that passes the 260 "
+                "limit — shorten with `crumb rename <id> --slug <short>`",
+            )
+        handoff_text, _p, handoff_path = _handoffs.read_text(memory_dir, root)
+        next_len = len(split_md_sections(handoff_text or "").get("Next Action", ""))
+        if next_len > NEXT_ACTION_LOG_WARN_CHARS:
+            add(
+                "next_action_log",
+                False,
+                f"the handoff's Next Action is {next_len} characters "
+                f"({len(split_next_entries(split_md_sections(handoff_text).get('Next Action', '')))}"
+                " entries); `crumb handoff trim --keep 10` moves the older ones to a history file",
+            )
         degraded = _related.load_degraded(memory_dir)
         if degraded:
             add(

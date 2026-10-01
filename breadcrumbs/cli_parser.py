@@ -905,6 +905,34 @@ def _add_migrate(sub, global_parser: argparse.ArgumentParser) -> None:
     p.set_defaults(func=cli.cmd_migrate)
 
 
+# rename — shorten a record's file name; handoff trim — move old entries
+def _add_rename(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "rename",
+        parents=[global_parser],
+        help="give a record a shorter file name (and id); references are updated and the "
+        "old id still resolves",
+    )
+    p.add_argument("record_id", metavar="ID", help="the record to rename")
+    p.add_argument("--slug", required=True, help="the new slug: lowercase words and hyphens")
+    p.set_defaults(func=cli.cmd_rename)
+
+
+def _add_handoff(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "handoff", parents=[global_parser], help="maintain the handoff's Next Action log"
+    )
+    p.set_defaults(func=cli.cmd_handoff, handoff_what=None)
+    hs = p.add_subparsers(dest="handoff_what", metavar="<what>")
+    pt = hs.add_parser(
+        "trim",
+        parents=[global_parser],
+        help="move all but the newest N Next Action entries to a history file (none deleted)",
+    )
+    pt.add_argument("--keep", type=int, default=10, help="entries to keep (default 10)")
+    pt.set_defaults(func=cli.cmd_handoff, handoff_what="trim")
+
+
 # repair — assisted repair of records that break the record contract
 def _add_repair(sub, global_parser: argparse.ArgumentParser) -> None:
     p = sub.add_parser(
@@ -1172,6 +1200,8 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "rollup": _add_rollup,
     "migrate": _add_migrate,
     "repair": _add_repair,
+    "rename": _add_rename,
+    "handoff": _add_handoff,
     "usage": _add_usage,
     "reindex": _add_reindex,
     "recover": _add_recover,

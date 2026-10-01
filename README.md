@@ -381,7 +381,10 @@ kept by hand) is kept as one block under `### Earlier, as written`. Repeating
 the newest entry's text adds nothing. `crumb resume` shows the newest entry and
 says how many earlier ones the handoff holds. Only `--replace` overwrites the
 section, and the text it replaced is kept in the new session record under
-`### Replaced Next Action (…)`, with a `CRUMB-WARN:` naming it.
+`### Replaced Next Action (…)`, with a `CRUMB-WARN:` naming it. The log only
+grows; when it gets long (`crumb doctor` says so past 8,000 characters),
+`crumb handoff trim --keep 10` moves all but the newest ten entries, unchanged,
+to `handoff-history.md` (or `handoffs/<slug>.history.md`). Nothing is deleted.
 
 `current.md`'s **Recently Changed** is yours: capture no longer writes the git
 log there (resume shows *Landed Since The Handoff Was Written* from git
@@ -421,7 +424,11 @@ A session with no `--title` is named from what you already said about it — the
 carries four hex characters of entropy, so two agents capturing on the same day
 in two checkouts cannot write the same file. `crumb retitle <id> "…"` fixes a
 title written before that; it rewrites the searchable title only, since the id,
-slug and filename are what other records reference. `dirty_files` excludes
+slug and filename are what other records reference. To shorten a *file name*
+(records from before the 60-character cap can pass Windows' 260-character path
+limit, which `crumb doctor` reports), `crumb rename <id> --slug <short>` renames
+the file and its id, rewrites every reference to the old id in the store, and
+keeps the old id in `formerly:` so it still resolves. `dirty_files` excludes
 `.project-memory/` by default (`--include-memory` puts it back) and is capped —
 a capture rewrites the store on every firing, and in a shared tree it also sees
 every other session's uncommitted records.
