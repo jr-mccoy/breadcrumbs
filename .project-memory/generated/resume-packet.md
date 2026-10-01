@@ -1,31 +1,18 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 5e04468 | inputs_hash: e51a1abfb68c | generated_at: 2026-09-28T02:16:12+00:00 -->
-<!-- view: markdown | budget: 3799/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 2083046 | inputs_hash: 053022139260 | generated_at: 2026-10-01T21:16:22+00:00 -->
+<!-- view: markdown | budget: 3558/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/new-session-9f1k6i` · commit `5e04468` · 6 uncommitted file(s) · handoff: handoffs/claude-new-session-9f1k6i-e54e91.md
+branch `claude/zealous-hamilton-ba7e5m` · commit `2083046` · 3 uncommitted file(s) · handoff: handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
 
 ## Next Action
-WP21 is at review_required (commit 22907a1; 0.3.1 merged in 751283f). Wait for operator approval; then mark WP21 completed in the tracker and start WP14 (next in the roadmap's single-agent order: WP14 -> WP15 -> WP16 ...). WP14 must follow docs/compatibility.md section 4: review profiles ship as a schema bump plus a requires: feature, and bump the minor (0.4.0).
-
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- 5e04468 WP22: release checklist prepared; nothing released
-- 529356e WP17: the native full suite is green on Windows and macOS (CI run 248)
-- a8c3960 CI: run the native full suite on main, weekly and on demand only
-- 9b55822 WP17, WP19, WP20: review records, results and tracker entries
-- f528a24 WP17: the write gate compares POSIX paths too (regression from 48bc814)
-- 68c8075 WP20: onboarding and operation, documented and checked
-- 9366074 WP19: review record for the continuity replays
-- 48bc814 WP17: fix what the first native full-suite run found on macOS and Windows
-- e835448 CI: bound the native job's non-gating full suite and make it verbose
-- 6157248 verify: a verification's expiry and created_at are one instant
+Operator reviews docs/reviews/2026-10-01-dowhat-field-report-plan.md and answers D1b (should the first --next append set requires: next-action-log?). Then start Release 1 item 1 (capture --next appends; --replace saves what it replaced).
 
 ## Active Decisions
 - `dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand` — Keeps per-push cost low while main and a weekly run still see platform regressions; run it by hand on a branch before merging platform-sensitive changes.
@@ -63,7 +50,7 @@ _(none recorded)_
 
 ## Inbox (unsorted, expires)
 _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or drop with `crumb inbox drop <id>`)_
-- `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (5d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
+- `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (9d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
 - .github/workflows/ci.yml
@@ -120,22 +107,22 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- ⚠ handoff is 0 day(s) old, written 34 commit(s) behind current HEAD.
-- active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 23 days old with no update — is this still true?
-- active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 23 days old with no update — is this still true?
-- active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 23 days old with no update — is this still true?
-- active decision dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head is 24 days old with no update — is this still true?
-- active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 40 days old with no update — is this still true?
-- active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 40 days old with no update — is this still true?
-- active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 40 days old with no update — is this still true?
-- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 41 days old with no update — is this still true?
-- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 42 days old with no update — is this still true?
-- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 43 days old with no update — is this still true?
-- active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 43 days old with no update — is this still true?
-- active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 43 days old with no update — is this still true?
-- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 43 days old with no update — is this still true?
-- active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 43 days old with no update — is this still true?
-- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 44 days old with no update — is this still true?
-- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 44 days old with no update — is this still true?
-- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 44 days old with no update — is this still true?
-- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 44 days — did this ever get resolved?
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 26 days old with no update — is this still true?
+- active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 26 days old with no update — is this still true?
+- active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 26 days old with no update — is this still true?
+- active decision dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head is 28 days old with no update — is this still true?
+- active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 44 days old with no update — is this still true?
+- active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 44 days old with no update — is this still true?
+- active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 44 days old with no update — is this still true?
+- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 45 days old with no update — is this still true?
+- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 46 days old with no update — is this still true?
+- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 46 days old with no update — is this still true?
+- active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 47 days old with no update — is this still true?
+- active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 47 days old with no update — is this still true?
+- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 47 days old with no update — is this still true?
+- active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 47 days old with no update — is this still true?
+- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 47 days old with no update — is this still true?
+- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 47 days old with no update — is this still true?
+- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 47 days old with no update — is this still true?
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 47 days — did this ever get resolved?
