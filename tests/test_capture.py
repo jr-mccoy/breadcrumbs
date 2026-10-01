@@ -389,3 +389,98 @@ class PruneSessionsTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+HAND_LOG = "\n".join(
+    [f"- 2026-09-{d:02d}: hand-kept status line {d} (Play Store review)" for d in range(30, 0, -1)]
+)
+
+
+def _handoff_with_next(mem: Path, text: str) -> None:
+    (mem / "handoff.md").write_text(
+        "# Project Handoff\n\n## Current Focus\nship\n\n## Next Action\n" + text + "\n"
+    )
+
+
+class NextActionLogTests(unittest.TestCase):
+    """Field report 2026-10-01, issue 1: `--next` replaced a 139-line hand-kept
+    Next Action log with one line, and nothing kept a copy."""
+
+    def test_next_adds_an_entry_and_keeps_the_rest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            _handoff_with_next(mem, HAND_LOG)
+            run(["capture", "session", "--project", tmp, "--next", "x"])
+            sec = crumb.split_md_sections((mem / "handoff.md").read_text())["Next Action"]
+            self.assertTrue(sec.startswith("### 20"), sec[:40])
+            self.assertEqual(crumb.split_next_entries(sec)[0], "x")
+            self.assertIn(HAND_LOG, sec)
+            # Repeating the same text changes nothing.
+            run(["capture", "session", "--project", tmp, "--next", "x"])
+            again = crumb.split_md_sections((mem / "handoff.md").read_text())["Next Action"]
+            self.assertEqual(again, sec)
+            run(["capture", "session", "--project", tmp, "--next", "y"])
+            third = crumb.split_md_sections((mem / "handoff.md").read_text())["Next Action"]
+            self.assertEqual(crumb.split_next_entries(third)[:2], ["y", "x"])
+            self.assertIn(HAND_LOG, third)
+
+    def test_replace_saves_what_it_replaced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            _handoff_with_next(mem, HAND_LOG)
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, _ = run(
+                    ["capture", "session", "--project", tmp, "--next", "y", "--replace"]
+                )
+            self.assertEqual(code, 0)
+            sec = crumb.split_md_sections((mem / "handoff.md").read_text())["Next Action"]
+            self.assertEqual(crumb.split_next_entries(sec), ["y"])
+            self.assertNotIn("hand-kept", sec)
+            self.assertIn("handoff.md", err.getvalue())
+            body = next((mem / "sessions").glob("*.md")).read_text()
+            self.assertIn("### Replaced Next Action (handoff.md)", body)
+            self.assertIn(HAND_LOG, body)
+            self.assertEqual([f for f in crumb.run_validate(mem) if f["status"] == "fail"], [])
+
+    def test_snapshot_never_touches_hand_written_recently_changed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            cur = mem / "current.md"
+            cur.write_text(
+                "# Current State\n\n## Current Focus\nship\n\n"
+                "## Recently Changed\n- hand note: rejected by Play review, resubmitted\n"
+            )
+            before = crumb.split_md_sections(cur.read_text())["Recently Changed"]
+            commit(root, "g.txt", "new work")
+            cli._hook_capture_snapshot(root)
+            commit(root, "h.txt", "more work")
+            run(["capture", "session", "--project", tmp, "--next", "n"])
+            after = crumb.split_md_sections(cur.read_text())["Recently Changed"]
+            self.assertEqual(after, before)
+
+    def test_recent_adds_above_existing_notes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            cur = mem / "current.md"
+            cur.write_text("# Current State\n\n## Recently Changed\n- old note\n")
+            run(["capture", "session", "--project", tmp, "--next", "n", "--recent", "new note"])
+            after = crumb.split_md_sections(cur.read_text())["Recently Changed"]
+            self.assertEqual(crumb.split_next_entries(after), ["new note", "- old note"])
+
+    def test_resume_shows_newest_entry_and_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            _handoff_with_next(mem, HAND_LOG)
+            run(["capture", "session", "--project", tmp, "--next", "a"])
+            run(["capture", "session", "--project", tmp, "--next", "b"])
+            code, out = run(["resume", "--project", tmp])
+            self.assertEqual(code, 0)
+            self.assertIn("## Next Action\nb\n", out)
+            self.assertIn("2 earlier entries", out)
+            self.assertNotIn("hand-kept status line 15", out)

@@ -236,7 +236,9 @@ class HookCaptureTests(unittest.TestCase):
 
             self.assertEqual(sorted(p.name for p in (mem / "sessions").glob("*.md")), before)
             handoff = crumb.split_md_sections((mem / "handoff.md").read_text())
-            self.assertEqual(handoff["Next Action"].strip(), "wire the parser into the CLI")
+            self.assertEqual(
+                crumb.split_next_entries(handoff["Next Action"]), ["wire the parser into the CLI"]
+            )
 
     def test_new_work_since_the_last_record_is_captured(self):
         """The dedupe guard must not swallow a firing after real work."""
@@ -342,7 +344,7 @@ class ExtractionTurnTests(unittest.TestCase):
             )
             self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
             handoff = crumb.split_md_sections((mem / "handoff.md").read_text())
-            self.assertEqual(handoff["Next Action"].strip(), "ship it")
+            self.assertEqual(crumb.split_next_entries(handoff["Next Action"])[0], "ship it")
 
     def test_dirty_files_without_commits_snapshot_silently(self):
         # Proportionality: an edit-only turn never earns an interrogation.

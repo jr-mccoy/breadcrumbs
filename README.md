@@ -374,6 +374,19 @@ for narrative confirmation + a required **Next Action**. It writes the session r
 and refreshes the handoff and `current.md`. `--fast` skips all prompts and any
 LLM, writing a git snapshot + the one-line `--next`. No path requires an LLM.
 
+**The Next Action is a log, newest first.** `--next` adds a dated entry
+(`### 2026-10-01 · \`abc1234\``) *above* what the handoff already holds; nothing
+already there is removed or rewritten. Text that had no entry header (a log you
+kept by hand) is kept as one block under `### Earlier, as written`. Repeating
+the newest entry's text adds nothing. `crumb resume` shows the newest entry and
+says how many earlier ones the handoff holds. Only `--replace` overwrites the
+section, and the text it replaced is kept in the new session record under
+`### Replaced Next Action (…)`, with a `CRUMB-WARN:` naming it.
+
+`current.md`'s **Recently Changed** is yours: capture no longer writes the git
+log there (resume shows *Landed Since The Handoff Was Written* from git
+instead). `--recent "…"` adds a dated note above what is there.
+
 The handoff is per branch (schema 4): on the default branch (`origin/HEAD`, else
 `main`, else `master`) it is `handoff.md`; on any other branch it is
 `handoffs/<branch-slug>.md` — `feature-x` writes `handoffs/feature-x.md`, and a
@@ -981,7 +994,8 @@ piece is independent:
   - `Stop → crumb hook capture` snapshots a session record when the turn ends —
     once per unit of work, not once per turn: a firing is skipped when the HEAD
     commit and dirty-file set are unchanged since the newest session record, and
-    its stand-in Next Action never overwrites one you set.
+    its stand-in Next Action never touches the handoff, and it never writes
+    `current.md`.
 
     It also **mines the transcript** on every firing, which is a side effect
     and not a decision: even a firing that stays silent should salvage what the

@@ -660,7 +660,20 @@ def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
         "--fast", action="store_true", help="git snapshot + --next only; no prompts, no LLM"
     )
     p_session.add_argument(
-        "--next", dest="next_action", help="the Next Action (required on --fast)"
+        "--next",
+        dest="next_action",
+        help="the Next Action (required on --fast); added as a dated entry above the "
+        "handoff's earlier ones, which are kept",
+    )
+    p_session.add_argument(
+        "--recent",
+        help="a note for current.md's Recently Changed, added above what is there",
+    )
+    p_session.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite the handoff's Next Action (and Recently Changed, with --recent) "
+        "instead of adding to it; the replaced text is kept in the session record",
     )
     p_session.add_argument("--title", help="session topic (default: 'session')")
     p_session.add_argument(

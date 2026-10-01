@@ -8,6 +8,22 @@ prints both.
 
 ## [Unreleased]
 
+Fixes from the DoWhat field report on 0.4.0
+(`docs/reviews/2026-10-01-dowhat-field-report-plan.md`).
+
+### Changed
+
+- **`capture session --next` adds, it no longer replaces.** The handoff's Next
+  Action is a log, newest first: each `--next` adds a dated entry above the
+  earlier ones, which are kept byte-for-byte (a hand-kept log is kept as one
+  block under `### Earlier, as written`). `--replace` overwrites, and keeps
+  what it replaced in the session record. `resume` shows the newest entry and
+  a count of earlier ones. A 0.4.0 crumb writing the same store still replaces
+  the whole section, so upgrade every machine that shares a store.
+- **`current.md`'s Recently Changed is no longer overwritten** by capture or
+  by the Stop hook's snapshot (it used to receive the git log, which resume
+  already shows as *Landed Since*). `--recent "…"` adds a note above it.
+
 ## [0.4.0] — 2026-09-28
 
 **The reliability release.** It implements the remediation of an external audit

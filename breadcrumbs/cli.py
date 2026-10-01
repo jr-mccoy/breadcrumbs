@@ -5603,6 +5603,32 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         )
         return 2
 
+    from breadcrumbs import handoffs as _handoffs
+
+    # `--replace` is the only way a capture removes handoff/current text, and
+    # what it removes is kept in the session record (issue 1, 2026-10-01).
+    replace = bool(getattr(args, "replace", False))
+    recent = (getattr(args, "recent", None) or "").strip()
+    replaced: dict[str, str] = {}
+    if replace:
+        hp = _handoffs.write_path(memory_dir, root, git_branch(root))
+        old_next = split_md_sections(_handoffs.seed_text(memory_dir, hp)).get("Next Action", "")
+        if not _is_placeholder(old_next) and old_next.strip() != (next_action or "").strip():
+            replaced[f"Next Action ({hp.relative_to(memory_dir).as_posix()})"] = old_next.strip()
+        if recent:
+            cur_path = memory_dir / "current.md"
+            old_recent = (
+                split_md_sections(path_policy.read_text(cur_path)).get("Recently Changed", "")
+                if cur_path.is_file()
+                else ""
+            )
+            if not _is_placeholder(old_recent) and old_recent.strip() != recent:
+                replaced["Recently Changed (current.md)"] = old_recent.strip()
+    if replaced:
+        kept = "\n\n".join(f"### Replaced {k}\n\n{v}" for k, v in replaced.items())
+        prior = (sections.get(UNSORTED_SECTION) or "").strip()
+        sections[UNSORTED_SECTION] = f"{prior}\n\n{kept}" if prior else kept
+
     title = args.title or _derive_session_title(sections, args.focus) or SESSION_TITLE_FALLBACK
     if coalesce is not None:
         before = path_policy.read_text(coalesce.path)
@@ -5647,10 +5673,11 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     # (0.1.10 field test, P1-6). An unset --focus keeps the previous Current
     # Focus (update_handoff/update_current retain the old value on empty),
     # which is also the honest reading of "the caller said nothing about focus".
+    #
+    # Recently Changed is written only from an explicit `--recent`: the git log
+    # it used to receive is what resume's *Landed Since* already shows, and
+    # writing it replaced hand-written notes on every snapshot (issue 1).
     focus = args.focus or ""
-    recently = sections.get("Work Completed", "")
-    from breadcrumbs import handoffs as _handoffs
-
     handoff_path = _handoffs.write_path(memory_dir, root, meta["branch"])
     update_handoff(
         memory_dir,
@@ -5659,8 +5686,15 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         focus,
         sections["Next Action"],
         path=handoff_path,
+        replace=replace,
     )
-    update_current(memory_dir, focus, recently)
+    update_current(memory_dir, focus, recent, commit=meta["commit"], replace=replace)
+    for what in replaced:
+        _emit_warning(
+            args,
+            f"--replace removed the previous {what}; it is kept in the session "
+            f"record under `### Replaced {what}`",
+        )
     # Reindex-on-write: capture mutates three packet inputs (the
     # session record, handoff.md, current.md), so the projections must follow —
     # otherwise the documented session-end flow leaves `validate` failing on
@@ -5676,6 +5710,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         "fast": bool(args.fast),
         "since": since,
         "coalesced": coalesce is not None,
+        "replaced": sorted(replaced),
     }
     if section_notes:
         summary["warnings"] = section_notes
@@ -5905,6 +5940,57 @@ def _user_preamble(preamble: list[str]) -> list[str]:
     return kept
 
 
+# A Next Action entry's header: `### 2026-10-01 · `abc1234``. `###` is not a
+# section boundary for split_md_ordered (it splits on `## ` only).
+NEXT_ENTRY_HEADER_RE = re.compile(r"^### (?:\d{4}-\d{2}-\d{2}\b|Earlier, as written\b).*$")
+# Put above text that had no entry header (a hand-kept log) the first time an
+# entry is added over it, so it stays one block, byte-for-byte, below the header.
+NEXT_LEGACY_HEADER = "### Earlier, as written"
+# Past this many characters `doctor` suggests trimming the log by hand.
+NEXT_ACTION_LOG_WARN_CHARS = 8000
+
+
+def _next_entry(text: str, commit: str = "") -> str:
+    head = f"### {now_iso()[:10]}"
+    if commit and commit != "(no-git)":
+        head += f" · `{commit}`"
+    return f"{head}\n{text.strip()}"
+
+
+def split_next_entries(section: str) -> list[str]:
+    """A Next Action section as its entries, newest first, bodies without headers.
+
+    Text before the first dated header (or a section with no headers at all —
+    a hand-kept log, or one written before entries existed) is one entry.
+    """
+    entries: list[list[str]] = []
+    cur: list[str] | None = None
+    for line in (section or "").splitlines():
+        if NEXT_ENTRY_HEADER_RE.match(line):
+            cur = []
+            entries.append(cur)
+            continue
+        if cur is None:
+            cur = []
+            entries.append(cur)
+        cur.append(line)
+    out = ["\n".join(e).strip() for e in entries]
+    return [e for e in out if e]
+
+
+def add_next_entry(existing: str, text: str, commit: str = "") -> str:
+    """`existing` with `text` added on top as a dated entry; unchanged when the
+    newest entry already says exactly `text` (a repeated capture adds nothing)."""
+    existing = "" if _is_placeholder(existing or "") else (existing or "").strip()
+    entries = split_next_entries(existing)
+    if entries and entries[0].strip() == text.strip():
+        return existing
+    entry = _next_entry(text, commit)
+    if existing and not NEXT_ENTRY_HEADER_RE.match(existing.splitlines()[0]):
+        existing = f"{NEXT_LEGACY_HEADER}\n{existing}"
+    return f"{entry}\n\n{existing}" if existing else entry
+
+
 def update_handoff(
     memory_dir: Path,
     branch: str,
@@ -5913,8 +5999,15 @@ def update_handoff(
     next_action: str,
     *,
     path: Path | None = None,
+    replace: bool = False,
 ) -> None:
     """Rewrite a handoff with fresh metadata and the given focus / next action.
+
+    The Next Action is a running log, newest first: a new one is added as a
+    dated entry above everything already there, which stays byte-for-byte
+    (field report 2026-10-01, issue 1: a one-line `--next` replaced a 139-line
+    hand-kept log, and nothing kept a copy). Only `replace=True` (`--replace`)
+    overwrites the section, and its caller saves what it replaced.
 
     `path` is `handoff.md` unless a branch handoff is being written (WM-50); a
     branch handoff that does not exist yet starts from `handoff.md`'s content,
@@ -5930,7 +6023,12 @@ def update_handoff(
     focus = "" if _is_placeholder(focus) else focus
     next_action = "" if _is_placeholder(next_action) else next_action
     sec["Current Focus"] = focus or sec.get("Current Focus", "")
-    sec["Next Action"] = next_action or sec.get("Next Action", "")
+    if next_action:
+        sec["Next Action"] = (
+            _next_entry(next_action, commit)
+            if replace
+            else add_next_entry(sec.get("Next Action", ""), next_action, commit)
+        )
 
     out = [
         "# Project Handoff",
@@ -5960,16 +6058,31 @@ def update_handoff(
     write_text_atomic(path, "\n".join(out).rstrip() + "\n")
 
 
-def update_current(memory_dir: Path, focus: str, recently: str) -> None:
+def update_current(
+    memory_dir: Path,
+    focus: str,
+    recently: str,
+    *,
+    commit: str = "",
+    replace: bool = False,
+) -> None:
+    """Rewrite current.md with the given focus; `recently` is added as a dated
+    entry above the existing Recently Changed text (never replacing it unless
+    `replace`). Capture passes `recently` only when someone set it explicitly —
+    the git log it used to write here duplicated resume's *Landed Since* and
+    overwrote hand-written notes on every Stop-hook snapshot."""
     path = Path(memory_dir) / "current.md"
     existing = path_policy.read_text(path) if path.exists() else ""
     preamble, ordered = split_md_ordered(existing)
     sec = split_md_sections(existing)
     focus = "" if _is_placeholder(focus) else focus
     recently = "" if _is_placeholder(recently) else recently
+    existing_recent = sec.get("Recently Changed", "")
+    if recently and not replace:
+        recently = add_next_entry(existing_recent, recently, commit)
     vals = {
         "Current Focus": focus or sec.get("Current Focus", ""),
-        "Recently Changed": recently or sec.get("Recently Changed", ""),
+        "Recently Changed": recently or existing_recent,
         "Watch Out For": sec.get("Watch Out For", ""),
     }
     out = [
@@ -7369,6 +7482,12 @@ def _build_resume_packet_once(
 
     next_action = handoff_sections.get("Next Action", "")
     next_action = "" if _is_placeholder(next_action) else next_action.strip()
+    # The Next Action is a log, newest first: the packet carries the newest
+    # entry and says how many earlier ones the handoff holds (issue 1).
+    next_entries = split_next_entries(next_action)
+    next_action_earlier = max(len(next_entries) - 1, 0)
+    if next_entries:
+        next_action = next_entries[0]
 
     packet: dict = {
         "source": {
@@ -7390,6 +7509,7 @@ def _build_resume_packet_once(
         "project": project,
         "current_focus": focus,
         "next_action": next_action,
+        "next_action_earlier": next_action_earlier,
         "active_decisions": [
             {
                 "id": r.meta.get("id", r.stem),
@@ -7964,6 +8084,10 @@ def render_packet_markdown(packet: dict) -> str:
         packet["next_action"] or "_(not recorded — set one with `crumb capture session --next`)_",
         "",
     ]
+    if packet.get("next_action_earlier"):
+        n = packet["next_action_earlier"]
+        where = (packet.get("project") or {}).get("handoff") or "the handoff"
+        out[-1:-1] = ["", f"_({n} earlier entr{'y' if n == 1 else 'ies'} in {where})_"]
 
     # P1-5: the staleness numbers say how *old* the handoff is, never whether its
     # claims still hold. Listing what actually landed since it was written makes
@@ -11454,7 +11578,8 @@ def adapter_block() -> str:
                 '  `crumb mark-status q_<slug> answered --reason "…"` (name the decision',
                 "  that answered it), so it stops counting as a live blocker.",
                 '- **Session end:** `crumb capture session --next "<what to do next>"`',
-                '  (add `--set "Decisions Made" "…"` for narrative). Pass `--next`: the bare',
+                '  (add `--set "Decisions Made" "…"` for narrative). `--next` adds an entry',
+                "  above the handoff's earlier ones; nothing is replaced. Pass `--next`: the bare",
                 "  form prompts for each section and cannot be answered without a terminal.",
                 "  If the `Stop` hook is installed, a snapshot is already taken for you.",
                 "",

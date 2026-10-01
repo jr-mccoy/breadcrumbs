@@ -30,7 +30,8 @@ promote it with `crumb inbox promote <id> <type>` if it turns out to be durable.
 **At session end:**
 
 1. Run `crumb capture session --next "<what to do next>"` (add `--set "<heading>"
-   "<text>"` per narrative section), or write a session record by hand. The bare
+   "<text>"` per narrative section). `--next` adds a dated entry above the
+   handoff's earlier ones and replaces nothing. The bare
    `crumb capture session` prompts for each section, so it needs a terminal; with
    the `Stop` hook installed a snapshot is taken for you either way.
 2. Record durable decisions and failed attempts as typed records.

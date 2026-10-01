@@ -111,7 +111,8 @@ This repo has a durable memory store under `.project-memory/`. Use it:
   `crumb verify "<subject>" --status fixed|open|regressed|… --evidence …`.
 - **Leaving a note for the next agent:** `crumb note question|trap|idea …`.
 - **Session end:** `crumb capture session --next "<what to do next>"`
-  (add `--set "Decisions Made" "…"` for narrative). Pass `--next`: the bare
+  (add `--set "Decisions Made" "…"` for narrative). `--next` adds an entry
+  above the handoff's earlier ones; nothing is replaced. Pass `--next`: the bare
   form prompts for each section and cannot be answered without a terminal.
   If the `Stop` hook is installed, a snapshot is already taken for you.
 
