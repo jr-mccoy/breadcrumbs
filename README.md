@@ -1155,6 +1155,18 @@ cannot execute the CLI can still reorient by reading:
    naming the file to open (on a store still at `schema_version` 2 they hold the
    traps and questions themselves).
 
+**Writing without the CLI: leave a draft, not a record.** An agent that cannot
+run `crumb` should put a free-form note in `.project-memory/inbox/drafts/`
+(a `# Title` line, then plain text). Nothing validates a draft, and
+`crumb inbox import` later turns each one into a jot (a draft longer than a
+jot holds is kept and cited). Records written by hand in the wrong shape fail
+validation, and readers then skip them or misread them. `crumb repair`
+previews, then (`--apply`) writes, what can be derived honestly for such a
+record: id, title and dates from the file and git, `status`/`privacy`/`scope`,
+a mapped legacy status kept in `repaired_from`, and `confidence: low` when
+there is no evidence. It never sets a verification's outcome or invents
+evidence; it lists those with the exact `--set <id>.outcome=…` to run.
+
 Everything is human-readable Markdown, so no binary store or vendor runtime is
 required to resume. (`generated/resume-packet.md` is a rebuildable projection — if
 it disagrees with the canonical records, the records win and it should be

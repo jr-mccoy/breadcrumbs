@@ -46,6 +46,15 @@ Fixes from the DoWhat field report on 0.4.0
 
 ### Added
 
+- `crumb repair` (field report issue 12): previews, then with `--apply`
+  writes, what can be derived honestly for records that fail validation —
+  frontmatter for a hand-written file, a legacy status mapped and kept in
+  `repaired_from`, a free scope read as `project`, `confidence: low` with no
+  evidence — and lists what needs a person (a verification's outcome, given
+  with `--set <id>.outcome=…`; evidence paths it found in the body).
+- `inbox/drafts/` and `crumb inbox import`: the sanctioned way for an agent
+  without the CLI to leave a note; each draft becomes a jot. The bundled
+  store README no longer suggests writing a record by hand.
 - `crumb mcp register --local`: a portable `.mcp.json` entry plus this
   machine's interpreter registered at Claude Code's local scope, so a
   committed config no longer carries one machine's Python path (field report
