@@ -734,8 +734,11 @@ Behavior:
   `--json` match carries a `promoted` boolean.
 - **Branch-scoped records are always found.** A `scope: branch` record written
   on another branch is searched like any other (the human line adds `written on
-  another branch (possibly stale)`, as for any record from another branch), and
-  every `--json` match carries `scope` (`project` or `branch`).
+  another branch (possibly stale)` while its file has not reached HEAD), and
+  every `--json` match carries `scope` (`project` or `branch`). A record whose
+  file has reached HEAD — merged, squash-merged or rebased in — carries no
+  label and no down-weighting, whatever its `branch:` says, and a branch-scoped
+  one is then live like a project record.
 - `guard` is this same engine with a verdict on top plus a noise floor,
   so a `search` hit is the permissive case of a `guard` match.
 - Exit codes: `0` on success (including zero matches), `2` when no

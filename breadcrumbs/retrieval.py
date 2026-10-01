@@ -165,6 +165,14 @@ class Lookup:
         }
 
 
+def _lone_tag(match: dict) -> bool:
+    """A match whose only evidence is one shared tag: a topic, not an answer."""
+    signals = set(match.get("signals") or ()) - {"do-not-retry", "keyword"}
+    tags = {cli._stem(str(t).lower()) for t in match.get("matched_tags") or ()}
+    words = set(match.get("keyword_overlap") or ()) - tags
+    return signals == {"tag"} and len(tags) == 1 and not words
+
+
 def prompt_lookup(memory_dir: Path, root: Path, prompt: str, *, limit: int = 5) -> Lookup:
     """The current records worth a prompt's context, best first, and how they were found."""
     summary = corpus_summary(memory_dir, root)
@@ -197,6 +205,12 @@ def prompt_lookup(memory_dir: Path, root: Path, prompt: str, *, limit: int = 5) 
         or m.get("score", 0) >= cli.GUARD_READ_FIRST_SCORE
     ]
     kept = [m for m in kept if eligible(m, "prompt")]
+    # A lone shared tag is dropped only beside a match with real evidence: on
+    # its own it may be all the store has ("add a new secret" against a
+    # decision tagged `secrets`), but next to the trap that names the error it
+    # is the noise that pushed that trap out (field report 2026-10-01, issue 8).
+    if kept and not _lone_tag(kept[0]):
+        kept = [m for m in kept if not _lone_tag(m)]
     return Lookup(
         matches=kept[:limit],
         mode=info.get("mode") or "full_scan",

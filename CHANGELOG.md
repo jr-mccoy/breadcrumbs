@@ -13,6 +13,26 @@ Fixes from the DoWhat field report on 0.4.0
 
 ### Changed
 
+- **Guard warns less, and on the right things** (field report issues 7, 8, 10,
+  11). Compound commands are read-only when every segment is
+  (`cd x && grep … 2>/dev/null | head`), and a pipe into `xargs rm -rf`, `sh`
+  or `tee` is no longer "read-only" (it used to cap a destructive command
+  down). Quoted text and here-documents no longer classify an action; guard's
+  keyword contribution is capped; crumb's own commands are classified by
+  effect, and a memory write matches records about the files it writes
+  (`writes-file`). An edit outside the project is not guarded. A force-push to
+  the default branch, `rm -rf` outside build directories and a real
+  `crumb migrate` always ask (`high_impact` in `--json`), citing no unrelated
+  records. A do-not-retry line needs topical evidence before it raises a
+  match; one shared tag no longer floors a verdict; template headings and
+  failure words (`why`, `fail`, `error`) are not shared words; `/dev/null`,
+  `and/or`, URLs and `./gradlew` are not files; an attempt titled with a
+  command gets the exact-command signal. The prompt hook drops a lone-tag
+  match beside a stronger one. The "written on another branch" label is only
+  for records whose file has not reached HEAD, so merged, squashed and
+  rebased cloud-branch records are history again, and branch-scoped ones are
+  live. The eval baseline was rewritten once for all of this, and an
+  `android` suite plus seven critical cases hold the field's own examples.
 - **`capture session --next` adds, it no longer replaces.** The handoff's Next
   Action is a log, newest first: each `--next` adds a dated entry above the
   earlier ones, which are kept byte-for-byte (a hand-kept log is kept as one

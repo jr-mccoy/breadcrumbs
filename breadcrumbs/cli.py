@@ -33,7 +33,7 @@ import subprocess
 import sys
 import threading
 from datetime import date, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # annotations only; the parser lives in `cli_parser`
@@ -45,6 +45,7 @@ from breadcrumbs import validation as _validation
 
 # What the store may read and write on disk (audit F17). Stdlib-only too.
 from breadcrumbs import path_policy
+from breadcrumbs import shellcmd as _shellcmd
 from breadcrumbs.adapters import claude as _claude
 
 # --------------------------------------------------------------------------- #
@@ -4161,7 +4162,7 @@ def _may_drive_verdict(item: dict) -> bool:
 # 2: `commands` added (audit F10). 3: every record that could drive a verdict,
 # with `titles` and `tags` (audit WP11). A pre-filter of another format is not
 # trusted: the hook runs the full guard instead.
-GUARD_PREFILTER_FORMAT = 3
+GUARD_PREFILTER_FORMAT = 4
 
 
 # Written when a projection rebuild raised, removed by the next one that works.
@@ -6801,6 +6802,10 @@ def _section_lines(handoff_sections: dict, heading: str) -> list[str]:
 # ---- staleness ------------------------------------------------------------- #
 
 
+def _reached_head(root: Path) -> "HeadTree":
+    return HeadTree(root)
+
+
 class HeadTree:
     """Which store files have *reached the current HEAD*: committed in HEAD's
     tree and byte-identical to the worktree copy. Lazy — no git call until asked.
@@ -8480,6 +8485,17 @@ GUARD_W_STATUS_ACTIVE = 1
 GUARD_W_CONFIDENCE_HIGH = 1
 GUARD_W_REVIEWED = 1
 GUARD_W_DO_NOT_RETRY = 4  # attempt carries an explicit "Do Not Retry Unless"
+# A file the action writes without naming it (crumb's own commands, issue 11).
+# Below a named file: the command is the sanctioned writer, so a trap about
+# hand-editing that file should be seen, not take over the verdict.
+GUARD_W_WRITES = 3
+# Shared specific words that, on their own, make a do-not-retry attempt topical
+# enough for its line to count ("logout no longer clears the session cookie"
+# against an attempt whose result was "logout stopped clearing cookies").
+GUARD_TOPICAL_KEYWORDS = 3
+# Guard's keyword contribution stops here, so a longer command does not score
+# higher for being longer (issue 7c). Plain search is uncapped.
+GUARD_KEYWORD_CAP = 4
 GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
 
 # What a match must have, beyond shared vocabulary, to be surfaced as a warning
@@ -8489,7 +8505,7 @@ GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
 # specificity that lets a match raise a verdict ({file, tag}) — being worth
 # showing and being worth escalating are different bars.
 GUARD_SURFACING_SIGNALS = frozenset(
-    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker", "command"}
+    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker", "command", "writes-file"}
 )
 
 # recency / branch de-weighting (reuses the staleness signals above)
@@ -8578,82 +8594,32 @@ def _is_destructive(action: str, classes: list[str]) -> bool:
 # ASK_HUMAN are reserved for actions that write, delete, push, deploy or execute.
 GUARD_READ_ONLY_CEILING = "READ_FIRST"
 
-# Commands whose whole job is to report. Deliberately a short allowlist of the
-# unambiguous ones: `sed`, `awk` and `tee` can all write, and anything not named
-# here is simply treated as capable of side effects, which is the safe default.
-GUARD_READ_ONLY_COMMANDS = frozenset(
-    """
-    cat less more head tail nl wc
-    ls dir tree stat file du df pwd realpath basename
-    grep egrep fgrep rg ack ag find fd locate
-    diff cmp md5sum sha1sum sha256sum
-    which whereis type man whoami hostname uname date
-    echo printf uniq cut column jq yq
-    ps top uptime id groups
-    """.split()
-)
-
-# Two near-misses, deliberately absent: `env` runs an arbitrary command as its
-# argument, and `sort -o` writes a file. Neither reports for a living.
-
-# `git` is both the most-used command in any store and the one whose subcommands
-# span the whole range, so it gets its own allowlist rather than the verb alone.
-GUARD_READ_ONLY_GIT_SUBCOMMANDS = frozenset(
-    {
-        "status",
-        "log",
-        "diff",
-        "show",
-        "blame",
-        "describe",
-        "shortlog",
-        "rev-parse",
-        "rev-list",
-        "ls-files",
-        "ls-tree",
-        "ls-remote",
-        "cat-file",
-        "whatchanged",
-        "grep",
-        "reflog",
-        "annotate",
-        "count-objects",
-        "var",
-    }
-)
-
-# Flags that make an otherwise-reporting command act: `find . -delete` and
-# `find . -exec rm {} +` are the ones that matter in practice. Matched as whole
-# tokens, so an argument that merely contains one does not trip it.
-GUARD_READ_ONLY_DISQUALIFYING_ARGS = frozenset(
-    "-delete -exec -execdir -ok -okdir -fprint -fls -fprintf".split()
-)
-
-# Shell metacharacters that can turn a reporting command into a writing one
-# (`cat x > y`, `ls && rm -rf .`, `` grep `rm -rf .` ``). Their presence forfeits
-# the read-only claim outright: this cap only ever *lowers* a verdict, so the
-# conservative reading is the correct one.
-_SHELL_EFFECT_RE = re.compile(r"[>;&`]|\|\||\$\(")
+# The read-only verb tables and the command reader live in `shellcmd` (field
+# report 2026-10-01, issue 7 / N4); the names stay importable from here.
+GUARD_READ_ONLY_COMMANDS = _shellcmd.READ_ONLY_COMMANDS
+GUARD_READ_ONLY_GIT_SUBCOMMANDS = _shellcmd.READ_ONLY_GIT_SUBCOMMANDS
+GUARD_READ_ONLY_DISQUALIFYING_ARGS = _shellcmd.READ_ONLY_DISQUALIFYING_ARGS
 
 
 def _is_read_only_action(action: str) -> bool:
     """True only when the action provably cannot change anything (G2).
 
-    Conservative by construction: an action this cannot recognize is treated as
+    Every segment of a compound command must be read-only on its own
+    (`cd x && grep …` is; `find … | xargs rm -rf` is not), and output may only
+    be redirected to `/dev/null` or another stream. An edit is never read-only.
+    Conservative by construction: anything this cannot read is treated as
     capable of side effects, so a missed classification costs an unnecessary
     PAUSE, never a swallowed one.
     """
     text = (action or "").strip()
-    if not text or _SHELL_EFFECT_RE.search(text):
+    if not text or _EDIT_ACTION_RE.match(text):
         return False
-    tokens = text.split()
-    if GUARD_READ_ONLY_DISQUALIFYING_ARGS & {t.lower() for t in tokens[1:]}:
-        return False
-    verb = PurePosixPath(tokens[0].replace("\\", "/")).name.lower()
-    if verb == "git":
-        subcommands = [t for t in tokens[1:] if not t.startswith("-")]
-        return bool(subcommands) and subcommands[0] in GUARD_READ_ONLY_GIT_SUBCOMMANDS
-    return verb in GUARD_READ_ONLY_COMMANDS
+    return _shellcmd.is_read_only(text)
+
+
+# What the Claude adapter (and `crumb guard --file`) builds for an edit:
+# `edit <path>` or `edit <path>: <first characters of the new content>`.
+_EDIT_ACTION_RE = re.compile(r"^(edit|delete a cell in) (\S+)(?::\s(.*))?$", re.S)
 
 
 _VERDICTS = ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN")
@@ -8691,8 +8657,14 @@ GUARD_STOPWORDS = _FUNCTION_WORDS | frozenset(
     stuff need needs want wants now today please let lets go going into onto
     src lib test tests spec specs index main app ts js tsx jsx py md json yml yaml
     txt cfg ini case feature support handle handling
+    why fail fails failed failing failure error errors broken wrong issue issues
+    problem problems
     """.split()
 )
+# The last line above (field report 2026-10-01, issue 8): the words a question
+# about *any* failure uses. "why is my robolectric test failing" shared `why`
+# and `fail` with every attempt record, which is what let five unrelated
+# attempts outrank the one trap about the actual error.
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
 # Candidate path tokens in free text. This regex only *finds* things shaped like
@@ -8727,6 +8699,18 @@ GUARD_PATH_EXTENSIONS = frozenset(
 _VERSION_TOKEN_RE = re.compile(r"^v?\d+(\.\d+)+$")
 
 
+_SYSTEM_PATH_RE = re.compile(r"^(?:\.\./|~)?/?(?:dev|proc|sys)/")
+# Slash-joined words that read as prose, not as a directory and a file.
+_PROSE_SLASH_PAIRS = frozenset(
+    """
+    and/or either/or read/write yes/no input/output stdin/stdout stdout/stderr
+    ci/cd on/off true/false client/server i/o r/w pass/fail before/after he/she
+    his/her s/he am/pm win/loss success/failure open/close start/stop get/set
+    push/pull load/store encode/decode request/response send/receive
+    """.split()
+)
+
+
 def _is_path_token(token: str) -> bool:
     """Is `token` really a file path, as opposed to prose that looks like one?
 
@@ -8746,6 +8730,17 @@ def _is_path_token(token: str) -> bool:
     """
     token = (token or "").strip()
     if len(token) < 2 or token.startswith("-") or _VERSION_TOKEN_RE.match(token):
+        return False
+    # Device files and pseudo-filesystems are not project files: `2>/dev/null`
+    # produced "mentions: null" (field report 2026-10-01, issue 10).
+    if _SYSTEM_PATH_RE.match(token):
+        return False
+    if token.lower() in _PROSE_SLASH_PAIRS:
+        return False  # `and/or`, `read/write`, `ci/cd`
+    if token.startswith("./") and "/" not in token[2:] and "." not in token[2:]:
+        # `./gradlew` is a command being run, not a file the action is about;
+        # as a path it gave every record mentioning `./gradlew assembleDebug`
+        # a mention signal against `./gradlew --stop` (issue 8).
         return False
     basename = token.rsplit("/", 1)[-1]
     extension = basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
@@ -9003,8 +8998,21 @@ def _specific(text: str) -> set[str]:
 
 
 def _paths_from_text(text: str) -> set[str]:
-    """File paths found in free text — candidates that pass `_is_path_token`."""
-    return {m.group(0) for m in _FILE_TOKEN_RE.finditer(text or "") if _is_path_token(m.group(0))}
+    """File paths found in free text — candidates that pass `_is_path_token`.
+
+    A token that is part of a URL (`https://host/a`) is not a path: its last
+    segment used to become a file name of its own (issue 10).
+    """
+    text = text or ""
+    out = set()
+    for m in _FILE_TOKEN_RE.finditer(text):
+        token = m.group(0)
+        before = text[max(0, m.start() - 3) : m.start()]
+        if before.endswith(":") or before.endswith(":/") or token.startswith("//"):
+            continue
+        if _is_path_token(token):
+            out.add(token)
+    return out
 
 
 # Bullets in a trap block that hold the *remedy*, not the hazard. Mining file
@@ -9159,8 +9167,29 @@ _CLASS_SEVERITY = [
 
 
 def classify_action(action: str) -> tuple[str, list[str]]:
-    """Return (primary_class, sorted matched classes). 'routine_edit' if none hit."""
-    toks = _tokenize(action)
+    """Return (primary_class, sorted matched classes). 'routine_edit' if none hit.
+
+    Reads what the action *does*, not what it *says* (field report 2026-10-01,
+    issue 7 / N11): quoted text and here-document bodies are dropped, so a
+    commit message or a `--next "cut the release"` note is not a release. An
+    edit is classified by its path, not by the content being written. crumb's
+    own commands are classified by the table in `shellcmd`, never by the words
+    in their arguments: reading memory and writing memory are routine, and only
+    a real `crumb migrate` is a migration.
+    """
+    edit = _EDIT_ACTION_RE.match((action or "").strip())
+    if edit:
+        text = f"{edit.group(1)} {edit.group(2)}"
+    else:
+        crumb = _shellcmd.crumb_commands(action or "")
+        if crumb and len(crumb) == len(_shellcmd.segments(action or "") or [None]):
+            effects = {effect for effect, _args in crumb}
+            if effects <= {"read_only", "memory_write"}:
+                return "routine_edit", ["routine_edit"]
+            if effects <= {"read_only", "memory_write", "migration"}:
+                return "migration", ["migration"]
+        text = _shellcmd.classification_text(action or "")
+    toks = _tokenize(text)
     matched = {cls for cls, kws in ACTION_CLASS_KEYWORDS.items() if toks & kws}
     if not matched:
         return "routine_edit", ["routine_edit"]
@@ -9174,6 +9203,9 @@ def classify_action(action: str) -> tuple[str, list[str]]:
 def _attempt_has_do_not_retry(rec: Record) -> bool:
     sec = rec.sections.get("Do Not Retry Unless", "")
     return bool(_first_line(sec))
+
+
+_MD_HEADING_LINE_RE = re.compile(r"(?m)^#{1,6}\s.*$")
 
 
 def _item_from_record(rec: Record) -> dict:
@@ -9196,7 +9228,12 @@ def _item_from_record(rec: Record) -> dict:
     files = _norm_files(set(_evidence_refs(rec, ("file", "path"))))
     mentioned = _norm_files(mined) - files
     tags = {str(t).lower() for t in (rec.meta.get("tags") or [])}
-    text = " ".join([str(rec.meta.get("title") or ""), rec.body, " ".join(tags)])
+    # Section headings are the template, not the record: "## Why It Failed /
+    # Succeeded" made every attempt share `why` and `fail` with "why is my test
+    # failing", and push the one relevant trap out (field report 2026-10-01,
+    # issue 8).
+    body_text = _MD_HEADING_LINE_RE.sub(" ", rec.body)
+    text = " ".join([str(rec.meta.get("title") or ""), body_text, " ".join(tags)])
     # For verifications the interesting "status" is the *outcome* (open/fixed/…),
     # not the lifecycle status — so `search type:verification status:open` filters
     # on what the agent actually cares about. The lifecycle value is
@@ -9224,6 +9261,13 @@ def _item_from_record(rec: Record) -> dict:
         "branch": rec.meta.get("branch"),
         "record": rec,
         "do_not_retry": rec.rtype == "attempt" and _attempt_has_do_not_retry(rec),
+        # An attempt titled "Ran gradlew --stop …" names a command just as a
+        # trap's summary does (issue 8): the title head only, never the body.
+        "command_heads": (
+            _trap_command_heads(str(rec.meta.get("title") or ""), "")
+            if rec.rtype == "attempt"
+            else None
+        ),
         "expired": record_expired(rec.meta),
         "promoted": bool(rec.meta.get("promoted_to")),
         "scope": str(rec.meta.get("scope") or "project"),
@@ -9257,7 +9301,15 @@ def _command_tokens(text: str) -> list[str]:
     from breadcrumbs import transcript as _transcript
 
     flat = _transcript.normalize_command(str(text or ""))
-    return [t.strip("\"'`.,;:").lower() for t in flat.split() if t.strip("\"'`.,;:")]
+    out = []
+    for t in flat.split():
+        # `./gradlew` is `gradlew`: stripping the dot alone left `/gradlew`, so a
+        # trap titled "gradlew --stop …" never matched `./gradlew --stop`.
+        t = t[2:] if t.startswith("./") else t
+        t = t.strip("\"'`.,;:").lower()
+        if t:
+            out.append(t)
+    return out
 
 
 # A head is `[kind, *tokens]`. A `title` head is the leading words of a trap's
@@ -9268,7 +9320,7 @@ _HEAD_TITLE = "title"
 _HEAD_SPAN = "span"
 # A summary that opens with one of these describes running the command after it
 # ("Running npm test truncates …").
-_RUN_VERBS = ("run", "running", "runs", "calling", "executing")
+_RUN_VERBS = ("run", "running", "runs", "ran", "calling", "executing")
 
 
 def _trap_command_heads(heading: str, body: str) -> list[list[str]]:
@@ -9313,7 +9365,10 @@ def _names_command(action_tokens: list[str], heads) -> bool:
 
 def _item_from_trap(trap: dict) -> dict:
     heading, body = trap["heading"], trap.get("content", trap.get("body", ""))
-    text = heading + "\n" + body
+    # Trap files carry tags since the field report's N1; a trap never scored
+    # them, so a trap tagged `robolectric` lost to every attempt sharing it.
+    tags = {str(t).lower() for t in (trap.get("tags") or [])}
+    text = heading + "\n" + body + "\n" + " ".join(sorted(tags))
     return {
         "id": trap.get("id") or heading.split(":", 1)[0].strip() or "trap",
         "kind": "trap",
@@ -9321,7 +9376,8 @@ def _item_from_trap(trap: dict) -> dict:
         # in search and keep counting as live in guard's active/history split.
         "status": trap.get("status") or "active",
         "title": heading,
-        "tags": set(),
+        "tags": tags,
+        "tag_stems": {_stem(t): t for t in tags},
         "files": _norm_files(_paths_from_text(_trap_area_text(body))),
         "mentioned_files": (
             _norm_files(_paths_from_text(_trap_hazard_text(body)))
@@ -9504,6 +9560,10 @@ def _score_item(
     distances: CommitDistanceIndex,
     ubiquitous: frozenset[str] = frozenset(),
     q_words: frozenset[str] = frozenset(),
+    keyword_cap: int | None = None,
+    q_writes: set[str] = frozenset(),
+    do_not_retry_boost: bool = True,
+    reached: "HeadTree | None" = None,
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
 
@@ -9513,8 +9573,8 @@ def _score_item(
     # a matched full path. Keying on basename alone (the old approach) wrongly
     # collapsed genuinely-distinct files that share a name (src/a/x.ts, src/b/x.ts)
     # — undercounting the score and picking a hash-order-dependent survivor.
-    def _overlap(candidate: set[str]) -> tuple[list[str], int]:
-        raw = candidate & q_files
+    def _overlap(candidate: set[str], against: set[str] = q_files) -> tuple[list[str], int]:
+        raw = candidate & against
         full_paths = {f for f in raw if "/" in f}
         covered = {f.rsplit("/", 1)[-1] for f in full_paths}
         extra_bare = {f for f in raw if "/" not in f and f not in covered}
@@ -9523,6 +9583,9 @@ def _score_item(
     matched_files, file_count = _overlap(item["files"])
     # Prose-mined paths, scored separately and never as "same file(s)".
     matched_mentions, mention_count = _overlap(item.get("mentioned_files", set()) - item["files"])
+    # Files the action writes without naming them (crumb's own commands,
+    # issue 11): weaker than a file the action names, and said differently.
+    matched_writes, writes_count = _overlap(item["files"], q_writes) if q_writes else ([], 0)
     # Tag overlap is computed on stems; the display set carries the raw tags.
     tag_stems = item.get("tag_stems") or {t: t for t in item["tags"]}
     matched_tag_stems = set(tag_stems) & q_specific
@@ -9563,6 +9626,7 @@ def _score_item(
         not matched_files
         and not matched_mentions
         and not matched_tags
+        and not matched_writes
         and kw_count < min_keyword
         and not short_query_title_hit
     ):
@@ -9579,8 +9643,14 @@ def _score_item(
     if matched_tags:
         score += GUARD_W_TAG * len(matched_tag_stems)
         signals.append("tag")
+    if matched_writes:
+        score += GUARD_W_WRITES * writes_count
+        signals.append("writes-file")
     if kw_count:
-        score += GUARD_W_KEYWORD * kw_count
+        # Capped for guard: overlap grew with the command's length, so a long
+        # commit message scored 39 against records it had nothing to do with
+        # (issue 7c). Plain search keeps the uncapped count.
+        score += GUARD_W_KEYWORD * (min(kw_count, keyword_cap) if keyword_cap else kw_count)
         if kw_count >= min_keyword:
             signals.append("keyword")
     if title_overlap:
@@ -9595,7 +9665,21 @@ def _score_item(
             score += GUARD_W_CONFIDENCE_HIGH
         if rec.meta.get("review_status") == "reviewed":
             score += GUARD_W_REVIEWED
-    if item["do_not_retry"]:
+    # A do-not-retry line opposes *this* action only when the record is about
+    # it: a file, the title, a tag plus a shared word, or a file the action
+    # writes. Applied on any overlap, one shared tag lifted an unrelated
+    # attempt to the PAUSE band and pushed the relevant record out (issue 8).
+    # Words beyond the tags: a tag's own word is in the record's text too, so it
+    # would otherwise count as the "shared word" that makes a tag hit topical.
+    kw_beyond_tags = len(kw_overlap - matched_tag_stems)
+    topical = bool(
+        matched_files
+        or (title_overlap - matched_tag_stems)
+        or matched_writes
+        or (matched_tags and kw_beyond_tags >= 1)
+        or kw_beyond_tags >= GUARD_TOPICAL_KEYWORDS
+    )
+    if item["do_not_retry"] and do_not_retry_boost and topical:
         score += GUARD_W_DO_NOT_RETRY
         signals.append("do-not-retry")
     if item["kind"] == "question" and item["status"] == "open":
@@ -9625,6 +9709,9 @@ def _score_item(
         and rb not in (NO_GIT_BRANCH, None, "")
         and cur_branch not in (NO_GIT_BRANCH, "HEAD")
         and rb != cur_branch
+        # A record whose file has reached HEAD (merged, squashed, rebased) is
+        # history here, not a risk — the same test resume uses (issue 9).
+        and not (reached is not None and rec is not None and reached.contains(rec.path))
     ):
         branch_mismatch = True
         factor *= GUARD_BRANCH_MISMATCH_FACTOR
@@ -9653,19 +9740,34 @@ def _score_item(
         "matched_mentions": sorted(matched_mentions),
         "matched_tags": sorted(matched_tags),
         "keyword_overlap": sorted(kw_overlap),
+        "matched_writes": sorted(matched_writes),
+        # Is there evidence beyond one shared topic? A tag alone (a `git` tag
+        # against `git status`) says the record is about the same component,
+        # not about this action; it no longer floors a verdict by itself.
+        "topical": topical,
         "branch_mismatch": branch_mismatch,
         "reason": _match_reason(
-            item["kind"], signals, matched_files, matched_tags, kw_count, matched_mentions
+            item["kind"],
+            signals,
+            matched_files,
+            matched_tags,
+            kw_count,
+            matched_mentions,
+            matched_writes,
         ),
     }
 
 
-def _match_reason(kind, signals, matched_files, matched_tags, kw_count, matched_mentions=()) -> str:
+def _match_reason(
+    kind, signals, matched_files, matched_tags, kw_count, matched_mentions=(), matched_writes=()
+) -> str:
     """Human phrase for why a record matched. Derived facts only — never executed."""
     parts: list[str] = []
     if matched_files:
         shown = ", ".join(sorted(matched_files)[:3])
         parts.append(f"same file(s): {shown}")
+    if matched_writes:
+        parts.append(f"this command writes: {', '.join(sorted(matched_writes)[:3])}")
     if matched_mentions:
         # Deliberately a different phrase. `same file(s)` is a claim the author
         # made; this is one the extractor made, and telling them apart is what
@@ -9701,8 +9803,18 @@ def search(
     include_ideas: bool = False,
     allow_full_scan: bool = True,
     info: dict | None = None,
+    path_text: str | None = None,
+    keyword_cap: int | None = None,
+    writes: list[str] | None = None,
+    do_not_retry_boost: bool = True,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Deterministic search over the canonical records (§20.10).
+
+    Guard's own knobs: `path_text` is where query paths are read from (default
+    the query), `keyword_cap` bounds the keyword contribution so a longer
+    command does not score higher for being long, `writes` are files the
+    action writes without naming them (crumb's own commands, issue 11), and
+    `do_not_retry_boost=False` ranks by relevance alone (the prompt hook).
 
     Returns (matches sorted best-first, items_by_id). Matching signals: exact/
     keyword text, tag/component, and file path. No embeddings; same input ->
@@ -9724,7 +9836,10 @@ def search(
     filters = filters or {}
     q_specific = _specific(query)
     q_words = frozenset(_stem(t) for t in _tokenize(query) if t not in _FUNCTION_WORDS)
-    q_files = _norm_files(_paths_from_text(query) | set(files or []))
+    q_files = _norm_files(
+        _paths_from_text(query if path_text is None else path_text) | set(files or [])
+    )
+    q_writes = _norm_files(writes or []) - q_files
     q_command = _command_tokens(query)
     # The search index narrows the corpus to records that could possibly match
     # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
@@ -9733,7 +9848,12 @@ def search(
 
     explain: dict = {}
     narrowed = _searchindex.candidate_items(
-        memory_dir, root, q_specific, q_files, include_ideas=include_ideas, explain=explain
+        memory_dir,
+        root,
+        q_specific,
+        q_files | q_writes,
+        include_ideas=include_ideas,
+        explain=explain,
     )
     info = info if info is not None else {}
     if narrowed is not None:
@@ -9751,6 +9871,10 @@ def search(
     cur_branch = git_branch(root)
     # One commit-distance index for the whole pass — see the class.
     distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
+    # Which record files have reached HEAD, built once per pass (issue 9): a
+    # record committed here from a since-merged branch is history, not "written
+    # on another branch", whatever its `branch:` field says.
+    reached = _reached_head(root)
 
     matches: list[dict] = []
     for it in items:
@@ -9767,9 +9891,13 @@ def search(
             distances=distances,
             ubiquitous=ubiquitous,
             q_words=q_words,
+            keyword_cap=keyword_cap,
+            q_writes=q_writes,
+            do_not_retry_boost=do_not_retry_boost,
+            reached=reached,
         )
         if it.get("command_heads") and _names_command(q_command, it["command_heads"]):
-            m = _with_command_signal(m, it)
+            m = _with_command_signal(m, it, do_not_retry_boost=do_not_retry_boost)
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.
             if filters and not q_specific and not q_files:
@@ -9812,8 +9940,8 @@ def search(
     return matches, by_id
 
 
-def _with_command_signal(m: dict | None, item: dict) -> dict:
-    """Mark a match (or make one) for a trap that names the action's command."""
+def _with_command_signal(m: dict | None, item: dict, *, do_not_retry_boost: bool = True) -> dict:
+    """Mark a match (or make one) for a record that names the action's command."""
     if m is None:
         m = {
             "id": item["id"],
@@ -9836,6 +9964,16 @@ def _with_command_signal(m: dict | None, item: dict) -> dict:
     if "command" not in m["signals"]:
         m["signals"].append("command")
         m["reason"] = (m["reason"] + "; " if m["reason"] else "") + "names this exact command"
+    # Naming the exact command is the most topical evidence there is, so an
+    # attempt's do-not-retry line applies (issue 8: "Ran gradlew --stop on a
+    # STOPREQUESTED daemon" was not in `./gradlew --stop`'s top three).
+    if item.get("do_not_retry") and do_not_retry_boost and "do-not-retry" not in m["signals"]:
+        m["signals"].append("do-not-retry")
+        m["score"] = float(m["score"]) + GUARD_W_DO_NOT_RETRY
+        m["raw_score"] = float(m["raw_score"]) + GUARD_W_DO_NOT_RETRY
+        m["stance"] = _match_stance(m["signals"])
+        if "do-not-retry condition" not in m["reason"]:
+            m["reason"] += "; has an explicit do-not-retry condition"
     # As strong as READ_FIRST evidence: it ranks and surfaces like it.
     m["score"] = max(float(m["score"]), float(GUARD_READ_FIRST_SCORE))
     m["raw_score"] = max(float(m["raw_score"]), float(GUARD_READ_FIRST_SCORE))
@@ -9912,7 +10050,11 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
     verdicts: list[str] = ["PROCEED"]
     for m in top:
         sig = set(m["signals"])
-        specific = bool({"file", "tag"} & sig)
+        # A tag counts as specific only with evidence beyond the tag itself
+        # (`topical`; field report 2026-10-01, issue 7: every git-tagged
+        # decision floored every git command at READ_FIRST). A file, or a file
+        # the action writes, always does.
+        specific = bool({"file", "writes-file"} & sig) or ("tag" in sig and m.get("topical", True))
         floor = "PROCEED"
         if "do-not-retry" in sig and specific:
             floor = "PAUSE"  # a failed attempt on these files/component
@@ -9966,7 +10108,9 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
     return verdict
 
 
-def _recommended_action(verdict: str, top: list[dict], by_id: dict, root: Path) -> str:
+def _recommended_action(
+    verdict: str, top: list[dict], by_id: dict, root: Path, *, high_impact: str | None = None
+) -> str:
     """Synthesize the next safest action from match kinds (§11.6).
 
     Generated by this code from structure — never copied as an imperative out of a
@@ -9982,6 +10126,16 @@ def _recommended_action(verdict: str, top: list[dict], by_id: dict, root: Path) 
     cmds = _dedup(cmds)[:3]
     verify = f" Run the recorded verification command(s): {'; '.join(cmds)}." if cmds else ""
 
+    if verdict == "ASK_HUMAN" and high_impact and not top:
+        return (
+            f"High-impact action ({high_impact}) and no project memory about it. "
+            "Get a human to confirm before proceeding." + verify
+        )
+    if verdict == "ASK_HUMAN" and high_impact:
+        return (
+            f"High-impact action ({high_impact}). Read {ids}, then get a human to "
+            "confirm before proceeding." + verify
+        )
     if verdict == "ASK_HUMAN":
         return (
             f"This is a high-impact change that collides with recorded memory ({ids}). "
@@ -10036,15 +10190,23 @@ def guard(
     a real verdict. `crumb search` sees them; the verdict never does.
     """
     primary, classes = classify_action(action)
+    # Match on the command, not on a here-document's body (issue 7c), and take
+    # paths only from the command and the edited file — never from the content
+    # being written (issue 10: `mentions: CLAUDE.md` came from prose).
+    edit = _EDIT_ACTION_RE.match((action or "").strip())
+    path_text = f"{edit.group(1)} {edit.group(2)}" if edit else _shellcmd.matching_text(action)
     matches, by_id = search(
         memory_dir,
         root,
-        action,
+        _shellcmd.matching_text(action),
         files=files,
         stale_days=stale_days,
         min_keyword=GUARD_MIN_KEYWORD_OVERLAP,
         noise_floor=GUARD_NOISE_FLOOR,
         include_ideas=False,
+        path_text=path_text,
+        keyword_cap=GUARD_KEYWORD_CAP,
+        writes=_shellcmd.crumb_writes(action, MEMORY_DIRNAME) if not edit else None,
     )
 
     active, history = [], []
@@ -10086,6 +10248,13 @@ def guard(
 
     top = active[:GUARD_MAX_WARNINGS]
     verdict = _decide_verdict(top, classes, action)
+    # Operator decision D3 (2026-10-01): a short, literal list of high-impact
+    # actions asks a human even when no record is about them. Without it, the
+    # only thing that ever made `git push --force origin main` ASK_HUMAN was
+    # unrelated records that happened to share the word "git".
+    high_impact = _shellcmd.high_impact(action) if not edit else None
+    if high_impact:
+        verdict = "ASK_HUMAN"
 
     # Staleness is computed so a stale/wrong-branch handoff surfaces
     # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
@@ -10132,7 +10301,10 @@ def guard(
         "staleness": staleness,
         # NOT `next_action` — that key is the resume packet's *recorded* Next
         # Action, and one name for two unrelated things read as one thing.
-        "recommended_action": _recommended_action(verdict, top, by_id, root),
+        "high_impact": high_impact,
+        "recommended_action": _recommended_action(
+            verdict, top, by_id, root, high_impact=high_impact
+        ),
         "thresholds": {
             "noise_floor": GUARD_NOISE_FLOOR,
             "read_first_score": GUARD_READ_FIRST_SCORE,
@@ -13341,6 +13513,21 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
     return 0
 
 
+def _outside_project(path: str, root: Path) -> bool:
+    """Is `path` (as a tool call names it) outside the project root?"""
+    try:
+        p = Path(os.path.expanduser(str(path)))
+        # Relative paths are the project's. An absolute path counts as outside
+        # only when its directory really exists elsewhere — a path-shaped name
+        # that is no directory on this machine (`/api/orders`) is not a claim
+        # about the filesystem, so it is still matched.
+        if not p.is_absolute() or not p.parent.is_dir():
+            return False
+        return not p.resolve().is_relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return False
+
+
 def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     if not memory_dir.is_dir():
         print(json.dumps({}))
@@ -13357,6 +13544,13 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     if not action:
         print(json.dumps({}))
         return 0
+    # An edit to a file outside the project (the agent's own memory folder, a
+    # scratch file) is not this store's business: a project trap about
+    # `handoff.md` fired on ~/.claude/…/memory/handoff.md (issue 7b).
+    if files and all(_outside_project(f, root) for f in files):
+        _hooklog.note(skipped="outside-project")
+        print(json.dumps({}))
+        return 0
     # Cost-aware pre-filter: pure-string classify + risk regex on the common
     # path, plus one read of the reindex-time trap-token index so
     # trap-shaped routine commands escalate too. Only a plausibly-risky action
@@ -13365,7 +13559,10 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     risky = (
         classes != ["routine_edit"]
         or bool(_HOOK_RISK_RE.search(action))
-        or _prefilter_trap_hit(memory_dir, action, files)
+        or bool(_shellcmd.high_impact(action))
+        or _prefilter_trap_hit(
+            memory_dir, action, list(files or []) + _shellcmd.crumb_writes(action, MEMORY_DIRNAME)
+        )
     )
     if not risky:
         _hooklog.note(skipped="prefilter")

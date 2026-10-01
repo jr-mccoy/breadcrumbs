@@ -603,10 +603,35 @@ a record that forbids the action from one that merely names the same file.
 `guard --json` reports it as `read_only`. Without that, verdict severity
 inverts: overlap is symmetric, so `git status` (which shares vocabulary with
 every record that discusses git) outranked `npm test` (which executes arbitrary
-code and matched nothing). Anything the classifier does not recognize — shell
-plumbing, an acting flag like `find -delete` — is treated as capable of side
+code and matched nothing). A compound command is read-only when **every**
+segment is: `cd app && grep -r x . 2>/dev/null | head` is, while
+`find . | xargs rm -rf`, `cat x | sh` and `ls | tee out` are not. Anything the
+classifier cannot read — command substitution, an acting flag like
+`find -delete`, output redirected to a file — is treated as capable of side
 effects, so a missed classification costs an unnecessary `PAUSE`, never a
 swallowed one.
+
+**Guard reads what a command does, not what it says.** Quoted text and
+here-document bodies (a commit message, a `--next "cut the release"` note) do
+not classify the action, and a long command scores no higher for being long
+(guard's keyword contribution is capped). crumb's own commands are classified
+by effect: reads (`resume`, `search`, `migrate --dry-run`, …) are read-only,
+memory writes (`remember`, `capture`, `reindex`, …) are routine, and only a
+real `crumb migrate` is a migration. A memory-writing command still matches
+the records about the files it writes (`this command writes:
+.project-memory/handoff.md`). An edit to a file outside the project (an
+agent's own memory folder) is not guarded at all.
+
+**A few actions always ask.** A force-push to `main`/`master`, `rm -rf`
+outside build and cache directories (or on piped input), and a real
+`crumb migrate` get `ASK_HUMAN` even when no record is about them, and say so
+("no project memory about it") instead of citing unrelated records.
+
+**A do-not-retry line has to be about this action.** It raises a match (and
+makes it `[objects]`) only when the record is topical: it names the file, the
+command, a title word, a tag *plus* another shared word, or three shared words.
+One shared tag is a topic, not an objection, and on its own no longer floors a
+verdict either.
 
 **A file signal says who claimed it.** `--evidence file …`, and a trap's
 `Area / files:` bullet, are the author declaring what a record is about: those

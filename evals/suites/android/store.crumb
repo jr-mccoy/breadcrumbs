@@ -1,0 +1,125 @@
+# An Android app (Kotlin, Gradle, Room, Robolectric, Firestore), built from the
+# DoWhat field report of 2026-10-01 (docs/reviews/2026-10-01-dowhat-field-report-plan.md,
+# issues 7, 8 and 10). It holds the shape that made guard and the prompt hook
+# rank badly in the field: many attempts with a Do-Not-Retry line that share
+# one tag (robolectric, gradle, git) with a query and nothing else, a trap
+# whose tags carry its topic, and prose that mentions `./gradlew` everywhere.
+
+@2026-06-02 remember decision --title "Use Room for local persistence"
+  --set Decision "All on-device data goes through Room DAOs in app/src/main/java/data/."
+  --evidence file app/src/main/java/data/AppDatabase.kt --tags room,database
+
+@2026-06-03 remember decision --title "Compose for every new screen"
+  --set Decision "New screens are Jetpack Compose; legacy XML layouts are only touched to delete them."
+  --evidence file app/src/main/java/ui/MainActivity.kt --tags compose,ui
+
+@2026-06-04 remember decision --title "Hilt provides every ViewModel dependency"
+  --set Decision "ViewModels get repositories through Hilt constructor injection."
+  --evidence file app/src/main/java/di/AppModule.kt --tags hilt,di
+
+@2026-06-05 remember decision --title "WorkManager runs the nightly sync"
+  --set Decision "Sync is a periodic WorkManager job with a network constraint."
+  --evidence file app/src/main/java/sync/SyncWorker.kt --tags sync,workmanager
+
+@2026-06-06 remember decision --title "Firestore is the only remote store"
+  --set Decision "Tasks sync to Firestore; there is no custom backend."
+  --evidence file firestore.rules --tags firestore,backend
+
+@2026-06-07 remember decision --title "Trunk-based development on main"
+  --set Decision "Short-lived branches merge to main the same day; main is always releasable."
+  --evidence file .github/workflows/ci.yml --tags git,workflow
+
+@2026-06-08 remember decision --title "Screenshot tests use Roborazzi"
+  --set Decision "UI regressions are caught by Roborazzi screenshot tests under app/src/test/screenshots/."
+  --evidence file app/build.gradle.kts --tags screenshot,testing
+
+@2026-06-09 remember decision --title "Kotlin coroutines, never RxJava"
+  --set Decision "Asynchronous work is coroutines and Flow; RxJava is not a dependency."
+  --evidence file app/build.gradle.kts --tags coroutines
+
+@2026-06-10 remember decision --title "Release builds are minified with R8"
+  --set Decision "minifyEnabled true for release; keep rules live in app/proguard-rules.pro."
+  --evidence file app/proguard-rules.pro --tags release,r8
+
+@2026-06-11 remember decision --title "Play Store listing text lives in fastlane metadata"
+  --set Decision "Store listing copy is edited in fastlane/metadata/android, never in the console."
+  --evidence file fastlane/metadata/android/en-US/full_description.txt --tags playstore
+
+@2026-06-12 remember decision --title "Dates are stored as epoch milliseconds"
+  --set Decision "Room columns hold epoch millis; formatting happens in the UI layer."
+  --evidence file app/src/main/java/data/Converters.kt --tags room,dates
+
+@2026-06-13 remember decision --title "Notifications go through one channel helper"
+  --set Decision "Every notification is built by NotificationHelper so channels stay consistent."
+  --evidence file app/src/main/java/notify/NotificationHelper.kt --tags notifications
+
+@2026-07-01 remember attempt --title "Re-recorded the empty-state artwork screenshots"
+  --set Problem "The empty-state artwork screenshot test diffed on CI after a vector change."
+  --set Tried "Re-recorded every Roborazzi golden locally on a Mac."
+  --set Result "CI rendered fonts differently and every golden failed again."
+  --set Why\ It\ Failed\ /\ Succeeded "Goldens must be recorded on the CI image, not a laptop."
+  --set Do\ Not\ Retry\ Unless "Goldens are recorded inside the CI container."
+  --evidence file app/src/test/screenshots/EmptyStateTest.kt --tags robolectric,screenshot
+
+@2026-07-05 remember attempt --title "Ran the Room migration test against an in-memory database"
+  --set Problem "MigrationTestHelper needed a schema export the in-memory builder skips."
+  --set Tried "Pointed MigrationTestHelper at Room.inMemoryDatabaseBuilder."
+  --set Result "The helper could not open the exported schema and the test failed to start."
+  --set Why\ It\ Failed\ /\ Succeeded "Migration tests need the exported JSON schemas under app/schemas/."
+  --set Do\ Not\ Retry\ Unless "Room supports in-memory migration testing."
+  --evidence file app/src/test/java/data/MigrationTest.kt --tags robolectric,room
+
+@2026-07-09 remember attempt --title "Deleted app/build/test-results to clear stale reports"
+  --set Problem "Old JUnit XML made the test report show failures that were already fixed."
+  --set Tried "rm -rf app/build/test-results while a Gradle test task was still running."
+  --set Result "The running task crashed writing its report and the build cache was poisoned."
+  --set Why\ It\ Failed\ /\ Succeeded "Another daemon owned the directory."
+  --set Do\ Not\ Retry\ Unless "No Gradle daemon is running; use ./gradlew cleanTest instead."
+  --evidence file app/build/test-results --tags gradle,robolectric
+
+@2026-07-12 remember attempt --title "Popped a stash after filtering hunks with git add -p"
+  --set Problem "Wanted to commit part of a file and keep the rest."
+  --set Tried "git add -p, then git stash, then git stash pop."
+  --set Result "The pop conflicted with the staged hunks and lost the unstaged ones."
+  --set Do\ Not\ Retry\ Unless "git gains a way to stash only unstaged hunks safely."
+  --evidence file docs/git-notes.md --tags git
+
+@2026-07-15 remember attempt --title "Rebased the release branch onto a squashed main"
+  --set Problem "The release branch carried commits main had squash-merged."
+  --set Tried "git rebase main on the release branch."
+  --set Result "Every squashed commit replayed as a conflict."
+  --set Do\ Not\ Retry\ Unless "main stops squash-merging."
+  --evidence file docs/git-notes.md --tags git
+
+@2026-07-20 remember attempt --title "Ran gradlew --stop on a STOPREQUESTED daemon that was a LIVE build"
+  --set Problem "./gradlew --status showed a daemon as STOPREQUESTED during a slow build."
+  --set Tried "./gradlew --stop to clear it."
+  --set Result "--stop killed every daemon, including the live build in another terminal."
+  --set Do\ Not\ Retry\ Unless "No other build is running anywhere on the machine."
+  --evidence file gradle.properties --tags gradle,daemon
+
+@2026-07-24 remember attempt --title "Raised the Gradle heap to fix an assembleDebug OOM"
+  --set Problem "./gradlew assembleDebug ran out of metaspace on CI."
+  --set Tried "org.gradle.jvmargs=-Xmx8g in gradle.properties."
+  --set Result "The CI runner has 7 GB; the daemon was killed by the OOM killer."
+  --set Do\ Not\ Retry\ Unless "CI runners get more than 8 GB of memory."
+  --evidence file gradle.properties --tags gradle,ci
+
+@2026-07-28 remember attempt --title "Enabled the configuration cache for every task"
+  --set Problem "./gradlew assembleDebug spent 20 s configuring."
+  --set Tried "org.gradle.configuration-cache=true globally."
+  --set Result "The Firebase plugin is not compatible and broke the release build."
+  --set Do\ Not\ Retry\ Unless "The Firebase Gradle plugin supports the configuration cache."
+  --evidence file gradle.properties --tags gradle,firebase
+
+@2026-09-01 note trap "Robolectric test classes need application = android.app.Application or KeyStore init kills them" --slug robolectric-keystore-application
+  --area app/src/test/ --symptom "Every test in the class fails in setUp with a KeyStore exception"
+  --why "The real App class initialises the Android KeyStore, which Robolectric does not provide"
+  --safe "Annotate the class with @Config(application = android.app.Application::class)"
+  --tags robolectric,keystore
+
+@2026-09-02 note trap "Deploying Firestore indexes deletes TTL policies" --slug firestore-indexes-delete-ttl
+  --area firestore.indexes.json --symptom "TTL policies vanish after firebase deploy --only firestore:indexes"
+  --why "The deploy replaces the field overrides wholesale, and TTL lives there"
+  --safe "Deploy rules and indexes separately; re-check TTL in the console after an indexes deploy"
+  --tags firestore,deploy
