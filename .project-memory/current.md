@@ -3,7 +3,7 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
+crumb-kit 0.4.0 is on PyPI. 0.5.0 (the DoWhat field-report fixes: Next Action log, migration safety, Stop-hook session cursor, guard rework and speed, repair/rename/handoff trim) is version-bumped and merged to main, ready to publish. docs/reviews/2026-10-01-dowhat-field-report-plan.md is the record; do not redo it.
 
 ## Recently Changed
 - 2083046 Plan fixes for the DoWhat field report on 0.4.0

@@ -8,8 +8,24 @@ prints both.
 
 ## [Unreleased]
 
-Fixes from the DoWhat field report on 0.4.0
-(`docs/reviews/2026-10-01-dowhat-field-report-plan.md`).
+## [0.5.0] — 2026-10-01
+
+**The field-report release.** Fixes everything a real Android project's store
+(398 records, migrated from schema 1) turned up on 0.4.0:
+`docs/reviews/2026-10-01-dowhat-field-report-plan.md` has each issue, its root
+cause, the fix and its test.
+
+**Upgrading.** `schema_version` is unchanged (4); no `crumb migrate` is needed.
+This is a minor release because behaviour people rely on changed:
+- `capture session --next` now **adds** an entry to the handoff's Next Action
+  instead of replacing it (use `--replace` to overwrite). A 0.4.x crumb writing
+  the same store still replaces the whole section, so upgrade every machine
+  that shares a store.
+- guard gives different verdicts: far fewer warnings on routine and read-only
+  commands, and `ASK_HUMAN` on a short list of high-impact actions even with no
+  memory about them.
+- the guard pre-filter format is 4; it is rebuilt by the first write or session
+  start, with no action needed.
 
 ### Changed
 

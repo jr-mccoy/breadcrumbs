@@ -89,7 +89,7 @@
 ]
 ],
 "format": 4,
-"inputs_hash": "ac3c96441279",
+"inputs_hash": "53df2f878112",
 "paths": [
 ".crumbignore",
 ".github/workflows/ci.yml",

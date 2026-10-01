@@ -1,20 +1,24 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 3085c5d | inputs_hash: ac3c96441279 | generated_at: 2026-10-01T22:29:08+00:00 -->
-<!-- view: markdown | budget: 3544/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 54eeaab | inputs_hash: 53df2f878112 | generated_at: 2026-10-01T23:54:24+00:00 -->
+<!-- view: markdown | budget: 3651/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/zealous-hamilton-ba7e5m` · commit `3085c5d` · 8 uncommitted file(s) · handoff: handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md
+branch `claude/zealous-hamilton-ba7e5m` · commit `54eeaab` · 9 uncommitted file(s) · handoff: handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md
 
 ## Current Focus
-Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)
+crumb-kit 0.4.0 is on PyPI. 0.5.0 (the DoWhat field-report fixes: Next Action log, migration safety, Stop-hook session cursor, guard rework and speed, repair/rename/handoff trim) is version-bumped and merged to main, ready to publish. docs/reviews/2026-10-01-dowhat-field-report-plan.md is the record; do not redo it.
 
 ## Next Action
 Review and merge claude/zealous-hamilton-ba7e5m (all DoWhat field-report fixes; docs/reviews/2026-10-01-dowhat-field-report-plan.md → Implementation status). Before releasing 0.5.0, run the native Windows CI job to confirm the \\?\ backup/restore, UTF-8 under Git Bash and mcp register --local.
 
 _(1 earlier entry in handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md)_
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 54eeaab Project memory: decisions and session capture for the field-report fixes
 
 ## Active Decisions
 - `dec_20261001_guard-reads-shell-commands-by-segment-and-effect` — Field report issues 7/8/N4: 23 of 23 firings warned, and find | xargs rm -rf was capped as read-only. Operator decision D3 (built-in floor).
@@ -109,7 +113,7 @@ _(… 7 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
 - active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 26 days old with no update — is this still true?
 - active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 26 days old with no update — is this still true?
 - active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 26 days old with no update — is this still true?

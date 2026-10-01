@@ -79,6 +79,7 @@ content that must be converted or must not be misread.
 | 0.3.0 | 4 | schema 1 → 4 in one release (phases 0–6); `crumb migrate` |
 | 0.3.1 | 4 | hotfix: hook launchers never pass a failure through |
 | 0.4.0 | 4 | the audit remediation (WP00–WP22); `requires: review-profiles`; OS write lock |
+| 0.5.0 | 4 | the DoWhat field-report fixes; `--next` appends; guard reworked |
 <!-- compat:releases:end -->
 
 The rows are the CHANGELOG's released sections. Checked against PyPI on
