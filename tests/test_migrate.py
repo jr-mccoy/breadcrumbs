@@ -431,3 +431,76 @@ class LegacyBlockTests(unittest.TestCase):
                     blockfiles.adopt_blocks(mem, Path(tmp))
             self.assertIn("traps/t11.md", str(ctx.exception))
             self.assertIn("12 trap/question file(s)", str(ctx.exception))
+
+
+class LongPathTests(unittest.TestCase):
+    """Field report 2026-10-01, issue 5: the backup copy went past Windows'
+    MAX_PATH and the error printed was shutil.Error's raw list of tuples."""
+
+    def test_extended_path_forms(self):
+        from breadcrumbs import path_policy as pp
+
+        self.assertEqual(pp.extended_path(r"C:\a\b\..\c.md", windows=True), "\\\\?\\C:\\a\\c.md")
+        self.assertEqual(
+            pp.extended_path(r"\\srv\share\x", windows=True), "\\\\?\\UNC\\srv\\share\\x"
+        )
+        self.assertEqual(pp.extended_path("\\\\?\\C:\\x", windows=True), "\\\\?\\C:\\x")
+        self.assertEqual(pp.plain_path(pp.extended_path(r"C:\a\c.md", windows=True)), r"C:\a\c.md")
+        self.assertEqual(pp.extended_path("/tmp/x", windows=False), "/tmp/x")
+
+    def test_a_failed_backup_copy_is_readable_and_leaves_nothing(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            set_version(mem, 3)
+            err = shutil.Error(
+                [
+                    (
+                        str(mem / "decisions" / "x.md"),
+                        "dst",
+                        "[WinError 3] The system cannot find the path specified",
+                    )
+                ]
+            )
+            with mock.patch.object(mig.shutil, "copytree", side_effect=err):
+                result = mig.migrate(mem, Path(tmp))
+            self.assertFalse(result["ok"])
+            self.assertIn("decisions/x.md", result["error"])
+            self.assertIn("WinError 3", result["error"])
+            self.assertIn("Nothing was migrated", result["error"])
+            self.assertNotIn("[('", result["error"])
+            backups = mem / "private" / "migrations"
+            leftover = [p for p in backups.iterdir()] if backups.is_dir() else []
+            self.assertEqual(leftover, [])
+            self.assertEqual(mig.store_schema_version(mem), 3)
+
+    def test_cli_never_prints_the_raw_tuple_list(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            err = shutil.Error([("/x/.project-memory/a.md", "/y", "File name too long")])
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(_cli, "cmd_validate", side_effect=err),
+                contextlib.redirect_stderr(stderr),
+            ):
+                code, _ = run(["validate", "--project", tmp])
+            self.assertEqual(code, 1)
+            self.assertNotIn("[('", stderr.getvalue())
+            self.assertIn("a.md (File name too long)", stderr.getvalue())
+
+    def test_restore_that_cannot_copy_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            set_version(mem, 3)
+            self.assertTrue(mig.migrate(mem, Path(tmp))["ok"])
+            before = mig.store_files(mem)
+            with mock.patch.object(mig, "_copytree", side_effect=OSError("disk full")):
+                result = mig.restore(mem)
+            self.assertFalse(result["ok"])
+            self.assertIn("nothing was changed", result["error"])
+            self.assertEqual(mig.store_files(mem), before)
+            leftover = [p.name for p in (mem / "private" / "migrations").iterdir()]
+            self.assertFalse(any(n.startswith(".restoring") for n in leftover), leftover)

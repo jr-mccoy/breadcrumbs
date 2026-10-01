@@ -14121,8 +14121,11 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         # Expected, user-facing failures (missing template/package, permissions,
         # unrepresentable values) surface as a clean error + nonzero exit rather
-        # than a raw traceback. Programming errors still propagate.
-        _emit_error(args, str(exc))
+        # than a raw traceback. Programming errors still propagate. A failed
+        # copy (`shutil.Error`) is described file by file, not as a raw list.
+        _emit_error(
+            args, path_policy.describe_copy_error(exc) if isinstance(exc, OSError) else str(exc)
+        )
         return 1
 
 

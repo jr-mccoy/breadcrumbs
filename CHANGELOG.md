@@ -42,6 +42,12 @@ Fixes from the DoWhat field report on 0.4.0
   person to merge, and the migration says so. A step's validation failure now
   lists every file, not the first five, and a hand-added block that cannot be
   adopted at reindex prints a `CRUMB-WARN` instead of failing silently.
+- **Migration backups work past Windows' 260-character path limit**: the
+  backup, its verification, the preview copy and `--restore` use extended-length
+  (`\\?\`) paths on Windows. A copy that still fails says which files and why
+  (never the raw `[('C:\\…', …)]` list), says nothing was migrated, and
+  leaves no partial backup behind. `--restore` copies the backup in beside the
+  store before replacing anything, so a failed restore changes nothing.
 - **Traps and questions keep their tags.** `note trap|question` and
   `inbox promote … trap|question` wrote `tags: []`, dropping the jot's tags
   and any `--tags` given. `note trap` and `note question` now take `--tags`.
