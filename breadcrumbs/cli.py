@@ -12033,6 +12033,63 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_repair(args: argparse.Namespace) -> int:
+    """`crumb repair [--apply] [--set ID.FIELD=VALUE]` (field report issue 12)."""
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import lock as _lock
+    from breadcrumbs import repair as _repair
+
+    planned = _repair.plan(memory_dir, root, _repair.parse_sets(getattr(args, "set", None)))
+    needs = [n for p in planned for n in p["needs"]]
+    proposals = [x for p in planned for x in p["proposals"]]
+    result: dict = {"applied": False, "written": [], "skipped": []}
+    if args.apply and any(p["changes"] for p in planned):
+        try:
+            with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+                result = {"applied": True, **_repair.apply(memory_dir, root, planned)}
+        except _lock.StoreLocked as exc:
+            _emit_error(args, str(exc))
+            return 1
+    if args.json:
+        items = [
+            {"id": p["id"], "path": p["rel"], "changes": p["changes"], "needs": p["needs"]}
+            for p in planned
+        ]
+        _print_json(
+            args,
+            {**result, "items": items, "needs": needs, "proposals": proposals},
+        )
+        return 0
+    if not planned:
+        print("repair: nothing to repair — every record meets the contract.")
+        return 0
+    verb = "repaired" if result["applied"] else "would repair"
+    print(f"repair: {verb} {sum(1 for p in planned if p['changes'])} record(s)")
+    for p in planned:
+        if not p["changes"]:
+            continue
+        print(f"  {p['rel']}")
+        for c in p["changes"]:
+            print(f"      {c}")
+    for s in result.get("skipped") or []:
+        print(f"  not written (would add a validate failure): {s['id']}: {s['reason']}")
+    if needs:
+        print("\nNeeds a person (repair never guesses these):")
+        for n in needs:
+            print(f"  {n}")
+    if proposals:
+        print("\nEvidence you could add (`crumb verify` / `remember --supersedes`):")
+        for x in proposals:
+            print(f"  {x}")
+    if not result["applied"]:
+        print("\nRe-run with --apply to write the changes.")
+    return 0
+
+
 def _cmd_migrate_restore(args: argparse.Namespace, memory_dir: Path) -> int:
     """`crumb migrate --restore [BACKUP]` (audit WP21)."""
     from breadcrumbs import migrate as _migrate
@@ -12242,6 +12299,24 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     from breadcrumbs import inbox as _inbox
 
     what = getattr(args, "inbox_what", None)
+
+    if what == "import":
+        result = _inbox.import_drafts(memory_dir, root, agent=getattr(args, "agent", None))
+        if args.json:
+            _print_json(args, {**result, "items": result["imported"] + result["kept"]})
+            return 1 if result["failed"] else 0
+        done = result["imported"] + result["kept"]
+        if not done and not result["failed"]:
+            print("inbox import: no drafts in inbox/drafts/.")
+            return 0
+        for e in result["imported"]:
+            print(f"  {e['draft']} -> {e['id']} (draft removed)")
+        for e in result["kept"]:
+            print(f"  {e['draft']} -> {e['id']} (draft kept: longer than a jot holds)")
+        for e in result["failed"]:
+            print(f"  {e['draft']}: not imported: {e['error']}")
+        print("Promote what is durable: `crumb inbox promote <id> decision|attempt|trap|…`.")
+        return 1 if result["failed"] else 0
 
     if what == "promote":
         result = _inbox.promote_jot(

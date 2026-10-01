@@ -235,13 +235,14 @@ def verb_of(tokens: list[str]) -> str:
 CRUMB_READ_ONLY = frozenset(
     """
     resume search show guard validate schema audit scan-secrets doctor usage
-    help version --version -V --help -h
+    questions expired help version --version -V --help -h
     """.split()
 )
 CRUMB_MEMORY_WRITE = frozenset(
     """
     remember note verify mark-status retitle reindex recover capture jot inbox
-    review prune traps policy
+    review prune traps policy consolidate promote demote rollup repair rename
+    handoff
     """.split()
 )
 
@@ -297,6 +298,8 @@ def crumb_effect(args: list[str]) -> str:
     if sub == "inbox" and (len(positional) < 2 or positional[1] in ("list", "show")):
         return "read_only"
     if sub == "traps" and "--confirm" not in flags:
+        return "read_only"
+    if sub == "repair" and "--apply" not in flags:
         return "read_only"
     if sub == "policy" and (len(positional) < 2 or positional[1] in ("show",)):
         return "read_only"

@@ -618,3 +618,44 @@ class McpTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class DraftImportTests(unittest.TestCase):
+    """Field report 2026-10-01, issue 12: an agent without the CLI hand-wrote
+    records that failed validation. Drafts are the sanctioned alternative."""
+
+    def test_a_short_draft_becomes_a_jot_and_is_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            drafts = mem / "inbox" / "drafts"
+            drafts.mkdir(parents=True)
+            (drafts / "2026-09-20-zebra.md").write_text(
+                "# Zebra cache race\n\nFixed by the lock.\n"
+            )
+            self.assertEqual(
+                [
+                    f
+                    for f in crumb.run_validate(mem)
+                    if f["status"] == "fail" and "drafts" in f["path"]
+                ],
+                [],
+            )
+            code, out = run(["inbox", "import", "--project", tmp, "--json"])
+            self.assertEqual(code, 0, out)
+            doc = json.loads(out)
+            self.assertEqual(len(doc["imported"]), 1)
+            self.assertFalse((drafts / "2026-09-20-zebra.md").exists())
+            jot = ibx.find_jot(mem, doc["imported"][0]["id"])
+            self.assertIn("Fixed by the lock", jot.body)
+
+    def test_a_long_draft_is_kept_and_cited(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            drafts = mem / "inbox" / "drafts"
+            drafts.mkdir(parents=True)
+            long = "word " * 400
+            (drafts / "long.md").write_text(f"# Long note\n\n{long}\n")
+            code, out = run(["inbox", "import", "--project", tmp, "--json"])
+            doc = json.loads(out)
+            self.assertEqual(len(doc["kept"]), 1)
+            self.assertTrue((drafts / "long.md").exists())

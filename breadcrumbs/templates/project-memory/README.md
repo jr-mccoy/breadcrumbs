@@ -41,6 +41,13 @@ A read-only cloud agent with no CLI can resume from these files directly:
 (indexed by `known-traps.md` and `open-questions.md`), and
 `generated/resume-packet.md`.
 
+**No CLI? Write a draft, not a record.** Put a free-form note in
+`inbox/drafts/<date>-<topic>.md` (a `# Title` line, then plain text). Nothing
+validates a draft. Later, `crumb inbox import` turns each one into a jot to
+promote. A record written by hand in the wrong shape fails validation and
+readers skip it or misread it; `crumb repair` fixes what it can for one that
+already exists.
+
 ---
 
 ## What lives where

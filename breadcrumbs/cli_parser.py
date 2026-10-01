@@ -905,6 +905,25 @@ def _add_migrate(sub, global_parser: argparse.ArgumentParser) -> None:
     p.set_defaults(func=cli.cmd_migrate)
 
 
+# repair — assisted repair of records that break the record contract
+def _add_repair(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "repair",
+        parents=[global_parser],
+        help="fill in what can be derived for records that fail validation (hand-written "
+        "ones), map legacy values, and list what needs a person; --apply writes",
+    )
+    p.add_argument("--apply", action="store_true", help="write the changes (default: preview)")
+    p.add_argument(
+        "--set",
+        action="append",
+        metavar="ID.FIELD=VALUE",
+        help="supply a value repair will not guess, e.g. ver_20260920_x.outcome=fixed "
+        "(repeatable; only `outcome` is accepted today)",
+    )
+    p.set_defaults(func=cli.cmd_repair)
+
+
 # usage — local surfacing counts
 def _add_usage(sub, global_parser: argparse.ArgumentParser) -> None:
     p = sub.add_parser(
@@ -1037,6 +1056,14 @@ def _add_inbox(sub, global_parser: argparse.ArgumentParser) -> None:
     pp.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
     pp.set_defaults(func=cli.cmd_inbox, all=False, expired=False)
 
+    pi = inbox_sub.add_parser(
+        "import",
+        parents=[global_parser],
+        help="turn notes left in inbox/drafts/ (by an agent without the CLI) into jots",
+    )
+    pi.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="importer"))
+    pi.set_defaults(func=cli.cmd_inbox, all=False, expired=False)
+
     pd = inbox_sub.add_parser(
         "drop", parents=[global_parser], help="retire a jot as noise (kept as history)"
     )
@@ -1144,6 +1171,7 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "prune": _add_prune,
     "rollup": _add_rollup,
     "migrate": _add_migrate,
+    "repair": _add_repair,
     "usage": _add_usage,
     "reindex": _add_reindex,
     "recover": _add_recover,
