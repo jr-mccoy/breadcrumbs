@@ -12933,6 +12933,16 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
             f"\n{summary['locked']} writing hook firing(s) skipped because another "
             "writer held the store lock."
         )
+    if summary.get("incompatible"):
+        print(
+            f"{summary['incompatible']} writing hook firing(s) refused: the store needs a "
+            "newer crumb-kit than this one (see `crumb doctor`)."
+        )
+    if summary.get("snapshot_failed"):
+        print(
+            f"{summary['snapshot_failed']} Stop-hook snapshot(s) failed; the log line's "
+            "`snapshot_error` says why."
+        )
     print(
         f"\nLocal to this machine ({rel}, never committed; counts and verdicts "
         "only). See docs/field-test.md."
@@ -13222,10 +13232,27 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
     return text + "\n\n"
 
 
+def _record_session_start(memory_dir: Path, root: Path, payload: dict) -> None:
+    """Remember the HEAD this session starts from — the Stop hook counts this
+    session's commits from it (field report 2026-10-01, issue 2). A resumed or
+    compacted session keeps its original start. Never raises."""
+    try:
+        from breadcrumbs import hooks_common
+
+        head = _git_out(root, "rev-parse", "HEAD") if is_git_repo(root) else None
+        if head:
+            hooks_common.set_session_baseline(
+                memory_dir, hooks_common.session_id_of(payload), head, keep_existing=True
+            )
+    except Exception:  # pragma: no cover - a SessionStart hook must never fail
+        pass
+
+
 def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> int:
     out: dict = {}
     payload = payload or {}
     if memory_dir.is_dir():
+        _record_session_start(memory_dir, root, payload)
         try:
             # `source` says why this SessionStart fired. Absent on older harness
             # versions, which is `startup` for every practical purpose.
@@ -13448,9 +13475,26 @@ def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
     recorded = rec.meta.get("dirty_files")
     if not isinstance(recorded, list):
         return False
-    if (rec.meta.get("commit") or "") != git_commit(root):
+    if not _same_commit(rec.meta.get("commit") or "", git_commit(root)):
         return False
-    return _work_dirty_files(recorded) == _work_dirty_files(git_dirty_files(root))
+    # The record holds the capped list (`derive_fields`), so compare with the
+    # live list capped the same way: comparing a capped list with an uncapped
+    # one made every firing with more than DIRTY_FILES_MAX dirty files look
+    # like new work, and re-snapshot every turn (field report 2026-10-01, N5).
+    live = _cap_dirty_files(git_dirty_files(root, include_memory=False))
+    return _work_dirty_files(recorded) == _work_dirty_files(live)
+
+
+def _same_commit(a: str, b: str) -> bool:
+    """Two commit ids name the same commit, whatever their abbreviation length.
+
+    Short shas are compared as strings across machines, where `core.abbrev` or
+    a grown object count can make one longer than the other (N8)."""
+    a, b = (a or "").strip(), (b or "").strip()
+    if not a or not b or NO_GIT_COMMIT in (a, b):
+        return a == b
+    n = min(len(a), len(b))
+    return n >= 7 and a[:n] == b[:n]
 
 
 def _extraction_enabled(memory_dir: Path) -> bool:
@@ -13467,12 +13511,82 @@ def _extraction_enabled(memory_dir: Path) -> bool:
 EXTRACTION_MAX_COMMITS_SHOWN = 5
 
 
+# A commit authored this long before the session started is not the session's
+# work (a fast-forward `git pull` of other people's commits); the margin
+# absorbs clock skew between the commit's machine and this one.
+EXTRACTION_AUTHOR_MARGIN_SECONDS = 120
+
+
+def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]:
+    """One-line subjects of the commits this session made since it was last asked.
+
+    Counted from the HEAD the session started on (SessionStart records it), not
+    from the newest session record in the store, which may be another session's
+    or another machine's from days ago (field report 2026-10-01, issue 2).
+
+    - No baseline yet (SessionStart not installed, or a session that predates
+      it): this firing records one and asks nothing.
+    - HEAD is not a descendant of the baseline (a checkout, a reset, a
+      rebase): re-baseline silently; there is no honest range to list.
+    - Commits that touch only the memory store, and commits authored before
+      the session started (pulled history), are not the session's work.
+
+    The caller advances the baseline to HEAD once it has asked, so the same
+    commits are never asked about twice, whatever the agent then does (issue 3).
+    """
+    from breadcrumbs import hooks_common
+
+    if not is_git_repo(root):
+        return []
+    head = _git_out(root, "rev-parse", "HEAD")
+    if not head:
+        return []
+    entry = hooks_common.session_baseline(memory_dir, session_id)
+    base = entry.get("head")
+    if not base:
+        hooks_common.set_session_baseline(memory_dir, session_id, head)
+        return []
+    if base == head:
+        return []
+    if _git_out(root, "merge-base", "--is-ancestor", base, head) is None:
+        hooks_common.set_session_baseline(memory_dir, session_id, head)
+        return []
+    out = _git_out(
+        root,
+        "log",
+        "--no-decorate",
+        "--format=%at %h %s",
+        f"{base}..{head}",
+        "--",
+        ".",
+        f":(exclude){MEMORY_DIRNAME}",
+    )
+    started = _epoch(entry.get("started_at"))
+    lines: list[str] = []
+    for line in (out or "").splitlines():
+        stamp, _, rest = line.strip().partition(" ")
+        if not rest:
+            continue
+        if started is not None and stamp.isdigit():
+            if int(stamp) < started - EXTRACTION_AUTHOR_MARGIN_SECONDS:
+                continue
+        lines.append(rest)
+    return lines
+
+
+def _epoch(stamp) -> int | None:
+    from breadcrumbs import validation as _validation
+
+    when = _validation.parse_timestamp(stamp) if stamp else None
+    return int(when.timestamp()) if when is not None else None
+
+
 def _extraction_commits(memory_dir: Path, root: Path) -> list[str]:
     """One-line subjects for commits since the last session record.
 
-    Empty means "do not prompt": nothing new, no git, or no prior session
-    record — the first firing in a store takes the baseline snapshot silently
-    instead of interrogating the agent about pre-existing history.
+    Superseded on the Stop hook by `_session_commits` (per-session baseline);
+    kept for callers that ask about the store as a whole. Empty means nothing
+    new, no git, or no prior session record.
     """
     last = _last_session_commit(memory_dir)
     if not last:
@@ -13528,9 +13642,9 @@ def _extraction_reason(commits: list[str], session_jots: list[dict] | None = Non
         # describe work it never did. The instruction below scopes recording to
         # the session's own work.
         parts.append(
-            f"breadcrumbs: {len(commits)} new commit(s) landed since the last recorded "
-            f"session (this turn's work, or another actor's if the workspace is "
-            f"shared):\n{listing}"
+            f"breadcrumbs: {len(commits)} new commit(s) since this session started "
+            f"(or since it was last asked) — this session's work, or another actor's "
+            f"if the workspace is shared:\n{listing}"
         )
     else:
         parts.append(
@@ -13562,9 +13676,11 @@ def _extraction_reason(commits: list[str], session_jots: list[dict] | None = Non
         "A write refused with exit 3 is a near-duplicate: pass `--supersedes <id>` "
         "to replace that record, or `--allow-duplicate` to keep both.\n"
         'Finish with `crumb capture session --next "<the next concrete action — cite '
-        'a commit sha or file so the claim stays checkable>"`. '
+        'a commit sha or file so the claim stays checkable>"`; it adds an entry above '
+        "the handoff's earlier ones and replaces nothing. "
         "Record durable facts only — routine work needs no records; if nothing "
-        "durable happened, run just the final capture command."
+        "durable happened, run just the final capture command. You will not be "
+        "asked about these commits again."
     )
     return "\n".join(parts)
 
@@ -13599,14 +13715,18 @@ def _session_jot_rows(memory_dir: Path, session_id: str) -> list[dict]:
         return []
 
 
-def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> None:
+def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> str:
     """The machine snapshot: the same --fast path the CLI uses (diff-stat already
     summarized). The Next Action is placeholder text (`_is_placeholder` knows
     it), so this capture cannot clobber a Next Action / Focus a human set.
 
     `host_session` is the harness's session id from the Stop payload. It is what
     lets the second and later firings of one session update the first firing's
-    snapshot instead of stacking a new record beside it (F-6)."""
+    snapshot instead of stacking a new record beside it (F-6).
+
+    Returns `"ok"` or `"failed: <why>"` for the hook log. It used to swallow
+    every failure, so a snapshot that never landed looked like one that did
+    (field report 2026-10-01, issue 3)."""
     import argparse
 
     ns = argparse.Namespace(
@@ -13625,11 +13745,16 @@ def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> None:
         agent=detect_agent(fallback="agent"),
         capture_what="session",
     )
+    err = io.StringIO()
     try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            cmd_capture_session(ns)
-    except Exception:  # pragma: no cover - a capture failure must not block Stop
-        pass
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = cmd_capture_session(ns)
+    except Exception as exc:  # a capture failure must not block Stop — but it is logged
+        return f"failed: {type(exc).__name__}: {exc}"[:200]
+    if code != 0:
+        detail = " ".join(err.getvalue().split())
+        return f"failed: exit {code}" + (f": {detail}" if detail else "")[:200]
+    return "ok"
 
 
 def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
@@ -13666,16 +13791,20 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     host_session = str(payload.get("session_id") or "") or None
     if payload.get("stop_hook_active"):
         if not redundant:
-            _hook_capture_snapshot(root, host_session)
-            _hooklog.note(snapshot=True)
+            _note_snapshot(_hook_capture_snapshot(root, host_session))
         print(json.dumps({}))
         return 0
+    try:
+        # Always computed, so the first firing of a session records where it
+        # started even when this firing is otherwise silent.
+        commits = _session_commits(memory_dir, root, session_key)
+    except Exception:  # pragma: no cover - the prompt degrades to jots-only
+        commits = []
     if redundant:
         _hooklog.note(redundant=True)
         print(json.dumps({}))
         return 0
     if _extraction_enabled(memory_dir):
-        commits = _extraction_commits(memory_dir, root)
         # Candidates this session produced that have not already been offered.
         # Re-offering a jot the agent declined, every turn until it expires, is
         # exactly the fatigue that makes an agent start ignoring the prompt.
@@ -13691,13 +13820,29 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
             hooks_common.record_extraction_asked(
                 memory_dir, session_key, [j["id"] for j in jots[:EXTRACTION_MAX_JOTS_SHOWN]]
             )
-            _hooklog.note(offered=len(jots[:EXTRACTION_MAX_JOTS_SHOWN]))
+            # Asked once: these commits are never asked about again, whether
+            # or not the agent's capture (or the continuation's snapshot)
+            # then lands. Without this a failed snapshot re-asked every turn.
+            head = _git_out(root, "rev-parse", "HEAD")
+            if head:
+                hooks_common.set_session_baseline(memory_dir, session_key, head)
+            _hooklog.note(offered=len(jots[:EXTRACTION_MAX_JOTS_SHOWN]), commits=len(commits))
             print(json.dumps({"decision": "block", "reason": _extraction_reason(commits, jots)}))
             return 0
-    _hook_capture_snapshot(root, host_session)
-    _hooklog.note(snapshot=True)
+    _note_snapshot(_hook_capture_snapshot(root, host_session))
     print(json.dumps({}))
     return 0
+
+
+def _note_snapshot(status: str) -> None:
+    """Log a Stop-hook snapshot as `ok` or `failed` (with why) — never claim one
+    that did not land."""
+    from breadcrumbs import hooklog as _hooklog
+
+    if status == "ok":
+        _hooklog.note(snapshot="ok")
+    else:
+        _hooklog.note(snapshot="failed", snapshot_error=status.removeprefix("failed: "))
 
 
 def cmd_hook(args: argparse.Namespace) -> int:
@@ -13743,10 +13888,16 @@ def _run_hook(event: str, memory_dir: Path, root: Path, payload: dict) -> int:
     try:
         with _lock.store_lock(memory_dir, timeout=_lock.HOOK_TIMEOUT):
             return _dispatch_writing_hook(event, memory_dir, root, payload)
-    except _lock.StoreLocked:
+    except _lock.StoreLocked as exc:
         from breadcrumbs import hooklog as _hooklog
 
-        _hooklog.note(outcome="locked")
+        # An incompatible store is a StoreLocked too, but it is not busy — it
+        # will refuse every firing until crumb-kit is upgraded. Logging it as
+        # "locked" hid why the Stop hook went quiet (field report, N6).
+        if isinstance(exc, getattr(_lock, "IncompatibleStore", ())):
+            _hooklog.note(outcome="incompatible", reason=str(exc)[:200])
+        else:
+            _hooklog.note(outcome="locked")
         print("{}")
         return 0
 

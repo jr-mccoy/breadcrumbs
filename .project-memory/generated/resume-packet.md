@@ -1,12 +1,12 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 2083046 | inputs_hash: 053022139260 | generated_at: 2026-10-01T21:16:22+00:00 -->
+<!-- source_commit: 7edf192 | inputs_hash: 3982d863357d | generated_at: 2026-10-01T21:38:05+00:00 -->
 <!-- view: markdown | budget: 3558/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/zealous-hamilton-ba7e5m` · commit `2083046` · 3 uncommitted file(s) · handoff: handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md
+branch `claude/zealous-hamilton-ba7e5m` · commit `7edf192` · 11 uncommitted file(s) · handoff: handoffs/claude-zealous-hamilton-ba7e5m-2a7c4d.md
 
 ## Current Focus
 Stabilization per the 2026-09-26 audit roadmap (WP00-05 done; WP06 awaiting review)

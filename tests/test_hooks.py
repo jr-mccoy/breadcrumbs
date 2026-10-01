@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest import mock
@@ -863,3 +864,126 @@ class HookGuardPermissionModeTests(unittest.TestCase):
             hso = out.get("hookSpecificOutput") or {}
             self.assertIsNone(hso.get("permissionDecision"), out)
             self.assertIn("guard", hso.get("additionalContext", ""), out)
+
+
+class SessionCursorTests(unittest.TestCase):
+    """Field report 2026-10-01, issues 2-3: the Stop hook asked about commits
+    other sessions made (counted from the newest session record in the store),
+    and could ask again every turn when its fallback snapshot did not land."""
+
+    def _commit(self, root: Path, name: str, msg: str, path: str | None = None) -> None:
+        target = root / (path or name)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"{msg}\n")
+        git(root, "add", str(target.relative_to(root)))
+        git(root, "commit", "-qm", msg)
+
+    def _start(self, root: Path, sid: str) -> None:
+        run_hook("session", {"cwd": str(root), "session_id": sid})
+
+    def test_other_sessions_commits_are_not_this_sessions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            crumb.main(["capture", "session", "--project", str(root), "--fast", "--next", "x"])
+            for i in range(7):
+                self._commit(root, f"o{i}.txt", f"other session work {i}")
+            self._start(root, "NEW")
+            self.assertEqual(run_hook("capture", {"cwd": str(root), "session_id": "NEW"}), {})
+
+    def test_this_sessions_commit_is_asked_about_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            self._start(root, "S")
+            self._commit(root, "mine.txt", "my own work")
+            out = run_hook("capture", {"cwd": str(root), "session_id": "S"})
+            self.assertEqual(out.get("decision"), "block", out)
+            self.assertIn("my own work", out["reason"])
+            self.assertIn("1 new commit(s)", out["reason"])
+
+    def test_a_memory_only_commit_is_not_new_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            self._start(root, "S")
+            self._commit(root, "x", "chore: commit memory", path=".project-memory/decisions/x.md")
+            self.assertEqual(run_hook("capture", {"cwd": str(root), "session_id": "S"}), {})
+
+    def test_a_backward_checkout_is_not_a_new_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            self._commit(root, "a.txt", "a")
+            self._start(root, "S")
+            git(root, "checkout", "-q", "HEAD~1")
+            self.assertEqual(run_hook("capture", {"cwd": str(root), "session_id": "S"}), {})
+
+    def test_a_failed_snapshot_never_re_asks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            self._start(root, "S")
+            self._commit(root, "w.txt", "work")
+            payload = {"cwd": str(root), "session_id": "S"}
+            with unittest.mock.patch.object(_cli, "cmd_capture_session", side_effect=OSError("x")):
+                self.assertEqual(run_hook("capture", payload).get("decision"), "block")
+                self.assertEqual(run_hook("capture", {**payload, "stop_hook_active": True}), {})
+                self.assertEqual(run_hook("capture", payload), {})
+            with unittest.mock.patch.object(_cli, "cmd_capture_session", return_value=2):
+                self.assertEqual(run_hook("capture", payload), {})
+
+    def test_a_failed_snapshot_is_logged_as_failed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            (root / "dirty.txt").write_text("x\n")
+            with unittest.mock.patch.object(
+                _cli, "cmd_capture_session", side_effect=OSError("disk full")
+            ):
+                run_hook("capture", {"cwd": str(root), "session_id": "S"})
+            log = (mem / "private" / "hook-log.jsonl").read_text().splitlines()
+            last = json.loads(log[-1])
+            self.assertEqual(last.get("snapshot"), "failed")
+            self.assertIn("disk full", last.get("snapshot_error", ""))
+
+    def test_a_future_dated_record_does_not_cause_a_nag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            crumb.main(["capture", "session", "--project", str(root), "--fast", "--next", "x"])
+            rec = next((mem / "sessions").glob("*.md"))
+            rec.write_text(rec.read_text().replace("created_at: 2026", "created_at: 2027", 1))
+            self._start(root, "S")
+            self._commit(root, "w.txt", "work")
+            payload = {"cwd": str(root), "session_id": "S"}
+            self.assertEqual(run_hook("capture", payload).get("decision"), "block")
+            run_hook("capture", {**payload, "stop_hook_active": True})
+            self.assertEqual(run_hook("capture", payload), {})
+            self.assertEqual(run_hook("capture", payload), {})
+
+    def test_many_dirty_files_are_redundant_on_the_second_firing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            for i in range(40):
+                (root / f"d{i}.txt").write_text("x\n")
+            run_hook("capture", {"cwd": str(root), "session_id": "S"})
+            self.assertTrue(_cli._hook_capture_is_redundant(mem, root))
+
+    def test_session_start_records_the_head_once(self):
+        from breadcrumbs import hooks_common
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            self._start(root, "S")
+            first = hooks_common.session_baseline(mem, "S")["head"]
+            self._commit(root, "w.txt", "work")
+            self._start(root, "S")  # a resumed session keeps its start
+            self.assertEqual(hooks_common.session_baseline(mem, "S")["head"], first)
+
+    def test_short_shas_of_different_lengths_are_the_same_commit(self):
+        self.assertTrue(_cli._same_commit("abc1234", "abc1234de"))
+        self.assertFalse(_cli._same_commit("abc1234", "abc1235"))
+        self.assertFalse(_cli._same_commit("abc", "abcdef0"))

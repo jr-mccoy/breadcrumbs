@@ -26,6 +26,18 @@ Fixes from the DoWhat field report on 0.4.0
 
 ### Fixed
 
+- **The Stop hook asks only about this session's commits, and only once.** It
+  counted from the newest session record in the store, so on install, after a
+  `git pull`, a long gap or another machine's capture it asked about commits
+  other sessions made; and when its fallback snapshot failed it asked again
+  every turn. It now counts from the HEAD this session started on (recorded by
+  `SessionStart`, keyed by session id), skips commits that touch only
+  `.project-memory/` or were authored before the session began, re-baselines
+  silently after a checkout or reset, and moves the starting point to HEAD each
+  time it asks. Snapshot failures are logged (`snapshot: failed` plus
+  `snapshot_error`) instead of reported as taken; an incompatible store is
+  logged as `incompatible`, not `locked`; and a session with more than 25
+  dirty files no longer re-snapshots on every turn.
 - **`migrate --dry-run` runs the real steps on a scratch copy**, so it says
   "would apply" only when applying would succeed, and names the blocking
   record and its line (`known-traps.md:41`) when it would not. It also lists

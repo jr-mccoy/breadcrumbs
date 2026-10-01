@@ -1007,7 +1007,7 @@ piece is independent:
     long session stays mineable, and nothing is written twice. `crumb doctor`
     shows the backlog.
 
-    When the ending turn produced **new commits** — or the miner found a
+    When **this session** produced new commits — or the miner found a
     failed-then-fixed command, or three candidates of any kind — the hook does
     more than snapshot: it holds the stop once (**the extraction turn**) and
     hands the agent a concrete instruction, with the mined candidates listed by
@@ -1015,17 +1015,22 @@ piece is independent:
     at the moment the model has least context left, into "promote this one, drop
     that one". Record any durable decision, failed attempt, or verification
     (`crumb remember` / `verify` / `mark-status` / `crumb inbox promote`), then
-    `crumb capture session --next "…"`. That last command
-    is also what clears the prompt, so completing the instruction and moving on
-    are the same act. This is what makes the agent the memory *author* with no
+    `crumb capture session --next "…"` (which adds an entry to the handoff
+    and replaces nothing). This is what makes the agent the memory *author* with no
     human in the loop: the request lands while the model still holds the
     session's "why", instead of relying on a signpost it read hundreds of turns
     ago. Proportionality rules keep it quiet: edit-only turns and no-change
-    turns never prompt, a continuation of a held stop is never held again (the
-    machine snapshot is the floor if the agent ignores the instruction), and
-    the very first firing in a store takes a silent baseline instead of
-    interrogating the agent about pre-existing history. A candidate the agent
-    declined is never offered again in the same session. Opt out per project
+    turns never prompt, and a continuation of a held stop is never held again
+    (the machine snapshot is the floor if the agent ignores the instruction).
+    Commits are counted from **where this session started**: `SessionStart`
+    records HEAD per session (a session with no record takes one silently at
+    its first `Stop`), so commits other sessions made, a `git pull` of older
+    history, a checkout, and commits that touch only `.project-memory/` are
+    never asked about. Each batch of commits is asked about **once** — the
+    starting point moves to HEAD when the hook asks, whether or not a capture
+    follows — and a candidate the agent declined is never offered again in the
+    same session. A snapshot that fails is logged as `snapshot: failed` with
+    the reason (`crumb doctor --hook-log`). Opt out per project
     with `extraction_prompt: false` in `manifest.yml` — which stops the prompt,
     not the mining.
 

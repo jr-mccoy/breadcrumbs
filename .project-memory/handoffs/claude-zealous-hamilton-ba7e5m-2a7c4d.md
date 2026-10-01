@@ -1,8 +1,8 @@
 # Project Handoff
 
-_Last updated: 2026-10-01T21:16:22+00:00_
+_Last updated: 2026-10-01T21:38:05+00:00_
 _Branch: claude/zealous-hamilton-ba7e5m_
-_Commit: 2083046_
+_Commit: 7edf192_
 
 ## Current Focus
 crumb-kit 0.3.1 is released (2026-09-27). Phases 0–6 of docs/roadmap-working-memory.md shipped in 0.3.0; do not redo them. The audit remediation (docs/reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md, work packages WP00–WP22) is implemented on branch claude/new-session-9f1k6i. The tracker, docs/reviews/2026-09-26-breadcrumbs-work-packages.json, is authoritative for each package's status; each has a review record under docs/reviews/2026-09-27-breadcrumbs-wpNN/.

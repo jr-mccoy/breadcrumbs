@@ -233,7 +233,7 @@ def summarize(entries: list[dict]) -> dict:
                     ev["counts"][key] = ev["counts"].get(key, 0) + 1
             elif isinstance(val, int):
                 ev["counts"][key] = ev["counts"].get(key, 0) + val
-            elif isinstance(val, str) and key != "tool":
+            elif isinstance(val, str) and key not in ("tool", "reason", "snapshot_error"):
                 name = f"{key}: {val}"
                 ev["counts"][name] = ev["counts"].get(name, 0) + 1
         if e.get("session"):
@@ -257,4 +257,6 @@ def summarize(entries: list[dict]) -> dict:
         "sessions": len(sessions),
         "events": report,
         "locked": sum(1 for e in entries if e.get("outcome") == "locked"),
+        "incompatible": sum(1 for e in entries if e.get("outcome") == "incompatible"),
+        "snapshot_failed": sum(1 for e in entries if e.get("snapshot") == "failed"),
     }
