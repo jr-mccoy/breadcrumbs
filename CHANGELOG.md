@@ -26,6 +26,13 @@ Fixes from the DoWhat field report on 0.4.0
 
 ### Fixed
 
+- **`resume` names the records readers drop or misread.** A record with a
+  status outside the vocabulary (a decision marked `fixed`) was silently left
+  out of Active Decisions and guard while the packet's contract warning said
+  "they are still read"; it is now named (`status-invalid`) and the warning
+  says it is left out. A verification with no frontmatter is named
+  (`no-frontmatter`, `outcome-missing`) and its outcome shows as `unknown`, not
+  `open`.
 - **The Stop hook asks only about this session's commits, and only once.** It
   counted from the newest session record in the store, so on install, after a
   `git pull`, a long gap or another machine's capture it asked about commits

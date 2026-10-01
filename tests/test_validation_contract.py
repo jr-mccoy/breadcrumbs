@@ -279,6 +279,30 @@ class DegradedReadTests(ContractCase):
         packet = crumb.build_resume_packet(self.mem, self.root)
         self.assertFalse([w for w in packet["warnings"] if "record contract" in w])
 
+    def test_an_invalid_status_is_named_and_its_effect_said(self):
+        # Field report 2026-10-01, N3: a decision marked `fixed` vanished from
+        # Active Decisions and the warning still said "they are still read".
+        _path, bad_id = self.decision("Never use the porpoise queue", status="fixed")
+        packet = crumb.build_resume_packet(self.mem, self.root)
+        warning = [w for w in packet["warnings"] if "record contract" in w]
+        self.assertEqual(len(warning), 1, packet["warnings"])
+        self.assertIn(bad_id, warning[0])
+        self.assertIn("status-invalid", warning[0])
+        self.assertIn("left out of resume and guard", warning[0])
+
+    def test_a_hand_written_verification_is_named_and_not_shown_open(self):
+        vdir = self.mem / "verifications"
+        vdir.mkdir(exist_ok=True)
+        (vdir / "2026-09-20-zebra-cache-race-fixed.md").write_text(
+            "# Zebra cache race\n\nFixed. Re-ran the soak test for an hour.\n", encoding="utf-8"
+        )
+        packet = crumb.build_resume_packet(self.mem, self.root)
+        warning = " ".join(w for w in packet["warnings"] if "record contract" in w)
+        self.assertIn("zebra-cache-race-fixed", warning)
+        self.assertIn("no-frontmatter", warning)
+        outcomes = [v.get("outcome") for v in packet.get("verifications", [])]
+        self.assertNotIn("open", outcomes)
+
     def test_machine_local_jots_do_not_change_the_committed_packet(self):
         jot = self.mem / "private" / "inbox" / "2026-09-01-local-note-abcd.md"
         jot.parent.mkdir(parents=True, exist_ok=True)

@@ -1813,10 +1813,14 @@ def record_contract_warnings(memory_dir: Path) -> list[str]:
     entries = record_contract_entries(records, memory_dir)
     linked = _validation.store_issues(entries)
     problems: dict[str, list[str]] = {}
+    hidden = 0
     for rec, (rel, rid, meta) in zip(records, entries):
         codes = ["frontmatter-malformed"] if rec.error else []
         codes += [i["code"] for i in _validation.record_issues(meta, rec.rtype, rid)]
         codes += [i["code"] for i in linked.get(rel, [])]
+        codes += _reader_visible_problems(rec)
+        if "status-invalid" in codes:
+            hidden += 1
         if codes:
             problems[rid or rel] = codes
     if not problems:
@@ -1826,11 +1830,43 @@ def record_contract_warnings(memory_dir: Path) -> list[str]:
         for rid, codes in sorted(problems.items())[:CONTRACT_WARNING_EXAMPLES]
     ]
     more = len(problems) - len(shown)
+    # Say what the readers actually do with them. "They are still read" was
+    # untrue for an invalid status: such a decision is dropped from every
+    # active list, and guard then PROCEEDs past it (field report 2026-10-01, N3).
+    effect = (
+        f" — {hidden} with an invalid status are left out of resume and guard; "
+        if hidden
+        else " — they are still read; "
+    )
     return [
         f"⚠ {len(problems)} record(s) break the record contract: {'; '.join(shown)}"
         + (f"; +{more} more" if more > 0 else "")
-        + " — they are still read; run `crumb validate`."
+        + effect
+        + "run `crumb validate`."
     ]
+
+
+def _reader_visible_problems(rec: "Record") -> list[str]:
+    """Contract breaks that change what readers show, which `record_issues` does
+    not cover: a status outside the vocabulary (readers drop the record), no
+    frontmatter at all (hand-written), a verification with no subject or no
+    valid outcome (shown as outcome `unknown`)."""
+    if rec.error:
+        return []
+    if not rec.meta:
+        codes = ["no-frontmatter"]
+        return codes + (["outcome-missing"] if rec.rtype == "verification" else [])
+    codes: list[str] = []
+    status = rec.meta.get("status")
+    vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
+    if status is not None and str(status) not in vocab and rec.rtype != "jot":
+        codes.append("status-invalid")
+    if rec.rtype == "verification":
+        if rec.meta.get("outcome") not in VALID_VERIFICATION_OUTCOME:
+            codes.append("outcome-missing")
+        if rec.meta.get("subject") in (None, ""):
+            codes.append("subject-missing")
+    return codes
 
 
 def record_contract_entries(records: list["Record"], memory_dir: Path) -> list[tuple]:
@@ -7569,7 +7605,9 @@ def _build_resume_packet_once(
             {
                 "id": r.meta.get("id", r.stem),
                 "subject": (r.meta.get("subject") or r.meta.get("title", "")),
-                "outcome": (r.meta.get("outcome") or "open"),
+                # A verification with no outcome is not "open" — nobody said so.
+                # Showing it as open inverted a hand-written "Fixed." (N3).
+                "outcome": (r.meta.get("outcome") or "unknown"),
                 "method": r.meta.get("method"),
             }
             for r in listed_verifications
@@ -9165,7 +9203,7 @@ def _item_from_record(rec: Record) -> dict:
     # kept alongside it: guard's liveness test needs both, and folding them into
     # one field is what silently excluded every verification from the verdict.
     lifecycle = str(rec.meta.get("status") or "active")
-    status = (rec.meta.get("outcome") or "open") if rec.rtype == "verification" else lifecycle
+    status = (rec.meta.get("outcome") or "unknown") if rec.rtype == "verification" else lifecycle
     return {
         "id": rec.meta.get("id", rec.stem),
         "kind": rec.rtype,
