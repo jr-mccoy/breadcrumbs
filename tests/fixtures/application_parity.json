@@ -345,13 +345,13 @@
      "title": "Cache TTL is five minutes for the pricing API"
     }
    ],
-   "approx_tokens": 851,
+   "approx_tokens": 858,
    "budget": {
     "estimator": "approx-tokens/2",
     "estimator_rule": "ceil(ASCII chars / 4) + 1 per non-ASCII char \u2014 a heuristic, not a model tokenizer",
     "limit": 5000,
     "unit": "approx_tokens",
-    "used": 851,
+    "used": 858,
     "view": "json",
     "within": true
    },
@@ -390,6 +390,7 @@
     "src/pricing/cache.py"
    ],
    "next_action": "",
+   "next_action_earlier": 0,
    "ok": true,
    "omitted": {},
    "omitted_reason": {},
@@ -903,7 +904,7 @@
    "estimator_rule": "ceil(ASCII chars / 4) + 1 per non-ASCII char \u2014 a heuristic, not a model tokenizer",
    "limit": 5000,
    "unit": "approx_tokens",
-   "used": 758,
+   "used": 765,
    "view": "json",
    "within": true
   },
@@ -940,6 +941,7 @@
    "src/pricing/cache.py"
   ],
   "next_action": "",
+  "next_action_earlier": 0,
   "ok": true,
   "omitted": {},
   "omitted_reason": {},

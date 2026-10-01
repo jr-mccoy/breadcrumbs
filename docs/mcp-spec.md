@@ -311,6 +311,7 @@ are not the same kind of thing. Both pairs are deliberate:
 | `verification` | verification **commands** — the lines under the handoff's *Verification Commands* heading |
 | `stale_after_days` | the **threshold** in force (default 21) |
 | `handoff_age_days` / `handoff_commit_distance` | the **measured** handoff age and commit distance; `null` when the timestamp is unparseable or there is no git repo |
+| `next_action` / `next_action_earlier` | the handoff's **newest** Next Action entry, and how many earlier entries the handoff keeps below it (`capture session --next` adds entries; it never replaces them) |
 
 The handoff measured is the one the packet read: at schema 4, the current
 branch's `handoffs/<slug>.md` when it exists, else `handoff.md`.
