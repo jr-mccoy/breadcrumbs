@@ -1,6 +1,7 @@
 # Fix plan: the DoWhat field report (crumb-kit 0.4.0)
 
-Status: **plan only, nothing implemented.** Written 2026-10-01 on branch
+Status: **implemented on this branch** (see *Implementation status* at the
+end). The plan below is kept as written, with the decisions as answered. Written 2026-10-01 on branch
 `claude/zealous-hamilton-ba7e5m`, at commit `295c6db` (the 0.4.0 release
 commit). That is the same code the field session ran, so the report's line
 numbers in `breadcrumbs/cli.py` still match.
@@ -1170,3 +1171,78 @@ its area:
 - **Repair.** A new `crumb repair` fills in what can be known honestly
   (dates, titles, ids) and asks a person for what can't (did the fix work?
   what's the evidence?).
+
+---
+
+## Implementation status (2026-10-01)
+
+Every issue and every new finding (N1–N12) is fixed on
+`claude/zealous-hamilton-ba7e5m`. Each release's commits carry the issue
+numbers. The full suite (`python -m unittest discover -s tests`) is green,
+and so are `ruff check` / `ruff format --check` and `python evals/run.py`
+(27 critical cases, including the 7 new field cases).
+
+| Item | Where |
+|---|---|
+| #1 Next Action log, `--replace`, `--recent`, resume shows newest + count | `cli.update_handoff`/`update_current`/`cmd_capture_session`; `tests/test_capture.py` `NextActionLogTests` |
+| N1 trap/question tags | `cli._note_as_file`, `blockfiles.load_*_files`; `tests/test_inbox.py` |
+| #4, N2, N10, N12 migration preview, legacy mapping, duplicate ids | `migrate.simulate`, `blockfiles._legacy_fixes`/`adopt_blocks`; `tests/test_migrate.py` `LegacyBlockTests` |
+| #5, N9 long paths, readable errors, staged restore | `path_policy.extended_path`/`describe_copy_error`, `migrate.backup_store`/`restore`; `LongPathTests` |
+| #2, #3, N5–N8, #13c Stop hook | `cli._session_commits`, `hooks_common.session_baseline`; `tests/test_hooks.py` `SessionCursorTests` |
+| N3 unusable records named | `cli.record_contract_warnings`; `tests/test_validation_contract.py` |
+| #7, #8, #9, #10, #11, N4, N11, D3 guard | new `breadcrumbs/shellcmd.py`, `cli._score_item`/`guard`/`classify_action`; `tests/test_guard_field_report.py`; `evals/suites/android` + `evals/critical/cases.yml` |
+| #6 speed | `cli.CommitDistanceIndex`, `searchindex._is_fresh`, `_prefilter_exact_hit`, per-record pre-filter (format 4) |
+| #12 repair, drafts | new `breadcrumbs/repair.py`, `inbox.import_drafts`; `tests/test_repair.py`, `tests/test_inbox.py` |
+| #5 rest, #1 trim | new `breadcrumbs/rename.py`; `tests/test_rename.py` |
+| #13a, #13b UTF-8, `mcp register --local`, uv docs | `cli.configure_stream_encoding`, `cli.register_mcp_local`; `tests/test_output.py`, `tests/test_integrations.py` |
+
+**Where the implementation differs from the plan, and why**
+
+- **D1b:** no `requires: next-action-log`. You are the only user and have
+  already upgraded; the CHANGELOG says to upgrade every machine that shares a
+  store.
+- **Recently Changed** is set with a new `--recent "…"` flag, not
+  `--set "Recently Changed"`: `--set` names session-record sections, and
+  Recently Changed is not one.
+- **Prompt hook ranking:** the plan said to drop the do-not-retry boost from
+  the prompt hook entirely.
+  - Measured on the eval suites, that lost a relevant failed attempt
+    ("logout no longer clears the session cookie").
+  - So the prompt hook keeps the boost, but only where it now applies at
+    all: when the attempt is topical.
+  - In addition, a match whose only evidence is one shared tag is dropped
+    when a stronger match is present.
+- **More than planned for issue 8**, each one found while making the field
+  cases pass:
+  - Failure words (`why`, `fail`, `error`, …) no longer count as shared
+    words.
+  - A tag's own word no longer doubles as the "extra" shared word.
+  - One shared tag no longer floors a verdict on its own; two shared tags,
+    or a tag plus another word, still do.
+- **Issue 5 pre-flight:** replaced by extended-length paths. The backup copy
+  can no longer hit the 260 limit, so there is nothing to pre-check; the
+  `doctor` `path_length` check and `crumb rename` cover the names themselves.
+- **Hook phase timings:** the hook log records how many `git` processes each
+  firing starts (`git`), plus the existing handler `ms`. That separates git
+  cost from Python cost, which was the question the field data could not
+  answer.
+- **D5:** branch-scoped records become live project memory once their file
+  has reached HEAD (the default the plan assumed).
+
+**Not verified on Windows.** These were tested on Linux only, with the
+Windows code paths exercised through the pure helpers:
+
+- the extended-length (`\\?\`) backup and restore;
+- UTF-8 output under Git Bash;
+- `crumb mcp register --local`;
+- `uv tool upgrade` with a running server.
+
+The native Windows CI job (`ci.yml`, run on demand) is the place to confirm
+them before a release.
+
+**Not released.** The CHANGELOG entries are under `[Unreleased]`. These
+changes make up a minor release (0.5.0): `--next` behaves differently, and
+guard verdicts change. Releasing follows `RELEASING.md`: bump `__version__`,
+add the CHANGELOG heading and the `docs/compatibility.md` §3 row, then run
+`release.yml`.
+
