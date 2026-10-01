@@ -44,8 +44,19 @@ Fixes from the DoWhat field report on 0.4.0
   by the Stop hook's snapshot (it used to receive the git log, which resume
   already shows as *Landed Since*). `--recent "…"` adds a note above it.
 
+### Added
+
+- `crumb mcp register --local`: a portable `.mcp.json` entry plus this
+  machine's interpreter registered at Claude Code's local scope, so a
+  committed config no longer carries one machine's Python path (field report
+  issue 13). The README's Windows upgrade section covers `uv tool` installs.
+
 ### Fixed
 
+- **Windows terminals that are not consoles get UTF-8.** Under Git Bash/mintty,
+  in a pipe or redirected to a file, `—` printed as `�` because Python wrote the
+  ANSI code page; stdout and stderr are now UTF-8 there (a real console is
+  unchanged).
 - **The guard hook is fast enough to run on every tool call** (field report
   issue 6: p50 5.3 s on Windows). Record commits not on HEAD's history (records
   from squash-merged cloud branches) no longer cost two or three `git`

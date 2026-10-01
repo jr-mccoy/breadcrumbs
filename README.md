@@ -1117,6 +1117,23 @@ sessions running an MCP server (or stop the `breadcrumbs-mcp` processes) and run
 the upgrade again. Re-run `crumb mcp register` afterwards to move an existing
 `.mcp.json` onto the interpreter form.
 
+**`uv tool` installs work the same way.** `uv tool install "crumb-kit[mcp]"`
+puts the shims in `~/.local/bin` and the package in uv's own tool environment;
+`crumb mcp register` then names that environment's Python. `uv tool upgrade
+crumb-kit` replaces files in the same environment, so the same rule applies:
+close the editor sessions running the server first if the upgrade reports a
+file in use, and re-run `crumb mcp register` if the tool environment moved (a
+new `--python`).
+
+**A committed `.mcp.json` with an absolute interpreter path breaks other
+machines.** On Windows the interpreter form names *this* machine's Python. If
+the repository is shared across machines (or with teammates), use
+`crumb mcp register --local` instead: it keeps the committed entry portable
+(`breadcrumbs-mcp`) and registers the interpreter form at Claude Code's
+**local** scope (per user, per project, never committed), which overrides the
+committed entry on this machine only. It runs `claude mcp add --scope local …`
+for you, or prints the command when the `claude` CLI is not on `PATH`.
+
 Note that an in-place upgrade does **not** restart running servers — they keep
 executing the old code until the editor is restarted, so restart it after
 upgrading.

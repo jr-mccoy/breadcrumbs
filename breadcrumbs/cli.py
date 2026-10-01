@@ -28,6 +28,7 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -109,6 +110,28 @@ _ASCII_MARK_PASS = "[ok]"
 _ASCII_MARK_FAIL = "[x]"
 
 
+def configure_stream_encoding(stream, *, windows: bool | None = None) -> None:
+    """Never raise on encoding; UTF-8 on a Windows stream that is not a console."""
+    windows = (os.name == "nt") if windows is None else windows
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        if windows and not _is_console(stream):
+            reconfigure(encoding="utf-8", errors="replace")
+        else:
+            reconfigure(errors="replace")
+    except (ValueError, OSError, TypeError):  # pragma: no cover - stream-dependent
+        pass
+
+
+def _is_console(stream) -> bool:
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
 def _stream_encodes(stream, text: str) -> bool:
     """Can `stream` encode `text` without loss? True for str-only sinks."""
     encoding = getattr(stream, "encoding", None)
@@ -125,21 +148,22 @@ def _stream_encodes(stream, text: str) -> bool:
     return True
 
 
-def configure_output(stream=None) -> None:
+def configure_output(stream=None, *, windows: bool | None = None) -> None:
     """Make stdout total: never raise on encoding, and pick markers it can print.
 
     Called once from `main()`. Idempotent, and safe on any stream shape — a
     stream with no `reconfigure` (a pipe wrapper, a test buffer) just keeps the
     marker probe.
+
+    On Windows, output that is not a real console (Git Bash/mintty, a pipe, a
+    file) is written as UTF-8. Python otherwise uses the ANSI code page there,
+    and `—` became byte 0x97, which a UTF-8 terminal shows as `�` (field report
+    2026-10-01, issue 13). A real console is left alone: it already receives
+    Unicode through the console API.
     """
     global MARK_PASS, MARK_FAIL
     stream = sys.stdout if stream is None else stream
-    reconfigure = getattr(stream, "reconfigure", None)
-    if reconfigure is not None:
-        try:
-            reconfigure(errors="replace")
-        except (ValueError, OSError, TypeError):  # pragma: no cover - stream-dependent
-            pass
+    configure_stream_encoding(stream, windows=windows)
     # Probe the glyphs, not the current markers: after an ASCII choice the
     # current ones always encode, so a second call switched back to glyphs the
     # stream cannot print (a cp1252 console after any earlier call; WP17).
@@ -11617,7 +11641,52 @@ def _splice_json_insert(text: str, parent_key: str, key: str, value: dict) -> st
     return text[: m.end()] + snippet + text[m.end() :]
 
 
-def register_mcp(root: Path) -> tuple[Path, bool]:
+def local_mcp_command(root: Path) -> list[str]:
+    """The `claude mcp add` that registers this interpreter at local scope.
+
+    Local scope is per user and per project, never committed, and overrides a
+    project-scope server of the same name — so the committed `.mcp.json` can
+    stay portable while this machine still launches through the interpreter
+    (no locked `breadcrumbs-mcp.exe` on upgrade). Field report 2026-10-01,
+    issue 13 / operator decision D4.
+    """
+    return [
+        "claude",
+        "mcp",
+        "add",
+        "--scope",
+        "local",
+        "-e",
+        f"BREADCRUMBS_PROJECT={Path(root)}",
+        MCP_SERVER_NAME,
+        "--",
+        sys.executable,
+        "-m",
+        "breadcrumbs",
+        "mcp",
+        "serve",
+    ]
+
+
+def register_mcp_local(root: Path) -> dict:
+    """Run `local_mcp_command`; `{ok, command, error}`. Never raises."""
+    cmd = local_mcp_command(root)
+    exe = shutil.which("claude")
+    if exe is None:
+        return {"ok": False, "command": cmd, "error": "the `claude` CLI is not on PATH"}
+    try:
+        r = subprocess.run(
+            [exe, *cmd[1:]], cwd=str(root), capture_output=True, text=True, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "command": cmd, "error": str(exc)}
+    if r.returncode != 0:
+        detail = " ".join((r.stderr or r.stdout or "").split())[:300]
+        return {"ok": False, "command": cmd, "error": detail or f"exit {r.returncode}"}
+    return {"ok": True, "command": cmd, "error": None}
+
+
+def register_mcp(root: Path, *, portable: bool = False) -> tuple[Path, bool]:
     """Add the breadcrumbs server to `.mcp.json`; other servers stay byte-identical.
 
     Returns (path, changed). Three tiers, safest-first: an already-current entry
@@ -11626,7 +11695,7 @@ def register_mcp(root: Path) -> tuple[Path, bool]:
     formatting; anything else falls back to the parse-validated full rewrite.
     """
     path = root / ".mcp.json"
-    entry = mcp_server_entry()
+    entry = mcp_server_entry(windows=False if portable else None)
     path_policy.check_project_target(path, root)
 
     if path.exists():
@@ -11654,7 +11723,7 @@ def register_mcp(root: Path) -> tuple[Path, bool]:
 
     def _mut(data: dict) -> None:
         servers = data.setdefault("mcpServers", {})
-        servers[MCP_SERVER_NAME] = mcp_server_entry()
+        servers[MCP_SERVER_NAME] = entry
 
     merge_json_file(path, _mut, root=root)
     return path, True
@@ -11705,7 +11774,8 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
     if what == "register":
         root = resolve_root(args.project)
-        path, changed = register_mcp(root)
+        local = bool(getattr(args, "local", False))
+        path, changed = register_mcp(root, portable=local)
         sdk = _mcp_sdk_available()
         summary = {
             "registered": str(path),
@@ -11713,8 +11783,22 @@ def cmd_mcp(args: argparse.Namespace) -> int:
             "changed": changed,
             "sdk_available": sdk,
         }
+        if local:
+            summary["local"] = register_mcp_local(root)
         if args.json:
             _print_json(args, summary)
+        elif local:
+            state = "" if changed else " (already current)"
+            print(f"Registered the portable MCP server '{MCP_SERVER_NAME}' in {path}{state}")
+            res = summary["local"]
+            if res["ok"]:
+                print(f"  and this interpreter at Claude Code's local scope ({sys.executable})")
+            else:
+                print(f"  could not register at local scope: {res['error']}")
+                print("  run this yourself in the project directory:")
+                print("    " + " ".join(shlex.quote(c) for c in res["command"]))
+            if not sdk:
+                print("  note: the MCP SDK isn't installed — run: pip install 'crumb-kit[mcp]'")
         else:
             state = "" if changed else " (already current)"
             print(f"Registered MCP server '{MCP_SERVER_NAME}' in {path}{state}")
@@ -14569,6 +14653,7 @@ def _unknown_hook_event(argv: list[str]) -> str | None:
 
 def main(argv: list[str] | None = None) -> int:
     configure_output()
+    configure_stream_encoding(sys.stderr)
     raw = sys.argv[1:] if argv is None else list(argv)
     if requested_command(raw) == "hook":
         unknown = _unknown_hook_event(raw)

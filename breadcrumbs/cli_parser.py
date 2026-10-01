@@ -863,6 +863,13 @@ def _add_mcp(sub, global_parser: argparse.ArgumentParser) -> None:
         parents=[global_parser],
         help="add the breadcrumbs server to .mcp.json (preserves other servers)",
     )
+    p_mcp_register.add_argument(
+        "--local",
+        action="store_true",
+        help="keep the committed .mcp.json portable (`breadcrumbs-mcp`) and register this "
+        "machine's interpreter (`<python> -m breadcrumbs mcp serve`) at Claude Code's local "
+        "scope, which overrides it here only — for a repo shared across machines",
+    )
     p_mcp_register.set_defaults(func=cli.cmd_mcp, mcp_what="register")
     p_mcp_doctor = mcp_sub.add_parser(
         "doctor",
