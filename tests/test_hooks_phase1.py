@@ -518,7 +518,8 @@ class ExtractionTurnTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             init_store(root)
-            run_hook("capture", {"cwd": str(root), "session_id": "s0"})  # silent baseline
+            # Silent baseline: the session's first firing records where it started.
+            run_hook("capture", {"cwd": str(root), "session_id": "s1"})
             (root / "g.txt").write_text("b\n")
             git(root, "add", "g.txt")
             git(root, "commit", "-qm", "add g")
@@ -528,7 +529,7 @@ class ExtractionTurnTests(unittest.TestCase):
                 {"cwd": str(root), "session_id": "s1", "transcript_path": str(path)},
             )
             reason = out["reason"]
-            self.assertLess(reason.index("new commit(s) landed"), reason.index("Candidates mined"))
+            self.assertLess(reason.index("new commit(s)"), reason.index("Candidates mined"))
 
     def test_the_same_jots_are_never_offered_twice(self):
         with tempfile.TemporaryDirectory() as tmp:

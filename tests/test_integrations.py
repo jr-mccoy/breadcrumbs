@@ -1247,3 +1247,39 @@ class WindowsMcpEntryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocalMcpRegistrationTests(unittest.TestCase):
+    """Field report 2026-10-01, issue 13 / decision D4: an absolute interpreter
+    path in a committed .mcp.json breaks every other machine."""
+
+    def test_local_keeps_the_committed_entry_portable(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with mock.patch("shutil.which", return_value=None):
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    code = crumb.main(["mcp", "register", "--local", "--project", tmp])
+            self.assertEqual(code, 0)
+            entry = json.loads((root / ".mcp.json").read_text())["mcpServers"]["breadcrumbs"]
+            self.assertEqual(entry["command"], "breadcrumbs-mcp")
+            out = buf.getvalue()
+            self.assertIn("claude mcp add --scope local", out)
+            self.assertIn("-m breadcrumbs mcp serve", out)
+
+    def test_local_runs_claude_mcp_add(self):
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as tmp:
+            done = mock.Mock(returncode=0, stdout="", stderr="")
+            with (
+                mock.patch("shutil.which", return_value="/usr/bin/claude"),
+                mock.patch("subprocess.run", return_value=done) as run_,
+            ):
+                res = crumb.register_mcp_local(Path(tmp))
+            self.assertTrue(res["ok"])
+            argv = run_.call_args[0][0]
+            self.assertEqual(argv[:5], ["/usr/bin/claude", "mcp", "add", "--scope", "local"])
+            self.assertIn(sys.executable, argv)

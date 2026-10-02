@@ -40,6 +40,17 @@ PROSE_NOT_PATHS = [
     "v0.1.5/v0.1.6",
     "--title/--set",
     "--area/--symptom/--why",
+    # Field report 2026-10-01, issue 10: system and prose slash-words.
+    "/dev/null",
+    "/dev/stderr",
+    "../dev/null",
+    "and/or",
+    "read/write",
+    "ci/cd",
+    # A script run from the current directory is a command, not a file the
+    # action is about (issue 8: `./gradlew` mentions opened the gate for every
+    # gradle record).
+    "./gradlew",
 ]
 
 REAL_PATHS = [
@@ -53,7 +64,8 @@ REAL_PATHS = [
     "package.json",
     "src/v2/api.ts",
     "app/2023/report.md",
-    "./gradlew",
+    "./scripts/build.sh",
+    "./run.sh",
 ]
 
 
@@ -74,6 +86,12 @@ class PathTokenTests(unittest.TestCase):
         self.assertEqual(
             _cli._paths_from_text(text), {"breadcrumbs/cli.py", "docs/architecture.md"}
         )
+
+    def test_a_url_is_never_a_path(self):
+        self.assertEqual(_cli._paths_from_text("see https://example.com/a/b for it"), set())
+
+    def test_dev_null_in_a_command_is_no_mention(self):
+        self.assertEqual(_cli._paths_from_text("grep -r x app/build 2>/dev/null"), {"app/build"})
 
     def test_a_flag_list_is_never_a_path(self):
         self.assertEqual(_cli._paths_from_text("pass --area/--symptom/--why"), set())

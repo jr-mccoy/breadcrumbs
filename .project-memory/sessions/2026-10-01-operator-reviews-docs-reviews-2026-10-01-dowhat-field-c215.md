@@ -1,11 +1,30 @@
-# Current State
+---
+id: ses_20261001_operator-reviews-docs-reviews-2026-10-01-dowhat-field-c215
+type: session
+slug: operator-reviews-docs-reviews-2026-10-01-dowhat-field-c215
+title: Operator reviews docs/reviews/2026-10-01-dowhat-field-report-plan.md
+status: active
+created_at: 2026-10-01T21:16:22+00:00
+updated_at: 2026-10-01T21:16:22+00:00
+created_by: unknown
+agent: claude-code
+project: breadcrumbs
+scope: project
+branch: claude/zealous-hamilton-ba7e5m
+commit: 2083046
+dirty_files: []
+confidence: medium
+privacy: repo-safe
+review_status: unreviewed
+reviewed_by: null
+supersedes: []
+superseded_by: null
+expires_at: null
+tags: []
+evidence: []
+---
 
-_What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
-
-## Current Focus
-crumb-kit 0.4.0 is on PyPI. 0.5.0 (the DoWhat field-report fixes: Next Action log, migration safety, Stop-hook session cursor, guard rework and speed, repair/rename/handoff trim) is version-bumped and merged to main, ready to publish. docs/reviews/2026-10-01-dowhat-field-report-plan.md is the record; do not redo it.
-
-## Recently Changed
+## Work Completed
 - 2083046 Plan fixes for the DoWhat field report on 0.4.0
 - 295c6db Merge pull request #55 from jr-mccoy/claude/new-session-9f1k6i
 - cb327eb Release checklist: reference hashes for the 0.4.0 artifacts
@@ -29,4 +48,11 @@ crumb-kit 0.4.0 is on PyPI. 0.5.0 (the DoWhat field-report fixes: Next Action lo
 
 _Prefill window: last 20 commits (`ecf0245`..HEAD). The last session record is at `22907a1`, 38 commits back — too far to attribute to one session, so the older commits are not counted here._
 
-## Watch Out For
+## Decisions Made
+Operator chose: Next Action = append unless --replace (D1); map legacy trap statuses to stale by default (D2); built-in ASK_HUMAN floor for high-impact actions with no memory (D3); Windows MCP: docs now, local scope later (D4).
+
+## Files Touched
+68 files changed, +8016/-184 (vs `ecf0245`)
+
+## Next Action
+Operator reviews docs/reviews/2026-10-01-dowhat-field-report-plan.md and answers D1b (should the first --next append set requires: next-action-log?). Then start Release 1 item 1 (capture --next appends; --replace saves what it replaced).

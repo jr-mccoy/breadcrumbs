@@ -8,6 +8,144 @@ prints both.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-01
+
+**The field-report release.** Fixes everything a real Android project's store
+(398 records, migrated from schema 1) turned up on 0.4.0:
+`docs/reviews/2026-10-01-dowhat-field-report-plan.md` has each issue, its root
+cause, the fix and its test.
+
+**Upgrading.** `schema_version` is unchanged (4); no `crumb migrate` is needed.
+This is a minor release because behaviour people rely on changed:
+- `capture session --next` now **adds** an entry to the handoff's Next Action
+  instead of replacing it (use `--replace` to overwrite). A 0.4.x crumb writing
+  the same store still replaces the whole section, so upgrade every machine
+  that shares a store.
+- guard gives different verdicts: far fewer warnings on routine and read-only
+  commands, and `ASK_HUMAN` on a short list of high-impact actions even with no
+  memory about them.
+- the guard pre-filter format is 4; it is rebuilt by the first write or session
+  start, with no action needed.
+
+### Changed
+
+- **Guard warns less, and on the right things** (field report issues 7, 8, 10,
+  11). Compound commands are read-only when every segment is
+  (`cd x && grep … 2>/dev/null | head`), and a pipe into `xargs rm -rf`, `sh`
+  or `tee` is no longer "read-only" (it used to cap a destructive command
+  down). Quoted text and here-documents no longer classify an action; guard's
+  keyword contribution is capped; crumb's own commands are classified by
+  effect, and a memory write matches records about the files it writes
+  (`writes-file`). An edit outside the project is not guarded. A force-push to
+  the default branch, `rm -rf` outside build directories and a real
+  `crumb migrate` always ask (`high_impact` in `--json`), citing no unrelated
+  records. A do-not-retry line needs topical evidence before it raises a
+  match; one shared tag no longer floors a verdict; template headings and
+  failure words (`why`, `fail`, `error`) are not shared words; `/dev/null`,
+  `and/or`, URLs and `./gradlew` are not files; an attempt titled with a
+  command gets the exact-command signal. The prompt hook drops a lone-tag
+  match beside a stronger one. The "written on another branch" label is only
+  for records whose file has not reached HEAD, so merged, squashed and
+  rebased cloud-branch records are history again, and branch-scoped ones are
+  live. The eval baseline was rewritten once for all of this, and an
+  `android` suite plus seven critical cases hold the field's own examples.
+- **`capture session --next` adds, it no longer replaces.** The handoff's Next
+  Action is a log, newest first: each `--next` adds a dated entry above the
+  earlier ones, which are kept byte-for-byte (a hand-kept log is kept as one
+  block under `### Earlier, as written`). `--replace` overwrites, and keeps
+  what it replaced in the session record. `resume` shows the newest entry and
+  a count of earlier ones. A 0.4.0 crumb writing the same store still replaces
+  the whole section, so upgrade every machine that shares a store.
+- **`current.md`'s Recently Changed is no longer overwritten** by capture or
+  by the Stop hook's snapshot (it used to receive the git log, which resume
+  already shows as *Landed Since*). `--recent "…"` adds a note above it.
+
+### Added
+
+- `crumb rename <id> --slug <short>` shortens a record's file name and id,
+  updates every reference to it in the store, and keeps the old id resolvable
+  (`formerly:`); `crumb doctor` reports store paths over 200 characters
+  (field report issue 5).
+- `crumb handoff trim --keep N` moves older Next Action entries to a committed
+  history file; `crumb doctor` reports a Next Action over 8,000 characters.
+- `crumb repair` (field report issue 12): previews, then with `--apply`
+  writes, what can be derived honestly for records that fail validation —
+  frontmatter for a hand-written file, a legacy status mapped and kept in
+  `repaired_from`, a free scope read as `project`, `confidence: low` with no
+  evidence — and lists what needs a person (a verification's outcome, given
+  with `--set <id>.outcome=…`; evidence paths it found in the body).
+- `inbox/drafts/` and `crumb inbox import`: the sanctioned way for an agent
+  without the CLI to leave a note; each draft becomes a jot. The bundled
+  store README no longer suggests writing a record by hand.
+- `crumb mcp register --local`: a portable `.mcp.json` entry plus this
+  machine's interpreter registered at Claude Code's local scope, so a
+  committed config no longer carries one machine's Python path (field report
+  issue 13). The README's Windows upgrade section covers `uv tool` installs.
+
+### Fixed
+
+- **Windows terminals that are not consoles get UTF-8.** Under Git Bash/mintty,
+  in a pipe or redirected to a file, `—` printed as `�` because Python wrote the
+  ANSI code page; stdout and stderr are now UTF-8 there (a real console is
+  unchanged).
+- **The guard hook is fast enough to run on every tool call** (field report
+  issue 6: p50 5.3 s on Windows). Record commits not on HEAD's history (records
+  from squash-merged cloud branches) no longer cost two or three `git`
+  processes each — 127 for one edit in a test store, now a constant 6 —
+  branch and default-branch lookups are asked once per firing, the guard path
+  no longer re-reads every decision for a staleness view that does not use
+  them, and the hook trusts the search index on an unchanged path/size/mtime
+  signature. A read-only command is guarded only when a record names that
+  exact command or a path it touches. The pre-filter tests two shared words per
+  record, not against the union of every record's words (format 4), and
+  `SessionStart` republishes it when a `git pull` left it unverified. On Linux
+  an edit in a 400-record store went from 481 ms to about 200 ms end to end;
+  `doctor --hook-log` notes a guard p50 over 300 ms.
+- **`resume` names the records readers drop or misread.** A record with a
+  status outside the vocabulary (a decision marked `fixed`) was silently left
+  out of Active Decisions and guard while the packet's contract warning said
+  "they are still read"; it is now named (`status-invalid`) and the warning
+  says it is left out. A verification with no frontmatter is named
+  (`no-frontmatter`, `outcome-missing`) and its outcome shows as `unknown`, not
+  `open`.
+- **The Stop hook asks only about this session's commits, and only once.** It
+  counted from the newest session record in the store, so on install, after a
+  `git pull`, a long gap or another machine's capture it asked about commits
+  other sessions made; and when its fallback snapshot failed it asked again
+  every turn. It now counts from the HEAD this session started on (recorded by
+  `SessionStart`, keyed by session id), skips commits that touch only
+  `.project-memory/` or were authored before the session began, re-baselines
+  silently after a checkout or reset, and moves the starting point to HEAD each
+  time it asks. Snapshot failures are logged (`snapshot: failed` plus
+  `snapshot_error`) instead of reported as taken; an incompatible store is
+  logged as `incompatible`, not `locked`; and a session with more than 25
+  dirty files no longer re-snapshots on every turn.
+- **`migrate --dry-run` runs the real steps on a scratch copy**, so it says
+  "would apply" only when applying would succeed, and names the blocking
+  record and its line (`known-traps.md:41`) when it would not. It also lists
+  each record behind "Left as they are for you to fix", not just counts.
+- **Hand-written trap and question values no longer stop a migration.**
+  Statuses a file may not hold (`fixed`, `resolved 2026-09-18 — …`, `done`)
+  become `stale` for a trap and `answered`/`closed` for a question; a
+  `superseded` with no successor becomes `stale`; a dangling `Superseded by`
+  or an undated `Last confirmed` is dropped. Every original value is kept,
+  verbatim, in the file's Notes (`- Original status: …`). Readers already
+  treated these as settled, so nothing changes what they show.
+- **A duplicate trap or question id is never dropped** by the migration (the
+  second block used to vanish silently); it is kept below the index for a
+  person to merge, and the migration says so. A step's validation failure now
+  lists every file, not the first five, and a hand-added block that cannot be
+  adopted at reindex prints a `CRUMB-WARN` instead of failing silently.
+- **Migration backups work past Windows' 260-character path limit**: the
+  backup, its verification, the preview copy and `--restore` use extended-length
+  (`\\?\`) paths on Windows. A copy that still fails says which files and why
+  (never the raw `[('C:\\…', …)]` list), says nothing was migrated, and
+  leaves no partial backup behind. `--restore` copies the backup in beside the
+  store before replacing anything, so a failed restore changes nothing.
+- **Traps and questions keep their tags.** `note trap|question` and
+  `inbox promote … trap|question` wrote `tags: []`, dropping the jot's tags
+  and any `--tags` given. `note trap` and `note question` now take `--tags`.
+
 ## [0.4.0] — 2026-09-28
 
 **The reliability release.** It implements the remediation of an external audit

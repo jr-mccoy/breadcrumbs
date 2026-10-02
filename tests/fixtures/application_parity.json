@@ -9,6 +9,7 @@
    ],
    "command": "crumb guard",
    "destructive": false,
+   "high_impact": null,
    "history": [],
    "items": [
     {
@@ -29,6 +30,7 @@
       "cache",
       "pricing"
      ],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 23.0,
      "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
@@ -44,7 +46,8 @@
      "stance": "blocking",
      "status": "active",
      "suppressed": false,
-     "title": "Tried an in-memory cache for pricing"
+     "title": "Tried an in-memory cache for pricing",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -65,6 +68,7 @@
       "cache",
       "pricing"
      ],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 21.0,
      "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +3 shared keyword(s); named in the record's title",
@@ -79,7 +83,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "Cache TTL is five minutes for the pricing API"
+     "title": "Cache TTL is five minutes for the pricing API",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -94,6 +99,7 @@
      "matched_files": [],
      "matched_mentions": [],
      "matched_tags": [],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 5.0,
      "reason": "2 shared keyword(s); named in the record's title",
@@ -106,7 +112,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency",
+     "topical": true
     }
    ],
    "matches": [
@@ -128,6 +135,7 @@
       "cache",
       "pricing"
      ],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 23.0,
      "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
@@ -143,7 +151,8 @@
      "stance": "blocking",
      "status": "active",
      "suppressed": false,
-     "title": "Tried an in-memory cache for pricing"
+     "title": "Tried an in-memory cache for pricing",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -164,6 +173,7 @@
       "cache",
       "pricing"
      ],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 21.0,
      "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +3 shared keyword(s); named in the record's title",
@@ -178,7 +188,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "Cache TTL is five minutes for the pricing API"
+     "title": "Cache TTL is five minutes for the pricing API",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -193,6 +204,7 @@
      "matched_files": [],
      "matched_mentions": [],
      "matched_tags": [],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 5.0,
      "reason": "2 shared keyword(s); named in the record's title",
@@ -205,7 +217,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency",
+     "topical": true
     }
    ],
    "ok": true,
@@ -345,13 +358,13 @@
      "title": "Cache TTL is five minutes for the pricing API"
     }
    ],
-   "approx_tokens": 851,
+   "approx_tokens": 858,
    "budget": {
     "estimator": "approx-tokens/2",
     "estimator_rule": "ceil(ASCII chars / 4) + 1 per non-ASCII char \u2014 a heuristic, not a model tokenizer",
     "limit": 5000,
     "unit": "approx_tokens",
-    "used": 851,
+    "used": 858,
     "view": "json",
     "within": true
    },
@@ -390,6 +403,7 @@
     "src/pricing/cache.py"
    ],
    "next_action": "",
+   "next_action_earlier": 0,
    "ok": true,
    "omitted": {},
    "omitted_reason": {},
@@ -452,6 +466,7 @@
       "cache",
       "pricing"
      ],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 17.0,
      "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
@@ -466,7 +481,8 @@
      "stance": "blocking",
      "status": "active",
      "suppressed": false,
-     "title": "Tried an in-memory cache for pricing"
+     "title": "Tried an in-memory cache for pricing",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -484,6 +500,7 @@
       "cache",
       "pricing"
      ],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 13.0,
      "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title",
@@ -497,7 +514,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "Cache TTL is five minutes for the pricing API"
+     "title": "Cache TTL is five minutes for the pricing API",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -512,6 +530,7 @@
      "matched_files": [],
      "matched_mentions": [],
      "matched_tags": [],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 5.0,
      "reason": "2 shared keyword(s); named in the record's title",
@@ -524,7 +543,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "pricing cache warmed at deploy"
+     "title": "pricing cache warmed at deploy",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -539,6 +559,7 @@
      "matched_files": [],
      "matched_mentions": [],
      "matched_tags": [],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 5.0,
      "reason": "2 shared keyword(s); named in the record's title; names this exact command",
@@ -552,7 +573,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency",
+     "topical": true
     }
    ],
    "lookup": {
@@ -577,6 +599,7 @@
       "cache",
       "pricing"
      ],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 17.0,
      "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
@@ -591,7 +614,8 @@
      "stance": "blocking",
      "status": "active",
      "suppressed": false,
-     "title": "Tried an in-memory cache for pricing"
+     "title": "Tried an in-memory cache for pricing",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -609,6 +633,7 @@
       "cache",
       "pricing"
      ],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 13.0,
      "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title",
@@ -622,7 +647,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "Cache TTL is five minutes for the pricing API"
+     "title": "Cache TTL is five minutes for the pricing API",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -637,6 +663,7 @@
      "matched_files": [],
      "matched_mentions": [],
      "matched_tags": [],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 5.0,
      "reason": "2 shared keyword(s); named in the record's title",
@@ -649,7 +676,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "pricing cache warmed at deploy"
+     "title": "pricing cache warmed at deploy",
+     "topical": true
     },
     {
      "branch_mismatch": false,
@@ -664,6 +692,7 @@
      "matched_files": [],
      "matched_mentions": [],
      "matched_tags": [],
+     "matched_writes": [],
      "promoted": false,
      "raw_score": 5.0,
      "reason": "2 shared keyword(s); named in the record's title; names this exact command",
@@ -677,7 +706,8 @@
      "stance": "advisory",
      "status": "active",
      "suppressed": false,
-     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+     "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency",
+     "topical": true
     }
    ],
    "ok": true,
@@ -729,6 +759,7 @@
    "routine_edit"
   ],
   "destructive": false,
+  "high_impact": null,
   "history": [],
   "matches": [
    {
@@ -749,6 +780,7 @@
      "cache",
      "pricing"
     ],
+    "matched_writes": [],
     "promoted": false,
     "raw_score": 23.0,
     "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
@@ -764,7 +796,8 @@
     "stance": "blocking",
     "status": "active",
     "suppressed": false,
-    "title": "Tried an in-memory cache for pricing"
+    "title": "Tried an in-memory cache for pricing",
+    "topical": true
    },
    {
     "branch_mismatch": false,
@@ -785,6 +818,7 @@
      "cache",
      "pricing"
     ],
+    "matched_writes": [],
     "promoted": false,
     "raw_score": 21.0,
     "reason": "same file(s): src/pricing/cache.py; same component/tag: cache, pricing; +3 shared keyword(s); named in the record's title",
@@ -799,7 +833,8 @@
     "stance": "advisory",
     "status": "active",
     "suppressed": false,
-    "title": "Cache TTL is five minutes for the pricing API"
+    "title": "Cache TTL is five minutes for the pricing API",
+    "topical": true
    },
    {
     "branch_mismatch": false,
@@ -814,6 +849,7 @@
     "matched_files": [],
     "matched_mentions": [],
     "matched_tags": [],
+    "matched_writes": [],
     "promoted": false,
     "raw_score": 5.0,
     "reason": "2 shared keyword(s); named in the record's title",
@@ -826,7 +862,8 @@
     "stance": "advisory",
     "status": "active",
     "suppressed": false,
-    "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+    "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency",
+    "topical": true
    }
   ],
   "ok": true,
@@ -903,7 +940,7 @@
    "estimator_rule": "ceil(ASCII chars / 4) + 1 per non-ASCII char \u2014 a heuristic, not a model tokenizer",
    "limit": 5000,
    "unit": "approx_tokens",
-   "used": 758,
+   "used": 765,
    "view": "json",
    "within": true
   },
@@ -940,6 +977,7 @@
    "src/pricing/cache.py"
   ],
   "next_action": "",
+  "next_action_earlier": 0,
   "ok": true,
   "omitted": {},
   "omitted_reason": {},
@@ -994,6 +1032,7 @@
      "cache",
      "pricing"
     ],
+    "matched_writes": [],
     "promoted": false,
     "raw_score": 17.0,
     "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition",
@@ -1008,7 +1047,8 @@
     "stance": "blocking",
     "status": "active",
     "suppressed": false,
-    "title": "Tried an in-memory cache for pricing"
+    "title": "Tried an in-memory cache for pricing",
+    "topical": true
    },
    {
     "branch_mismatch": false,
@@ -1026,6 +1066,7 @@
      "cache",
      "pricing"
     ],
+    "matched_writes": [],
     "promoted": false,
     "raw_score": 13.0,
     "reason": "same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title",
@@ -1039,7 +1080,8 @@
     "stance": "advisory",
     "status": "active",
     "suppressed": false,
-    "title": "Cache TTL is five minutes for the pricing API"
+    "title": "Cache TTL is five minutes for the pricing API",
+    "topical": true
    },
    {
     "branch_mismatch": false,
@@ -1054,6 +1096,7 @@
     "matched_files": [],
     "matched_mentions": [],
     "matched_tags": [],
+    "matched_writes": [],
     "promoted": false,
     "raw_score": 5.0,
     "reason": "2 shared keyword(s); named in the record's title",
@@ -1066,7 +1109,8 @@
     "stance": "advisory",
     "status": "active",
     "suppressed": false,
-    "title": "pricing cache warmed at deploy"
+    "title": "pricing cache warmed at deploy",
+    "topical": true
    },
    {
     "branch_mismatch": false,
@@ -1081,6 +1125,7 @@
     "matched_files": [],
     "matched_mentions": [],
     "matched_tags": [],
+    "matched_writes": [],
     "promoted": false,
     "raw_score": 5.0,
     "reason": "2 shared keyword(s); named in the record's title; names this exact command",
@@ -1094,7 +1139,8 @@
     "stance": "advisory",
     "status": "active",
     "suppressed": false,
-    "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency"
+    "title": "trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency",
+    "topical": true
    }
   ],
   "ok": true,

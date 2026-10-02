@@ -138,3 +138,52 @@ cases:
   - id: holdout-delivery-is-bounded
     suite: holdout-ops
     check: delivery_bounded
+
+  # ---- the DoWhat field report (2026-10-01; docs/reviews/2026-10-01-dowhat-field-report-plan.md)
+  - id: android-robolectric-trap-delivered
+    suite: android
+    check: delivered
+    task: "why is my robolectric test failing with a KeyStore error"
+    require: [trap_robolectric-keystore-application]
+    note: "issue 8: unrelated do-not-retry attempts sharing one tag pushed this trap out"
+
+  - id: android-git-status-is-not-a-stop
+    suite: android
+    check: guard_not
+    task: "git status"
+    verdict_not: [PAUSE, ASK_HUMAN]
+    note: "issue 8: unrelated git attempts were labelled [objects]/blocking"
+
+  - id: android-force-push-to-main-asks
+    suite: android
+    check: guard_not
+    task: "git push --force origin main"
+    verdict_not: [PROCEED, READ_FIRST, PAUSE]
+    note: "decision D3: high-impact with no memory about it still asks a human"
+
+  - id: android-gradlew-stop-asks
+    suite: android
+    check: guard_not
+    task: "./gradlew --stop"
+    verdict_not: [PROCEED, READ_FIRST]
+
+  - id: android-read-only-compound-command-is-not-a-stop
+    suite: android
+    check: guard_not
+    task: "cd app/build; grep -r 'CREATE TABLE' . 2>/dev/null"
+    verdict_not: [PAUSE, ASK_HUMAN]
+    note: "issue 7a: `cd X;` and `2>/dev/null` used to forfeit the read-only cap"
+
+  - id: android-xargs-rm-is-not-capped
+    suite: android
+    check: guard_not
+    task: "find app/src -name '*.orig' | xargs rm -rf"
+    verdict_not: [PROCEED, READ_FIRST]
+    note: "N4: only the first word was checked, so this was 'read-only'"
+
+  - id: android-migrate-preview-is-not-a-migration
+    suite: android
+    check: guard_not
+    task: "crumb migrate --dry-run"
+    verdict_not: [PAUSE, ASK_HUMAN]
+    note: "issue 7d"

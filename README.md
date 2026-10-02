@@ -374,6 +374,22 @@ for narrative confirmation + a required **Next Action**. It writes the session r
 and refreshes the handoff and `current.md`. `--fast` skips all prompts and any
 LLM, writing a git snapshot + the one-line `--next`. No path requires an LLM.
 
+**The Next Action is a log, newest first.** `--next` adds a dated entry
+(`### 2026-10-01 · \`abc1234\``) *above* what the handoff already holds; nothing
+already there is removed or rewritten. Text that had no entry header (a log you
+kept by hand) is kept as one block under `### Earlier, as written`. Repeating
+the newest entry's text adds nothing. `crumb resume` shows the newest entry and
+says how many earlier ones the handoff holds. Only `--replace` overwrites the
+section, and the text it replaced is kept in the new session record under
+`### Replaced Next Action (…)`, with a `CRUMB-WARN:` naming it. The log only
+grows; when it gets long (`crumb doctor` says so past 8,000 characters),
+`crumb handoff trim --keep 10` moves all but the newest ten entries, unchanged,
+to `handoff-history.md` (or `handoffs/<slug>.history.md`). Nothing is deleted.
+
+`current.md`'s **Recently Changed** is yours: capture no longer writes the git
+log there (resume shows *Landed Since The Handoff Was Written* from git
+instead). `--recent "…"` adds a dated note above what is there.
+
 The handoff is per branch (schema 4): on the default branch (`origin/HEAD`, else
 `main`, else `master`) it is `handoff.md`; on any other branch it is
 `handoffs/<branch-slug>.md` — `feature-x` writes `handoffs/feature-x.md`, and a
@@ -408,7 +424,11 @@ A session with no `--title` is named from what you already said about it — the
 carries four hex characters of entropy, so two agents capturing on the same day
 in two checkouts cannot write the same file. `crumb retitle <id> "…"` fixes a
 title written before that; it rewrites the searchable title only, since the id,
-slug and filename are what other records reference. `dirty_files` excludes
+slug and filename are what other records reference. To shorten a *file name*
+(records from before the 60-character cap can pass Windows' 260-character path
+limit, which `crumb doctor` reports), `crumb rename <id> --slug <short>` renames
+the file and its id, rewrites every reference to the old id in the store, and
+keeps the old id in `formerly:` so it still resolves. `dirty_files` excludes
 `.project-memory/` by default (`--include-memory` puts it back) and is capped —
 a capture rewrites the store on every firing, and in a shared tree it also sees
 every other session's uncommitted records.
@@ -590,10 +610,35 @@ a record that forbids the action from one that merely names the same file.
 `guard --json` reports it as `read_only`. Without that, verdict severity
 inverts: overlap is symmetric, so `git status` (which shares vocabulary with
 every record that discusses git) outranked `npm test` (which executes arbitrary
-code and matched nothing). Anything the classifier does not recognize — shell
-plumbing, an acting flag like `find -delete` — is treated as capable of side
+code and matched nothing). A compound command is read-only when **every**
+segment is: `cd app && grep -r x . 2>/dev/null | head` is, while
+`find . | xargs rm -rf`, `cat x | sh` and `ls | tee out` are not. Anything the
+classifier cannot read — command substitution, an acting flag like
+`find -delete`, output redirected to a file — is treated as capable of side
 effects, so a missed classification costs an unnecessary `PAUSE`, never a
 swallowed one.
+
+**Guard reads what a command does, not what it says.** Quoted text and
+here-document bodies (a commit message, a `--next "cut the release"` note) do
+not classify the action, and a long command scores no higher for being long
+(guard's keyword contribution is capped). crumb's own commands are classified
+by effect: reads (`resume`, `search`, `migrate --dry-run`, …) are read-only,
+memory writes (`remember`, `capture`, `reindex`, …) are routine, and only a
+real `crumb migrate` is a migration. A memory-writing command still matches
+the records about the files it writes (`this command writes:
+.project-memory/handoff.md`). An edit to a file outside the project (an
+agent's own memory folder) is not guarded at all.
+
+**A few actions always ask.** A force-push to `main`/`master`, `rm -rf`
+outside build and cache directories (or on piped input), and a real
+`crumb migrate` get `ASK_HUMAN` even when no record is about them, and say so
+("no project memory about it") instead of citing unrelated records.
+
+**A do-not-retry line has to be about this action.** It raises a match (and
+makes it `[objects]`) only when the record is topical: it names the file, the
+command, a title word, a tag *plus* another shared word, or three shared words.
+One shared tag is a topic, not an objection, and on its own no longer floors a
+verdict either.
 
 **A file signal says who claimed it.** `--evidence file …`, and a trap's
 `Area / files:` bullet, are the author declaring what a record is about: those
@@ -981,7 +1026,8 @@ piece is independent:
   - `Stop → crumb hook capture` snapshots a session record when the turn ends —
     once per unit of work, not once per turn: a firing is skipped when the HEAD
     commit and dirty-file set are unchanged since the newest session record, and
-    its stand-in Next Action never overwrites one you set.
+    its stand-in Next Action never touches the handoff, and it never writes
+    `current.md`.
 
     It also **mines the transcript** on every firing, which is a side effect
     and not a decision: even a firing that stays silent should salvage what the
@@ -993,7 +1039,7 @@ piece is independent:
     long session stays mineable, and nothing is written twice. `crumb doctor`
     shows the backlog.
 
-    When the ending turn produced **new commits** — or the miner found a
+    When **this session** produced new commits — or the miner found a
     failed-then-fixed command, or three candidates of any kind — the hook does
     more than snapshot: it holds the stop once (**the extraction turn**) and
     hands the agent a concrete instruction, with the mined candidates listed by
@@ -1001,17 +1047,22 @@ piece is independent:
     at the moment the model has least context left, into "promote this one, drop
     that one". Record any durable decision, failed attempt, or verification
     (`crumb remember` / `verify` / `mark-status` / `crumb inbox promote`), then
-    `crumb capture session --next "…"`. That last command
-    is also what clears the prompt, so completing the instruction and moving on
-    are the same act. This is what makes the agent the memory *author* with no
+    `crumb capture session --next "…"` (which adds an entry to the handoff
+    and replaces nothing). This is what makes the agent the memory *author* with no
     human in the loop: the request lands while the model still holds the
     session's "why", instead of relying on a signpost it read hundreds of turns
     ago. Proportionality rules keep it quiet: edit-only turns and no-change
-    turns never prompt, a continuation of a held stop is never held again (the
-    machine snapshot is the floor if the agent ignores the instruction), and
-    the very first firing in a store takes a silent baseline instead of
-    interrogating the agent about pre-existing history. A candidate the agent
-    declined is never offered again in the same session. Opt out per project
+    turns never prompt, and a continuation of a held stop is never held again
+    (the machine snapshot is the floor if the agent ignores the instruction).
+    Commits are counted from **where this session started**: `SessionStart`
+    records HEAD per session (a session with no record takes one silently at
+    its first `Stop`), so commits other sessions made, a `git pull` of older
+    history, a checkout, and commits that touch only `.project-memory/` are
+    never asked about. Each batch of commits is asked about **once** — the
+    starting point moves to HEAD when the hook asks, whether or not a capture
+    follows — and a candidate the agent declined is never offered again in the
+    same session. A snapshot that fails is logged as `snapshot: failed` with
+    the reason (`crumb doctor --hook-log`). Opt out per project
     with `extraction_prompt: false` in `manifest.yml` — which stops the prompt,
     not the mining.
 
@@ -1073,6 +1124,23 @@ sessions running an MCP server (or stop the `breadcrumbs-mcp` processes) and run
 the upgrade again. Re-run `crumb mcp register` afterwards to move an existing
 `.mcp.json` onto the interpreter form.
 
+**`uv tool` installs work the same way.** `uv tool install "crumb-kit[mcp]"`
+puts the shims in `~/.local/bin` and the package in uv's own tool environment;
+`crumb mcp register` then names that environment's Python. `uv tool upgrade
+crumb-kit` replaces files in the same environment, so the same rule applies:
+close the editor sessions running the server first if the upgrade reports a
+file in use, and re-run `crumb mcp register` if the tool environment moved (a
+new `--python`).
+
+**A committed `.mcp.json` with an absolute interpreter path breaks other
+machines.** On Windows the interpreter form names *this* machine's Python. If
+the repository is shared across machines (or with teammates), use
+`crumb mcp register --local` instead: it keeps the committed entry portable
+(`breadcrumbs-mcp`) and registers the interpreter form at Claude Code's
+**local** scope (per user, per project, never committed), which overrides the
+committed entry on this machine only. It runs `claude mcp add --scope local …`
+for you, or prints the command when the `claude` CLI is not on `PATH`.
+
 Note that an in-place upgrade does **not** restart running servers — they keep
 executing the old code until the editor is restarted, so restart it after
 upgrading.
@@ -1093,6 +1161,18 @@ cannot execute the CLI can still reorient by reading:
    `open-questions.md` are one-line-per-record indexes of the last two, each line
    naming the file to open (on a store still at `schema_version` 2 they hold the
    traps and questions themselves).
+
+**Writing without the CLI: leave a draft, not a record.** An agent that cannot
+run `crumb` should put a free-form note in `.project-memory/inbox/drafts/`
+(a `# Title` line, then plain text). Nothing validates a draft, and
+`crumb inbox import` later turns each one into a jot (a draft longer than a
+jot holds is kept and cited). Records written by hand in the wrong shape fail
+validation, and readers then skip them or misread them. `crumb repair`
+previews, then (`--apply`) writes, what can be derived honestly for such a
+record: id, title and dates from the file and git, `status`/`privacy`/`scope`,
+a mapped legacy status kept in `repaired_from`, and `confidence: low` when
+there is no evidence. It never sets a verification's outcome or invents
+evidence; it lists those with the exact `--set <id>.outcome=…` to run.
 
 Everything is human-readable Markdown, so no binary store or vendor runtime is
 required to resume. (`generated/resume-packet.md` is a rebuildable projection — if

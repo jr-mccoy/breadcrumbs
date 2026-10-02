@@ -18,6 +18,7 @@ limit:
 | `session-state.json` | `UserPromptSubmit` | `SessionStart` after a compaction | the latest substantive task, and apart from it the latest lookup: what it selected and emitted, and for which prompt (audit WP12) |
 | `compaction-marker.json` | `PreCompact` | `SessionStart` after a compaction | when the context was destroyed and what was salvaged |
 | `extraction-asked.json` | `Stop` | itself | jot ids already offered for promotion |
+| `session-baseline.json` | `SessionStart`, `Stop` | `Stop` | the HEAD this session started from, advanced each time `Stop` asks about commits (field report 2026-10-01, issues 2-3) |
 
 **Every function here is best-effort.** A hook that cannot read its own state
 must behave as though the state were empty; a hook that cannot write it loses at
@@ -47,6 +48,7 @@ MINER_CURSOR_FILENAME = "miner-cursor.json"
 SESSION_STATE_FILENAME = "session-state.json"
 COMPACTION_MARKER_FILENAME = "compaction-marker.json"
 EXTRACTION_ASKED_FILENAME = "extraction-asked.json"
+SESSION_BASELINE_FILENAME = "session-baseline.json"
 
 # How many sessions of history each file keeps. Eight is well past the number a
 # person has open at once and small enough that the files stay a single read.
@@ -449,3 +451,32 @@ def record_extraction_asked(memory_dir: Path, session_id: str, jot_ids: list[str
         return {"jots": sorted(known)[-MAX_KEYS_PER_SESSION:]}
 
     update_state(memory_dir, EXTRACTION_ASKED_FILENAME, session_id, mutate)
+
+
+# --------------------------------------------------------------------------- #
+# Where this session started (the Stop hook's "new commits" cursor)
+# --------------------------------------------------------------------------- #
+
+
+def session_baseline(memory_dir: Path, session_id: str) -> dict:
+    """`{head, started_at}` for this session, or `{}` when none is recorded."""
+    entry = read_state(memory_dir, SESSION_BASELINE_FILENAME).get(session_id)
+    return entry if isinstance(entry, dict) and entry.get("head") else {}
+
+
+def set_session_baseline(
+    memory_dir: Path, session_id: str, head: str, *, keep_existing: bool = False
+) -> None:
+    """Record `head` as where this session's new commits are counted from.
+
+    `keep_existing=True` (SessionStart) leaves a session that already has one
+    alone — a resumed or compacted session keeps its start. `started_at` is
+    set once, by whichever writes first.
+    """
+
+    def mutate(entry: dict) -> dict | None:
+        if keep_existing and entry.get("head"):
+            return None
+        return {"head": head, "started_at": entry.get("started_at") or cli.now_iso()}
+
+    update_state(memory_dir, SESSION_BASELINE_FILENAME, session_id, mutate)

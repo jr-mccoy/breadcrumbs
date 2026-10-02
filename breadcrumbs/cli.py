@@ -28,12 +28,13 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import threading
 from datetime import date, datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # annotations only; the parser lives in `cli_parser`
@@ -45,6 +46,7 @@ from breadcrumbs import validation as _validation
 
 # What the store may read and write on disk (audit F17). Stdlib-only too.
 from breadcrumbs import path_policy
+from breadcrumbs import shellcmd as _shellcmd
 from breadcrumbs.adapters import claude as _claude
 
 # --------------------------------------------------------------------------- #
@@ -108,6 +110,28 @@ _ASCII_MARK_PASS = "[ok]"
 _ASCII_MARK_FAIL = "[x]"
 
 
+def configure_stream_encoding(stream, *, windows: bool | None = None) -> None:
+    """Never raise on encoding; UTF-8 on a Windows stream that is not a console."""
+    windows = (os.name == "nt") if windows is None else windows
+    reconfigure = getattr(stream, "reconfigure", None)
+    if reconfigure is None:
+        return
+    try:
+        if windows and not _is_console(stream):
+            reconfigure(encoding="utf-8", errors="replace")
+        else:
+            reconfigure(errors="replace")
+    except (ValueError, OSError, TypeError):  # pragma: no cover - stream-dependent
+        pass
+
+
+def _is_console(stream) -> bool:
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
 def _stream_encodes(stream, text: str) -> bool:
     """Can `stream` encode `text` without loss? True for str-only sinks."""
     encoding = getattr(stream, "encoding", None)
@@ -124,21 +148,22 @@ def _stream_encodes(stream, text: str) -> bool:
     return True
 
 
-def configure_output(stream=None) -> None:
+def configure_output(stream=None, *, windows: bool | None = None) -> None:
     """Make stdout total: never raise on encoding, and pick markers it can print.
 
     Called once from `main()`. Idempotent, and safe on any stream shape — a
     stream with no `reconfigure` (a pipe wrapper, a test buffer) just keeps the
     marker probe.
+
+    On Windows, output that is not a real console (Git Bash/mintty, a pipe, a
+    file) is written as UTF-8. Python otherwise uses the ANSI code page there,
+    and `—` became byte 0x97, which a UTF-8 terminal shows as `�` (field report
+    2026-10-01, issue 13). A real console is left alone: it already receives
+    Unicode through the console API.
     """
     global MARK_PASS, MARK_FAIL
     stream = sys.stdout if stream is None else stream
-    reconfigure = getattr(stream, "reconfigure", None)
-    if reconfigure is not None:
-        try:
-            reconfigure(errors="replace")
-        except (ValueError, OSError, TypeError):  # pragma: no cover - stream-dependent
-            pass
+    configure_stream_encoding(stream, windows=windows)
     # Probe the glyphs, not the current markers: after an ASCII choice the
     # current ones always encode, so a second call switched back to glyphs the
     # stream cannot print (a cp1252 console after any earlier call; WP17).
@@ -439,6 +464,7 @@ def is_git_repo(root: Path) -> bool:
     cached = _IS_GIT_REPO_CACHE.get(key)
     if cached is not None:
         return cached
+    GIT_CALLS[0] += 1
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
@@ -1499,7 +1525,14 @@ def records_in(directory: Path, rtype: str) -> list[Record]:
 # separately.
 
 
+# git processes started by this process, for the hook log's `git` count: on
+# Windows each costs tens of milliseconds, and a count says at once whether a
+# slow firing was git or Python (field report 2026-10-01, issue 6).
+GIT_CALLS = [0]
+
+
 def _git_out(root: Path, *args: str) -> str | None:
+    GIT_CALLS[0] += 1
     try:
         r = subprocess.run(
             ["git", *args],
@@ -1521,6 +1554,12 @@ def _git_out(root: Path, *args: str) -> str | None:
 
 
 def git_branch(root: Path) -> str:
+    # The guard path asked this three times per firing; within one operation
+    # the branch cannot change (field report 2026-10-01, issue 6).
+    return op_memo(("git_branch", str(root)), lambda: _git_branch(root))
+
+
+def _git_branch(root: Path) -> str:
     if not is_git_repo(root):
         return NO_GIT_BRANCH
     out = _git_out(root, "rev-parse", "--abbrev-ref", "HEAD")
@@ -1813,10 +1852,14 @@ def record_contract_warnings(memory_dir: Path) -> list[str]:
     entries = record_contract_entries(records, memory_dir)
     linked = _validation.store_issues(entries)
     problems: dict[str, list[str]] = {}
+    hidden = 0
     for rec, (rel, rid, meta) in zip(records, entries):
         codes = ["frontmatter-malformed"] if rec.error else []
         codes += [i["code"] for i in _validation.record_issues(meta, rec.rtype, rid)]
         codes += [i["code"] for i in linked.get(rel, [])]
+        codes += _reader_visible_problems(rec)
+        if "status-invalid" in codes:
+            hidden += 1
         if codes:
             problems[rid or rel] = codes
     if not problems:
@@ -1826,11 +1869,43 @@ def record_contract_warnings(memory_dir: Path) -> list[str]:
         for rid, codes in sorted(problems.items())[:CONTRACT_WARNING_EXAMPLES]
     ]
     more = len(problems) - len(shown)
+    # Say what the readers actually do with them. "They are still read" was
+    # untrue for an invalid status: such a decision is dropped from every
+    # active list, and guard then PROCEEDs past it (field report 2026-10-01, N3).
+    effect = (
+        f" — {hidden} with an invalid status are left out of resume and guard; "
+        if hidden
+        else " — they are still read; "
+    )
     return [
         f"⚠ {len(problems)} record(s) break the record contract: {'; '.join(shown)}"
         + (f"; +{more} more" if more > 0 else "")
-        + " — they are still read; run `crumb validate`."
+        + effect
+        + "run `crumb validate`."
     ]
+
+
+def _reader_visible_problems(rec: "Record") -> list[str]:
+    """Contract breaks that change what readers show, which `record_issues` does
+    not cover: a status outside the vocabulary (readers drop the record), no
+    frontmatter at all (hand-written), a verification with no subject or no
+    valid outcome (shown as outcome `unknown`)."""
+    if rec.error:
+        return []
+    if not rec.meta:
+        codes = ["no-frontmatter"]
+        return codes + (["outcome-missing"] if rec.rtype == "verification" else [])
+    codes: list[str] = []
+    status = rec.meta.get("status")
+    vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
+    if status is not None and str(status) not in vocab and rec.rtype != "jot":
+        codes.append("status-invalid")
+    if rec.rtype == "verification":
+        if rec.meta.get("outcome") not in VALID_VERIFICATION_OUTCOME:
+            codes.append("outcome-missing")
+        if rec.meta.get("subject") in (None, ""):
+            codes.append("subject-missing")
+    return codes
 
 
 def record_contract_entries(records: list["Record"], memory_dir: Path) -> list[tuple]:
@@ -2993,6 +3068,11 @@ def find_record_by_id(memory_dir: Path, rid: str) -> "Record | None":
         ident = derive_identity(rec.stem, rec.rtype)
         if ident and ident[0] == rid:
             return rec
+    # A record renamed by `crumb rename` keeps its old ids in `formerly`, so a
+    # commit message or note citing one still resolves.
+    for rec in load_records(Path(memory_dir)):
+        if not rec.error and rid in (rec.meta.get("formerly") or []):
+            return rec
     return None
 
 
@@ -4079,10 +4159,12 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     tags: set[str] = set()
     paths: set[str] = set()
     commands: list[list[str]] = []
+    token_sets: list[list[str]] = []
     for it in _candidate_items(memory_dir, include_ideas=False):
         if not _may_drive_verdict(it):
             continue
         tokens |= set(it["specific"])
+        token_sets.append(sorted(it["specific"]))
         titles |= set(it.get("title_specific") or ())
         tags |= set(it.get("tag_stems") or {t: t for t in it.get("tags") or ()})
         paths |= set(it.get("files") or ()) | set(it.get("mentioned_files") or ())
@@ -4105,6 +4187,11 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
         "tags": sorted(tags),
         "paths": sorted(paths),
         "commands": sorted(commands),
+        # Each record's own stems. Guard's keyword gate is per record (two
+        # shared words in *one* record), so the pre-filter is too: against
+        # the union of every record's words, 12 of 20 everyday commands
+        # escalated to a full guard run (field report 2026-10-01, issue 6).
+        "token_sets": token_sets,
     }
 
 
@@ -4125,7 +4212,7 @@ def _may_drive_verdict(item: dict) -> bool:
 # 2: `commands` added (audit F10). 3: every record that could drive a verdict,
 # with `titles` and `tags` (audit WP11). A pre-filter of another format is not
 # trusted: the hook runs the full guard instead.
-GUARD_PREFILTER_FORMAT = 3
+GUARD_PREFILTER_FORMAT = 4
 
 
 # Written when a projection rebuild raised, removed by the next one that works.
@@ -4312,14 +4399,30 @@ _refresh_resume_packet = reindex_projections
 
 
 def _note_as_file(
-    memory_dir: Path, project_root: Path, kind: str, text: str, fields: dict, *, agent: str | None
+    memory_dir: Path,
+    project_root: Path,
+    kind: str,
+    text: str,
+    fields: dict,
+    *,
+    agent: str | None,
+    tags: list[str] | None = None,
 ) -> dict:
     """`note trap|question` at schema 3: one file per record (WM-22).
 
     Same checks, same result shape and the same hints as the block writer, so a
     caller cannot tell which storage it wrote to — which is the point.
+
+    Tags go into the file's frontmatter. They used to be dropped here, so a
+    trap promoted from a tagged jot (or `--tags` on promote) came out with
+    `tags: []` and could not match on them (field report 2026-10-01, N1).
     """
     from breadcrumbs import blockfiles
+
+    meta_extra = dict(fields.get("meta") or {})
+    if tags:
+        meta_extra["tags"] = sorted({str(t).strip() for t in tags if str(t).strip()})
+    fields = {**fields, "meta": meta_extra or None}
 
     if kind == "question":
         qstatus = (fields.get("status") or "open").strip().lower()
@@ -4534,7 +4637,7 @@ def _note_write(
     from breadcrumbs import blockfiles
 
     if kind in ("question", "trap") and blockfiles.uses_files(memory_dir):
-        return _note_as_file(memory_dir, project_root, kind, text, fields, agent=agent)
+        return _note_as_file(memory_dir, project_root, kind, text, fields, agent=agent, tags=tags)
 
     if kind == "question":
         path = memory_dir / "open-questions.md"
@@ -4738,7 +4841,7 @@ def cmd_note(args: argparse.Namespace) -> int:
         for note_text in section_notes:
             _emit_warning(args, note_text)
         fields = {"sections": idea_sections}
-        tags = _split_tags(args.tags)
+    tags = _split_tags(getattr(args, "tags", None))
 
     result = note(
         memory_dir,
@@ -5603,6 +5706,32 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         )
         return 2
 
+    from breadcrumbs import handoffs as _handoffs
+
+    # `--replace` is the only way a capture removes handoff/current text, and
+    # what it removes is kept in the session record (issue 1, 2026-10-01).
+    replace = bool(getattr(args, "replace", False))
+    recent = (getattr(args, "recent", None) or "").strip()
+    replaced: dict[str, str] = {}
+    if replace:
+        hp = _handoffs.write_path(memory_dir, root, git_branch(root))
+        old_next = split_md_sections(_handoffs.seed_text(memory_dir, hp)).get("Next Action", "")
+        if not _is_placeholder(old_next) and old_next.strip() != (next_action or "").strip():
+            replaced[f"Next Action ({hp.relative_to(memory_dir).as_posix()})"] = old_next.strip()
+        if recent:
+            cur_path = memory_dir / "current.md"
+            old_recent = (
+                split_md_sections(path_policy.read_text(cur_path)).get("Recently Changed", "")
+                if cur_path.is_file()
+                else ""
+            )
+            if not _is_placeholder(old_recent) and old_recent.strip() != recent:
+                replaced["Recently Changed (current.md)"] = old_recent.strip()
+    if replaced:
+        kept = "\n\n".join(f"### Replaced {k}\n\n{v}" for k, v in replaced.items())
+        prior = (sections.get(UNSORTED_SECTION) or "").strip()
+        sections[UNSORTED_SECTION] = f"{prior}\n\n{kept}" if prior else kept
+
     title = args.title or _derive_session_title(sections, args.focus) or SESSION_TITLE_FALLBACK
     if coalesce is not None:
         before = path_policy.read_text(coalesce.path)
@@ -5647,10 +5776,11 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     # (0.1.10 field test, P1-6). An unset --focus keeps the previous Current
     # Focus (update_handoff/update_current retain the old value on empty),
     # which is also the honest reading of "the caller said nothing about focus".
+    #
+    # Recently Changed is written only from an explicit `--recent`: the git log
+    # it used to receive is what resume's *Landed Since* already shows, and
+    # writing it replaced hand-written notes on every snapshot (issue 1).
     focus = args.focus or ""
-    recently = sections.get("Work Completed", "")
-    from breadcrumbs import handoffs as _handoffs
-
     handoff_path = _handoffs.write_path(memory_dir, root, meta["branch"])
     update_handoff(
         memory_dir,
@@ -5659,8 +5789,15 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         focus,
         sections["Next Action"],
         path=handoff_path,
+        replace=replace,
     )
-    update_current(memory_dir, focus, recently)
+    update_current(memory_dir, focus, recent, commit=meta["commit"], replace=replace)
+    for what in replaced:
+        _emit_warning(
+            args,
+            f"--replace removed the previous {what}; it is kept in the session "
+            f"record under `### Replaced {what}`",
+        )
     # Reindex-on-write: capture mutates three packet inputs (the
     # session record, handoff.md, current.md), so the projections must follow —
     # otherwise the documented session-end flow leaves `validate` failing on
@@ -5676,6 +5813,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         "fast": bool(args.fast),
         "since": since,
         "coalesced": coalesce is not None,
+        "replaced": sorted(replaced),
     }
     if section_notes:
         summary["warnings"] = section_notes
@@ -5905,6 +6043,60 @@ def _user_preamble(preamble: list[str]) -> list[str]:
     return kept
 
 
+# A Next Action entry's header: `### 2026-10-01 · `abc1234``. `###` is not a
+# section boundary for split_md_ordered (it splits on `## ` only).
+NEXT_ENTRY_HEADER_RE = re.compile(r"^### (?:\d{4}-\d{2}-\d{2}\b|Earlier, as written\b).*$")
+# Put above text that had no entry header (a hand-kept log) the first time an
+# entry is added over it, so it stays one block, byte-for-byte, below the header.
+NEXT_LEGACY_HEADER = "### Earlier, as written"
+# Past this many characters `doctor` suggests trimming the log by hand.
+NEXT_ACTION_LOG_WARN_CHARS = 8000
+# A store path (from the project root) longer than this leaves under 60
+# characters for a Windows checkout path before the 260 limit (issue 5).
+RECORD_PATH_WARN_CHARS = 200
+
+
+def _next_entry(text: str, commit: str = "") -> str:
+    head = f"### {now_iso()[:10]}"
+    if commit and commit != "(no-git)":
+        head += f" · `{commit}`"
+    return f"{head}\n{text.strip()}"
+
+
+def split_next_entries(section: str) -> list[str]:
+    """A Next Action section as its entries, newest first, bodies without headers.
+
+    Text before the first dated header (or a section with no headers at all —
+    a hand-kept log, or one written before entries existed) is one entry.
+    """
+    entries: list[list[str]] = []
+    cur: list[str] | None = None
+    for line in (section or "").splitlines():
+        if NEXT_ENTRY_HEADER_RE.match(line):
+            cur = []
+            entries.append(cur)
+            continue
+        if cur is None:
+            cur = []
+            entries.append(cur)
+        cur.append(line)
+    out = ["\n".join(e).strip() for e in entries]
+    return [e for e in out if e]
+
+
+def add_next_entry(existing: str, text: str, commit: str = "") -> str:
+    """`existing` with `text` added on top as a dated entry; unchanged when the
+    newest entry already says exactly `text` (a repeated capture adds nothing)."""
+    existing = "" if _is_placeholder(existing or "") else (existing or "").strip()
+    entries = split_next_entries(existing)
+    if entries and entries[0].strip() == text.strip():
+        return existing
+    entry = _next_entry(text, commit)
+    if existing and not NEXT_ENTRY_HEADER_RE.match(existing.splitlines()[0]):
+        existing = f"{NEXT_LEGACY_HEADER}\n{existing}"
+    return f"{entry}\n\n{existing}" if existing else entry
+
+
 def update_handoff(
     memory_dir: Path,
     branch: str,
@@ -5913,8 +6105,15 @@ def update_handoff(
     next_action: str,
     *,
     path: Path | None = None,
+    replace: bool = False,
 ) -> None:
     """Rewrite a handoff with fresh metadata and the given focus / next action.
+
+    The Next Action is a running log, newest first: a new one is added as a
+    dated entry above everything already there, which stays byte-for-byte
+    (field report 2026-10-01, issue 1: a one-line `--next` replaced a 139-line
+    hand-kept log, and nothing kept a copy). Only `replace=True` (`--replace`)
+    overwrites the section, and its caller saves what it replaced.
 
     `path` is `handoff.md` unless a branch handoff is being written (WM-50); a
     branch handoff that does not exist yet starts from `handoff.md`'s content,
@@ -5930,7 +6129,12 @@ def update_handoff(
     focus = "" if _is_placeholder(focus) else focus
     next_action = "" if _is_placeholder(next_action) else next_action
     sec["Current Focus"] = focus or sec.get("Current Focus", "")
-    sec["Next Action"] = next_action or sec.get("Next Action", "")
+    if next_action:
+        sec["Next Action"] = (
+            _next_entry(next_action, commit)
+            if replace
+            else add_next_entry(sec.get("Next Action", ""), next_action, commit)
+        )
 
     out = [
         "# Project Handoff",
@@ -5960,16 +6164,31 @@ def update_handoff(
     write_text_atomic(path, "\n".join(out).rstrip() + "\n")
 
 
-def update_current(memory_dir: Path, focus: str, recently: str) -> None:
+def update_current(
+    memory_dir: Path,
+    focus: str,
+    recently: str,
+    *,
+    commit: str = "",
+    replace: bool = False,
+) -> None:
+    """Rewrite current.md with the given focus; `recently` is added as a dated
+    entry above the existing Recently Changed text (never replacing it unless
+    `replace`). Capture passes `recently` only when someone set it explicitly —
+    the git log it used to write here duplicated resume's *Landed Since* and
+    overwrote hand-written notes on every Stop-hook snapshot."""
     path = Path(memory_dir) / "current.md"
     existing = path_policy.read_text(path) if path.exists() else ""
     preamble, ordered = split_md_ordered(existing)
     sec = split_md_sections(existing)
     focus = "" if _is_placeholder(focus) else focus
     recently = "" if _is_placeholder(recently) else recently
+    existing_recent = sec.get("Recently Changed", "")
+    if recently and not replace:
+        recently = add_next_entry(existing_recent, recently, commit)
     vals = {
         "Current Focus": focus or sec.get("Current Focus", ""),
-        "Recently Changed": recently or sec.get("Recently Changed", ""),
+        "Recently Changed": recently or existing_recent,
         "Watch Out For": sec.get("Watch Out For", ""),
     }
     out = [
@@ -6221,6 +6440,8 @@ def git_commit_distance(root: Path, commit: str | None) -> int | None:
 # back to the exact per-commit query; a store with records older than this many
 # commits pays one git call for each such distinct sha, which is the old cost.
 _REVLIST_INDEX_CAP = 5000
+# Exact per-commit lookups allowed per pass, for commits older than the index.
+_EXACT_LOOKUPS = 3
 
 
 class CommitDistanceIndex:
@@ -6280,13 +6501,28 @@ class CommitDistanceIndex:
         return by_n.get(commit)
 
     def distance_reaches(self, commit: str | None) -> bool:
-        """Is `commit` at least `threshold` commits behind HEAD? (False when unknown.)"""
+        """Is `commit` at least `threshold` commits behind HEAD? (False when unknown.)
+
+        No git call per commit on this path any more (field report 2026-10-01,
+        issue 6: a store whose records were written on since-squashed cloud
+        branches cost two or three spawns per record — 127 for one Edit, ~5 s
+        on Windows). A commit in the index is judged by its topo position (a
+        lower bound: a near miss can skip one decay factor, never add one). A
+        commit not in a *complete* index is not in HEAD's history at all and
+        has no meaningful distance: unknown, so no decay. Only when the index
+        was cut at `_REVLIST_INDEX_CAP` is a missing commit looked up exactly,
+        and then at most `_EXACT_LOOKUPS` times per pass.
+        """
         if commit in (None, "", NO_GIT_COMMIT):
             return False
         pos = self._position(str(commit))
-        if pos is not None and pos >= self._threshold:
-            return True  # proven by the lower bound — no git call
+        if pos is not None:
+            return pos >= self._threshold
+        if len(self._index()) < _REVLIST_INDEX_CAP:
+            return False
         if commit not in self._exact:
+            if len(self._exact) >= _EXACT_LOOKUPS:
+                return False
             self._exact[str(commit)] = git_commit_distance(self._root, str(commit))
         dist = self._exact[str(commit)]
         return dist is not None and dist >= self._threshold
@@ -6634,6 +6870,10 @@ def _section_lines(handoff_sections: dict, heading: str) -> list[str]:
 
 
 # ---- staleness ------------------------------------------------------------- #
+
+
+def _reached_head(root: Path) -> "HeadTree":
+    return HeadTree(root)
 
 
 class HeadTree:
@@ -7369,6 +7609,12 @@ def _build_resume_packet_once(
 
     next_action = handoff_sections.get("Next Action", "")
     next_action = "" if _is_placeholder(next_action) else next_action.strip()
+    # The Next Action is a log, newest first: the packet carries the newest
+    # entry and says how many earlier ones the handoff holds (issue 1).
+    next_entries = split_next_entries(next_action)
+    next_action_earlier = max(len(next_entries) - 1, 0)
+    if next_entries:
+        next_action = next_entries[0]
 
     packet: dict = {
         "source": {
@@ -7390,6 +7636,7 @@ def _build_resume_packet_once(
         "project": project,
         "current_focus": focus,
         "next_action": next_action,
+        "next_action_earlier": next_action_earlier,
         "active_decisions": [
             {
                 "id": r.meta.get("id", r.stem),
@@ -7433,7 +7680,9 @@ def _build_resume_packet_once(
             {
                 "id": r.meta.get("id", r.stem),
                 "subject": (r.meta.get("subject") or r.meta.get("title", "")),
-                "outcome": (r.meta.get("outcome") or "open"),
+                # A verification with no outcome is not "open" — nobody said so.
+                # Showing it as open inverted a hand-written "Fixed." (N3).
+                "outcome": (r.meta.get("outcome") or "unknown"),
                 "method": r.meta.get("method"),
             }
             for r in listed_verifications
@@ -7964,6 +8213,10 @@ def render_packet_markdown(packet: dict) -> str:
         packet["next_action"] or "_(not recorded — set one with `crumb capture session --next`)_",
         "",
     ]
+    if packet.get("next_action_earlier"):
+        n = packet["next_action_earlier"]
+        where = (packet.get("project") or {}).get("handoff") or "the handoff"
+        out[-1:-1] = ["", f"_({n} earlier entr{'y' if n == 1 else 'ies'} in {where})_"]
 
     # P1-5: the staleness numbers say how *old* the handoff is, never whether its
     # claims still hold. Listing what actually landed since it was written makes
@@ -8302,6 +8555,17 @@ GUARD_W_STATUS_ACTIVE = 1
 GUARD_W_CONFIDENCE_HIGH = 1
 GUARD_W_REVIEWED = 1
 GUARD_W_DO_NOT_RETRY = 4  # attempt carries an explicit "Do Not Retry Unless"
+# A file the action writes without naming it (crumb's own commands, issue 11).
+# Below a named file: the command is the sanctioned writer, so a trap about
+# hand-editing that file should be seen, not take over the verdict.
+GUARD_W_WRITES = 3
+# Shared specific words that, on their own, make a do-not-retry attempt topical
+# enough for its line to count ("logout no longer clears the session cookie"
+# against an attempt whose result was "logout stopped clearing cookies").
+GUARD_TOPICAL_KEYWORDS = 3
+# Guard's keyword contribution stops here, so a longer command does not score
+# higher for being longer (issue 7c). Plain search is uncapped.
+GUARD_KEYWORD_CAP = 4
 GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
 
 # What a match must have, beyond shared vocabulary, to be surfaced as a warning
@@ -8311,7 +8575,7 @@ GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
 # specificity that lets a match raise a verdict ({file, tag}) — being worth
 # showing and being worth escalating are different bars.
 GUARD_SURFACING_SIGNALS = frozenset(
-    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker", "command"}
+    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker", "command", "writes-file"}
 )
 
 # recency / branch de-weighting (reuses the staleness signals above)
@@ -8400,82 +8664,32 @@ def _is_destructive(action: str, classes: list[str]) -> bool:
 # ASK_HUMAN are reserved for actions that write, delete, push, deploy or execute.
 GUARD_READ_ONLY_CEILING = "READ_FIRST"
 
-# Commands whose whole job is to report. Deliberately a short allowlist of the
-# unambiguous ones: `sed`, `awk` and `tee` can all write, and anything not named
-# here is simply treated as capable of side effects, which is the safe default.
-GUARD_READ_ONLY_COMMANDS = frozenset(
-    """
-    cat less more head tail nl wc
-    ls dir tree stat file du df pwd realpath basename
-    grep egrep fgrep rg ack ag find fd locate
-    diff cmp md5sum sha1sum sha256sum
-    which whereis type man whoami hostname uname date
-    echo printf uniq cut column jq yq
-    ps top uptime id groups
-    """.split()
-)
-
-# Two near-misses, deliberately absent: `env` runs an arbitrary command as its
-# argument, and `sort -o` writes a file. Neither reports for a living.
-
-# `git` is both the most-used command in any store and the one whose subcommands
-# span the whole range, so it gets its own allowlist rather than the verb alone.
-GUARD_READ_ONLY_GIT_SUBCOMMANDS = frozenset(
-    {
-        "status",
-        "log",
-        "diff",
-        "show",
-        "blame",
-        "describe",
-        "shortlog",
-        "rev-parse",
-        "rev-list",
-        "ls-files",
-        "ls-tree",
-        "ls-remote",
-        "cat-file",
-        "whatchanged",
-        "grep",
-        "reflog",
-        "annotate",
-        "count-objects",
-        "var",
-    }
-)
-
-# Flags that make an otherwise-reporting command act: `find . -delete` and
-# `find . -exec rm {} +` are the ones that matter in practice. Matched as whole
-# tokens, so an argument that merely contains one does not trip it.
-GUARD_READ_ONLY_DISQUALIFYING_ARGS = frozenset(
-    "-delete -exec -execdir -ok -okdir -fprint -fls -fprintf".split()
-)
-
-# Shell metacharacters that can turn a reporting command into a writing one
-# (`cat x > y`, `ls && rm -rf .`, `` grep `rm -rf .` ``). Their presence forfeits
-# the read-only claim outright: this cap only ever *lowers* a verdict, so the
-# conservative reading is the correct one.
-_SHELL_EFFECT_RE = re.compile(r"[>;&`]|\|\||\$\(")
+# The read-only verb tables and the command reader live in `shellcmd` (field
+# report 2026-10-01, issue 7 / N4); the names stay importable from here.
+GUARD_READ_ONLY_COMMANDS = _shellcmd.READ_ONLY_COMMANDS
+GUARD_READ_ONLY_GIT_SUBCOMMANDS = _shellcmd.READ_ONLY_GIT_SUBCOMMANDS
+GUARD_READ_ONLY_DISQUALIFYING_ARGS = _shellcmd.READ_ONLY_DISQUALIFYING_ARGS
 
 
 def _is_read_only_action(action: str) -> bool:
     """True only when the action provably cannot change anything (G2).
 
-    Conservative by construction: an action this cannot recognize is treated as
+    Every segment of a compound command must be read-only on its own
+    (`cd x && grep …` is; `find … | xargs rm -rf` is not), and output may only
+    be redirected to `/dev/null` or another stream. An edit is never read-only.
+    Conservative by construction: anything this cannot read is treated as
     capable of side effects, so a missed classification costs an unnecessary
     PAUSE, never a swallowed one.
     """
     text = (action or "").strip()
-    if not text or _SHELL_EFFECT_RE.search(text):
+    if not text or _EDIT_ACTION_RE.match(text):
         return False
-    tokens = text.split()
-    if GUARD_READ_ONLY_DISQUALIFYING_ARGS & {t.lower() for t in tokens[1:]}:
-        return False
-    verb = PurePosixPath(tokens[0].replace("\\", "/")).name.lower()
-    if verb == "git":
-        subcommands = [t for t in tokens[1:] if not t.startswith("-")]
-        return bool(subcommands) and subcommands[0] in GUARD_READ_ONLY_GIT_SUBCOMMANDS
-    return verb in GUARD_READ_ONLY_COMMANDS
+    return _shellcmd.is_read_only(text)
+
+
+# What the Claude adapter (and `crumb guard --file`) builds for an edit:
+# `edit <path>` or `edit <path>: <first characters of the new content>`.
+_EDIT_ACTION_RE = re.compile(r"^(edit|delete a cell in) (\S+)(?::\s(.*))?$", re.S)
 
 
 _VERDICTS = ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN")
@@ -8513,8 +8727,14 @@ GUARD_STOPWORDS = _FUNCTION_WORDS | frozenset(
     stuff need needs want wants now today please let lets go going into onto
     src lib test tests spec specs index main app ts js tsx jsx py md json yml yaml
     txt cfg ini case feature support handle handling
+    why fail fails failed failing failure error errors broken wrong issue issues
+    problem problems
     """.split()
 )
+# The last line above (field report 2026-10-01, issue 8): the words a question
+# about *any* failure uses. "why is my robolectric test failing" shared `why`
+# and `fail` with every attempt record, which is what let five unrelated
+# attempts outrank the one trap about the actual error.
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
 # Candidate path tokens in free text. This regex only *finds* things shaped like
@@ -8549,6 +8769,18 @@ GUARD_PATH_EXTENSIONS = frozenset(
 _VERSION_TOKEN_RE = re.compile(r"^v?\d+(\.\d+)+$")
 
 
+_SYSTEM_PATH_RE = re.compile(r"^(?:\.\./|~)?/?(?:dev|proc|sys)/")
+# Slash-joined words that read as prose, not as a directory and a file.
+_PROSE_SLASH_PAIRS = frozenset(
+    """
+    and/or either/or read/write yes/no input/output stdin/stdout stdout/stderr
+    ci/cd on/off true/false client/server i/o r/w pass/fail before/after he/she
+    his/her s/he am/pm win/loss success/failure open/close start/stop get/set
+    push/pull load/store encode/decode request/response send/receive
+    """.split()
+)
+
+
 def _is_path_token(token: str) -> bool:
     """Is `token` really a file path, as opposed to prose that looks like one?
 
@@ -8568,6 +8800,17 @@ def _is_path_token(token: str) -> bool:
     """
     token = (token or "").strip()
     if len(token) < 2 or token.startswith("-") or _VERSION_TOKEN_RE.match(token):
+        return False
+    # Device files and pseudo-filesystems are not project files: `2>/dev/null`
+    # produced "mentions: null" (field report 2026-10-01, issue 10).
+    if _SYSTEM_PATH_RE.match(token):
+        return False
+    if token.lower() in _PROSE_SLASH_PAIRS:
+        return False  # `and/or`, `read/write`, `ci/cd`
+    if token.startswith("./") and "/" not in token[2:] and "." not in token[2:]:
+        # `./gradlew` is a command being run, not a file the action is about;
+        # as a path it gave every record mentioning `./gradlew assembleDebug`
+        # a mention signal against `./gradlew --stop` (issue 8).
         return False
     basename = token.rsplit("/", 1)[-1]
     extension = basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
@@ -8825,8 +9068,21 @@ def _specific(text: str) -> set[str]:
 
 
 def _paths_from_text(text: str) -> set[str]:
-    """File paths found in free text — candidates that pass `_is_path_token`."""
-    return {m.group(0) for m in _FILE_TOKEN_RE.finditer(text or "") if _is_path_token(m.group(0))}
+    """File paths found in free text — candidates that pass `_is_path_token`.
+
+    A token that is part of a URL (`https://host/a`) is not a path: its last
+    segment used to become a file name of its own (issue 10).
+    """
+    text = text or ""
+    out = set()
+    for m in _FILE_TOKEN_RE.finditer(text):
+        token = m.group(0)
+        before = text[max(0, m.start() - 3) : m.start()]
+        if before.endswith(":") or before.endswith(":/") or token.startswith("//"):
+            continue
+        if _is_path_token(token):
+            out.add(token)
+    return out
 
 
 # Bullets in a trap block that hold the *remedy*, not the hazard. Mining file
@@ -8981,8 +9237,29 @@ _CLASS_SEVERITY = [
 
 
 def classify_action(action: str) -> tuple[str, list[str]]:
-    """Return (primary_class, sorted matched classes). 'routine_edit' if none hit."""
-    toks = _tokenize(action)
+    """Return (primary_class, sorted matched classes). 'routine_edit' if none hit.
+
+    Reads what the action *does*, not what it *says* (field report 2026-10-01,
+    issue 7 / N11): quoted text and here-document bodies are dropped, so a
+    commit message or a `--next "cut the release"` note is not a release. An
+    edit is classified by its path, not by the content being written. crumb's
+    own commands are classified by the table in `shellcmd`, never by the words
+    in their arguments: reading memory and writing memory are routine, and only
+    a real `crumb migrate` is a migration.
+    """
+    edit = _EDIT_ACTION_RE.match((action or "").strip())
+    if edit:
+        text = f"{edit.group(1)} {edit.group(2)}"
+    else:
+        crumb = _shellcmd.crumb_commands(action or "")
+        if crumb and len(crumb) == len(_shellcmd.segments(action or "") or [None]):
+            effects = {effect for effect, _args in crumb}
+            if effects <= {"read_only", "memory_write"}:
+                return "routine_edit", ["routine_edit"]
+            if effects <= {"read_only", "memory_write", "migration"}:
+                return "migration", ["migration"]
+        text = _shellcmd.classification_text(action or "")
+    toks = _tokenize(text)
     matched = {cls for cls, kws in ACTION_CLASS_KEYWORDS.items() if toks & kws}
     if not matched:
         return "routine_edit", ["routine_edit"]
@@ -8996,6 +9273,9 @@ def classify_action(action: str) -> tuple[str, list[str]]:
 def _attempt_has_do_not_retry(rec: Record) -> bool:
     sec = rec.sections.get("Do Not Retry Unless", "")
     return bool(_first_line(sec))
+
+
+_MD_HEADING_LINE_RE = re.compile(r"(?m)^#{1,6}\s.*$")
 
 
 def _item_from_record(rec: Record) -> dict:
@@ -9018,14 +9298,19 @@ def _item_from_record(rec: Record) -> dict:
     files = _norm_files(set(_evidence_refs(rec, ("file", "path"))))
     mentioned = _norm_files(mined) - files
     tags = {str(t).lower() for t in (rec.meta.get("tags") or [])}
-    text = " ".join([str(rec.meta.get("title") or ""), rec.body, " ".join(tags)])
+    # Section headings are the template, not the record: "## Why It Failed /
+    # Succeeded" made every attempt share `why` and `fail` with "why is my test
+    # failing", and push the one relevant trap out (field report 2026-10-01,
+    # issue 8).
+    body_text = _MD_HEADING_LINE_RE.sub(" ", rec.body)
+    text = " ".join([str(rec.meta.get("title") or ""), body_text, " ".join(tags)])
     # For verifications the interesting "status" is the *outcome* (open/fixed/…),
     # not the lifecycle status — so `search type:verification status:open` filters
     # on what the agent actually cares about. The lifecycle value is
     # kept alongside it: guard's liveness test needs both, and folding them into
     # one field is what silently excluded every verification from the verdict.
     lifecycle = str(rec.meta.get("status") or "active")
-    status = (rec.meta.get("outcome") or "open") if rec.rtype == "verification" else lifecycle
+    status = (rec.meta.get("outcome") or "unknown") if rec.rtype == "verification" else lifecycle
     return {
         "id": rec.meta.get("id", rec.stem),
         "kind": rec.rtype,
@@ -9046,6 +9331,13 @@ def _item_from_record(rec: Record) -> dict:
         "branch": rec.meta.get("branch"),
         "record": rec,
         "do_not_retry": rec.rtype == "attempt" and _attempt_has_do_not_retry(rec),
+        # An attempt titled "Ran gradlew --stop …" names a command just as a
+        # trap's summary does (issue 8): the title head only, never the body.
+        "command_heads": (
+            _trap_command_heads(str(rec.meta.get("title") or ""), "")
+            if rec.rtype == "attempt"
+            else None
+        ),
         "expired": record_expired(rec.meta),
         "promoted": bool(rec.meta.get("promoted_to")),
         "scope": str(rec.meta.get("scope") or "project"),
@@ -9079,7 +9371,15 @@ def _command_tokens(text: str) -> list[str]:
     from breadcrumbs import transcript as _transcript
 
     flat = _transcript.normalize_command(str(text or ""))
-    return [t.strip("\"'`.,;:").lower() for t in flat.split() if t.strip("\"'`.,;:")]
+    out = []
+    for t in flat.split():
+        # `./gradlew` is `gradlew`: stripping the dot alone left `/gradlew`, so a
+        # trap titled "gradlew --stop …" never matched `./gradlew --stop`.
+        t = t[2:] if t.startswith("./") else t
+        t = t.strip("\"'`.,;:").lower()
+        if t:
+            out.append(t)
+    return out
 
 
 # A head is `[kind, *tokens]`. A `title` head is the leading words of a trap's
@@ -9090,7 +9390,7 @@ _HEAD_TITLE = "title"
 _HEAD_SPAN = "span"
 # A summary that opens with one of these describes running the command after it
 # ("Running npm test truncates …").
-_RUN_VERBS = ("run", "running", "runs", "calling", "executing")
+_RUN_VERBS = ("run", "running", "runs", "ran", "calling", "executing")
 
 
 def _trap_command_heads(heading: str, body: str) -> list[list[str]]:
@@ -9135,7 +9435,10 @@ def _names_command(action_tokens: list[str], heads) -> bool:
 
 def _item_from_trap(trap: dict) -> dict:
     heading, body = trap["heading"], trap.get("content", trap.get("body", ""))
-    text = heading + "\n" + body
+    # Trap files carry tags since the field report's N1; a trap never scored
+    # them, so a trap tagged `robolectric` lost to every attempt sharing it.
+    tags = {str(t).lower() for t in (trap.get("tags") or [])}
+    text = heading + "\n" + body + "\n" + " ".join(sorted(tags))
     return {
         "id": trap.get("id") or heading.split(":", 1)[0].strip() or "trap",
         "kind": "trap",
@@ -9143,7 +9446,8 @@ def _item_from_trap(trap: dict) -> dict:
         # in search and keep counting as live in guard's active/history split.
         "status": trap.get("status") or "active",
         "title": heading,
-        "tags": set(),
+        "tags": tags,
+        "tag_stems": {_stem(t): t for t in tags},
         "files": _norm_files(_paths_from_text(_trap_area_text(body))),
         "mentioned_files": (
             _norm_files(_paths_from_text(_trap_hazard_text(body)))
@@ -9326,6 +9630,10 @@ def _score_item(
     distances: CommitDistanceIndex,
     ubiquitous: frozenset[str] = frozenset(),
     q_words: frozenset[str] = frozenset(),
+    keyword_cap: int | None = None,
+    q_writes: set[str] = frozenset(),
+    do_not_retry_boost: bool = True,
+    reached: "HeadTree | None" = None,
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate."""
 
@@ -9335,8 +9643,8 @@ def _score_item(
     # a matched full path. Keying on basename alone (the old approach) wrongly
     # collapsed genuinely-distinct files that share a name (src/a/x.ts, src/b/x.ts)
     # — undercounting the score and picking a hash-order-dependent survivor.
-    def _overlap(candidate: set[str]) -> tuple[list[str], int]:
-        raw = candidate & q_files
+    def _overlap(candidate: set[str], against: set[str] = q_files) -> tuple[list[str], int]:
+        raw = candidate & against
         full_paths = {f for f in raw if "/" in f}
         covered = {f.rsplit("/", 1)[-1] for f in full_paths}
         extra_bare = {f for f in raw if "/" not in f and f not in covered}
@@ -9345,6 +9653,9 @@ def _score_item(
     matched_files, file_count = _overlap(item["files"])
     # Prose-mined paths, scored separately and never as "same file(s)".
     matched_mentions, mention_count = _overlap(item.get("mentioned_files", set()) - item["files"])
+    # Files the action writes without naming them (crumb's own commands,
+    # issue 11): weaker than a file the action names, and said differently.
+    matched_writes, writes_count = _overlap(item["files"], q_writes) if q_writes else ([], 0)
     # Tag overlap is computed on stems; the display set carries the raw tags.
     tag_stems = item.get("tag_stems") or {t: t for t in item["tags"]}
     matched_tag_stems = set(tag_stems) & q_specific
@@ -9385,6 +9696,7 @@ def _score_item(
         not matched_files
         and not matched_mentions
         and not matched_tags
+        and not matched_writes
         and kw_count < min_keyword
         and not short_query_title_hit
     ):
@@ -9401,8 +9713,14 @@ def _score_item(
     if matched_tags:
         score += GUARD_W_TAG * len(matched_tag_stems)
         signals.append("tag")
+    if matched_writes:
+        score += GUARD_W_WRITES * writes_count
+        signals.append("writes-file")
     if kw_count:
-        score += GUARD_W_KEYWORD * kw_count
+        # Capped for guard: overlap grew with the command's length, so a long
+        # commit message scored 39 against records it had nothing to do with
+        # (issue 7c). Plain search keeps the uncapped count.
+        score += GUARD_W_KEYWORD * (min(kw_count, keyword_cap) if keyword_cap else kw_count)
         if kw_count >= min_keyword:
             signals.append("keyword")
     if title_overlap:
@@ -9417,7 +9735,22 @@ def _score_item(
             score += GUARD_W_CONFIDENCE_HIGH
         if rec.meta.get("review_status") == "reviewed":
             score += GUARD_W_REVIEWED
-    if item["do_not_retry"]:
+    # A do-not-retry line opposes *this* action only when the record is about
+    # it: a file, the title, a tag plus a shared word, or a file the action
+    # writes. Applied on any overlap, one shared tag lifted an unrelated
+    # attempt to the PAUSE band and pushed the relevant record out (issue 8).
+    # Words beyond the tags: a tag's own word is in the record's text too, so it
+    # would otherwise count as the "shared word" that makes a tag hit topical.
+    kw_beyond_tags = len(kw_overlap - matched_tag_stems)
+    topical = bool(
+        matched_files
+        or (title_overlap - matched_tag_stems)
+        or matched_writes
+        or (matched_tags and kw_beyond_tags >= 1)
+        or len(matched_tag_stems) >= 2
+        or kw_beyond_tags >= GUARD_TOPICAL_KEYWORDS
+    )
+    if item["do_not_retry"] and do_not_retry_boost and topical:
         score += GUARD_W_DO_NOT_RETRY
         signals.append("do-not-retry")
     if item["kind"] == "question" and item["status"] == "open":
@@ -9447,6 +9780,9 @@ def _score_item(
         and rb not in (NO_GIT_BRANCH, None, "")
         and cur_branch not in (NO_GIT_BRANCH, "HEAD")
         and rb != cur_branch
+        # A record whose file has reached HEAD (merged, squashed, rebased) is
+        # history here, not a risk — the same test resume uses (issue 9).
+        and not (reached is not None and rec is not None and reached.contains(rec.path))
     ):
         branch_mismatch = True
         factor *= GUARD_BRANCH_MISMATCH_FACTOR
@@ -9475,19 +9811,34 @@ def _score_item(
         "matched_mentions": sorted(matched_mentions),
         "matched_tags": sorted(matched_tags),
         "keyword_overlap": sorted(kw_overlap),
+        "matched_writes": sorted(matched_writes),
+        # Is there evidence beyond one shared topic? A tag alone (a `git` tag
+        # against `git status`) says the record is about the same component,
+        # not about this action; it no longer floors a verdict by itself.
+        "topical": topical,
         "branch_mismatch": branch_mismatch,
         "reason": _match_reason(
-            item["kind"], signals, matched_files, matched_tags, kw_count, matched_mentions
+            item["kind"],
+            signals,
+            matched_files,
+            matched_tags,
+            kw_count,
+            matched_mentions,
+            matched_writes,
         ),
     }
 
 
-def _match_reason(kind, signals, matched_files, matched_tags, kw_count, matched_mentions=()) -> str:
+def _match_reason(
+    kind, signals, matched_files, matched_tags, kw_count, matched_mentions=(), matched_writes=()
+) -> str:
     """Human phrase for why a record matched. Derived facts only — never executed."""
     parts: list[str] = []
     if matched_files:
         shown = ", ".join(sorted(matched_files)[:3])
         parts.append(f"same file(s): {shown}")
+    if matched_writes:
+        parts.append(f"this command writes: {', '.join(sorted(matched_writes)[:3])}")
     if matched_mentions:
         # Deliberately a different phrase. `same file(s)` is a claim the author
         # made; this is one the extractor made, and telling them apart is what
@@ -9523,8 +9874,18 @@ def search(
     include_ideas: bool = False,
     allow_full_scan: bool = True,
     info: dict | None = None,
+    path_text: str | None = None,
+    keyword_cap: int | None = None,
+    writes: list[str] | None = None,
+    do_not_retry_boost: bool = True,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Deterministic search over the canonical records (§20.10).
+
+    Guard's own knobs: `path_text` is where query paths are read from (default
+    the query), `keyword_cap` bounds the keyword contribution so a longer
+    command does not score higher for being long, `writes` are files the
+    action writes without naming them (crumb's own commands, issue 11), and
+    `do_not_retry_boost=False` ranks by relevance alone (the prompt hook).
 
     Returns (matches sorted best-first, items_by_id). Matching signals: exact/
     keyword text, tag/component, and file path. No embeddings; same input ->
@@ -9546,7 +9907,10 @@ def search(
     filters = filters or {}
     q_specific = _specific(query)
     q_words = frozenset(_stem(t) for t in _tokenize(query) if t not in _FUNCTION_WORDS)
-    q_files = _norm_files(_paths_from_text(query) | set(files or []))
+    q_files = _norm_files(
+        _paths_from_text(query if path_text is None else path_text) | set(files or [])
+    )
+    q_writes = _norm_files(writes or []) - q_files
     q_command = _command_tokens(query)
     # The search index narrows the corpus to records that could possibly match
     # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
@@ -9555,7 +9919,12 @@ def search(
 
     explain: dict = {}
     narrowed = _searchindex.candidate_items(
-        memory_dir, root, q_specific, q_files, include_ideas=include_ideas, explain=explain
+        memory_dir,
+        root,
+        q_specific,
+        q_files | q_writes,
+        include_ideas=include_ideas,
+        explain=explain,
     )
     info = info if info is not None else {}
     if narrowed is not None:
@@ -9573,6 +9942,10 @@ def search(
     cur_branch = git_branch(root)
     # One commit-distance index for the whole pass — see the class.
     distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
+    # Which record files have reached HEAD, built once per pass (issue 9): a
+    # record committed here from a since-merged branch is history, not "written
+    # on another branch", whatever its `branch:` field says.
+    reached = _reached_head(root)
 
     matches: list[dict] = []
     for it in items:
@@ -9589,9 +9962,13 @@ def search(
             distances=distances,
             ubiquitous=ubiquitous,
             q_words=q_words,
+            keyword_cap=keyword_cap,
+            q_writes=q_writes,
+            do_not_retry_boost=do_not_retry_boost,
+            reached=reached,
         )
         if it.get("command_heads") and _names_command(q_command, it["command_heads"]):
-            m = _with_command_signal(m, it)
+            m = _with_command_signal(m, it, do_not_retry_boost=do_not_retry_boost)
         if m is None:
             # Filter-only lookups (no scoring query) still surface the item.
             if filters and not q_specific and not q_files:
@@ -9634,8 +10011,8 @@ def search(
     return matches, by_id
 
 
-def _with_command_signal(m: dict | None, item: dict) -> dict:
-    """Mark a match (or make one) for a trap that names the action's command."""
+def _with_command_signal(m: dict | None, item: dict, *, do_not_retry_boost: bool = True) -> dict:
+    """Mark a match (or make one) for a record that names the action's command."""
     if m is None:
         m = {
             "id": item["id"],
@@ -9658,6 +10035,16 @@ def _with_command_signal(m: dict | None, item: dict) -> dict:
     if "command" not in m["signals"]:
         m["signals"].append("command")
         m["reason"] = (m["reason"] + "; " if m["reason"] else "") + "names this exact command"
+    # Naming the exact command is the most topical evidence there is, so an
+    # attempt's do-not-retry line applies (issue 8: "Ran gradlew --stop on a
+    # STOPREQUESTED daemon" was not in `./gradlew --stop`'s top three).
+    if item.get("do_not_retry") and do_not_retry_boost and "do-not-retry" not in m["signals"]:
+        m["signals"].append("do-not-retry")
+        m["score"] = float(m["score"]) + GUARD_W_DO_NOT_RETRY
+        m["raw_score"] = float(m["raw_score"]) + GUARD_W_DO_NOT_RETRY
+        m["stance"] = _match_stance(m["signals"])
+        if "do-not-retry condition" not in m["reason"]:
+            m["reason"] += "; has an explicit do-not-retry condition"
     # As strong as READ_FIRST evidence: it ranks and surfaces like it.
     m["score"] = max(float(m["score"]), float(GUARD_READ_FIRST_SCORE))
     m["raw_score"] = max(float(m["raw_score"]), float(GUARD_READ_FIRST_SCORE))
@@ -9734,7 +10121,11 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
     verdicts: list[str] = ["PROCEED"]
     for m in top:
         sig = set(m["signals"])
-        specific = bool({"file", "tag"} & sig)
+        # A tag counts as specific only with evidence beyond the tag itself
+        # (`topical`; field report 2026-10-01, issue 7: every git-tagged
+        # decision floored every git command at READ_FIRST). A file, or a file
+        # the action writes, always does.
+        specific = bool({"file", "writes-file"} & sig) or ("tag" in sig and m.get("topical", True))
         floor = "PROCEED"
         if "do-not-retry" in sig and specific:
             floor = "PAUSE"  # a failed attempt on these files/component
@@ -9788,7 +10179,9 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
     return verdict
 
 
-def _recommended_action(verdict: str, top: list[dict], by_id: dict, root: Path) -> str:
+def _recommended_action(
+    verdict: str, top: list[dict], by_id: dict, root: Path, *, high_impact: str | None = None
+) -> str:
     """Synthesize the next safest action from match kinds (§11.6).
 
     Generated by this code from structure — never copied as an imperative out of a
@@ -9804,6 +10197,16 @@ def _recommended_action(verdict: str, top: list[dict], by_id: dict, root: Path) 
     cmds = _dedup(cmds)[:3]
     verify = f" Run the recorded verification command(s): {'; '.join(cmds)}." if cmds else ""
 
+    if verdict == "ASK_HUMAN" and high_impact and not top:
+        return (
+            f"High-impact action ({high_impact}) and no project memory about it. "
+            "Get a human to confirm before proceeding." + verify
+        )
+    if verdict == "ASK_HUMAN" and high_impact:
+        return (
+            f"High-impact action ({high_impact}). Read {ids}, then get a human to "
+            "confirm before proceeding." + verify
+        )
     if verdict == "ASK_HUMAN":
         return (
             f"This is a high-impact change that collides with recorded memory ({ids}). "
@@ -9858,15 +10261,23 @@ def guard(
     a real verdict. `crumb search` sees them; the verdict never does.
     """
     primary, classes = classify_action(action)
+    # Match on the command, not on a here-document's body (issue 7c), and take
+    # paths only from the command and the edited file — never from the content
+    # being written (issue 10: `mentions: CLAUDE.md` came from prose).
+    edit = _EDIT_ACTION_RE.match((action or "").strip())
+    path_text = f"{edit.group(1)} {edit.group(2)}" if edit else _shellcmd.matching_text(action)
     matches, by_id = search(
         memory_dir,
         root,
-        action,
+        _shellcmd.matching_text(action),
         files=files,
         stale_days=stale_days,
         min_keyword=GUARD_MIN_KEYWORD_OVERLAP,
         noise_floor=GUARD_NOISE_FLOOR,
         include_ideas=False,
+        path_text=path_text,
+        keyword_cap=GUARD_KEYWORD_CAP,
+        writes=_shellcmd.crumb_writes(action, MEMORY_DIRNAME) if not edit else None,
     )
 
     active, history = [], []
@@ -9908,6 +10319,13 @@ def guard(
 
     top = active[:GUARD_MAX_WARNINGS]
     verdict = _decide_verdict(top, classes, action)
+    # Operator decision D3 (2026-10-01): a short, literal list of high-impact
+    # actions asks a human even when no record is about them. Without it, the
+    # only thing that ever made `git push --force origin main` ASK_HUMAN was
+    # unrelated records that happened to share the word "git".
+    high_impact = _shellcmd.high_impact(action) if not edit else None
+    if high_impact:
+        verdict = "ASK_HUMAN"
 
     # Staleness is computed so a stale/wrong-branch handoff surfaces
     # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
@@ -9920,12 +10338,14 @@ def guard(
     # repeated the same store-wide facts verbatim on every call (P0-4). Only
     # abnormal states — cold handoff, detached HEAD, branch mismatch — belong
     # on the per-action path; the rest lives in resume/doctor/audit.
+    # The risks-only view reads no records (they feed only the full view), so
+    # none are loaded for it: that re-read every decision on each firing (#6).
     staleness = compute_staleness(
         root,
         parse_handoff_meta(handoff_text),
-        active_decisions(memory_dir),
-        active_attempts(memory_dir),
-        load_open_questions(memory_dir),
+        [],
+        [],
+        [],
         stale_days,
         risks_only=True,
         memory_dir=memory_dir,
@@ -9954,7 +10374,10 @@ def guard(
         "staleness": staleness,
         # NOT `next_action` — that key is the resume packet's *recorded* Next
         # Action, and one name for two unrelated things read as one thing.
-        "recommended_action": _recommended_action(verdict, top, by_id, root),
+        "high_impact": high_impact,
+        "recommended_action": _recommended_action(
+            verdict, top, by_id, root, high_impact=high_impact
+        ),
         "thresholds": {
             "noise_floor": GUARD_NOISE_FLOOR,
             "read_first_score": GUARD_READ_FIRST_SCORE,
@@ -11234,7 +11657,52 @@ def _splice_json_insert(text: str, parent_key: str, key: str, value: dict) -> st
     return text[: m.end()] + snippet + text[m.end() :]
 
 
-def register_mcp(root: Path) -> tuple[Path, bool]:
+def local_mcp_command(root: Path) -> list[str]:
+    """The `claude mcp add` that registers this interpreter at local scope.
+
+    Local scope is per user and per project, never committed, and overrides a
+    project-scope server of the same name — so the committed `.mcp.json` can
+    stay portable while this machine still launches through the interpreter
+    (no locked `breadcrumbs-mcp.exe` on upgrade). Field report 2026-10-01,
+    issue 13 / operator decision D4.
+    """
+    return [
+        "claude",
+        "mcp",
+        "add",
+        "--scope",
+        "local",
+        "-e",
+        f"BREADCRUMBS_PROJECT={Path(root)}",
+        MCP_SERVER_NAME,
+        "--",
+        sys.executable,
+        "-m",
+        "breadcrumbs",
+        "mcp",
+        "serve",
+    ]
+
+
+def register_mcp_local(root: Path) -> dict:
+    """Run `local_mcp_command`; `{ok, command, error}`. Never raises."""
+    cmd = local_mcp_command(root)
+    exe = shutil.which("claude")
+    if exe is None:
+        return {"ok": False, "command": cmd, "error": "the `claude` CLI is not on PATH"}
+    try:
+        r = subprocess.run(
+            [exe, *cmd[1:]], cwd=str(root), capture_output=True, text=True, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "command": cmd, "error": str(exc)}
+    if r.returncode != 0:
+        detail = " ".join((r.stderr or r.stdout or "").split())[:300]
+        return {"ok": False, "command": cmd, "error": detail or f"exit {r.returncode}"}
+    return {"ok": True, "command": cmd, "error": None}
+
+
+def register_mcp(root: Path, *, portable: bool = False) -> tuple[Path, bool]:
     """Add the breadcrumbs server to `.mcp.json`; other servers stay byte-identical.
 
     Returns (path, changed). Three tiers, safest-first: an already-current entry
@@ -11243,7 +11711,7 @@ def register_mcp(root: Path) -> tuple[Path, bool]:
     formatting; anything else falls back to the parse-validated full rewrite.
     """
     path = root / ".mcp.json"
-    entry = mcp_server_entry()
+    entry = mcp_server_entry(windows=False if portable else None)
     path_policy.check_project_target(path, root)
 
     if path.exists():
@@ -11271,7 +11739,7 @@ def register_mcp(root: Path) -> tuple[Path, bool]:
 
     def _mut(data: dict) -> None:
         servers = data.setdefault("mcpServers", {})
-        servers[MCP_SERVER_NAME] = mcp_server_entry()
+        servers[MCP_SERVER_NAME] = entry
 
     merge_json_file(path, _mut, root=root)
     return path, True
@@ -11322,7 +11790,8 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
     if what == "register":
         root = resolve_root(args.project)
-        path, changed = register_mcp(root)
+        local = bool(getattr(args, "local", False))
+        path, changed = register_mcp(root, portable=local)
         sdk = _mcp_sdk_available()
         summary = {
             "registered": str(path),
@@ -11330,8 +11799,22 @@ def cmd_mcp(args: argparse.Namespace) -> int:
             "changed": changed,
             "sdk_available": sdk,
         }
+        if local:
+            summary["local"] = register_mcp_local(root)
         if args.json:
             _print_json(args, summary)
+        elif local:
+            state = "" if changed else " (already current)"
+            print(f"Registered the portable MCP server '{MCP_SERVER_NAME}' in {path}{state}")
+            res = summary["local"]
+            if res["ok"]:
+                print(f"  and this interpreter at Claude Code's local scope ({sys.executable})")
+            else:
+                print(f"  could not register at local scope: {res['error']}")
+                print("  run this yourself in the project directory:")
+                print("    " + " ".join(shlex.quote(c) for c in res["command"]))
+            if not sdk:
+                print("  note: the MCP SDK isn't installed — run: pip install 'crumb-kit[mcp]'")
         else:
             state = "" if changed else " (already current)"
             print(f"Registered MCP server '{MCP_SERVER_NAME}' in {path}{state}")
@@ -11454,7 +11937,8 @@ def adapter_block() -> str:
                 '  `crumb mark-status q_<slug> answered --reason "…"` (name the decision',
                 "  that answered it), so it stops counting as a live blocker.",
                 '- **Session end:** `crumb capture session --next "<what to do next>"`',
-                '  (add `--set "Decisions Made" "…"` for narrative). Pass `--next`: the bare',
+                '  (add `--set "Decisions Made" "…"` for narrative). `--next` adds an entry',
+                "  above the handoff's earlier ones; nothing is replaced. Pass `--next`: the bare",
                 "  form prompts for each section and cannot be answered without a terminal.",
                 "  If the `Stop` hook is installed, a snapshot is already taken for you.",
                 "",
@@ -11517,6 +12001,12 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         _emit_error(args, result["error"] or "migration failed")
         if result.get("backup"):
             print(f"  the store was backed up first: {result['backup']}", file=sys.stderr)
+        if result.get("dry_run"):
+            print(
+                "  fix each record named above (`crumb mark-status <id> <status> --reason …`"
+                " edits a trap or question block), then preview again.",
+                file=sys.stderr,
+            )
         return 1
     if not result["steps"]:
         print(f"migrate: nothing to do — store is schema_version {result['to']}.")
@@ -11547,10 +12037,146 @@ def cmd_migrate(args: argparse.Namespace) -> int:
             print("Left as they are for you to fix (migration never rewrites them):")
             for code, n in legacy.items():
                 print(f"  {code}: {n}")
+            items = result.get("legacy_items") or []
+            for line in items[:50]:
+                print(f"    {line}")
+            if len(items) > 50:
+                print(f"    … and {len(items) - 50} more (`crumb validate` lists every one)")
         print("\nRe-run without --dry-run to apply.")
     else:
         print(f"\nBackup of the pre-migration store: {result['backup']}")
         print("To undo: crumb migrate --restore")
+    return 0
+
+
+def cmd_rename(args: argparse.Namespace) -> int:
+    """`crumb rename <id> --slug <short>` (field report issue 5)."""
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import lock as _lock
+    from breadcrumbs import mutations as _mutations
+    from breadcrumbs import rename as _rename
+
+    try:
+        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+            result = _rename.rename_record(memory_dir, root, args.record_id, args.slug)
+    except _lock.StoreLocked as exc:
+        _emit_error(args, str(exc))
+        return 1
+    except _mutations.MutationFailed as exc:
+        _emit_error(args, _mutations.describe(exc))
+        return 1
+    if not result.get("ok"):
+        _emit_error(args, result.get("error") or "rename failed")
+        return 1
+    if args.json:
+        _print_json(args, {**result, "items": result["updated"]})
+        return 0
+    print(f"Renamed {result['from']} -> {result['to']}")
+    print(f"  file: {result['path']}")
+    for rel in result["updated"]:
+        print(f"  updated a reference in {rel}")
+    print("  the old id still resolves (kept in `formerly`)")
+    return 0
+
+
+def cmd_handoff(args: argparse.Namespace) -> int:
+    """`crumb handoff trim --keep N` (field report issue 1)."""
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    if getattr(args, "handoff_what", None) != "trim":
+        _emit_error(args, "specify: `crumb handoff trim --keep N`")
+        return 2
+    from breadcrumbs import lock as _lock
+    from breadcrumbs import mutations as _mutations
+    from breadcrumbs import rename as _rename
+
+    try:
+        with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+            result = _rename.trim_handoff(memory_dir, root, max(1, int(args.keep)))
+    except _lock.StoreLocked as exc:
+        _emit_error(args, str(exc))
+        return 1
+    except _mutations.MutationFailed as exc:
+        _emit_error(args, _mutations.describe(exc))
+        return 1
+    if not result.get("ok"):
+        _emit_error(args, result.get("error") or "trim failed")
+        return 1
+    if args.json:
+        _print_json(args, result)
+    elif not result["moved"]:
+        print(f"handoff trim: {result['kept']} entr(ies); nothing to move.")
+    else:
+        print(
+            f"handoff trim: kept the newest {result['kept']}; moved {result['moved']} to "
+            f"{result['history']} (nothing deleted)."
+        )
+    if result.get("moved"):
+        reindex_projections(memory_dir, root)
+    return 0
+
+
+def cmd_repair(args: argparse.Namespace) -> int:
+    """`crumb repair [--apply] [--set ID.FIELD=VALUE]` (field report issue 12)."""
+    root = resolve_root(args.project)
+    memory_dir = root / MEMORY_DIRNAME
+    if not memory_dir.is_dir():
+        _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
+        return 2
+    from breadcrumbs import lock as _lock
+    from breadcrumbs import repair as _repair
+
+    planned = _repair.plan(memory_dir, root, _repair.parse_sets(getattr(args, "set", None)))
+    needs = [n for p in planned for n in p["needs"]]
+    proposals = [x for p in planned for x in p["proposals"]]
+    result: dict = {"applied": False, "written": [], "skipped": []}
+    if args.apply and any(p["changes"] for p in planned):
+        try:
+            with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
+                result = {"applied": True, **_repair.apply(memory_dir, root, planned)}
+        except _lock.StoreLocked as exc:
+            _emit_error(args, str(exc))
+            return 1
+    if args.json:
+        items = [
+            {"id": p["id"], "path": p["rel"], "changes": p["changes"], "needs": p["needs"]}
+            for p in planned
+        ]
+        _print_json(
+            args,
+            {**result, "items": items, "needs": needs, "proposals": proposals},
+        )
+        return 0
+    if not planned:
+        print("repair: nothing to repair — every record meets the contract.")
+        return 0
+    verb = "repaired" if result["applied"] else "would repair"
+    print(f"repair: {verb} {sum(1 for p in planned if p['changes'])} record(s)")
+    for p in planned:
+        if not p["changes"]:
+            continue
+        print(f"  {p['rel']}")
+        for c in p["changes"]:
+            print(f"      {c}")
+    for s in result.get("skipped") or []:
+        print(f"  not written (would add a validate failure): {s['id']}: {s['reason']}")
+    if needs:
+        print("\nNeeds a person (repair never guesses these):")
+        for n in needs:
+            print(f"  {n}")
+    if proposals:
+        print("\nEvidence you could add (`crumb verify` / `remember --supersedes`):")
+        for x in proposals:
+            print(f"  {x}")
+    if not result["applied"]:
+        print("\nRe-run with --apply to write the changes.")
     return 0
 
 
@@ -11763,6 +12389,24 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     from breadcrumbs import inbox as _inbox
 
     what = getattr(args, "inbox_what", None)
+
+    if what == "import":
+        result = _inbox.import_drafts(memory_dir, root, agent=getattr(args, "agent", None))
+        if args.json:
+            _print_json(args, {**result, "items": result["imported"] + result["kept"]})
+            return 1 if result["failed"] else 0
+        done = result["imported"] + result["kept"]
+        if not done and not result["failed"]:
+            print("inbox import: no drafts in inbox/drafts/.")
+            return 0
+        for e in result["imported"]:
+            print(f"  {e['draft']} -> {e['id']} (draft removed)")
+        for e in result["kept"]:
+            print(f"  {e['draft']} -> {e['id']} (draft kept: longer than a jot holds)")
+        for e in result["failed"]:
+            print(f"  {e['draft']}: not imported: {e['error']}")
+        print("Promote what is durable: `crumb inbox promote <id> decision|attempt|trap|…`.")
+        return 1 if result["failed"] else 0
 
     if what == "promote":
         result = _inbox.promote_jot(
@@ -12631,6 +13275,29 @@ def doctor_report(root: Path) -> dict:
             else f"{len(failures)} validation failure(s) (first: {failures[0]['message']}) "
             "— run `crumb validate`; an older store layout is fixed by `crumb migrate`",
         )
+        from breadcrumbs import handoffs as _handoffs
+        from breadcrumbs import rename as _rename
+
+        too_long = _rename.long_record_paths(root, memory_dir, RECORD_PATH_WARN_CHARS)
+        if too_long:
+            rel, n = too_long[0]
+            add(
+                "path_length",
+                False,
+                f"{len(too_long)} store path(s) longer than {RECORD_PATH_WARN_CHARS} characters "
+                f"(longest {n}: {rel}); with a Windows checkout path that passes the 260 "
+                "limit — shorten with `crumb rename <id> --slug <short>`",
+            )
+        handoff_text, _p, handoff_path = _handoffs.read_text(memory_dir, root)
+        next_len = len(split_md_sections(handoff_text or "").get("Next Action", ""))
+        if next_len > NEXT_ACTION_LOG_WARN_CHARS:
+            add(
+                "next_action_log",
+                False,
+                f"the handoff's Next Action is {next_len} characters "
+                f"({len(split_next_entries(split_md_sections(handoff_text).get('Next Action', '')))}"
+                " entries); `crumb handoff trim --keep 10` moves the older ones to a history file",
+            )
         degraded = _related.load_degraded(memory_dir)
         if degraded:
             add(
@@ -12781,6 +13448,23 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
             f"\n{summary['locked']} writing hook firing(s) skipped because another "
             "writer held the store lock."
         )
+    guard_p50 = (summary["events"].get("guard") or {}).get("ms_p50")
+    if isinstance(guard_p50, (int, float)) and guard_p50 > HOOK_GUARD_BUDGET_MS:
+        print(
+            f"\nguard p50 {guard_p50:.0f} ms is over the {HOOK_GUARD_BUDGET_MS} ms budget for a "
+            "hook on every tool call. `prefilter: unverified` above means the pre-filter was "
+            "out of date (run `crumb reindex`); otherwise see docs/field-test.md."
+        )
+    if summary.get("incompatible"):
+        print(
+            f"{summary['incompatible']} writing hook firing(s) refused: the store needs a "
+            "newer crumb-kit than this one (see `crumb doctor`)."
+        )
+    if summary.get("snapshot_failed"):
+        print(
+            f"{summary['snapshot_failed']} Stop-hook snapshot(s) failed; the log line's "
+            "`snapshot_error` says why."
+        )
     print(
         f"\nLocal to this machine ({rel}, never committed; counts and verdicts "
         "only). See docs/field-test.md."
@@ -12850,9 +13534,15 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     if _names_command(_command_tokens(action), idx.get("commands") or ()):
         return True
     q_specific = _specific(action)
-    idx_tokens = {_stem(str(t)) for t in (idx.get("tokens") or ())}
-    if len(q_specific & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
-        return True
+    sets = idx.get("token_sets")
+    if isinstance(sets, list):
+        for words in sets:
+            if len(q_specific & {_stem(str(t)) for t in words}) >= GUARD_MIN_KEYWORD_OVERLAP:
+                return True
+    else:
+        idx_tokens = {_stem(str(t)) for t in (idx.get("tokens") or ())}
+        if len(q_specific & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
+            return True
     if len(q_specific) == 1 and q_specific <= {_stem(str(t)) for t in (idx.get("titles") or ())}:
         return True
     if q_specific & {_stem(str(t)) for t in (idx.get("tags") or ())}:
@@ -12860,6 +13550,24 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
     index_paths = _norm_files(idx.get("paths") or ())
     return bool(action_paths & index_paths)
+
+
+def _prefilter_exact_hit(memory_dir: Path, action: str, files: list[str] | None) -> bool:
+    """Does a verified pre-filter say a record names this exact command or a
+    path it touches? True (run full guard) when the pre-filter is unverified."""
+    from breadcrumbs import projections as _projections
+
+    raw = _projections.verified(memory_dir, Path(memory_dir).parent, GUARD_PREFILTER_FILENAME)
+    try:
+        idx = json.loads(raw.decode("utf-8")) if raw is not None else None
+    except ValueError:
+        idx = None
+    if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
+        return True
+    if _names_command(_command_tokens(action), idx.get("commands") or ()):
+        return True
+    action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
+    return bool(action_paths & _norm_files(idx.get("paths") or ()))
 
 
 # How much of an edit's new content, and of a subagent's launch prompt, feeds
@@ -13070,10 +13778,40 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
     return text + "\n\n"
 
 
+def _record_session_start(memory_dir: Path, root: Path, payload: dict) -> None:
+    """Remember the HEAD this session starts from — the Stop hook counts this
+    session's commits from it (field report 2026-10-01, issue 2). A resumed or
+    compacted session keeps its original start. Never raises."""
+    try:
+        from breadcrumbs import hooks_common
+
+        head = _git_out(root, "rev-parse", "HEAD") if is_git_repo(root) else None
+        if head:
+            hooks_common.set_session_baseline(
+                memory_dir, hooks_common.session_id_of(payload), head, keep_existing=True
+            )
+    except Exception:  # pragma: no cover - a SessionStart hook must never fail
+        pass
+    # A `git pull` or checkout since the last crumb write leaves the guard
+    # pre-filter unverified, and then every tool call pays a full guard run
+    # until something writes (field report 2026-10-01, issue 6: "prefilter:
+    # unverified" on most firings). Republish once here, where one slow firing
+    # per session is affordable; skip if another writer holds the lock.
+    try:
+        from breadcrumbs import lock as _lock
+        from breadcrumbs import projections as _projections
+
+        if _projections.verified(memory_dir, root, GUARD_PREFILTER_FILENAME) is None:
+            try_reindex_projections(memory_dir, root, lock_timeout=_lock.HOOK_TIMEOUT)
+    except Exception:  # pragma: no cover - best-effort
+        pass
+
+
 def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> int:
     out: dict = {}
     payload = payload or {}
     if memory_dir.is_dir():
+        _record_session_start(memory_dir, root, payload)
         try:
             # `source` says why this SessionStart fired. Absent on older harness
             # versions, which is `startup` for every practical purpose.
@@ -13124,6 +13862,26 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
     return 0
 
 
+# The guard hook's budget for its p50 on the common path (field report
+# 2026-10-01, issue 6). `doctor --hook-log` says when a machine is over it.
+HOOK_GUARD_BUDGET_MS = 300
+
+
+def _outside_project(path: str, root: Path) -> bool:
+    """Is `path` (as a tool call names it) outside the project root?"""
+    try:
+        p = Path(os.path.expanduser(str(path)))
+        # Relative paths are the project's. An absolute path counts as outside
+        # only when its directory really exists elsewhere — a path-shaped name
+        # that is no directory on this machine (`/api/orders`) is not a claim
+        # about the filesystem, so it is still matched.
+        if not p.is_absolute() or not p.parent.is_dir():
+            return False
+        return not p.resolve().is_relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return False
+
+
 def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     if not memory_dir.is_dir():
         print(json.dumps({}))
@@ -13140,15 +13898,33 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     if not action:
         print(json.dumps({}))
         return 0
+    # An edit to a file outside the project (the agent's own memory folder, a
+    # scratch file) is not this store's business: a project trap about
+    # `handoff.md` fired on ~/.claude/…/memory/handoff.md (issue 7b).
+    if files and all(_outside_project(f, root) for f in files):
+        _hooklog.note(skipped="outside-project")
+        print(json.dumps({}))
+        return 0
     # Cost-aware pre-filter: pure-string classify + risk regex on the common
     # path, plus one read of the reindex-time trap-token index so
     # trap-shaped routine commands escalate too. Only a plausibly-risky action
     # escalates to full guard scoring.
     _primary, classes = classify_action(action)
+    # A read-only command (every segment) is guarded only for memory about
+    # *it*: a trap naming the exact command, or a record about a path it
+    # touches. Shared vocabulary alone cannot raise it past READ_FIRST, and
+    # was the bulk of the field's "a warning on every command" (issue 7).
+    if _is_read_only_action(action) and not _prefilter_exact_hit(memory_dir, action, files):
+        _hooklog.note(skipped="read-only")
+        print(json.dumps({}))
+        return 0
     risky = (
         classes != ["routine_edit"]
         or bool(_HOOK_RISK_RE.search(action))
-        or _prefilter_trap_hit(memory_dir, action, files)
+        or bool(_shellcmd.high_impact(action))
+        or _prefilter_trap_hit(
+            memory_dir, action, list(files or []) + _shellcmd.crumb_writes(action, MEMORY_DIRNAME)
+        )
     )
     if not risky:
         _hooklog.note(skipped="prefilter")
@@ -13296,9 +14072,26 @@ def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
     recorded = rec.meta.get("dirty_files")
     if not isinstance(recorded, list):
         return False
-    if (rec.meta.get("commit") or "") != git_commit(root):
+    if not _same_commit(rec.meta.get("commit") or "", git_commit(root)):
         return False
-    return _work_dirty_files(recorded) == _work_dirty_files(git_dirty_files(root))
+    # The record holds the capped list (`derive_fields`), so compare with the
+    # live list capped the same way: comparing a capped list with an uncapped
+    # one made every firing with more than DIRTY_FILES_MAX dirty files look
+    # like new work, and re-snapshot every turn (field report 2026-10-01, N5).
+    live = _cap_dirty_files(git_dirty_files(root, include_memory=False))
+    return _work_dirty_files(recorded) == _work_dirty_files(live)
+
+
+def _same_commit(a: str, b: str) -> bool:
+    """Two commit ids name the same commit, whatever their abbreviation length.
+
+    Short shas are compared as strings across machines, where `core.abbrev` or
+    a grown object count can make one longer than the other (N8)."""
+    a, b = (a or "").strip(), (b or "").strip()
+    if not a or not b or NO_GIT_COMMIT in (a, b):
+        return a == b
+    n = min(len(a), len(b))
+    return n >= 7 and a[:n] == b[:n]
 
 
 def _extraction_enabled(memory_dir: Path) -> bool:
@@ -13315,12 +14108,82 @@ def _extraction_enabled(memory_dir: Path) -> bool:
 EXTRACTION_MAX_COMMITS_SHOWN = 5
 
 
+# A commit authored this long before the session started is not the session's
+# work (a fast-forward `git pull` of other people's commits); the margin
+# absorbs clock skew between the commit's machine and this one.
+EXTRACTION_AUTHOR_MARGIN_SECONDS = 120
+
+
+def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]:
+    """One-line subjects of the commits this session made since it was last asked.
+
+    Counted from the HEAD the session started on (SessionStart records it), not
+    from the newest session record in the store, which may be another session's
+    or another machine's from days ago (field report 2026-10-01, issue 2).
+
+    - No baseline yet (SessionStart not installed, or a session that predates
+      it): this firing records one and asks nothing.
+    - HEAD is not a descendant of the baseline (a checkout, a reset, a
+      rebase): re-baseline silently; there is no honest range to list.
+    - Commits that touch only the memory store, and commits authored before
+      the session started (pulled history), are not the session's work.
+
+    The caller advances the baseline to HEAD once it has asked, so the same
+    commits are never asked about twice, whatever the agent then does (issue 3).
+    """
+    from breadcrumbs import hooks_common
+
+    if not is_git_repo(root):
+        return []
+    head = _git_out(root, "rev-parse", "HEAD")
+    if not head:
+        return []
+    entry = hooks_common.session_baseline(memory_dir, session_id)
+    base = entry.get("head")
+    if not base:
+        hooks_common.set_session_baseline(memory_dir, session_id, head)
+        return []
+    if base == head:
+        return []
+    if _git_out(root, "merge-base", "--is-ancestor", base, head) is None:
+        hooks_common.set_session_baseline(memory_dir, session_id, head)
+        return []
+    out = _git_out(
+        root,
+        "log",
+        "--no-decorate",
+        "--format=%at %h %s",
+        f"{base}..{head}",
+        "--",
+        ".",
+        f":(exclude){MEMORY_DIRNAME}",
+    )
+    started = _epoch(entry.get("started_at"))
+    lines: list[str] = []
+    for line in (out or "").splitlines():
+        stamp, _, rest = line.strip().partition(" ")
+        if not rest:
+            continue
+        if started is not None and stamp.isdigit():
+            if int(stamp) < started - EXTRACTION_AUTHOR_MARGIN_SECONDS:
+                continue
+        lines.append(rest)
+    return lines
+
+
+def _epoch(stamp) -> int | None:
+    from breadcrumbs import validation as _validation
+
+    when = _validation.parse_timestamp(stamp) if stamp else None
+    return int(when.timestamp()) if when is not None else None
+
+
 def _extraction_commits(memory_dir: Path, root: Path) -> list[str]:
     """One-line subjects for commits since the last session record.
 
-    Empty means "do not prompt": nothing new, no git, or no prior session
-    record — the first firing in a store takes the baseline snapshot silently
-    instead of interrogating the agent about pre-existing history.
+    Superseded on the Stop hook by `_session_commits` (per-session baseline);
+    kept for callers that ask about the store as a whole. Empty means nothing
+    new, no git, or no prior session record.
     """
     last = _last_session_commit(memory_dir)
     if not last:
@@ -13376,9 +14239,9 @@ def _extraction_reason(commits: list[str], session_jots: list[dict] | None = Non
         # describe work it never did. The instruction below scopes recording to
         # the session's own work.
         parts.append(
-            f"breadcrumbs: {len(commits)} new commit(s) landed since the last recorded "
-            f"session (this turn's work, or another actor's if the workspace is "
-            f"shared):\n{listing}"
+            f"breadcrumbs: {len(commits)} new commit(s) since this session started "
+            f"(or since it was last asked) — this session's work, or another actor's "
+            f"if the workspace is shared:\n{listing}"
         )
     else:
         parts.append(
@@ -13410,9 +14273,11 @@ def _extraction_reason(commits: list[str], session_jots: list[dict] | None = Non
         "A write refused with exit 3 is a near-duplicate: pass `--supersedes <id>` "
         "to replace that record, or `--allow-duplicate` to keep both.\n"
         'Finish with `crumb capture session --next "<the next concrete action — cite '
-        'a commit sha or file so the claim stays checkable>"`. '
+        'a commit sha or file so the claim stays checkable>"`; it adds an entry above '
+        "the handoff's earlier ones and replaces nothing. "
         "Record durable facts only — routine work needs no records; if nothing "
-        "durable happened, run just the final capture command."
+        "durable happened, run just the final capture command. You will not be "
+        "asked about these commits again."
     )
     return "\n".join(parts)
 
@@ -13447,14 +14312,18 @@ def _session_jot_rows(memory_dir: Path, session_id: str) -> list[dict]:
         return []
 
 
-def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> None:
+def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> str:
     """The machine snapshot: the same --fast path the CLI uses (diff-stat already
     summarized). The Next Action is placeholder text (`_is_placeholder` knows
     it), so this capture cannot clobber a Next Action / Focus a human set.
 
     `host_session` is the harness's session id from the Stop payload. It is what
     lets the second and later firings of one session update the first firing's
-    snapshot instead of stacking a new record beside it (F-6)."""
+    snapshot instead of stacking a new record beside it (F-6).
+
+    Returns `"ok"` or `"failed: <why>"` for the hook log. It used to swallow
+    every failure, so a snapshot that never landed looked like one that did
+    (field report 2026-10-01, issue 3)."""
     import argparse
 
     ns = argparse.Namespace(
@@ -13473,11 +14342,16 @@ def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> None:
         agent=detect_agent(fallback="agent"),
         capture_what="session",
     )
+    err = io.StringIO()
     try:
-        with contextlib.redirect_stdout(io.StringIO()):
-            cmd_capture_session(ns)
-    except Exception:  # pragma: no cover - a capture failure must not block Stop
-        pass
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = cmd_capture_session(ns)
+    except Exception as exc:  # a capture failure must not block Stop — but it is logged
+        return f"failed: {type(exc).__name__}: {exc}"[:200]
+    if code != 0:
+        detail = " ".join(err.getvalue().split())
+        return f"failed: exit {code}" + (f": {detail}" if detail else "")[:200]
+    return "ok"
 
 
 def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
@@ -13514,16 +14388,20 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     host_session = str(payload.get("session_id") or "") or None
     if payload.get("stop_hook_active"):
         if not redundant:
-            _hook_capture_snapshot(root, host_session)
-            _hooklog.note(snapshot=True)
+            _note_snapshot(_hook_capture_snapshot(root, host_session))
         print(json.dumps({}))
         return 0
+    try:
+        # Always computed, so the first firing of a session records where it
+        # started even when this firing is otherwise silent.
+        commits = _session_commits(memory_dir, root, session_key)
+    except Exception:  # pragma: no cover - the prompt degrades to jots-only
+        commits = []
     if redundant:
         _hooklog.note(redundant=True)
         print(json.dumps({}))
         return 0
     if _extraction_enabled(memory_dir):
-        commits = _extraction_commits(memory_dir, root)
         # Candidates this session produced that have not already been offered.
         # Re-offering a jot the agent declined, every turn until it expires, is
         # exactly the fatigue that makes an agent start ignoring the prompt.
@@ -13539,13 +14417,29 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
             hooks_common.record_extraction_asked(
                 memory_dir, session_key, [j["id"] for j in jots[:EXTRACTION_MAX_JOTS_SHOWN]]
             )
-            _hooklog.note(offered=len(jots[:EXTRACTION_MAX_JOTS_SHOWN]))
+            # Asked once: these commits are never asked about again, whether
+            # or not the agent's capture (or the continuation's snapshot)
+            # then lands. Without this a failed snapshot re-asked every turn.
+            head = _git_out(root, "rev-parse", "HEAD")
+            if head:
+                hooks_common.set_session_baseline(memory_dir, session_key, head)
+            _hooklog.note(offered=len(jots[:EXTRACTION_MAX_JOTS_SHOWN]), commits=len(commits))
             print(json.dumps({"decision": "block", "reason": _extraction_reason(commits, jots)}))
             return 0
-    _hook_capture_snapshot(root, host_session)
-    _hooklog.note(snapshot=True)
+    _note_snapshot(_hook_capture_snapshot(root, host_session))
     print(json.dumps({}))
     return 0
+
+
+def _note_snapshot(status: str) -> None:
+    """Log a Stop-hook snapshot as `ok` or `failed` (with why) — never claim one
+    that did not land."""
+    from breadcrumbs import hooklog as _hooklog
+
+    if status == "ok":
+        _hooklog.note(snapshot="ok")
+    else:
+        _hooklog.note(snapshot="failed", snapshot_error=status.removeprefix("failed: "))
 
 
 def cmd_hook(args: argparse.Namespace) -> int:
@@ -13568,8 +14462,12 @@ def cmd_hook(args: argparse.Namespace) -> int:
         # Everything a hook does runs in one application context on the hook
         # channel (audit F18, WP16): admission, the store's aliases, one parse
         # cache for the firing.
-        with _service.active(_service.Context(root, memory_dir, "hook")):
-            return _run_hook(event, memory_dir, root, payload)
+        before = GIT_CALLS[0]
+        try:
+            with _service.active(_service.Context(root, memory_dir, "hook")):
+                return _run_hook(event, memory_dir, root, payload)
+        finally:
+            _hooklog.note(git=GIT_CALLS[0] - before)
 
     return _hooklog.run_logged(event, memory_dir, payload, handler, now_iso)
 
@@ -13591,10 +14489,16 @@ def _run_hook(event: str, memory_dir: Path, root: Path, payload: dict) -> int:
     try:
         with _lock.store_lock(memory_dir, timeout=_lock.HOOK_TIMEOUT):
             return _dispatch_writing_hook(event, memory_dir, root, payload)
-    except _lock.StoreLocked:
+    except _lock.StoreLocked as exc:
         from breadcrumbs import hooklog as _hooklog
 
-        _hooklog.note(outcome="locked")
+        # An incompatible store is a StoreLocked too, but it is not busy — it
+        # will refuse every firing until crumb-kit is upgraded. Logging it as
+        # "locked" hid why the Stop hook went quiet (field report, N6).
+        if isinstance(exc, getattr(_lock, "IncompatibleStore", ())):
+            _hooklog.note(outcome="incompatible", reason=str(exc)[:200])
+        else:
+            _hooklog.note(outcome="locked")
         print("{}")
         return 0
 
@@ -13941,6 +14845,7 @@ def _unknown_hook_event(argv: list[str]) -> str | None:
 
 def main(argv: list[str] | None = None) -> int:
     configure_output()
+    configure_stream_encoding(sys.stderr)
     raw = sys.argv[1:] if argv is None else list(argv)
     if requested_command(raw) == "hook":
         unknown = _unknown_hook_event(raw)
@@ -13969,8 +14874,11 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError) as exc:
         # Expected, user-facing failures (missing template/package, permissions,
         # unrepresentable values) surface as a clean error + nonzero exit rather
-        # than a raw traceback. Programming errors still propagate.
-        _emit_error(args, str(exc))
+        # than a raw traceback. Programming errors still propagate. A failed
+        # copy (`shutil.Error`) is described file by file, not as a raw list.
+        _emit_error(
+            args, path_policy.describe_copy_error(exc) if isinstance(exc, OSError) else str(exc)
+        )
         return 1
 
 

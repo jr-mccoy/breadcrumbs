@@ -317,6 +317,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pq.add_argument("--title", help="the question (alias for the positional, as on `remember`)")
     pq.add_argument("--why", help="why it matters / what is blocked")
     pq.add_argument("--needs", help="human input | investigation | a decision")
+    pq.add_argument("--tags", help="comma-separated tags")
     pq.add_argument(
         "--status",
         default="open",
@@ -335,6 +336,7 @@ def _add_note(sub, global_parser: argparse.ArgumentParser) -> None:
     pt.add_argument("--why", help="the mechanism, not vibes")
     pt.add_argument("--safe", help="the safe approach to use instead")
     pt.add_argument("--verify", help="a command that proves it is OK")
+    pt.add_argument("--tags", help="comma-separated tags")
     _add_duplicate_flags(pt)
     pt.set_defaults(func=cli.cmd_note)
 
@@ -660,7 +662,20 @@ def _add_capture(sub, global_parser: argparse.ArgumentParser) -> None:
         "--fast", action="store_true", help="git snapshot + --next only; no prompts, no LLM"
     )
     p_session.add_argument(
-        "--next", dest="next_action", help="the Next Action (required on --fast)"
+        "--next",
+        dest="next_action",
+        help="the Next Action (required on --fast); added as a dated entry above the "
+        "handoff's earlier ones, which are kept",
+    )
+    p_session.add_argument(
+        "--recent",
+        help="a note for current.md's Recently Changed, added above what is there",
+    )
+    p_session.add_argument(
+        "--replace",
+        action="store_true",
+        help="overwrite the handoff's Next Action (and Recently Changed, with --recent) "
+        "instead of adding to it; the replaced text is kept in the session record",
     )
     p_session.add_argument("--title", help="session topic (default: 'session')")
     p_session.add_argument(
@@ -848,6 +863,13 @@ def _add_mcp(sub, global_parser: argparse.ArgumentParser) -> None:
         parents=[global_parser],
         help="add the breadcrumbs server to .mcp.json (preserves other servers)",
     )
+    p_mcp_register.add_argument(
+        "--local",
+        action="store_true",
+        help="keep the committed .mcp.json portable (`breadcrumbs-mcp`) and register this "
+        "machine's interpreter (`<python> -m breadcrumbs mcp serve`) at Claude Code's local "
+        "scope, which overrides it here only — for a repo shared across machines",
+    )
     p_mcp_register.set_defaults(func=cli.cmd_mcp, mcp_what="register")
     p_mcp_doctor = mcp_sub.add_parser(
         "doctor",
@@ -881,6 +903,53 @@ def _add_migrate(sub, global_parser: argparse.ArgumentParser) -> None:
         "(default: the interrupted migration's backup, else the newest)",
     )
     p.set_defaults(func=cli.cmd_migrate)
+
+
+# rename — shorten a record's file name; handoff trim — move old entries
+def _add_rename(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "rename",
+        parents=[global_parser],
+        help="give a record a shorter file name (and id); references are updated and the "
+        "old id still resolves",
+    )
+    p.add_argument("record_id", metavar="ID", help="the record to rename")
+    p.add_argument("--slug", required=True, help="the new slug: lowercase words and hyphens")
+    p.set_defaults(func=cli.cmd_rename)
+
+
+def _add_handoff(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "handoff", parents=[global_parser], help="maintain the handoff's Next Action log"
+    )
+    p.set_defaults(func=cli.cmd_handoff, handoff_what=None)
+    hs = p.add_subparsers(dest="handoff_what", metavar="<what>")
+    pt = hs.add_parser(
+        "trim",
+        parents=[global_parser],
+        help="move all but the newest N Next Action entries to a history file (none deleted)",
+    )
+    pt.add_argument("--keep", type=int, default=10, help="entries to keep (default 10)")
+    pt.set_defaults(func=cli.cmd_handoff, handoff_what="trim")
+
+
+# repair — assisted repair of records that break the record contract
+def _add_repair(sub, global_parser: argparse.ArgumentParser) -> None:
+    p = sub.add_parser(
+        "repair",
+        parents=[global_parser],
+        help="fill in what can be derived for records that fail validation (hand-written "
+        "ones), map legacy values, and list what needs a person; --apply writes",
+    )
+    p.add_argument("--apply", action="store_true", help="write the changes (default: preview)")
+    p.add_argument(
+        "--set",
+        action="append",
+        metavar="ID.FIELD=VALUE",
+        help="supply a value repair will not guess, e.g. ver_20260920_x.outcome=fixed "
+        "(repeatable; only `outcome` is accepted today)",
+    )
+    p.set_defaults(func=cli.cmd_repair)
 
 
 # usage — local surfacing counts
@@ -1015,6 +1084,14 @@ def _add_inbox(sub, global_parser: argparse.ArgumentParser) -> None:
     pp.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="author"))
     pp.set_defaults(func=cli.cmd_inbox, all=False, expired=False)
 
+    pi = inbox_sub.add_parser(
+        "import",
+        parents=[global_parser],
+        help="turn notes left in inbox/drafts/ (by an agent without the CLI) into jots",
+    )
+    pi.add_argument("--agent", default=None, help=_AGENT_FLAG_HELP.format(what="importer"))
+    pi.set_defaults(func=cli.cmd_inbox, all=False, expired=False)
+
     pd = inbox_sub.add_parser(
         "drop", parents=[global_parser], help="retire a jot as noise (kept as history)"
     )
@@ -1122,6 +1199,9 @@ _SUBCOMMAND_BUILDERS: dict[str, object] = {
     "prune": _add_prune,
     "rollup": _add_rollup,
     "migrate": _add_migrate,
+    "repair": _add_repair,
+    "rename": _add_rename,
+    "handoff": _add_handoff,
     "usage": _add_usage,
     "reindex": _add_reindex,
     "recover": _add_recover,

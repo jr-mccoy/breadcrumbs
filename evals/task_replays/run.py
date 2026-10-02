@@ -63,6 +63,19 @@ def _env() -> dict:
     env = {k: v for k, v in os.environ.items() if k not in AGENT_MARKERS}
     # The replay's git ignores the machine's config (signing, default branch).
     env.update({"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "USER": "replay"})
+    # No background maintenance: newer git (2.47+) detaches `git maintenance
+    # run --auto` after a commit, and a detached run still writing into
+    # .git/objects made the temporary repo's cleanup fail ("Directory not
+    # empty") on CI's git 2.55.
+    env.update(
+        {
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "maintenance.auto",
+            "GIT_CONFIG_VALUE_0": "false",
+            "GIT_CONFIG_KEY_1": "gc.auto",
+            "GIT_CONFIG_VALUE_1": "0",
+        }
+    )
     return env
 
 

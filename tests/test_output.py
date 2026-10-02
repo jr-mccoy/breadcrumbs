@@ -160,3 +160,31 @@ class ErrorVisibilityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WindowsPipeEncodingTests(unittest.TestCase):
+    """Field report 2026-10-01, issue 13: under Git Bash an em dash printed as
+    `�`, because a non-console stream on Windows used cp1252 (byte 0x97)."""
+
+    def _stream(self, tty: bool):
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding="cp1252", newline="")
+        stream.isatty = lambda: tty  # type: ignore[method-assign]
+        return raw, stream
+
+    def test_a_windows_pipe_is_written_as_utf8(self):
+        raw, stream = self._stream(tty=False)
+        _cli.configure_stream_encoding(stream, windows=True)
+        stream.write("crumb doctor — integration health")
+        stream.flush()
+        self.assertIn("—".encode("utf-8"), raw.getvalue())
+
+    def test_a_windows_console_is_left_alone(self):
+        raw, stream = self._stream(tty=True)
+        _cli.configure_stream_encoding(stream, windows=True)
+        self.assertEqual(stream.encoding.lower(), "cp1252")
+
+    def test_elsewhere_the_encoding_is_left_alone(self):
+        raw, stream = self._stream(tty=False)
+        _cli.configure_stream_encoding(stream, windows=False)
+        self.assertEqual(stream.encoding.lower(), "cp1252")

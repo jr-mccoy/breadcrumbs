@@ -47,6 +47,11 @@ def default_branch(root: Path) -> str | None:
     `handoff.md` as it always did.
     """
     root = Path(root)
+    # Asked several times per guard firing; one answer per operation (issue 6).
+    return cli.op_memo(("default_branch", str(root)), lambda: _default_branch(root))
+
+
+def _default_branch(root: Path) -> str | None:
     if not cli.is_git_repo(root):
         return None
     ref = cli._git_out(root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")

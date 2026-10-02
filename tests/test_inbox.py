@@ -389,6 +389,50 @@ class PromoteTests(unittest.TestCase):
             )
             self.assertEqual(ibx.find_jot(mem, rid).meta["status"], "superseded")
 
+    def test_promote_to_a_trap_keeps_the_jots_tags_and_adds_new_ones(self):
+        # Field report 2026-10-01, N1: the trap came out with `tags: []`.
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            rid = jot(tmp, "robolectric KeyStore init kills the test class", "--tags", "keystore")
+            code, out = run(
+                ["inbox", "promote", rid, "trap", "--project", tmp, "--tags", "robolectric"]
+            )
+            self.assertEqual(code, 0, out)
+            trap = next(t for t in crumb.load_traps(mem) if "keystore" in t["heading"].lower())
+            self.assertEqual(sorted(trap["tags"]), ["keystore", "robolectric"])
+            meta, _ = crumb.parse_frontmatter(trap["record_path"].read_text())
+            self.assertEqual(sorted(meta["tags"]), ["keystore", "robolectric"])
+
+    def test_note_trap_and_question_take_tags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            code, out = run(
+                [
+                    "note",
+                    "trap",
+                    "gradlew stop kills live builds",
+                    "--project",
+                    tmp,
+                    "--tags",
+                    "gradle,daemon",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            code, out = run(
+                [
+                    "note",
+                    "question",
+                    "should the daemon be shared?",
+                    "--project",
+                    tmp,
+                    "--tags",
+                    "gradle",
+                ]
+            )
+            self.assertEqual(code, 0, out)
+            self.assertEqual(sorted(crumb.load_traps(mem)[0]["tags"]), ["daemon", "gradle"])
+            self.assertEqual(crumb.load_open_questions(mem)[0]["tags"], ["gradle"])
+
     def test_promote_to_a_verification(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
@@ -574,3 +618,44 @@ class McpTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class DraftImportTests(unittest.TestCase):
+    """Field report 2026-10-01, issue 12: an agent without the CLI hand-wrote
+    records that failed validation. Drafts are the sanctioned alternative."""
+
+    def test_a_short_draft_becomes_a_jot_and_is_removed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            drafts = mem / "inbox" / "drafts"
+            drafts.mkdir(parents=True)
+            (drafts / "2026-09-20-zebra.md").write_text(
+                "# Zebra cache race\n\nFixed by the lock.\n"
+            )
+            self.assertEqual(
+                [
+                    f
+                    for f in crumb.run_validate(mem)
+                    if f["status"] == "fail" and "drafts" in f["path"]
+                ],
+                [],
+            )
+            code, out = run(["inbox", "import", "--project", tmp, "--json"])
+            self.assertEqual(code, 0, out)
+            doc = json.loads(out)
+            self.assertEqual(len(doc["imported"]), 1)
+            self.assertFalse((drafts / "2026-09-20-zebra.md").exists())
+            jot = ibx.find_jot(mem, doc["imported"][0]["id"])
+            self.assertIn("Fixed by the lock", jot.body)
+
+    def test_a_long_draft_is_kept_and_cited(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            drafts = mem / "inbox" / "drafts"
+            drafts.mkdir(parents=True)
+            long = "word " * 400
+            (drafts / "long.md").write_text(f"# Long note\n\n{long}\n")
+            code, out = run(["inbox", "import", "--project", tmp, "--json"])
+            doc = json.loads(out)
+            self.assertEqual(len(doc["kept"]), 1)
+            self.assertTrue((drafts / "long.md").exists())

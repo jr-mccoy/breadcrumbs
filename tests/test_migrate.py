@@ -318,3 +318,189 @@ class MigrateCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class LegacyBlockTests(unittest.TestCase):
+    """Field report 2026-10-01, issue 4 / N2: a dry run said "would apply 3
+    step(s)", then step 3 failed on hand-written trap statuses; a duplicate trap
+    id was silently dropped."""
+
+    def _store(self, tmp: str, traps: str = "", questions: str = "") -> Path:
+        sys.path.insert(0, str(REPO_ROOT / "tests"))
+        from _schema2 import downgrade_to_schema2
+
+        mem = downgrade_to_schema2(init_store(tmp))
+        if traps:
+            with open(mem / "known-traps.md", "a", encoding="utf-8") as fh:
+                fh.write("\n" + traps)
+        if questions:
+            with open(mem / "open-questions.md", "a", encoding="utf-8") as fh:
+                fh.write("\n" + questions)
+        return mem
+
+    FIELD_TRAPS = (
+        "## trap_fixed-one: an old trap someone fixed\n- Why: w\n- Status: fixed\n\n"
+        "## trap_resolved-one: another\n- Why: w\n"
+        "- Status: resolved 2026-09-18 — we rewrote the loader in PR 41\n"
+    )
+
+    def test_field_statuses_are_mapped_and_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._store(tmp, self.FIELD_TRAPS)
+            preview = mig.migrate(mem, Path(tmp), dry_run=True)
+            self.assertTrue(preview["ok"], preview["error"])
+            lines = [ln for st in preview["steps"] for ln in st["changed"]]
+            self.assertTrue(any("trap_fixed-one" in ln and "-> stale" in ln for ln in lines))
+            self.assertTrue(any("known-traps.md:" in ln for ln in lines))
+            self.assertEqual(mig.store_schema_version(mem), 2)  # preview changed nothing
+            result = mig.migrate(mem, Path(tmp))
+            self.assertTrue(result["ok"], result["error"])
+            body = (mem / "traps" / "resolved-one.md").read_text(encoding="utf-8")
+            self.assertIn("status: stale", body)
+            self.assertIn(
+                "Original status: resolved 2026-09-18 — we rewrote the loader in PR 41", body
+            )
+            self.assertEqual([f for f in crumb.run_validate(mem) if f["status"] == "fail"], [])
+
+    BAD_INPUTS = {
+        "superseded-without-successor": "## trap_a: a\n- Status: superseded\n",
+        "bad-last-confirmed": "## trap_b: b\n- Last confirmed: last tuesday\n",
+        "dangling-successor": "## trap_c: c\n- Status: superseded\n- Superseded by: dec_nope\n",
+        "unknown-word": "## trap_d: d\n- Status: wip-ish\n",
+    }
+
+    def test_preview_and_real_run_agree(self):
+        for name, block in self.BAD_INPUTS.items():
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                mem = self._store(tmp, block)
+                preview = mig.migrate(mem, Path(tmp), dry_run=True)
+                real = mig.migrate(mem, Path(tmp))
+                self.assertEqual(preview["ok"], real["ok"], (preview["error"], real["error"]))
+                self.assertTrue(real["ok"], real["error"])
+
+    def test_question_status_maps_to_answered(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._store(tmp, questions="## Q: is it done?\n- Status: resolved by dec_x\n")
+            result = mig.migrate(mem, Path(tmp))
+            self.assertTrue(result["ok"], result["error"])
+            q = crumb.load_open_questions(mem)[0]
+            self.assertEqual(q["status"], "answered")
+
+    def test_duplicate_trap_id_is_never_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._store(
+                tmp,
+                "## trap_dup: first\n- Why: FIRST BODY\n\n## trap_dup: second\n- Why: SECOND BODY\n",
+            )
+            result = mig.migrate(mem, Path(tmp))
+            self.assertTrue(result["ok"], result["error"])
+            committed = "".join(
+                p.read_text(encoding="utf-8") for p in mem.rglob("*.md") if "private" not in p.parts
+            )
+            self.assertIn("FIRST BODY", committed)
+            self.assertIn("SECOND BODY", committed)
+
+    def test_a_blocker_is_named_and_the_preview_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = self._store(tmp, "## trap_ok: fine\n- Why: w\n")
+            boom = mig.Migration(
+                3,
+                "boom",
+                lambda m, r: (_ for _ in ()).throw(RuntimeError("trap_x (known-traps.md:9): boom")),
+            )
+            with mock.patch.object(mig, "MIGRATIONS", [mig.MIGRATIONS[0], boom, mig.MIGRATIONS[2]]):
+                preview = mig.migrate(mem, Path(tmp), dry_run=True)
+            self.assertFalse(preview["ok"])
+            self.assertIn("known-traps.md:9", preview["error"])
+            self.assertIn("schema_version 3", preview["error"])
+            self.assertEqual(mig.store_schema_version(mem), 2)
+
+    def test_every_failure_is_listed(self):
+        # The step used to show the first five, so a store with many bad blocks
+        # meant fix five, re-run, repeat (N12).
+        with tempfile.TemporaryDirectory() as tmp:
+            blocks = "".join(f"## trap_t{i}: t{i}\n- Why: w\n\n" for i in range(12))
+            mem = self._store(tmp, blocks)
+            from breadcrumbs import blockfiles
+
+            fails = [
+                {"status": "fail", "path": f"traps/t{i}.md", "message": "bad"} for i in range(12)
+            ]
+            with mock.patch.object(_cli, "run_validate", return_value=fails):
+                with self.assertRaises(RuntimeError) as ctx:
+                    blockfiles.adopt_blocks(mem, Path(tmp))
+            self.assertIn("traps/t11.md", str(ctx.exception))
+            self.assertIn("12 trap/question file(s)", str(ctx.exception))
+
+
+class LongPathTests(unittest.TestCase):
+    """Field report 2026-10-01, issue 5: the backup copy went past Windows'
+    MAX_PATH and the error printed was shutil.Error's raw list of tuples."""
+
+    def test_extended_path_forms(self):
+        from breadcrumbs import path_policy as pp
+
+        self.assertEqual(pp.extended_path(r"C:\a\b\..\c.md", windows=True), "\\\\?\\C:\\a\\c.md")
+        self.assertEqual(
+            pp.extended_path(r"\\srv\share\x", windows=True), "\\\\?\\UNC\\srv\\share\\x"
+        )
+        self.assertEqual(pp.extended_path("\\\\?\\C:\\x", windows=True), "\\\\?\\C:\\x")
+        self.assertEqual(pp.plain_path(pp.extended_path(r"C:\a\c.md", windows=True)), r"C:\a\c.md")
+        self.assertEqual(pp.extended_path("/tmp/x", windows=False), "/tmp/x")
+
+    def test_a_failed_backup_copy_is_readable_and_leaves_nothing(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            set_version(mem, 3)
+            err = shutil.Error(
+                [
+                    (
+                        str(mem / "decisions" / "x.md"),
+                        "dst",
+                        "[WinError 3] The system cannot find the path specified",
+                    )
+                ]
+            )
+            with mock.patch.object(mig.shutil, "copytree", side_effect=err):
+                result = mig.migrate(mem, Path(tmp))
+            self.assertFalse(result["ok"])
+            self.assertIn("decisions/x.md", result["error"])
+            self.assertIn("WinError 3", result["error"])
+            self.assertIn("Nothing was migrated", result["error"])
+            self.assertNotIn("[('", result["error"])
+            backups = mem / "private" / "migrations"
+            leftover = [p for p in backups.iterdir()] if backups.is_dir() else []
+            self.assertEqual(leftover, [])
+            self.assertEqual(mig.store_schema_version(mem), 3)
+
+    def test_cli_never_prints_the_raw_tuple_list(self):
+        import shutil
+
+        with tempfile.TemporaryDirectory() as tmp:
+            init_store(tmp)
+            err = shutil.Error([("/x/.project-memory/a.md", "/y", "File name too long")])
+            stderr = io.StringIO()
+            with (
+                mock.patch.object(_cli, "cmd_validate", side_effect=err),
+                contextlib.redirect_stderr(stderr),
+            ):
+                code, _ = run(["validate", "--project", tmp])
+            self.assertEqual(code, 1)
+            self.assertNotIn("[('", stderr.getvalue())
+            self.assertIn("a.md (File name too long)", stderr.getvalue())
+
+    def test_restore_that_cannot_copy_changes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mem = init_store(tmp)
+            set_version(mem, 3)
+            self.assertTrue(mig.migrate(mem, Path(tmp))["ok"])
+            before = mig.store_files(mem)
+            with mock.patch.object(mig, "_copytree", side_effect=OSError("disk full")):
+                result = mig.restore(mem)
+            self.assertFalse(result["ok"])
+            self.assertIn("nothing was changed", result["error"])
+            self.assertEqual(mig.store_files(mem), before)
+            leftover = [p.name for p in (mem / "private" / "migrations").iterdir()]
+            self.assertFalse(any(n.startswith(".restoring") for n in leftover), leftover)

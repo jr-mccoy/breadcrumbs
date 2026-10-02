@@ -98,6 +98,75 @@ class Refused(PermissionError):
 # --------------------------------------------------------------------------- #
 
 
+_EXTENDED_PREFIX = "\\\\?\\"
+
+
+def extended_path(path, *, windows: bool | None = None) -> str:
+    r"""`path` as a string the OS accepts past MAX_PATH (260 characters).
+
+    On Windows that is the `\\?\` extended-length form of the absolute path
+    (`\\?\UNC\server\share\…` for a UNC path), which the file APIs honour
+    whether or not the LongPathsEnabled policy is on. Elsewhere it is just
+    `str(path)`. Pure string work, so it is testable on any OS (`windows=`).
+    Field report 2026-10-01, issue 5: a migration backup under
+    `private/migrations/<stamp>/` went past 260 characters on Windows.
+    """
+    import ntpath
+
+    windows = (os.name == "nt") if windows is None else windows
+    text = os.fspath(path)
+    if not windows or text.startswith(_EXTENDED_PREFIX):
+        return text
+    if not ntpath.isabs(text):
+        text = ntpath.join(os.getcwd(), text)
+    text = ntpath.normpath(text.replace("/", "\\"))
+    if text.startswith("\\\\"):
+        return _EXTENDED_PREFIX + "UNC\\" + text[2:]
+    return _EXTENDED_PREFIX + text
+
+
+def plain_path(path) -> str:
+    """Undo `extended_path`, for showing a path to a person."""
+    text = os.fspath(path)
+    if text.startswith(_EXTENDED_PREFIX + "UNC\\"):
+        return "\\\\" + text[len(_EXTENDED_PREFIX) + 4 :]
+    if text.startswith(_EXTENDED_PREFIX):
+        return text[len(_EXTENDED_PREFIX) :]
+    return text
+
+
+def describe_copy_error(exc: BaseException, base=None, *, limit: int = 10) -> str:
+    r"""A person-readable account of a failed copy.
+
+    `shutil.Error` carries a list of `(src, dst, why)` tuples and its `str()` is
+    the raw list (field report: `CRUMB-ERROR: crumb migrate: [('C:\…', …)]`).
+    This names up to `limit` files — relative to `base` when given — and why.
+    """
+    import shutil
+
+    rows = exc.args[0] if isinstance(exc, shutil.Error) and exc.args else None
+    if not isinstance(rows, list):
+        return str(exc)
+
+    def short(p: str) -> str:
+        p = plain_path(p)
+        if base is not None:
+            for root in (os.fspath(base), plain_path(extended_path(base))):
+                if p.startswith(root):
+                    return p[len(root) :].lstrip("\\/").replace("\\", "/") or p
+        return p
+
+    lines = []
+    for row in rows[:limit]:
+        if isinstance(row, (tuple, list)) and len(row) == 3:
+            src, _dst, why = row
+            lines.append(f"{short(str(src))} ({why})")
+        else:
+            lines.append(str(row))
+    more = f"; and {len(rows) - limit} more" if len(rows) > limit else ""
+    return f"{len(rows)} file(s) could not be copied: " + "; ".join(lines) + more
+
+
 def split_store(path) -> tuple[Path, tuple[str, ...]] | None:
     """`(store_dir, parts_under_it)` for a path inside a store, else None.
 

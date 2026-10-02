@@ -70,6 +70,13 @@ class BackupUnverified(Exception):
     """A backup that does not match what it claims to hold."""
 
 
+class BackupFailed(BackupUnverified):
+    """A backup that could not be written at all (a path too long, a full disk).
+
+    The partial copy is removed before this is raised, so a failed attempt
+    leaves nothing behind under `private/migrations/`."""
+
+
 class Migration(NamedTuple):
     """One ordered, idempotent step from `version - 1` to `version`.
 
@@ -240,18 +247,25 @@ def backup_store(memory_dir: Path) -> Path:
         n += 1
         dest = memory_dir.joinpath(*BACKUPS_RELPATH) / f"{stamp}-{n}"
     path_policy.mkdirs(dest)
-    for entry in sorted(memory_dir.iterdir()):
-        if entry.name in _BACKUP_SKIP_DIRS:
-            continue
-        target = dest / entry.name
-        # Links are copied as links, never followed (audit F17); the driver
-        # refuses a store with any, so this is the second line.
-        if entry.is_symlink():
-            continue
-        if entry.is_dir():
-            shutil.copytree(entry, target, symlinks=True, dirs_exist_ok=True)
-        elif entry.is_file():
-            shutil.copy2(entry, target, follow_symlinks=False)
+    try:
+        for entry in sorted(memory_dir.iterdir()):
+            if entry.name in _BACKUP_SKIP_DIRS:
+                continue
+            target = dest / entry.name
+            # Links are copied as links, never followed (audit F17); the driver
+            # refuses a store with any, so this is the second line.
+            if entry.is_symlink():
+                continue
+            if entry.is_dir():
+                _copytree(entry, target)
+            elif entry.is_file():
+                _copy2(entry, target)
+    except OSError as exc:  # shutil.Error is an OSError
+        _discard(dest)
+        raise BackupFailed(
+            f"the backup could not be written to {_rel(dest, memory_dir)}: "
+            + path_policy.describe_copy_error(exc, memory_dir)
+        ) from None
     source = store_files(memory_dir)
     doc = {
         "format": 1,
@@ -274,18 +288,28 @@ def store_files(directory: Path) -> dict[str, str]:
     backup of one), skipping `private/`, `index/` and the backup manifest.
     Links are never followed or listed."""
     directory = Path(directory)
+    # Walked through the extended-length form on Windows, so a deep store or
+    # backup is hashed rather than reported missing (issue 5); elsewhere this
+    # is the plain path and files are read under the store's link policy.
+    top = path_policy.extended_path(directory)
+    windows = top != os.fspath(directory)
     out: dict[str, str] = {}
-    for dirpath, dirnames, filenames in os.walk(directory, followlinks=False):
-        rel_dir = Path(dirpath).relative_to(directory)
-        if rel_dir == Path("."):
+    for dirpath, dirnames, filenames in os.walk(top, followlinks=False):
+        rel_parts = [p for p in dirpath[len(top) :].replace("\\", "/").split("/") if p]
+        if not rel_parts:
             dirnames[:] = [d for d in dirnames if d not in _BACKUP_SKIP_DIRS]
-        dirnames[:] = [d for d in dirnames if not (Path(dirpath) / d).is_symlink()]
+        dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
         for name in filenames:
-            p = Path(dirpath) / name
-            rel = (rel_dir / name).as_posix()
-            if p.is_symlink() or rel == BACKUP_MANIFEST:
+            full = os.path.join(dirpath, name)
+            rel = "/".join([*rel_parts, name])
+            if os.path.islink(full) or rel == BACKUP_MANIFEST:
                 continue
-            out[rel] = hashlib.sha256(path_policy.read_bytes(p)).hexdigest()
+            if windows:
+                with open(full, "rb") as fh:
+                    data = fh.read()
+            else:
+                data = path_policy.read_bytes(Path(full))
+            out[rel] = hashlib.sha256(data).hexdigest()
     return dict(sorted(out.items()))
 
 
@@ -306,6 +330,25 @@ def verify_backup(backup: Path) -> list[str]:
     ]
     problems += [f"{rel} is not in the manifest" for rel in actual if rel not in expected]
     return problems
+
+
+def _copytree(src: Path, dst: Path) -> None:
+    shutil.copytree(
+        path_policy.extended_path(src),
+        path_policy.extended_path(dst),
+        symlinks=True,
+        dirs_exist_ok=True,
+    )
+
+
+def _copy2(src: Path, dst: Path) -> None:
+    shutil.copy2(
+        path_policy.extended_path(src), path_policy.extended_path(dst), follow_symlinks=False
+    )
+
+
+def _discard(path: Path) -> None:
+    shutil.rmtree(path_policy.extended_path(path), ignore_errors=True)
 
 
 def _rel(path: Path, memory_dir: Path) -> str:
@@ -388,20 +431,42 @@ def restore(memory_dir: Path, backup: Path | None = None, *, dry_run: bool = Fal
             "backup": shown,
             "error": "the store contains links: " + ", ".join(links[:10]),
         }
+    # Copy the backup next to the store first, and only then swap it in: the
+    # store used to be emptied before the copy, so a copy that failed part-way
+    # (a long path, a full disk) left it half gone (field report 2026-10-01, N9).
+    stamp = cli.now_iso().replace(":", "").replace("-", "")[:15]
+    staging = memory_dir.joinpath(*BACKUPS_RELPATH) / f".restoring-{stamp}"
+    _discard(staging)
+    path_policy.mkdirs(staging)
+    try:
+        for entry in sorted(backup.iterdir()):
+            if entry.name == BACKUP_MANIFEST:
+                continue
+            if entry.is_dir():
+                _copytree(entry, staging / entry.name)
+            else:
+                _copy2(entry, staging / entry.name)
+    except OSError as exc:
+        _discard(staging)
+        return {
+            **base,
+            "backup": shown,
+            "changed": changed,
+            "error": "the backup could not be copied back, so nothing was changed: "
+            + path_policy.describe_copy_error(exc, backup),
+        }
     for entry in sorted(memory_dir.iterdir()):
         if entry.name in _BACKUP_SKIP_DIRS:
             continue
         if entry.is_dir():
-            shutil.rmtree(entry)
+            shutil.rmtree(path_policy.extended_path(entry))
         else:
             entry.unlink()
-    for entry in sorted(backup.iterdir()):
-        if entry.name == BACKUP_MANIFEST:
-            continue
-        if entry.is_dir():
-            shutil.copytree(entry, memory_dir / entry.name, symlinks=True)
-        else:
-            shutil.copy2(entry, memory_dir / entry.name, follow_symlinks=False)
+    for entry in sorted(staging.iterdir()):
+        os.replace(
+            path_policy.extended_path(entry), path_policy.extended_path(memory_dir / entry.name)
+        )
+    _discard(staging)
     after = store_files(memory_dir)
     if after != saved:
         bad = sorted(r for r in set(after) | set(saved) if after.get(r) != saved.get(r))
@@ -419,6 +484,64 @@ def restore(memory_dir: Path, backup: Path | None = None, *, dry_run: bool = Fal
         "changed": changed,
         "schema_version": store_schema_version(memory_dir),
     }
+
+
+def simulate(memory_dir: Path, pending: list[Migration]) -> tuple[list[dict], dict | None]:
+    """Run `pending` against a scratch copy of the store; nothing real is touched.
+
+    Returns `(steps, blocker)`: each step's `{version, summary, changed}` as the
+    real run would report it, and `{version, error}` for the first step that
+    would fail (None when every step would succeed). The copy is made with the
+    same rules as the backup — committed store only, no `private/` or `index/`
+    — so the steps see exactly what they will see for real.
+    """
+    import tempfile
+
+    memory_dir = Path(memory_dir)
+    steps: list[dict] = []
+    with tempfile.TemporaryDirectory(prefix="crumb-migrate-") as td:
+        scratch_root = Path(td)
+        copy = scratch_root / memory_dir.name
+        path_policy.mkdirs(copy)
+        try:
+            for entry in sorted(memory_dir.iterdir()):
+                if entry.name in _BACKUP_SKIP_DIRS or entry.is_symlink():
+                    continue
+                if entry.is_dir():
+                    _copytree(entry, copy / entry.name)
+                elif entry.is_file():
+                    _copy2(entry, copy / entry.name)
+        except OSError as exc:
+            reason = path_policy.describe_copy_error(exc, memory_dir)
+            return steps, {
+                "version": pending[0].version,
+                "error": f"the store could not be copied for the preview: {reason}",
+            }
+        for m in pending:
+            try:
+                changed = m.apply(copy, scratch_root)
+            except Exception as exc:  # noqa: BLE001 - reported as the blocker
+                steps.append({"version": m.version, "summary": m.summary, "changed": []})
+                return steps, {"version": m.version, "error": str(exc)}
+            set_manifest_version(copy, m.version)
+            steps.append({"version": m.version, "summary": m.summary, "changed": changed})
+    return steps, None
+
+
+def legacy_findings(memory_dir: Path) -> tuple[dict, list[str]]:
+    """`legacy_report`'s counts plus one `path: message` line per finding, so a
+    preview names each record a person has to fix, not just how many."""
+    counts: dict[str, int] = {}
+    items: list[str] = []
+    for finding in cli.run_validate(Path(memory_dir)):
+        if finding.get("status") != "fail":
+            continue
+        code = finding.get("code") or finding.get("check")
+        if code in ("schema-version", "manifest"):
+            continue
+        counts[code] = counts.get(code, 0) + 1
+        items.append(f"{finding.get('path') or '(store)'}: {finding.get('message')}")
+    return dict(sorted(counts.items())), items
 
 
 def legacy_report(memory_dir: Path) -> dict:
@@ -528,19 +651,30 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
 
     marker = in_progress(memory_dir)
     if dry_run:
+        # The preview runs the real steps on a scratch copy, so it can only say
+        # "would apply" when applying would succeed (field report 2026-10-01,
+        # issue 4: a dry run passed, then step 3 failed on two trap statuses).
+        steps, blocker = simulate(memory_dir, pending)
+        legacy, legacy_items = legacy_findings(memory_dir)
         return {
-            "ok": True,
+            "ok": blocker is None,
             "from": current,
             "to": current,
             "target": target,
-            "steps": [{"version": m.version, "summary": m.summary, "changed": []} for m in pending],
+            "steps": steps,
             "backup": None,
             "dry_run": True,
             # What the backup will hold, and what migration leaves for a person.
             "backup_files": len(store_files(memory_dir)),
-            "legacy": legacy_report(memory_dir),
+            "legacy": legacy,
+            "legacy_items": legacy_items,
             "resumes": marker,
-            "error": None,
+            "error": (
+                None
+                if blocker is None
+                else f"the migration would stop at schema_version {blocker['version']}: "
+                f"{blocker['error']}. Nothing was changed."
+            ),
         }
 
     # A migration that stopped part-way resumes against the backup it took

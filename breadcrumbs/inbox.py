@@ -721,3 +721,67 @@ def prune_jots(
         "dry_run": dry_run,
         "after_days": after_days,
     }
+
+
+# --------------------------------------------------------------------------- #
+# Drafts: notes left by an agent that could not run the CLI
+# --------------------------------------------------------------------------- #
+
+DRAFTS_DIRNAME = "drafts"
+
+
+def drafts_dir(memory_dir: Path) -> Path:
+    """`inbox/drafts/`: where an agent without the CLI leaves free-form notes.
+
+    `validate` and every reader ignore it (records are read one directory
+    deep), so a note there can be any shape. Hand-written *records* were the
+    other option, and in the field 133 of them failed validation and were
+    dropped or misread (DoWhat field report 2026-10-01, issue 12).
+    """
+    return Path(memory_dir) / "inbox" / DRAFTS_DIRNAME
+
+
+def import_drafts(memory_dir: Path, project_root: Path, *, agent: str | None = None) -> dict:
+    """Turn each `inbox/drafts/*.md` into a jot. `{imported, kept, failed}`.
+
+    A draft that fits in a jot is removed once its jot is written. A longer one
+    is kept where it is (the jot cites it as file evidence), so nothing a
+    person wrote is cut short.
+    """
+    import re
+
+    memory_dir = Path(memory_dir)
+    out: dict = {"imported": [], "kept": [], "failed": []}
+    directory = drafts_dir(memory_dir)
+    if not directory.is_dir():
+        return out
+    for path in sorted(directory.glob("*.md")):
+        raw = path_policy.read_text(path)
+        heading = re.search(r"(?m)^#\s+(.+?)\s*$", raw)
+        body = re.sub(r"(?m)^#\s+.+$", "", raw).strip()
+        title = (heading.group(1) if heading else "").strip() or None
+        text = " ".join((body or title or "").split())
+        if not text:
+            continue
+        rel = path.relative_to(memory_dir.parent).as_posix()
+        long = len(text) > JOT_MAX_CHARS
+        result = write_jot(
+            memory_dir,
+            project_root,
+            text,
+            title=title,
+            agent=agent,
+            source="draft",
+            scope="project",
+            files=[rel] if long else None,
+        )
+        if not result.get("ok"):
+            out["failed"].append({"draft": rel, "error": result.get("error") or "rejected"})
+            continue
+        entry = {"draft": rel, "id": result.get("id")}
+        if long:
+            out["kept"].append(entry)
+        else:
+            path.unlink()
+            out["imported"].append(entry)
+    return out
