@@ -35,6 +35,18 @@
       "reason": "DoWhat retest of 0.5.0: the android suite gains the retest's records and 5 tasks (crumb pipelines, sed, crumb migrate, the 429 and todos attempts); no existing task's metrics changed",
       "regressions": [],
       "removed": []
+    },
+    {
+      "added": 1,
+      "date": "2026-10-02",
+      "improvements": [],
+      "reason": "DoWhat retest of 0.5.0: the android sed task now greps the migration test's name (as in the field) instead of 'migrat(e|ion)', and the hunk attempt mentions git status; both critical cases fail on 0.5.0 and pass now. The only 'regression' is the renamed task.",
+      "regressions": [
+        "android::sed -n '867p' app/lint-results.txt | grep -oiE 'migrat(e|ion)': task removed"
+      ],
+      "removed": [
+        "android::sed -n '867p' app/lint-results.txt | grep -oiE 'migrat(e|ion)'"
+      ]
     }
   ],
   "comment": "Written by `python evals/run.py --write-baseline --reason \u2026`. See evals/README.md.",
@@ -155,18 +167,18 @@
       },
       "packet": {
         "n": {
-          "precision_at_5": 7,
-          "recall_at_5": 7,
+          "precision_at_5": 8,
+          "recall_at_5": 8,
           "reject_hits": 12
         },
-        "precision_at_5": 0.3476,
+        "precision_at_5": 0.3667,
         "recall_at_5": 1.0,
         "reject_hits": 5
       },
       "packet_delivered": {
         "n": {
-          "precision_at_5": 7,
-          "recall_in_view": 7,
+          "precision_at_5": 8,
+          "recall_in_view": 8,
           "reject_hits": 12,
           "tokens_max": 12,
           "tokens_mean": 12,
@@ -176,17 +188,17 @@
         "recall_in_view": 1.0,
         "reject_hits": 5,
         "tokens_max": 1933,
-        "tokens_mean": 1901.0,
+        "tokens_mean": 1902.5,
         "within_budget": 1.0
       },
       "prompt": {
         "n": {
-          "precision_at_5": 7,
-          "quiet": 5,
-          "recall_at_5": 7,
+          "precision_at_5": 8,
+          "quiet": 4,
+          "recall_at_5": 8,
           "reject_hits": 12
         },
-        "precision_at_5": 0.7619,
+        "precision_at_5": 0.7917,
         "quiet": 1.0,
         "recall_at_5": 1.0,
         "reject_hits": 0
@@ -194,20 +206,20 @@
       "prompt_delivered": {
         "dedupe": 1.0,
         "n": {
-          "dedupe": 7,
-          "precision_at_5": 7,
-          "quiet": 5,
-          "recall_at_5": 7,
+          "dedupe": 8,
+          "precision_at_5": 8,
+          "quiet": 4,
+          "recall_at_5": 8,
           "reject_hits": 12,
-          "tokens_max": 7,
-          "tokens_mean": 7
+          "tokens_max": 8,
+          "tokens_mean": 8
         },
-        "precision_at_5": 0.7619,
+        "precision_at_5": 0.7917,
         "quiet": 1.0,
         "recall_at_5": 1.0,
         "reject_hits": 0,
         "tokens_max": 221,
-        "tokens_mean": 137.1429
+        "tokens_mean": 133.625
       },
       "tasks": 12
     },
@@ -423,59 +435,59 @@
       },
       "packet": {
         "n": {
-          "precision_at_5": 40,
-          "recall_at_5": 40,
+          "precision_at_5": 41,
+          "recall_at_5": 41,
           "reject_hits": 51
         },
-        "precision_at_5": 0.5437,
-        "recall_at_5": 0.9792,
+        "precision_at_5": 0.5427,
+        "recall_at_5": 0.9797,
         "reject_hits": 7
       },
       "packet_delivered": {
         "n": {
-          "precision_at_5": 40,
-          "recall_in_view": 40,
+          "precision_at_5": 41,
+          "recall_in_view": 41,
           "reject_hits": 51,
           "tokens_max": 51,
           "tokens_mean": 51,
           "within_budget": 51
         },
-        "precision_at_5": 0.105,
+        "precision_at_5": 0.1024,
         "recall_in_view": 1.0,
         "reject_hits": 8,
         "tokens_max": 1933,
-        "tokens_mean": 1482.2549,
+        "tokens_mean": 1482.6078,
         "within_budget": 1.0
       },
       "prompt": {
         "n": {
-          "precision_at_5": 40,
-          "quiet": 11,
-          "recall_at_5": 40,
+          "precision_at_5": 41,
+          "quiet": 10,
+          "recall_at_5": 41,
           "reject_hits": 51
         },
-        "precision_at_5": 0.7167,
+        "precision_at_5": 0.7236,
         "quiet": 1.0,
-        "recall_at_5": 0.8917,
+        "recall_at_5": 0.8943,
         "reject_hits": 1
       },
       "prompt_delivered": {
         "dedupe": 1.0,
         "n": {
-          "dedupe": 37,
-          "precision_at_5": 40,
-          "quiet": 11,
-          "recall_at_5": 40,
+          "dedupe": 38,
+          "precision_at_5": 41,
+          "quiet": 10,
+          "recall_at_5": 41,
           "reject_hits": 51,
-          "tokens_max": 37,
-          "tokens_mean": 37
+          "tokens_max": 38,
+          "tokens_mean": 38
         },
-        "precision_at_5": 0.7167,
+        "precision_at_5": 0.7236,
         "quiet": 1.0,
-        "recall_at_5": 0.8917,
+        "recall_at_5": 0.8943,
         "reject_hits": 1,
         "tokens_max": 312,
-        "tokens_mean": 148.5405
+        "tokens_mean": 147.5
       },
       "tasks": 51
     },
@@ -816,15 +828,11 @@
         "rejected": []
       }
     },
-    "android::sed -n '867p' app/lint-results.txt | grep -oiE 'migrat(e|ion)'": {
-      "control_spoke": {
-        "prompt": false,
-        "prompt_delivered": false
-      },
+    "android::sed -n '867p' app/lint-results.txt | grep -oiE 'MigrationV21ToV22Test|todos'": {
       "guard": {
         "hook_ok": true,
         "ok": true,
-        "verdict": "PROCEED"
+        "verdict": "READ_FIRST"
       },
       "packet": {
         "missed": [],

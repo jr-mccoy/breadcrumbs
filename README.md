@@ -385,6 +385,11 @@ section, and the text it replaced is kept in the new session record under
 grows; when it gets long (`crumb doctor` says so past 8,000 characters),
 `crumb handoff trim --keep 10` moves all but the newest ten entries, unchanged,
 to `handoff-history.md` (or `handoffs/<slug>.history.md`). Nothing is deleted.
+A hand-kept log under `### Earlier, as written` is split into entries at each
+line that starts with a bold date (`**2026-10-01 …**`); `--split-on REGEX`
+names another lead-in, and `--before 2026-09-01` moves the entries dated
+before that day instead of keeping a count. `crumb doctor` counts entries the
+same way.
 
 `current.md`'s **Recently Changed** is yours: capture no longer writes the git
 log there (resume shows *Landed Since The Handoff Was Written* from git
@@ -624,15 +629,32 @@ not classify the action, and a long command scores no higher for being long
 (guard's keyword contribution is capped). crumb's own commands are classified
 by effect: reads (`resume`, `search`, `migrate --dry-run`, …) are read-only,
 memory writes (`remember`, `capture`, `reindex`, …) are routine, and only a
-real `crumb migrate` is a migration. A memory-writing command still matches
-the records about the files it writes (`this command writes:
-.project-memory/handoff.md`). An edit to a file outside the project (an
-agent's own memory folder) is not guarded at all.
+real `crumb migrate` is a migration, whatever is piped after it
+(`crumb migrate --dry-run | sed -n '1,22p'` is still a read). crumb's own
+words (`crumb`, `migrate`, `reindex`) are not matched against the store: a
+crumb command meets memory only through the files it writes (`this command
+writes: .project-memory/handoff.md`) and records naming the exact command.
+`sed` and `awk` are read-only unless they write (`sed -i`, a `w`/`e` command,
+`awk` with `system()` or `print >`), and so are `git branch`, `git remote -v`,
+`git tag -l`, `git stash list` and `git config --get`. An edit is matched on
+its path and the code identifiers it writes, never on its prose; an edit
+inside `.project-memory/` is a memory write and at most `READ_FIRST`. An edit
+to a file outside the project (an agent's own memory folder) is not guarded
+at all.
+
+**Common words count for less.** In a store of 25 or more records, a tag or
+word carried by more than 8% of them (and more than 10) is *common*: it scores
+half, and it can neither make a record topical nor raise a verdict by itself.
+A read-only command never shows a record as `[objects]`. The guard hook shows
+an advisory record once per session, unless the action names that record's
+file or command; an objection and a high-impact action always speak.
 
 **A few actions always ask.** A force-push to `main`/`master`, `rm -rf`
 outside build and cache directories (or on piped input), and a real
 `crumb migrate` get `ASK_HUMAN` even when no record is about them, and say so
-("no project memory about it") instead of citing unrelated records.
+("no project memory about it") instead of citing unrelated records. When
+records are cited, they are only the ones about the action itself: its file,
+the file it writes, its exact command, or a topical match.
 
 **A do-not-retry line has to be about this action.** It raises a match (and
 makes it `[objects]`) only when the record is topical: it names the file, the
@@ -747,6 +769,17 @@ keeping its id and every line, and turns the two files into generated indexes.
 Until a store migrates it keeps reading and writing the blocks. Schema 4 adds
 `handoffs/` for one handoff per branch; a schema-3 store keeps a single
 `handoff.md`.
+
+`migrate` also maintains a store that is already current (and `--dry-run`
+lists it). The store's `README.md` and the `generated/`, `index/` and
+`private/` READMEs are replaced when they still match a version crumb-kit
+shipped, so an upgraded store stops describing its old layout; an edited one
+is kept, with a warning. The untouched 0.1.x `evidence/refs.yml` is removed.
+And it sets `min_crumb_version: 0.5.0` in `manifest.yml` (never lowering a
+higher one), plus `requires: min-crumb-version`: a crumb-kit older than that
+refuses to write the store and says why, so a 0.4.x `capture session` cannot
+replace the Next Action log 0.5.0 keeps. `crumb doctor` shows the floor; you
+can also set it by hand.
 
 `usage` answers the question `audit`'s `[unreachable]` check cannot: not whether
 a record *could* be found, but whether it ever *was*. A record counts when its

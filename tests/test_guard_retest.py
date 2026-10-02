@@ -43,8 +43,10 @@ def write_decision(mem: Path, slug: str, title: str, tags: list[str], body: str 
         f"slug: {slug}\n"
         f"title: {title}\n"
         "status: active\n"
-        "created_at: 2026-06-01T12:00:00+00:00\n"
-        "updated_at: 2026-06-01T12:00:00+00:00\n"
+        # Recent, like the field's records: old ones are decayed below the
+        # thresholds anyway, which would hide what this test is about.
+        f"created_at: {_cli.now_iso()}\n"
+        f"updated_at: {_cli.now_iso()}\n"
         "scope: project\n"
         "confidence: low\n"
         "tags:\n"
@@ -280,7 +282,10 @@ class CommonWordsTests(StoreCase):
         for action in ("git status", "cp a.txt b.txt", "edit README.md: notes on memory and git"):
             with self.subTest(action):
                 res = self.guard(action, files=["README.md"] if action.startswith("edit") else None)
-                self.assertNotIn(res["verdict"], ("PAUSE", "ASK_HUMAN"))
+                # git and memory are on most of this store: sharing them is not a
+                # reason to stop (0.5.0 said READ_FIRST to git status and to the
+                # README edit on the strength of the git tag alone).
+                self.assertEqual(res["verdict"], "PROCEED", res["matches"])
                 cited = [
                     m["id"] for m in res["matches"] if m["score"] >= _cli.GUARD_READ_FIRST_SCORE
                 ]

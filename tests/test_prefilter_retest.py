@@ -63,6 +63,7 @@ class StoreCase(unittest.TestCase):
                 tags,
                 "--confidence",
                 "low",
+                "--allow-duplicate",  # alike on purpose
             ]
         )
 
@@ -88,9 +89,11 @@ class MachineLocalPrefilterTests(StoreCase):
         self.assertNotIn(": ", text)
 
     def test_the_same_records_give_the_same_bytes_in_any_order(self):
-        for i in range(6):
-            self.decision(f"Decision {i} on module {i} caching", tags=f"area{i},shared")
+        words = ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot")
+        for w in words:
+            self.decision(f"Decision on the {w} module caching", tags=f"{w},shared")
         items = _cli._candidate_items(self.mem, include_ideas=False)
+        self.assertGreaterEqual(len(items), 6)
         forward = _cli._build_guard_prefilter(self.mem)
         with mock.patch.object(_cli, "_candidate_items", return_value=list(reversed(items))):
             backward = _cli._build_guard_prefilter(self.mem)

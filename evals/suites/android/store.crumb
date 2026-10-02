@@ -150,7 +150,7 @@
 
 @2026-09-13 remember attempt --title "Hunk-filtering discipline applied to the .kt file lost the unrelated hunks"
   --set Problem "One .kt file held two unrelated changes and only one belonged in the commit."
-  --set Tried "Filtered hunks with git add -p and committed, then reset the rest."
+  --set Tried "Checked git status, filtered hunks with git add -p and committed, then reset the rest."
   --set Result "git reset --hard after the commit threw away the unrelated hunks."
   --set Do\ Not\ Retry\ Unless "The unrelated hunks are saved to a patch first."
   --evidence file app/src/main/java/ui/TodoScreen.kt --tags git,kotlin

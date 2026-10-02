@@ -40,6 +40,8 @@ checking section F found one new problem (F1).
 | 14 | A minimum version "won't stop 0.4.x". | 0.4.0 and 0.5.0 already refuse to write a store whose `manifest.yml` lists a `requires:` feature they don't know (`compat.py`, audit WP21). So 0.4.x *can* be stopped today, at the price of stopping 0.5.0 too. Decision D14 uses exactly that as a bridge. |
 | 5 | The README says the hook drops repeats. | The repeat filter covers READ_FIRST only, and keys on the action's target plus the exact set of records shown (`_hook_guard`). The same record shown for `git status`, then `cp`, then a README edit is three different keys; a PAUSE or ASK_HUMAN is never filtered. That is why it came back "again and again with changing verdicts". |
 
+| — | 0.5.0 reached PyPI hours after its tag. | They went out together. Run 41 of `release.yml` uploaded the wheel and sdist at 02:30:24–26 UTC on 2026-10-02 and created the tag and GitHub Release at 02:30:28–31 UTC, in the same job, PyPI first. The earlier time on the release page (00:09 UTC) is the merge commit's date, which GitHub shows as the release's creation date. The workflow already does what was asked; nothing to change. |
+
 ## New finding
 
 | ID | Finding | Where |
@@ -308,3 +310,46 @@ Guard verdicts change, the prefilter moves, and `min_crumb_version` is new
 store metadata. So this is a minor release: **0.6.0**. `schema_version`
 stays 4, and no migration step is added: the template refresh and the
 minimum version are applied by `crumb migrate` on a current store too.
+
+## Implementation status (2026-10-02)
+
+Every item and F1 is fixed on `claude/sharp-hopper-g0wbvw`, one commit per
+group:
+
+| Items | Commit subject | Tests |
+|---|---|---|
+| 1–6, eval cases | guard: read sed/awk and crumb pipelines by effect; cite only direct evidence | `tests/test_guard_retest.py`; 14 critical cases and 5 tasks in `evals/` |
+| 7 | guard hook: no git processes on the guard path; phase timings in the hook log | `tests/test_gitrefs.py` |
+| 8, 9 | guard pre-filter: machine-local in index/, compact and sorted, no secret-shaped tokens | `tests/test_prefilter_retest.py` |
+| 10 | repair: suggest only evidence files that exist in the tree or in HEAD | `tests/test_repair.py` `EvidenceSuggestionTests` |
+| 11 | handoff trim: split a hand-kept log into entries; --before DATE; --split-on REGEX | `tests/test_rename.py` `HandKeptLogTests` |
+| 12–14 | migrate refreshes untouched template files and sets min_crumb_version; doctor points a current store at repair | `tests/test_store_maintenance.py` |
+| F1 | Stop hook: count only commits made in this checkout (HEAD's reflog) | `tests/test_hooks.py` `SessionCursorTests` |
+
+**Where the implementation differs from the plan, and why**
+
+- **Common words (item 5)** need a floor of more than 10 records as well as
+  8% of the store. With 8% alone, a 38-record eval store treated a tag on 4
+  records as common, and the prompt hook lost relevant matches on the webapp
+  suite.
+- **Common evidence cannot raise a verdict.** A match carried only by common
+  tags and words is shown, but its score band is ignored. Without this, two
+  common tags still reached READ_FIRST on score, and a class word then
+  escalated it.
+- **The prompt hook** reads a prompt that *is* a crumb command the way guard
+  does. Otherwise `crumb migrate --dry-run` typed as a prompt matched every
+  crumb-tagged record.
+- **Damping** keeps 0.5.0's per-target repeat filter and adds per-record
+  delivery state to the same per-session file (`private/hook-guard-seen.json`).
+
+**Not verified on Windows.** These were tested on Linux, with real git repos
+and the same code paths:
+
+- the `.git` reader on Git for Windows checkouts (`core.autocrlf`, a
+  `gitdir:` worktree);
+- the Stop hook's reflog reading;
+- the new `import_ms` / `git_ms` numbers.
+
+The next Windows session's `crumb doctor --hook-log` shows the phase medians,
+which settles decision D7's "then remeasure".
+

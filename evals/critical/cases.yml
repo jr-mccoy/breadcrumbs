@@ -194,7 +194,7 @@ cases:
   - id: android-sed-pipeline-is-read-only
     suite: android
     check: guard_not
-    task: "sed -n '867p' app/lint-results.txt | grep -oiE 'migrat(e|ion)'"
+    task: "sed -n '867p' app/lint-results.txt | grep -oiE 'MigrationV21ToV22Test|todos'"
     verdict_not: [PAUSE, ASK_HUMAN]
     note: "item 1: `sed -n` was not read-only, and the hook gave PAUSE"
 

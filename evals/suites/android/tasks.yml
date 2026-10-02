@@ -43,9 +43,9 @@ tasks:
     expect: []
     verdict: [PROCEED, READ_FIRST]
 
-  - task: "sed -n '867p' app/lint-results.txt | grep -oiE 'migrat(e|ion)'"
-    note: "item 1: sed -n is read-only"
-    expect: []
+  - task: "sed -n '867p' app/lint-results.txt | grep -oiE 'MigrationV21ToV22Test|todos'"
+    note: "item 1: sed -n is read-only, so the attempt it names is context, never a stop"
+    expect: [att_20260910_migrationv21tov22test-s-todos-inserts-named-5-of-the-10]
     verdict: [PROCEED, READ_FIRST]
 
   - task: "crumb migrate"
