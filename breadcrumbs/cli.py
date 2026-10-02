@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -45,6 +46,7 @@ if TYPE_CHECKING:  # annotations only; the parser lives in `cli_parser`
 from breadcrumbs import validation as _validation
 
 # What the store may read and write on disk (audit F17). Stdlib-only too.
+import breadcrumbs as _breadcrumbs_pkg
 from breadcrumbs import path_policy
 from breadcrumbs import shellcmd as _shellcmd
 from breadcrumbs.adapters import claude as _claude
@@ -464,7 +466,15 @@ def is_git_repo(root: Path) -> bool:
     cached = _IS_GIT_REPO_CACHE.get(key)
     if cached is not None:
         return cached
+    from breadcrumbs import gitrefs
+
+    # A `.git` found by walking up answers without a process (DoWhat retest of
+    # 0.5.0, item 7); anything unusual still asks git.
+    if gitrefs.git_dir(Path(root)) is not None:
+        _IS_GIT_REPO_CACHE[key] = True
+        return True
     GIT_CALLS[0] += 1
+    started = time.perf_counter()
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
@@ -476,6 +486,7 @@ def is_git_repo(root: Path) -> bool:
         answer = result.returncode == 0 and result.stdout.strip() == "true"
     except (FileNotFoundError, OSError):
         answer = False
+    GIT_MS[0] += (time.perf_counter() - started) * 1000
     _IS_GIT_REPO_CACHE[key] = answer
     return answer
 
@@ -1529,10 +1540,14 @@ def records_in(directory: Path, rtype: str) -> list[Record]:
 # Windows each costs tens of milliseconds, and a count says at once whether a
 # slow firing was git or Python (field report 2026-10-01, issue 6).
 GIT_CALLS = [0]
+# ...and the milliseconds they took, for the hook log's `git_ms` (item 7 of the
+# 0.5.0 retest: the next Windows measurement should say where the time went).
+GIT_MS = [0.0]
 
 
 def _git_out(root: Path, *args: str) -> str | None:
     GIT_CALLS[0] += 1
+    started = time.perf_counter()
     try:
         r = subprocess.run(
             ["git", *args],
@@ -1543,6 +1558,8 @@ def _git_out(root: Path, *args: str) -> str | None:
         )
     except (FileNotFoundError, OSError):
         return None
+    finally:
+        GIT_MS[0] += (time.perf_counter() - started) * 1000
     if r.returncode != 0:
         return None
     # Trailing newline only. A whole-output strip() also ate the leading space of
@@ -1562,6 +1579,11 @@ def git_branch(root: Path) -> str:
 def _git_branch(root: Path) -> str:
     if not is_git_repo(root):
         return NO_GIT_BRANCH
+    from breadcrumbs import gitrefs
+
+    fast = gitrefs.branch(root)
+    if fast:
+        return fast
     out = _git_out(root, "rev-parse", "--abbrev-ref", "HEAD")
     if out:
         return out
@@ -6444,6 +6466,43 @@ _REVLIST_INDEX_CAP = 5000
 _EXACT_LOOKUPS = 3
 
 
+# HEAD's topo-ordered history, cached per HEAD in the machine-local index/
+# (DoWhat retest of 0.5.0, item 7). The `rev-list` it replaces ran on every
+# guard firing that scored a record; HEAD moves far less often than that.
+COMMIT_ORDER_RELPATH = ("index", "commit-order.txt")
+
+
+def _cached_commit_order(root: Path) -> list[str]:
+    """HEAD's history, newest first, up to `_REVLIST_INDEX_CAP` shas.
+
+    Read from `index/commit-order.txt` when its first line names the current
+    HEAD (read from .git without a process); otherwise asked of git and
+    written back. A store-less checkout, an unreadable HEAD or a failed write
+    simply asks git each time, as before.
+    """
+    from breadcrumbs import gitrefs
+
+    head = gitrefs.head_sha(root)
+    cache = Path(root) / MEMORY_DIRNAME / Path(*COMMIT_ORDER_RELPATH)
+    if head:
+        try:
+            text = path_policy.read_text(cache)
+        except OSError:
+            text = ""
+        first, _, rest = text.partition("\n")
+        if first == f"{head} {_REVLIST_INDEX_CAP}":
+            return rest.split()
+    out = _git_out(root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD")
+    order = (out or "").split()
+    if head and order and order[0] == head and cache.parent.parent.is_dir():
+        try:
+            path_policy.mkdirs(cache.parent)
+            write_text_atomic(cache, f"{head} {_REVLIST_INDEX_CAP}\n" + "\n".join(order) + "\n")
+        except OSError:
+            pass
+    return order
+
+
 class CommitDistanceIndex:
     """Commit-distance for a whole scoring pass, in one git call instead of N.
 
@@ -6475,10 +6534,8 @@ class CommitDistanceIndex:
 
     def _index(self) -> dict[str, int]:
         if self._pos is None:
-            out = _git_out(
-                self._root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD"
-            )
-            self._pos = {sha: i for i, sha in enumerate((out or "").split())}
+            order = _cached_commit_order(self._root)
+            self._pos = {sha: i for i, sha in enumerate(order)}
         return self._pos
 
     def _position(self, commit: str) -> int | None:
@@ -13585,6 +13642,16 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
         rate = f"{ev['spoke_rate'] * 100:.0f}%" if ev["spoke_rate"] is not None else "-"
         print(f"  {name:<9} {ev['count']:>5}  spoke {rate:>4}  ({outcomes})")
         print(f"            ms p50 {ev['ms_p50']}  p95 {ev['ms_p95']}  max {ev['ms_max']}")
+        phases = ev.get("phases_p50") or {}
+        if phases:
+            parts = []
+            if "import_ms" in phases:
+                parts.append(f"import {phases['import_ms']:.0f} ms")
+            if "git_ms" in phases:
+                parts.append(f"git {phases['git_ms']:.0f} ms")
+            if "git" in phases:
+                parts.append(f"{phases['git']:.0f} git process(es)")
+            print(f"            p50 phases: {', '.join(parts)}")
         if ev.get("verdicts"):
             verdicts = ", ".join(f"{k} {v}" for k, v in sorted(ev["verdicts"].items()))
             print(f"            verdicts: {verdicts}")
@@ -13598,10 +13665,19 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
         )
     guard_p50 = (summary["events"].get("guard") or {}).get("ms_p50")
     if isinstance(guard_p50, (int, float)) and guard_p50 > HOOK_GUARD_BUDGET_MS:
+        phases = (summary["events"].get("guard") or {}).get("phases_p50") or {}
+        rest = guard_p50 - (phases.get("git_ms") or 0)
+        where = (
+            f" Of that, git processes took {phases['git_ms']:.0f} ms and crumb's own work "
+            f"{rest:.0f} ms; loading crumb took a further {phases.get('import_ms', 0):.0f} ms "
+            "(Python's own start-up is not measured)."
+            if phases
+            else ""
+        )
         print(
             f"\nguard p50 {guard_p50:.0f} ms is over the {HOOK_GUARD_BUDGET_MS} ms budget for a "
-            "hook on every tool call. `prefilter: unverified` above means the pre-filter was "
-            "out of date (run `crumb reindex`); otherwise see docs/field-test.md."
+            f"hook on every tool call.{where} `prefilter: unverified` above means the "
+            "pre-filter was out of date (run `crumb reindex`); otherwise see docs/field-test.md."
         )
     if summary.get("incompatible"):
         print(
@@ -14672,12 +14748,19 @@ def cmd_hook(args: argparse.Namespace) -> int:
         # Everything a hook does runs in one application context on the hook
         # channel (audit F18, WP16): admission, the store's aliases, one parse
         # cache for the firing.
-        before = GIT_CALLS[0]
+        before, before_ms = GIT_CALLS[0], GIT_MS[0]
         try:
             with _service.active(_service.Context(root, memory_dir, "hook")):
                 return _run_hook(event, memory_dir, root, payload)
         finally:
-            _hooklog.note(git=GIT_CALLS[0] - before)
+            # Where a slow firing's time went (DoWhat retest of 0.5.0, item 7):
+            # `git` processes and their milliseconds, and the module import
+            # (Python's own start-up is the rest of the host's wall time).
+            _hooklog.note(
+                git=GIT_CALLS[0] - before,
+                git_ms=round(GIT_MS[0] - before_ms, 1),
+                import_ms=IMPORT_MS,
+            )
 
     return _hooklog.run_logged(event, memory_dir, payload, handler, now_iso)
 
@@ -15090,6 +15173,12 @@ def main(argv: list[str] | None = None) -> int:
             args, path_policy.describe_copy_error(exc) if isinstance(exc, OSError) else str(exc)
         )
         return 1
+
+
+# How long importing the package and this module took, for the hook log's
+# `import_ms` (DoWhat retest of 0.5.0, item 7): on Windows start-up is a large
+# share of the hook's budget. The clock starts in `breadcrumbs/__init__.py`.
+IMPORT_MS = round((time.perf_counter() - _breadcrumbs_pkg._IMPORT_STARTED) * 1000, 1)
 
 
 if __name__ == "__main__":

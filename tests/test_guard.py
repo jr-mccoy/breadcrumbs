@@ -759,7 +759,9 @@ class CommitDistanceIndexTests(unittest.TestCase):
             )
             # Every one of those records scores (they all name the same files), so
             # a per-record git call would show up here as ~3x the record count.
-            self.assertEqual(few, many, f"git calls grew with the store: {few} -> {many}")
+            # `<=`, not `==`: the first call may build the commit-order cache in
+            # index/ and the second reuse it (DoWhat retest of 0.5.0, item 7).
+            self.assertLessEqual(many, few, f"git calls grew with the store: {few} -> {many}")
             self.assertLess(many, 20, f"{many} git calls for one guard call")
 
 

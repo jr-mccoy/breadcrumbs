@@ -196,6 +196,10 @@ def read_log(memory_dir: Path) -> list[dict]:
 
 
 _BASE_KEYS = frozenset({"event", "at", "ms", "outcome", "session", "verdict"})
+# Per-firing timings, reported as medians rather than summed: `import_ms`
+# (loading crumb's code), `git_ms` (time in `git` processes) and `git` (how
+# many it started).
+PHASE_KEYS = frozenset({"import_ms", "git_ms", "git"})
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -212,7 +216,8 @@ def summarize(entries: list[dict]) -> dict:
     sessions: set[str] = set()
     for e in entries:
         ev = events.setdefault(
-            e["event"], {"count": 0, "outcomes": {}, "ms": [], "verdicts": {}, "counts": {}}
+            e["event"],
+            {"count": 0, "outcomes": {}, "ms": [], "verdicts": {}, "counts": {}, "phases": {}},
         )
         ev["count"] += 1
         outcome = str(e.get("outcome") or "unknown")
@@ -227,6 +232,10 @@ def summarize(entries: list[dict]) -> dict:
         # string detail is tallied by value (`skipped: prefilter`).
         for key, val in e.items():
             if key in _BASE_KEYS:
+                continue
+            if key in PHASE_KEYS:
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    ev["phases"].setdefault(key, []).append(float(val))
                 continue
             if isinstance(val, bool):
                 if val:
@@ -246,6 +255,10 @@ def summarize(entries: list[dict]) -> dict:
         ev["ms_max"] = max(ms) if ms else None
         spoke = sum(n for o, n in ev["outcomes"].items() if o in ("context", "ask", "block"))
         ev["spoke_rate"] = round(spoke / ev["count"], 3) if ev["count"] else None
+        # Where the time went, as medians (DoWhat retest of 0.5.0, item 7).
+        ev["phases_p50"] = {k: _percentile(v, 50) for k, v in sorted(ev.pop("phases").items())}
+        if not ev["phases_p50"]:
+            ev.pop("phases_p50")
         if not ev["verdicts"]:
             ev.pop("verdicts")
         report[name] = ev
