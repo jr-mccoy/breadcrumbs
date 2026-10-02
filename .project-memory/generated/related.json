@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "2e9a4bc53e50",
+ "inputs_hash": "edf3f755982c",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -28,14 +28,14 @@
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer"
   ],
   "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author": [
+   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new",
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
   ],
   "dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store": [
+   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new",
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
   ],
   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one": [
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
@@ -70,7 +70,7 @@
   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head": [
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
    "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
+   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new"
   ],
   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
@@ -80,7 +80,7 @@
   "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call": [
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns"
+   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new"
   ],
   "dec_20260905_path-extraction-is-structural-and-a-mined-path": [
    "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
@@ -95,7 +95,7 @@
   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
    "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new"
   ],
   "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim": [
    "dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps",
@@ -245,12 +245,17 @@
   "dec_20261001_capture-session-next-adds-a-dated-entry-only-replace": [
    "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
    "dec_20261002_a-store-names-its-oldest-allowed-writer-with-min-crumb",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new"
   ],
   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect": [
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts"
+  ],
+  "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new": [
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
+   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
   ],
   "dec_20261002_a-store-names-its-oldest-allowed-writer-with-min-crumb": [
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",

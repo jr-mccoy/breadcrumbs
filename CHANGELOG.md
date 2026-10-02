@@ -6,9 +6,9 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
-## [Unreleased]
+## [0.6.0] — 2026-10-02
 
-**The retest release** (proposed version **0.6.0**). Fixes what the DoWhat
+**The retest release.** Fixes what the DoWhat
 project's 0.5.0 retest and its schema 1 → 4 migration turned up on Windows:
 `docs/reviews/2026-10-02-dowhat-retest-plan.md` has each item, the
 corrections to the report, the decisions (D7, D8, D14) and each item's test.
@@ -108,6 +108,15 @@ because behaviour people rely on changed:
   about. Only commits HEAD's reflog says were created in this checkout count
   now (`commit`, `cherry-pick`, `revert`, rebase picks).
 - `tests/test_json_envelope.py` no longer modifies the checked-in fixture.
+- **Committing the store no longer earns another Stop-hook snapshot.** The
+  snapshot records HEAD, and committing the snapshot moves HEAD, so the next
+  Stop rewrote the record (and the projections) with the sha of the commit
+  that had just committed them and left the store dirty again — which the
+  agent committed again, every turn. A HEAD that moved only by commits inside
+  `.project-memory/` now counts as nothing moved, the filter the commit
+  counter already applied. The agent's own `capture session`, committed in
+  the extraction turn, is therefore the session's capture: the continuation
+  no longer stacks a machine snapshot beside it.
 
 ## [0.5.0] — 2026-10-01
 

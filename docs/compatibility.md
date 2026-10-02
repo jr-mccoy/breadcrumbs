@@ -80,6 +80,7 @@ content that must be converted or must not be misread.
 | 0.3.1 | 4 | hotfix: hook launchers never pass a failure through |
 | 0.4.0 | 4 | the audit remediation (WP00–WP22); `requires: review-profiles`; OS write lock |
 | 0.5.0 | 4 | the DoWhat field-report fixes; `--next` appends; guard reworked |
+| 0.6.0 | 4 | the DoWhat retest fixes; guard pre-filter machine-local; `min_crumb_version`; Stop hook settles after a memory commit |
 <!-- compat:releases:end -->
 
 The rows are the CHANGELOG's released sections. Checked against PyPI on
