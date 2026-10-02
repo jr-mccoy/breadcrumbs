@@ -776,7 +776,7 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
             _clear_in_progress(memory_dir)
         maint = maintenance(memory_dir, dry_run=dry_run)
         if maint["changes"] and not dry_run and (memory_dir / "generated").is_dir():
-            cli.reindex_projections(memory_dir, project_root)
+            cli.reindex_projections(memory_dir, project_root, force=True)
         return {
             "ok": True,
             "from": current,
@@ -900,7 +900,7 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
     # to go stale. Best-effort either way: a projection that cannot be rebuilt
     # is `validate`'s finding, not a failed migration.
     if (memory_dir / "generated").is_dir():
-        cli.reindex_projections(memory_dir, project_root)
+        cli.reindex_projections(memory_dir, project_root, force=True)
     return {
         "ok": True,
         "from": current,

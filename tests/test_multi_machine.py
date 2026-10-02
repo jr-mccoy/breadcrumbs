@@ -26,6 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
+from breadcrumbs import projections as bprojections  # noqa: E402
+from breadcrumbs import snapshots as bsnapshots  # noqa: E402
 from breadcrumbs import cli as bcli  # noqa: E402  (the module `crumb` re-exports)
 
 FIXTURE = REPO_ROOT / "fixtures" / "fixture-11-multi-machine"
@@ -330,6 +332,10 @@ class ResumeReindexTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full", git_repo=False)
             mem = root / crumb.MEMORY_DIRNAME
+            # An input changed, so the committed packet is due for a rewrite
+            # (a fresh one is kept as it is: `ResumeLeavesAFreshPacketTests`).
+            with (mem / "known-traps.md").open("a", encoding="utf-8") as fh:
+                fh.write(self.TRAP)
             with mock.patch.object(bcli, "write_text_atomic", wraps=bcli.write_text_atomic) as spy:
                 run(["resume", "--project", str(root)])
             written = {Path(c.args[0]).name for c in spy.call_args_list}
@@ -346,6 +352,154 @@ class ResumeReindexTests(unittest.TestCase):
             run(["resume", "--fast", "--project", str(root)])
             run(["resume", "--task", "something else", "--project", str(root)])
             self.assertEqual((mem / "generated" / "resume-packet.md").read_bytes(), before)
+
+
+# --------------------------------------------------------------------------- #
+# A fresh committed packet is left alone: the tree settles (0.6.0)
+# --------------------------------------------------------------------------- #
+class ResumeLeavesAFreshPacketTests(unittest.TestCase):
+    """Reading memory must not dirty the tree.
+
+    The packet embeds HEAD, the clock and the dirty count. `resume` and the
+    SessionStart republish rewrote it on every run, so every session started
+    with a modified packet, and committing it moved HEAD, so the next read
+    rewrote it again.
+    """
+
+    def _committed_store(self, tmp: str) -> tuple[Path, Path]:
+        root = make_store(tmp, "full")
+        (root / "app.py").write_text("x = 1\n", encoding="utf-8")
+        seed_record(root)
+        git(root, "add", "-A")
+        git(root, "commit", "-qm", "store")
+        return root, root / crumb.MEMORY_DIRNAME
+
+    @staticmethod
+    def _dirty(root: Path) -> list[str]:
+        return [ln for ln in git(root, "status", "--porcelain").stdout.splitlines() if ln]
+
+    def _session_start(self, root: Path) -> None:
+        saved = sys.stdin
+        sys.stdin = io.StringIO(
+            json.dumps({"cwd": str(root), "session_id": "s", "hook_event_name": "SessionStart"})
+        )
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(crumb.main(["hook", "session"]), 0)
+        finally:
+            sys.stdin = saved
+
+    def test_resume_on_a_clean_tree_leaves_it_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._committed_store(tmp)
+            self.assertEqual(run(["resume", "--project", str(root)])[0], 0)
+            self.assertEqual(self._dirty(root), [])
+            # HEAD moves by real work: still nothing for a read to rewrite.
+            (root / "app.py").write_text("x = 2\n", encoding="utf-8")
+            git(root, "commit", "-qam", "work")
+            self.assertEqual(run(["resume", "--project", str(root)])[0], 0)
+            self.assertEqual(self._dirty(root), [])
+            self.assertFalse(crumb.detect_packet_drift(mem), "the kept packet is fresh")
+            self.assertFalse(crumb._packet_is_stale(mem, root), "doctor must not chase HEAD")
+
+    def test_session_start_on_a_fresh_clone_leaves_it_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._committed_store(tmp)
+            # A fresh clone has no machine-local index/: the pre-filter is
+            # unverified, so SessionStart republishes.
+            for f in (mem / "index").iterdir():
+                if f.name != "README.md":  # committed; the rest is machine-local
+                    shutil.rmtree(f) if f.is_dir() else f.unlink()
+            self._session_start(root)
+            self.assertEqual(self._dirty(root), [])
+            self.assertTrue(crumb.guard_prefilter_path(mem).is_file(), "pre-filter rebuilt")
+            self.assertIsNotNone(
+                bprojections.verified(mem, root, crumb.GUARD_PREFILTER_FILENAME),
+                "the generation that kept the packet is still vouched for",
+            )
+            self.assertIsNotNone(bprojections.verified(mem, root, "resume-packet.md"))
+
+    def test_a_changed_input_still_rewrites_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._committed_store(tmp)
+            packet = mem / "generated" / "resume-packet.md"
+            before = crumb._stamped_inputs_hash(packet.read_text(encoding="utf-8"))
+            (mem / "current.md").write_text(
+                (mem / "current.md").read_text(encoding="utf-8") + "\nhand edit\n",
+                encoding="utf-8",
+            )
+            run(["resume", "--project", str(root)])
+            after = crumb._stamped_inputs_hash(packet.read_text(encoding="utf-8"))
+            self.assertNotEqual(before, after)
+            self.assertEqual(after, crumb._inputs_hash(mem, root))
+
+    def test_reindex_forces_the_rewrite(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._committed_store(tmp)
+            packet = mem / "generated" / "resume-packet.md"
+            real = bcli.render_packet_markdown
+            with mock.patch.object(
+                bcli, "render_packet_markdown", lambda p: real(p) + "<!-- newer renderer -->\n"
+            ):
+                run(["resume", "--project", str(root)])
+                self.assertNotIn("newer renderer", packet.read_text(encoding="utf-8"))
+                self.assertEqual(run(["reindex", "--project", str(root)])[0], 0)
+            self.assertIn("newer renderer", packet.read_text(encoding="utf-8"))
+
+    def test_doctor_still_sees_a_warning_about_the_store(self):
+        """Only clock- and HEAD-derived warnings are ignored: a packet published
+        while the store kept changing must still read as stale to doctor."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._committed_store(tmp)
+            packet = mem / "generated" / "resume-packet.md"
+            text = packet.read_text(encoding="utf-8")
+            unstable = text.replace(
+                "## Stale / Risk Warnings\n",
+                "## Stale / Risk Warnings\n- " + bsnapshots.UNSTABLE_WARNING + "\n",
+            )
+            self.assertNotEqual(text, unstable)
+            packet.write_text(unstable, encoding="utf-8")
+            self.assertTrue(crumb._packet_is_stale(mem, root))
+
+    def test_an_unresolved_merge_is_never_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._committed_store(tmp)
+            packet = mem / "generated" / "resume-packet.md"
+            text = packet.read_text(encoding="utf-8")
+            packet.write_text(
+                text + "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feat\n", encoding="utf-8"
+            )
+            run(["resume", "--project", str(root)])
+            self.assertNotIn("<<<<<<<", packet.read_text(encoding="utf-8"))
+
+    def test_landed_since_ignores_memory_only_commits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root, mem = self._committed_store(tmp)
+            run(["capture", "session", "--project", str(root), "--next", "ship app.py"])
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "memory: capture")
+            (root / "app.py").write_text("x = 3\n", encoding="utf-8")
+            git(root, "commit", "-qam", "real work")
+            run(
+                [
+                    "remember",
+                    "decision",
+                    "--project",
+                    str(root),
+                    "--title",
+                    "Keep x small",
+                    "--set",
+                    "Decision",
+                    "x stays under ten.",
+                    "--evidence",
+                    "file",
+                    "app.py",
+                ]
+            )
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "memory: decision")
+            landed = crumb.build_resume_packet(mem, root)["commits_since_handoff"]
+            self.assertEqual([c.split(" ", 1)[1] for c in landed], ["real work"])
 
 
 # --------------------------------------------------------------------------- #

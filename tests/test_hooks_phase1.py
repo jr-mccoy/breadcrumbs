@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -368,13 +369,16 @@ class SubagentHookTests(unittest.TestCase):
             root = make_repo(tmp)
             mem = init_store(root)
             path = write_transcript(root, bash("c1", "go test ./...", "ok 0.2s"), name="sub.jsonl")
+            parent = write_transcript(root, bash("p1", "make lint", "lint ok"), name="parent.jsonl")
             out = run_hook(
                 "subagent",
                 {
                     "cwd": str(root),
                     "session_id": "s1",
                     "agent_type": "Explore",
-                    "transcript_path": str(path),
+                    # The hooks reference: `transcript_path` is the parent's.
+                    "transcript_path": str(parent),
+                    "agent_transcript_path": str(path),
                 },
             )
             self.assertEqual(out, {}, "this plan does not hold a subagent")
@@ -392,8 +396,23 @@ class SubagentHookTests(unittest.TestCase):
             mem = init_store(root)
             path = write_transcript(root, [user_text("looked around")], name="sub.jsonl")
             run_hook(
-                "subagent", {"cwd": str(root), "session_id": "s1", "transcript_path": str(path)}
+                "subagent",
+                {"cwd": str(root), "session_id": "s1", "agent_transcript_path": str(path)},
             )
+            self.assertEqual(ibx.load_jots(mem), [])
+
+    def test_the_parent_transcript_is_never_mined(self):
+        """`transcript_path` on SubagentStop is the parent session's; mining it
+        re-read the whole parent on every subagent exit and tagged the parent's
+        findings `subagent` (0.6.0)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            parent = write_transcript(root, bash("p1", "go test ./...", "ok 0.2s"), name="p.jsonl")
+            out = run_hook(
+                "subagent", {"cwd": str(root), "session_id": "s1", "transcript_path": str(parent)}
+            )
+            self.assertEqual(out, {})
             self.assertEqual(ibx.load_jots(mem), [])
 
 
@@ -784,10 +803,19 @@ class BadPayloadTests(unittest.TestCase):
                 {"cwd": str(root), "session_id": 17, "transcript_path": 42},
                 {"cwd": str(root), "transcript_path": str(root)},  # a directory
             ]
-            for event in crumb.HOOK_EVENTS:
-                for payload in payloads:
-                    with self.subTest(event=event, payload=payload):
-                        self.assertIsInstance(run_hook(event, payload), dict)
+            # `{}` has no cwd, so the hooks fall back to the process's working
+            # directory. Run from the temp repo: from the checkout the suite
+            # runs in, every run fired all six hooks at this repo's own store
+            # and left a stray session snapshot behind.
+            here = os.getcwd()
+            os.chdir(root)
+            try:
+                for event in crumb.HOOK_EVENTS:
+                    for payload in payloads:
+                        with self.subTest(event=event, payload=payload):
+                            self.assertIsInstance(run_hook(event, payload), dict)
+            finally:
+                os.chdir(here)
 
 
 if __name__ == "__main__":  # pragma: no cover

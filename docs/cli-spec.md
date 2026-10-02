@@ -91,7 +91,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `capture` | `Stop` | — | Mines the transcript (always, as a side effect), then snapshots a session record or holds the stop once for the extraction turn. The extraction instruction includes one line saying a write refused with exit 3 is a near-duplicate, answered with `--supersedes <id>` or `--allow-duplicate`. |
 | `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, looked up for **any prompt that is not an acknowledgement** (audit WP10: a vocabulary such as "ok", "yes please", "go on", "thanks" or emoji alone, not a length — `npm test` and `quasar` are looked up) with **no record-count cutoff** (it used to return nothing above 500 records), with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Injects **current records only**: superseded, rejected, stale, disputed and quarantined records, answered and closed questions, records past their `expires_at`, and branch-scoped records written on another branch stay out. A verification stays in while its own lifecycle status is `active`, whatever its outcome. Captures a correction to `private/inbox/`. Records the prompt as the session's latest task **before** the lookup (audit WP12), and the lookup's selected and emitted ids apart from it; acknowledgements and slash commands leave the task alone. The dedupe key and the usage count are the ids left after budget trimming. **Never blocks** — that would erase the prompt. |
 | `compact` | `PreCompact` | — | Mines the transcript and writes a marker for the next `SessionStart`. Emits nothing: this event's stdout never reaches the model. |
-| `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript, tagged `subagent` and `agent:<type>`. Does not hold the subagent. |
+| `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript (`agent_transcript_path`; `transcript_path` is the parent's and is never read here), tagged `subagent` and `agent:<type>`. Its findings never earn the parent's extraction turn alone. Does not hold the subagent. |
 
 **How the prompt hook looks up** (audit WP10, `breadcrumbs/retrieval.py`).
 
@@ -298,7 +298,7 @@ Behavior:
 ## `resume` (built)
 
 ```bash
-crumb resume                  # full bounded packet; writes generated/resume-packet.md
+crumb resume                  # full bounded packet; refreshes generated/resume-packet.md if its inputs changed
 crumb resume --fast           # reduced reorientation view (print-only)
 crumb resume --json           # structured packet (sections + warnings + source header)
 crumb resume --stale-days N   # age cutoff in days (default: 21)
@@ -495,6 +495,13 @@ Behavior:
   `generated/related.json` and `generated/conflicts.json`, each written
   atomically (see `reindex`). `--fast`
   and `--task` are **print-only** and never overwrite them.
+- **A committed projection whose inputs are unchanged is left as it is**
+  (0.6.0). Its stamped `inputs_hash` matching the store's is what fresh means
+  (`validate`), and the commit, dirty count and ages in it describe the store as
+  of its `generated_at`. Rewriting it on every read left each session with a
+  modified packet before it had done anything, and committing it moved HEAD so
+  the next read rewrote it again. A write that changes the inputs rewrites it;
+  `crumb reindex` always does.
 - **Waits at most 0.5 seconds for the write lock** (audit WP05). A session must
   not fail to start because another session is capturing. If the lock is busy,
   `resume` prints the packet it built but publishes nothing (see
@@ -541,7 +548,7 @@ body when a line looks relevant.
 ## `reindex` (built)
 
 ```bash
-crumb reindex                  # rebuild every projection
+crumb reindex                  # rebuild every projection, even ones whose inputs are unchanged
 crumb reindex --search-index   # ...and build index/search.sqlite regardless of store size
 ```
 
