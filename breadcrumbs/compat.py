@@ -24,6 +24,14 @@ A store says what it needs in `manifest.yml`:
   the resume packet, `guard` (and the guard hook when it speaks), and stderr
   for the CLI's read commands.
 
+- **`min_crumb_version`** (optional), the oldest crumb-kit allowed to write
+  the store: `min_crumb_version: 0.5.0`. It is for a change in how a build
+  *writes* that needs no format change (DoWhat retest of 0.5.0, item 14: a
+  0.4.x `capture session` replaced the whole Next Action log that 0.5.0 keeps).
+  `crumb migrate` raises it to `MIN_SAFE_WRITER`, never lowers it, and lists
+  `min-crumb-version` under `requires`, so a build that predates the field
+  (0.4.x, 0.5.0) refuses too instead of ignoring it. It can be set by hand.
+
 **The limit.** crumb-kit 0.3.1 and earlier do not run this check. They read and
 write a newer store as though it were theirs; only their `validate` objects.
 `docs/compatibility.md` says how a semantic change is designed so that those
@@ -39,9 +47,18 @@ from pathlib import Path
 # Features this build implements, by the name a store lists under `requires`.
 # A change that defines one adds its name here in the same release that starts
 # writing it. `review-profiles`: a team-profile store (`admission.py`, WP14).
-KNOWN_FEATURES: frozenset[str] = frozenset({"review-profiles"})  # audit WP14
+# `min-crumb-version`: the store names the oldest crumb-kit that may write it
+# (`MIN_VERSION_KEY`; DoWhat retest of 0.5.0, item 14).
+KNOWN_FEATURES: frozenset[str] = frozenset({"review-profiles", "min-crumb-version"})
 
 REQUIRES_KEY = "requires"
+MIN_VERSION_KEY = "min_crumb_version"
+MIN_VERSION_FEATURE = "min-crumb-version"
+# The oldest release whose writes this build considers safe for a store it has
+# migrated. 0.5.0 made `capture session --next` add an entry instead of
+# replacing the Next Action log; a 0.4.x capture would wipe a log 0.5.0 kept.
+# Raise it in the release that changes how a store must be written.
+MIN_SAFE_WRITER = "0.5.0"
 
 CURRENT = "current"
 OLDER = "older"
@@ -49,6 +66,7 @@ NEWER = "newer"
 UNKNOWN_FEATURES = "unknown-features"
 UNREADABLE = "unreadable"
 ABSENT = "absent"
+NEEDS_NEWER_BUILD = "needs-newer-build"
 
 
 @dataclass(frozen=True)
@@ -57,6 +75,7 @@ class Compatibility:
     store_version: int | None
     build_version: int
     unknown_features: tuple[str, ...] = field(default_factory=tuple)
+    min_version: str | None = None
 
     @property
     def writable(self) -> bool:
@@ -79,6 +98,17 @@ class Compatibility:
             return (
                 f"this store requires {names}, which {tool} does not implement. Upgrade crumb-kit."
             )
+        if self.state == NEEDS_NEWER_BUILD:
+            return (
+                f"this store needs crumb-kit {self.min_version} or newer to write it "
+                f"(`{MIN_VERSION_KEY}` in manifest.yml); this is {tool}. Upgrade crumb-kit."
+            )
+        if self.state == UNREADABLE and self.min_version is not None:
+            return (
+                f"this store's manifest.yml has an unreadable {MIN_VERSION_KEY} "
+                f"({self.min_version!r}); {tool} cannot tell whether it may write it. "
+                "Fix the manifest."
+            )
         if self.state == UNREADABLE:
             return (
                 f"this store's manifest.yml has an unreadable schema_version; {tool} "
@@ -93,6 +123,16 @@ def parse_features(value) -> tuple[str, ...]:
         return ()
     text = str(value).strip().strip("[]")
     return tuple(sorted({v for v in re.split(r"[\s,]+", text) if v}))
+
+
+def parse_version(text) -> tuple[int, ...] | None:
+    """`0.5.0` -> (0, 5, 0); a suffix (`0.6.0rc1`, `0.6.0.dev2`) is ignored.
+    None when it does not start with a dotted number."""
+    m = re.match(r"\s*v?(\d+(?:\.\d+)*)", str(text or ""))
+    if not m:
+        return None
+    parts = tuple(int(p) for p in m.group(1).split("."))
+    return parts + (0,) * (3 - len(parts)) if len(parts) < 3 else parts
 
 
 def check(memory_dir: Path) -> Compatibility:
@@ -121,6 +161,15 @@ def check(memory_dir: Path) -> Compatibility:
     )
     if unknown:
         return Compatibility(UNKNOWN_FEATURES, version, build, unknown)
+    raw_min = manifest.get(MIN_VERSION_KEY)
+    if raw_min is not None and str(raw_min).strip() not in ("", "null", "~"):
+        wanted = parse_version(raw_min)
+        if wanted is None:
+            return Compatibility(UNREADABLE, version, build, min_version=str(raw_min))
+        if (parse_version(cli.get_version()) or (0,)) < wanted:
+            return Compatibility(
+                NEEDS_NEWER_BUILD, version, build, min_version=str(raw_min).strip()
+            )
     return Compatibility(OLDER if version < build else CURRENT, version, build)
 
 

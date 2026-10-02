@@ -12311,8 +12311,23 @@ def cmd_migrate(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
         return 1
+    maint = result.get("maintenance") or {}
+
+    def print_maintenance() -> None:
+        # Template files and the writer floor (DoWhat retest of 0.5.0, items 12, 14).
+        if maint.get("changes"):
+            print("Store files:" if not args.dry_run else "Store files it would update:")
+            for line in maint["changes"]:
+                print(f"  {line}")
+        for line in maint.get("warnings") or []:
+            print(f"  warning: {line}")
+
     if not result["steps"]:
-        print(f"migrate: nothing to do — store is schema_version {result['to']}.")
+        if maint.get("changes") or maint.get("warnings"):
+            print(f"migrate: store is schema_version {result['to']}; no format steps.")
+            print_maintenance()
+        else:
+            print(f"migrate: nothing to do — store is schema_version {result['to']}.")
         return 0
     verb = "would apply" if args.dry_run else "applied"
     print(f"migrate: {verb} {len(result['steps'])} step(s), {result['from']} -> {result['target']}")
@@ -12345,8 +12360,10 @@ def cmd_migrate(args: argparse.Namespace) -> int:
                 print(f"    {line}")
             if len(items) > 50:
                 print(f"    … and {len(items) - 50} more (`crumb validate` lists every one)")
+        print_maintenance()
         print("\nRe-run without --dry-run to apply.")
     else:
+        print_maintenance()
         print(f"\nBackup of the pre-migration store: {result['backup']}")
         print("To undo: crumb migrate --restore")
     return 0
@@ -13591,8 +13608,24 @@ def doctor_report(root: Path) -> dict:
             "every record passes `crumb validate`"
             if not failures
             else f"{len(failures)} validation failure(s) (first: {failures[0]['message']}) "
-            "— run `crumb validate`; an older store layout is fixed by `crumb migrate`",
+            "— run `crumb validate`; "
+            # On a current store `migrate` has nothing to fix (DoWhat retest of
+            # 0.5.0, item 13): records written by hand are `repair`'s job.
+            + (
+                "an older store layout is fixed by `crumb migrate`"
+                if compatibility.state == _compat.OLDER
+                else "`crumb repair` previews fixes for hand-written records"
+            ),
         )
+        if compatibility.min_version is None:
+            floor = (load_manifest(memory_dir) or {}).get(_compat.MIN_VERSION_KEY)
+            if floor not in (None, ""):
+                add(
+                    "min_writer",
+                    True,
+                    f"crumb-kit {floor} or newer may write this store "
+                    f"(`{_compat.MIN_VERSION_KEY}`); this is {get_version()}",
+                )
         from breadcrumbs import handoffs as _handoffs
         from breadcrumbs import rename as _rename
 
