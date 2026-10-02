@@ -5,6 +5,8 @@
 # `--write-baseline` refuses to run while one fails. Checks:
 #
 #   guard_not          cli.guard(task, files) must not return any `verdict_not`
+#   guard_cites_none   cli.guard(task, files) must cite none of the `forbid` ids
+#   guard_no_blocking  cli.guard(task, files) must show no match as blocking
 #   hook_guard_warns   `crumb hook guard` on the task must deliver a warning
 #   never_delivered    no `forbid` id is delivered as an entry (`via`: prompt, packet)
 #   delivered          every `require` id is delivered (`via`, default prompt)
@@ -187,3 +189,100 @@ cases:
     task: "crumb migrate --dry-run"
     verdict_not: [PAUSE, ASK_HUMAN]
     note: "issue 7d"
+
+  # ---- the DoWhat retest of 0.5.0 (docs/reviews/2026-10-02-dowhat-retest-plan.md)
+  - id: android-sed-pipeline-is-read-only
+    suite: android
+    check: guard_not
+    task: "sed -n '867p' app/lint-results.txt | grep -oiE 'migrat(e|ion)'"
+    verdict_not: [PAUSE, ASK_HUMAN]
+    note: "item 1: `sed -n` was not read-only, and the hook gave PAUSE"
+
+  - id: android-migrate-preview-piped-is-not-a-migration
+    suite: android
+    check: guard_not
+    task: "crumb migrate --dry-run | sed -n '1,22p'"
+    verdict_not: [PAUSE, ASK_HUMAN]
+    note: "item 2: the `| sed` made the dry run a migration"
+
+  - id: android-real-migrate-cites-nothing-unrelated
+    suite: android
+    check: guard_cites_none
+    task: "crumb migrate"
+    forbid: [att_20260912_retrying-gradle-against-maven-central-on-a-cold-web, att_20260705_ran-the-room-migration-test-against-an-in-memory-database, att_20260910_migrationv21tov22test-s-todos-inserts-named-5-of-the-10, att_20260913_hunk-filtering-discipline-applied-to-the-kt-file-lost, trap_git-merge-conflict-in-project-memory]
+    note: "item 3: high-impact verdicts cited a Gradle 429 attempt and a Room migration test"
+
+  - id: android-real-migrate-still-asks
+    suite: android
+    check: guard_not
+    task: "crumb migrate"
+    verdict_not: [PROCEED, READ_FIRST, PAUSE]
+
+  - id: android-handoff-note-is-not-paused
+    suite: android
+    check: guard_not
+    task: "edit .project-memory/handoff.md: Migrated the store from schema 1 to 4; the migration kept every trap."
+    files: [.project-memory/handoff.md]
+    verdict_not: [PAUSE, ASK_HUMAN]
+    note: "item 4: memory prose was scored, and a todo/migration/schema attempt PAUSEd it"
+
+  - id: android-handoff-note-cites-no-migration-attempt
+    suite: android
+    check: guard_cites_none
+    task: "edit .project-memory/handoff.md: Migrated the store from schema 1 to 4; the migration kept every trap."
+    files: [.project-memory/handoff.md]
+    forbid: [att_20260910_migrationv21tov22test-s-todos-inserts-named-5-of-the-10]
+
+  - id: android-script-comment-is-not-paused
+    suite: android
+    check: guard_not
+    task: "edit tools/run.sh: # migrated the schema; re-run the todo migration check"
+    files: [tools/run.sh]
+    verdict_not: [PAUSE, ASK_HUMAN]
+    note: "item 4: an ordinary shell script edit was PAUSEd on its comment"
+
+  - id: android-routine-commands-skip-the-merge-decision
+    suite: android
+    check: guard_cites_none
+    task: "cp app/src/main/res/values/strings.xml /tmp/strings.xml"
+    forbid: [dec_20260911_merging-main-into-a-branch-always-conflicts-on-exactly]
+    note: "item 5: the merge decision was cited on git status, reindex, cp and README edits"
+
+  - id: android-reindex-skips-the-merge-decision
+    suite: android
+    check: guard_cites_none
+    task: "crumb reindex"
+    forbid: [dec_20260911_merging-main-into-a-branch-always-conflicts-on-exactly, att_20260910_migrationv21tov22test-s-todos-inserts-named-5-of-the-10]
+
+  - id: android-git-status-shows-nothing-blocking
+    suite: android
+    check: guard_no_blocking
+    task: "git status"
+    note: "item 6: a read-only command showed a hunk-filtering attempt as [objects]"
+
+  - id: android-capture-matches-its-own-files
+    suite: android
+    check: hook_guard_warns
+    task: "crumb capture session --next 'publish 0.6.0 after the Windows retest'"
+    note: "protect list: capture session matches the trap about the files it writes"
+
+  - id: android-settings-button-colour-proceeds
+    suite: android
+    check: guard_not
+    task: "change the color of the settings button"
+    verdict_not: [READ_FIRST, PAUSE, ASK_HUMAN]
+    note: "protect list"
+
+  - id: android-rm-rf-src-asks
+    suite: android
+    check: guard_not
+    task: "rm -rf app/src"
+    verdict_not: [PROCEED, READ_FIRST, PAUSE]
+    note: "protect list"
+
+  - id: android-read-only-cd-grep-head-proceeds
+    suite: android
+    check: guard_not
+    task: "cd app && grep -r Foo . 2>/dev/null | head"
+    verdict_not: [READ_FIRST, PAUSE, ASK_HUMAN]
+    note: "protect list"

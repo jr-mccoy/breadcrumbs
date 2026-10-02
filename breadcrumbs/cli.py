@@ -8534,6 +8534,21 @@ GUARD_MIN_KEYWORD_OVERLAP = 2  # specific shared tokens for a pure-text match
 # are author-curated, deliberate signal.
 GUARD_DF_UBIQUITY = 1 / 3
 GUARD_DF_MIN_CORPUS = 8
+# Rarity, a softer tier below ubiquity (DoWhat retest of 0.5.0, item 5). In a
+# 400-record store full of migration and memory records, a `migration` tag or
+# the word `memory` says little about *this* action, yet one shared tag plus one
+# shared word made a record topical, and the same two records were cited on
+# `git status`, `cp`, a reindex and a README edit. A tag or word carried by more
+# than GUARD_DF_COMMON of the corpus is *common*: it scores half, and it cannot
+# make a match topical on its own, so it cannot floor a verdict or make a
+# do-not-retry line blocking. Unlike ubiquity this covers tags too: a tag on
+# most records is author-curated, but it still names the whole store's topic.
+# Below GUARD_DF_COMMON_MIN_CORPUS records nothing is common, and a stem must
+# also be on more than GUARD_DF_COMMON_MIN_RECORDS records: in a 40-record
+# store, four records sharing a tag is a topic, not the store's whole subject.
+GUARD_DF_COMMON = 0.08
+GUARD_DF_COMMON_MIN_CORPUS = 25
+GUARD_DF_COMMON_MIN_RECORDS = 10
 
 # scoring weights (§11.4 signals)
 GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
@@ -9248,19 +9263,36 @@ def classify_action(action: str) -> tuple[str, list[str]]:
     a real `crumb migrate` is a migration.
     """
     edit = _EDIT_ACTION_RE.match((action or "").strip())
+    effects: set[str] = set()
     if edit:
         text = f"{edit.group(1)} {edit.group(2)}"
     else:
-        crumb = _shellcmd.crumb_commands(action or "")
-        if crumb and len(crumb) == len(_shellcmd.segments(action or "") or [None]):
-            effects = {effect for effect, _args in crumb}
-            if effects <= {"read_only", "memory_write"}:
-                return "routine_edit", ["routine_edit"]
-            if effects <= {"read_only", "memory_write", "migration"}:
-                return "migration", ["migration"]
-        text = _shellcmd.classification_text(action or "")
+        # Segment by segment (DoWhat retest of 0.5.0, item 2): a crumb command
+        # counts by its effect, a read-only segment counts for nothing, and only
+        # the rest is read for class words. Judging the whole command at once
+        # made `crumb migrate --dry-run | sed -n '1,22p'` a migration, because
+        # the `| sed` stopped it being "all crumb" and `migrate` was a word.
+        segs = _shellcmd.segments(action or "")
+        if segs is None:
+            text = _shellcmd.classification_text(action or "")
+        else:
+            other: list[str] = []
+            for seg in segs:
+                args = _shellcmd.crumb_invocation(_shellcmd.words(seg))
+                if args is not None:
+                    effect = _shellcmd.crumb_effect(args)
+                    effects.add(effect)
+                    if effect == "other":
+                        other.append(seg)
+                    continue
+                if _shellcmd.is_read_only(seg):
+                    continue
+                other.append(seg)
+            text = _shellcmd.classification_text(" ; ".join(other))
     toks = _tokenize(text)
     matched = {cls for cls, kws in ACTION_CLASS_KEYWORDS.items() if toks & kws}
+    if "migration" in effects:
+        matched.add("migration")
     if not matched:
         return "routine_edit", ["routine_edit"]
     primary = next(c for c in _CLASS_SEVERITY if c in matched)
@@ -9634,8 +9666,15 @@ def _score_item(
     q_writes: set[str] = frozenset(),
     do_not_retry_boost: bool = True,
     reached: "HeadTree | None" = None,
+    common: frozenset[str] = frozenset(),
+    common_tags: frozenset[str] = frozenset(),
 ) -> dict | None:
-    """Score one item against the query. None if it does not clear the candidate gate."""
+    """Score one item against the query. None if it does not clear the candidate gate.
+
+    `common` / `common_tags` are the query's stems that too many records carry
+    as a word / as a tag to say much (`GUARD_DF_COMMON`): they score half and
+    never make a match topical by themselves.
+    """
 
     # _norm_files stores each file as both its full path and its bare basename,
     # so the intersection can hold both variants of one physical file. Count each
@@ -9704,6 +9743,8 @@ def _score_item(
 
     signals: list[str] = []
     score = 0.0
+    rare_tag_stems = matched_tag_stems - common_tags
+    rare_kw = kw_overlap - common
     if matched_files:
         score += GUARD_W_FILE * file_count
         signals.append("file")
@@ -9711,21 +9752,28 @@ def _score_item(
         score += GUARD_W_MENTION * mention_count
         signals.append("mention")
     if matched_tags:
-        score += GUARD_W_TAG * len(matched_tag_stems)
-        signals.append("tag")
+        score += GUARD_W_TAG * len(rare_tag_stems)
+        score += GUARD_W_TAG / 2 * (len(matched_tag_stems) - len(rare_tag_stems))
+        # Only a rare tag is a surfacing signal; a tag half the store carries
+        # is a topic, and on its own it is said as such (`common-tag`).
+        signals.append("tag" if rare_tag_stems else "common-tag")
     if matched_writes:
         score += GUARD_W_WRITES * writes_count
         signals.append("writes-file")
     if kw_count:
         # Capped for guard: overlap grew with the command's length, so a long
         # commit message scored 39 against records it had nothing to do with
-        # (issue 7c). Plain search keeps the uncapped count.
-        score += GUARD_W_KEYWORD * (min(kw_count, keyword_cap) if keyword_cap else kw_count)
+        # (issue 7c). Plain search keeps the uncapped count. A common word
+        # counts half (item 5 of the 0.5.0 retest).
+        weighted = len(rare_kw) + (kw_count - len(rare_kw)) / 2
+        score += GUARD_W_KEYWORD * (min(weighted, keyword_cap) if keyword_cap else weighted)
         if kw_count >= min_keyword:
             signals.append("keyword")
     if title_overlap:
-        score += GUARD_W_TITLE * len(title_overlap)
-        signals.append("title")
+        score += GUARD_W_TITLE * len(title_overlap - common)
+        score += GUARD_W_TITLE / 2 * len(title_overlap & common)
+        if title_overlap - common:
+            signals.append("title")
 
     rec = item.get("record")
     if item["status"] == "active":
@@ -9741,13 +9789,17 @@ def _score_item(
     # attempt to the PAUSE band and pushed the relevant record out (issue 8).
     # Words beyond the tags: a tag's own word is in the record's text too, so it
     # would otherwise count as the "shared word" that makes a tag hit topical.
-    kw_beyond_tags = len(kw_overlap - matched_tag_stems)
+    # Only rare evidence counts (item 5 of the 0.5.0 retest): a common tag
+    # plus one common word is what a store says about everything. In a store
+    # too small to have common words, these are the rules they always were.
+    kw_beyond_tags = len(rare_kw - matched_tag_stems)
     topical = bool(
         matched_files
-        or (title_overlap - matched_tag_stems)
+        or (title_overlap - matched_tag_stems - common)
         or matched_writes
-        or (matched_tags and kw_beyond_tags >= 1)
-        or len(matched_tag_stems) >= 2
+        or (rare_tag_stems and kw_beyond_tags >= 1)
+        or (len(matched_tag_stems) >= 2 and rare_tag_stems)
+        or (matched_tag_stems and kw_beyond_tags >= 2)
         or kw_beyond_tags >= GUARD_TOPICAL_KEYWORDS
     )
     if item["do_not_retry"] and do_not_retry_boost and topical:
@@ -9861,6 +9913,17 @@ def _match_reason(
     return "; ".join(parts) if parts else "keyword overlap"
 
 
+def _common_stems(df: dict) -> tuple[frozenset[str], frozenset[str]]:
+    """(common words, common tags) among the query's stems (`GUARD_DF_COMMON`)."""
+    n = int(df.get("n") or 0)
+    if n < GUARD_DF_COMMON_MIN_CORPUS:
+        return frozenset(), frozenset()
+    cutoff = max(n * GUARD_DF_COMMON, GUARD_DF_COMMON_MIN_RECORDS)
+    words = frozenset(s for s, c in (df.get("words") or {}).items() if c > cutoff)
+    tags = frozenset(s for s, c in (df.get("tags") or {}).items() if c > cutoff)
+    return words, tags
+
+
 def search(
     memory_dir: Path,
     root: Path,
@@ -9878,14 +9941,17 @@ def search(
     keyword_cap: int | None = None,
     writes: list[str] | None = None,
     do_not_retry_boost: bool = True,
+    command_text: str | None = None,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Deterministic search over the canonical records (§20.10).
 
     Guard's own knobs: `path_text` is where query paths are read from (default
     the query), `keyword_cap` bounds the keyword contribution so a longer
     command does not score higher for being long, `writes` are files the
-    action writes without naming them (crumb's own commands, issue 11), and
-    `do_not_retry_boost=False` ranks by relevance alone (the prompt hook).
+    action writes without naming them (crumb's own commands, issue 11),
+    `command_text` is the command matched against the commands records name
+    (default the query), and `do_not_retry_boost=False` ranks by relevance
+    alone (the prompt hook).
 
     Returns (matches sorted best-first, items_by_id). Matching signals: exact/
     keyword text, tag/component, and file path. No embeddings; same input ->
@@ -9911,13 +9977,14 @@ def search(
         _paths_from_text(query if path_text is None else path_text) | set(files or [])
     )
     q_writes = _norm_files(writes or []) - q_files
-    q_command = _command_tokens(query)
+    q_command = _command_tokens(query if command_text is None else command_text)
     # The search index narrows the corpus to records that could possibly match
     # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
     # the full scan below is then exactly what it always was.
     from breadcrumbs import searchindex as _searchindex
 
     explain: dict = {}
+    df: dict = {}
     narrowed = _searchindex.candidate_items(
         memory_dir,
         root,
@@ -9925,6 +9992,7 @@ def search(
         q_files | q_writes,
         include_ideas=include_ideas,
         explain=explain,
+        df_out=df,
     )
     info = info if info is not None else {}
     if narrowed is not None:
@@ -9937,6 +10005,14 @@ def search(
             return [], {}
         items = _candidate_items(memory_dir, include_ideas=include_ideas)
         ubiquitous = _ubiquitous_stems(items)
+        df = {
+            "n": len(items),
+            "words": {q: sum(1 for it in items if q in it["specific"]) for q in q_specific},
+            "tags": {
+                q: sum(1 for it in items if q in (it.get("tag_stems") or ())) for q in q_specific
+            },
+        }
+    common, common_tags = _common_stems(df)
     info["candidates"] = len(items)
     by_id = {it["id"]: it for it in items}
     cur_branch = git_branch(root)
@@ -9966,6 +10042,8 @@ def search(
             q_writes=q_writes,
             do_not_retry_boost=do_not_retry_boost,
             reached=reached,
+            common=common,
+            common_tags=common_tags,
         )
         if it.get("command_heads") and _names_command(q_command, it["command_heads"]):
             m = _with_command_signal(m, it, do_not_retry_boost=do_not_retry_boost)
@@ -10103,6 +10181,16 @@ def _min_verdict(*verdicts: str) -> str:
     return min(verdicts, key=lambda v: _VERDICT_RANK[v])
 
 
+def _only_common_evidence(m: dict) -> bool:
+    """A match carried only by common tags and words (`GUARD_DF_COMMON`)."""
+    sig = set(m.get("signals") or ())
+    return (
+        "common-tag" in sig
+        and not m.get("topical")
+        and not ({"tag", "file", "mention", "writes-file", "command", "open-blocker"} & sig)
+    )
+
+
 def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "") -> str:
     """Pick one verdict from the ranked matches + action class. Deterministic.
 
@@ -10125,7 +10213,9 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
         # (`topical`; field report 2026-10-01, issue 7: every git-tagged
         # decision floored every git command at READ_FIRST). A file, or a file
         # the action writes, always does.
-        specific = bool({"file", "writes-file"} & sig) or ("tag" in sig and m.get("topical", True))
+        specific = bool({"file", "writes-file"} & sig) or (
+            bool({"tag", "common-tag"} & sig) and m.get("topical", True)
+        )
         floor = "PROCEED"
         if "do-not-retry" in sig and specific:
             floor = "PAUSE"  # a failed attempt on these files/component
@@ -10150,7 +10240,12 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
 
         stance = m.get("stance") or _match_stance(m.get("signals"))
         ceiling = GUARD_BLOCKING_CEILING if stance == "blocking" else GUARD_ADVISORY_CEILING
-        verdicts.append(_min_verdict(_max_verdict(floor, _score_band(m["score"])), ceiling))
+        band = _score_band(m["score"])
+        if _only_common_evidence(m):
+            # Shared vocabulary the whole store speaks (DoWhat retest of 0.5.0,
+            # item 5): it may be shown, but it cannot raise a verdict.
+            band = "PROCEED"
+        verdicts.append(_min_verdict(_max_verdict(floor, band), ceiling))
 
     verdict = _max_verdict(*verdicts)
 
@@ -10241,6 +10336,28 @@ def _recommended_action(
     )
 
 
+def _direct_evidence(m: dict) -> bool:
+    """Is a match about this action itself, not just its vocabulary?"""
+    sig = set(m.get("signals") or ())
+    return bool({"file", "writes-file", "command"} & sig) or (
+        bool(m.get("topical")) and bool({"tag", "title"} & sig)
+    )
+
+
+def _is_memory_path(path: str, root: Path) -> bool:
+    """Is `path` (as an edit names it) inside this project's memory store?"""
+    norm = str(path or "").replace("\\", "/")
+    if norm.startswith(f"{MEMORY_DIRNAME}/") or f"/{MEMORY_DIRNAME}/" in f"/{norm}":
+        try:
+            target = Path(path)
+            if target.is_absolute():
+                return target.resolve().is_relative_to((Path(root) / MEMORY_DIRNAME).resolve())
+        except (OSError, ValueError):
+            return False
+        return True
+    return False
+
+
 def guard(
     memory_dir: Path,
     root: Path,
@@ -10265,11 +10382,23 @@ def guard(
     # paths only from the command and the edited file — never from the content
     # being written (issue 10: `mentions: CLAUDE.md` came from prose).
     edit = _EDIT_ACTION_RE.match((action or "").strip())
-    path_text = f"{edit.group(1)} {edit.group(2)}" if edit else _shellcmd.matching_text(action)
+    memory_edit = bool(edit) and _is_memory_path(edit.group(2), root)
+    if edit:
+        # An edit is about its file, not the prose it writes (DoWhat retest of
+        # 0.5.0, item 4: a handoff note that said "migrated the schema" was
+        # PAUSEd by a Room migration attempt). Code identifiers in the new
+        # content still count; an edit inside the store is a memory write and
+        # is matched on its path alone.
+        path_text = f"{edit.group(1)} {edit.group(2)}"
+        content = "" if memory_edit else (edit.group(3) or "")
+        query = " ".join([path_text, *_shellcmd.code_identifiers(content)])
+    else:
+        path_text = _shellcmd.without_crumb(action)
+        query = path_text
     matches, by_id = search(
         memory_dir,
         root,
-        _shellcmd.matching_text(action),
+        query,
         files=files,
         stale_days=stale_days,
         min_keyword=GUARD_MIN_KEYWORD_OVERLAP,
@@ -10278,6 +10407,7 @@ def guard(
         path_text=path_text,
         keyword_cap=GUARD_KEYWORD_CAP,
         writes=_shellcmd.crumb_writes(action, MEMORY_DIRNAME) if not edit else None,
+        command_text=_shellcmd.matching_text(action) if not edit else path_text,
     )
 
     active, history = [], []
@@ -10317,13 +10447,31 @@ def guard(
         )
         (active if live else history).append(m)
 
-    top = active[:GUARD_MAX_WARNINGS]
-    verdict = _decide_verdict(top, classes, action)
+    read_only = _is_read_only_action(action)
     # Operator decision D3 (2026-10-01): a short, literal list of high-impact
     # actions asks a human even when no record is about them. Without it, the
     # only thing that ever made `git push --force origin main` ASK_HUMAN was
     # unrelated records that happened to share the word "git".
     high_impact = _shellcmd.high_impact(action) if not edit else None
+    if high_impact:
+        # The verdict is the action's, so a record is cited only with direct
+        # evidence that it is about *this* action: a file it names or writes,
+        # the exact command, or a topical match. A real `crumb migrate` cited a
+        # Gradle rate-limit attempt and a Room migration test (DoWhat retest of
+        # 0.5.0, item 3); the rest is "no project memory about it".
+        demoted = [m for m in active if not _direct_evidence(m)]
+        active = [m for m in active if _direct_evidence(m)]
+        history = history + demoted
+    if read_only or memory_edit:
+        # An action that changes nothing — or a memory write — cannot be what a
+        # record objects to (item 6: `git status` showed a git attempt as
+        # `[objects]`). The verdict was already capped; now the stance agrees.
+        for m in active:
+            m["stance"] = "advisory"
+    top = active[:GUARD_MAX_WARNINGS]
+    verdict = _decide_verdict(top, classes, action)
+    if memory_edit:
+        verdict = _min_verdict(verdict, GUARD_READ_ONLY_CEILING)
     if high_impact:
         verdict = "ASK_HUMAN"
 
@@ -10368,7 +10516,7 @@ def guard(
         # The other end of the same axis: an action that cannot change anything
         # caps at READ_FIRST however strong the retrieval overlap (G2). Reported
         # so a caller can see *why* a loud-looking match did not raise a verdict.
-        "read_only": _is_read_only_action(action),
+        "read_only": read_only,
         "matches": top,
         "history": history[:GUARD_MAX_WARNINGS],
         "staleness": staleness,
@@ -13604,6 +13752,49 @@ _HOOK_SEEN_MAX_SESSIONS = 8
 _HOOK_SEEN_MAX_KEYS = 200
 
 
+def _hook_damp_repeats(memory_dir: Path, session_id: str, result: dict) -> dict:
+    """`result` without the advisory matches this session was already shown.
+
+    A match stays when it objects to the action (blocking) or when the action
+    itself names its file, the file a command writes, or its exact command:
+    that is news about *this* action, not a repeat. The verdict is decided
+    again from what is left (a high-impact action keeps ASK_HUMAN), so a
+    firing whose every match was a repeat goes quiet. Never raises: without
+    damping state the firing is left as it was.
+    """
+    try:
+        from breadcrumbs import hooks_common as _hooks_common
+
+        seen = _hooks_common.delivered_records(memory_dir, session_id, filename=_HOOK_SEEN_FILENAME)
+    except Exception:  # pragma: no cover - damping is best-effort
+        return result
+    if not seen:
+        return result
+
+    def keep(m: dict) -> bool:
+        if m["id"] not in seen:
+            return True
+        if (m.get("stance") or _match_stance(m.get("signals"))) == "blocking":
+            return True
+        return bool({"file", "writes-file", "command"} & set(m.get("signals") or ()))
+
+    matches = result.get("matches") or []
+    kept = [m for m in matches if keep(m)]
+    if len(kept) == len(matches):
+        return result
+    verdict = _decide_verdict(kept, result.get("action_classes") or [], result.get("action", ""))
+    # Never louder than guard said: its caps (read-only, a memory edit) hold.
+    verdict = _min_verdict(verdict, result["verdict"])
+    if result.get("high_impact"):
+        verdict = "ASK_HUMAN"
+    return {
+        **result,
+        "verdict": verdict,
+        "matches": kept,
+        "damped": [m["id"] for m in matches if not keep(m)],
+    }
+
+
 def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bool:
     """True if this advisory key already fired for this session; records it if not.
 
@@ -13944,6 +14135,18 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     ):
         verdict = GUARD_READ_ONLY_CEILING
         result = {**result, "verdict": verdict}
+    session_id = str(payload.get("session_id") or "unknown")
+    # Session damping (DoWhat retest of 0.5.0, item 5): an advisory record the
+    # agent was already shown this session is not shown again, unless this
+    # action names its file or command. Two records came back on most firings
+    # of one session — `git status`, `cp`, a reindex, a README edit — with a
+    # different verdict each time, which the per-target repeat filter below
+    # never caught. A blocking record, and a high-impact action, always speak.
+    if verdict != "PROCEED":
+        result = _hook_damp_repeats(memory_dir, session_id, result)
+        verdict = result["verdict"]
+        if result.get("damped"):
+            _hooklog.note(damped=len(result["damped"]))
     _hooklog.note(verdict=verdict)
     if verdict == "PROCEED":
         print(json.dumps({}))
@@ -13971,6 +14174,14 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
             session_id=str(payload.get("session_id") or "") or None,
         )
         _hooklog.note(emitted=len(emitted))
+        try:
+            from breadcrumbs import hooks_common as _hooks_common
+
+            _hooks_common.add_delivered_records(
+                memory_dir, session_id, [m["id"] for m in emitted], filename=_HOOK_SEEN_FILENAME
+            )
+        except Exception:  # pragma: no cover - damping state is best-effort
+            pass
 
     if verdict == "READ_FIRST":
         # Dedupe within the host session: the same records surfacing for the
@@ -13980,7 +14191,6 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         # PAUSE/ASK_HUMAN is never swallowed.
         target = (files or [None])[0] or result["action"]
         key = f"{target}|" + ",".join(sorted(m["id"] for m in shown))
-        session_id = str(payload.get("session_id") or "unknown")
         try:
             if _hook_guard_advisory_seen(memory_dir, session_id, key):
                 _hooklog.note(deduped=True)

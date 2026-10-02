@@ -123,3 +123,58 @@
   --why "The deploy replaces the field overrides wholesale, and TTL lives there"
   --safe "Deploy rules and indexes separately; re-check TTL in the console after an indexes deploy"
   --tags firestore,deploy
+
+# ---- The 0.5.0 retest (2026-10-02): the records that turned up on almost every
+# firing after the DoWhat store was migrated to schema 4. Their shapes are the
+# field's own: a do-not-retry attempt tagged with the store's commonest words
+# (migration, schema), a decision about crumb's own files tagged crumb/git/memory,
+# and git and Gradle attempts that share one tag with half the commands.
+
+@2026-09-10 remember attempt --title "MigrationV21ToV22Test's todos inserts named 5 of the 10 required columns"
+  --set Problem "The v21 to v22 Room migration test inserted fixture rows into todos before migrating."
+  --set Tried "Inserted rows naming only the columns the test cared about."
+  --set Result "SQLite rejected the inserts: five NOT NULL columns had no default, so the schema check never ran."
+  --set Do\ Not\ Retry\ Unless "The todos table gains defaults for every NOT NULL column."
+  --evidence file app/src/androidTest/java/data/MigrationV21ToV22Test.kt --tags todo,migration,schema
+
+@2026-09-11 remember decision --title "Merging main into a branch always conflicts on exactly three .project-memory files, and the generated one is regenerated rather than hand-merged"
+  --set Decision "Resolve handoff.md and current.md by hand; regenerate the generated index with crumb reindex instead of merging it."
+  --evidence file .gitattributes --tags crumb,git,memory
+
+@2026-09-12 remember attempt --title "Retrying Gradle against Maven Central on a cold web container hit HTTP 429"
+  --set Problem "A cold cloud container had no Gradle cache and every dependency came from Maven Central."
+  --set Tried "Re-ran ./gradlew assembleDebug in a loop until the downloads finished."
+  --set Result "Maven Central answered HTTP 429 Too Many Requests and the container was rate limited for an hour."
+  --set Do\ Not\ Retry\ Unless "The container has a warm Gradle cache or a mirror is configured."
+  --evidence file settings.gradle.kts --tags gradle,ci,network
+
+@2026-09-13 remember attempt --title "Hunk-filtering discipline applied to the .kt file lost the unrelated hunks"
+  --set Problem "One .kt file held two unrelated changes and only one belonged in the commit."
+  --set Tried "Filtered hunks with git add -p and committed, then reset the rest."
+  --set Result "git reset --hard after the commit threw away the unrelated hunks."
+  --set Do\ Not\ Retry\ Unless "The unrelated hunks are saved to a patch first."
+  --evidence file app/src/main/java/ui/TodoScreen.kt --tags git,kotlin
+
+@2026-09-14 note trap "A git merge conflict inside .project-memory is resolved by keeping both sides" --slug git-merge-conflict-in-project-memory
+  --area .project-memory/ --symptom "Conflict markers in handoff.md after merging main"
+  --why "Both branches added a Next Action entry at the top"
+  --safe "Keep both entries, newest first; never take one side wholesale"
+  --tags git,merge
+
+@2026-09-15 note trap "E2E login needs the dowhatE2eEmail and dowhatE2ePassword arguments single-quoted" --slug e2e-login-argument-quoting
+  --area app/src/androidTest/ --symptom "The instrumentation runner sees an empty password"
+  --why "Git Bash expands the dollar sign in the password before adb sees it"
+  --safe "Pass -e dowhatE2eEmail and -e dowhatE2ePassword in single quotes"
+  --tags e2e,testing
+
+@2026-09-16 note trap "Remote Config REST calls need the x-goog-user-project header" --slug remote-config-quota-project
+  --area tools/remote-config.sh --symptom "403 PERMISSION_DENIED from /v1/projects/<id>/remoteConfig"
+  --why "User credentials bill the quota project, which must be named on every call"
+  --safe "Send x-goog-user-project: dowhat-prod-4f2a9 with curl"
+  --tags firebase,remoteconfig
+
+@2026-09-17 note trap "capture session rewrites handoff.md and current.md" --slug capture-session-rewrites-handoff
+  --area .project-memory/handoff.md --symptom "Hand-kept text in Next Action changes after a capture"
+  --why "crumb capture session writes both files"
+  --safe "Pass --next; never --replace unless the log should go"
+  --tags crumb,handoff

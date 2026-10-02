@@ -27,6 +27,14 @@
       "reason": "DoWhat field report (2026-10-01) guard and prompt fixes: compound commands, crumb's own commands and quoted text classified by effect; do-not-retry boost needs topical evidence; template headings and symptom words are not shared words; traps score tags; a lone tag is not a verdict floor; the android suite from the field cases is added (its packet rejects are the resume packet's recency floor)",
       "regressions": [],
       "removed": []
+    },
+    {
+      "added": 5,
+      "date": "2026-10-02",
+      "improvements": [],
+      "reason": "DoWhat retest of 0.5.0: the android suite gains the retest's records and 5 tasks (crumb pipelines, sed, crumb migrate, the 429 and todos attempts); no existing task's metrics changed",
+      "regressions": [],
+      "removed": []
     }
   ],
   "comment": "Written by `python evals/run.py --write-baseline --reason \u2026`. See evals/README.md.",
@@ -141,44 +149,44 @@
         "guard_accuracy": 1.0,
         "hook_guard_accuracy": 1.0,
         "n": {
-          "guard_accuracy": 5,
-          "hook_guard_accuracy": 5
+          "guard_accuracy": 8,
+          "hook_guard_accuracy": 8
         }
       },
       "packet": {
         "n": {
-          "precision_at_5": 5,
-          "recall_at_5": 5,
-          "reject_hits": 7
+          "precision_at_5": 7,
+          "recall_at_5": 7,
+          "reject_hits": 12
         },
-        "precision_at_5": 0.4067,
+        "precision_at_5": 0.3476,
         "recall_at_5": 1.0,
         "reject_hits": 5
       },
       "packet_delivered": {
         "n": {
-          "precision_at_5": 5,
-          "recall_in_view": 5,
-          "reject_hits": 7,
-          "tokens_max": 7,
-          "tokens_mean": 7,
-          "within_budget": 7
+          "precision_at_5": 7,
+          "recall_in_view": 7,
+          "reject_hits": 12,
+          "tokens_max": 12,
+          "tokens_mean": 12,
+          "within_budget": 12
         },
         "precision_at_5": 0.0,
         "recall_in_view": 1.0,
         "reject_hits": 5,
-        "tokens_max": 1639,
-        "tokens_mean": 1619.0,
+        "tokens_max": 1933,
+        "tokens_mean": 1901.0,
         "within_budget": 1.0
       },
       "prompt": {
         "n": {
-          "precision_at_5": 5,
-          "quiet": 2,
-          "recall_at_5": 5,
-          "reject_hits": 7
+          "precision_at_5": 7,
+          "quiet": 5,
+          "recall_at_5": 7,
+          "reject_hits": 12
         },
-        "precision_at_5": 0.9,
+        "precision_at_5": 0.7619,
         "quiet": 1.0,
         "recall_at_5": 1.0,
         "reject_hits": 0
@@ -186,22 +194,22 @@
       "prompt_delivered": {
         "dedupe": 1.0,
         "n": {
-          "dedupe": 5,
-          "precision_at_5": 5,
-          "quiet": 2,
-          "recall_at_5": 5,
-          "reject_hits": 7,
-          "tokens_max": 5,
-          "tokens_mean": 5
+          "dedupe": 7,
+          "precision_at_5": 7,
+          "quiet": 5,
+          "recall_at_5": 7,
+          "reject_hits": 12,
+          "tokens_max": 7,
+          "tokens_mean": 7
         },
-        "precision_at_5": 0.9,
+        "precision_at_5": 0.7619,
         "quiet": 1.0,
         "recall_at_5": 1.0,
         "reject_hits": 0,
-        "tokens_max": 142,
-        "tokens_mean": 115.4
+        "tokens_max": 221,
+        "tokens_mean": 137.1429
       },
-      "tasks": 7
+      "tasks": 12
     },
     "holdout": {
       "guard": {
@@ -409,67 +417,67 @@
         "guard_accuracy": 1.0,
         "hook_guard_accuracy": 1.0,
         "n": {
-          "guard_accuracy": 13,
-          "hook_guard_accuracy": 13
+          "guard_accuracy": 16,
+          "hook_guard_accuracy": 16
         }
       },
       "packet": {
         "n": {
-          "precision_at_5": 38,
-          "recall_at_5": 38,
-          "reject_hits": 46
+          "precision_at_5": 40,
+          "recall_at_5": 40,
+          "reject_hits": 51
         },
-        "precision_at_5": 0.5618,
-        "recall_at_5": 0.9781,
+        "precision_at_5": 0.5437,
+        "recall_at_5": 0.9792,
         "reject_hits": 7
       },
       "packet_delivered": {
         "n": {
-          "precision_at_5": 38,
-          "recall_in_view": 38,
-          "reject_hits": 46,
-          "tokens_max": 46,
-          "tokens_mean": 46,
-          "within_budget": 46
+          "precision_at_5": 40,
+          "recall_in_view": 40,
+          "reject_hits": 51,
+          "tokens_max": 51,
+          "tokens_mean": 51,
+          "within_budget": 51
         },
-        "precision_at_5": 0.1105,
+        "precision_at_5": 0.105,
         "recall_in_view": 1.0,
         "reject_hits": 8,
-        "tokens_max": 1639,
-        "tokens_mean": 1393.8261,
+        "tokens_max": 1933,
+        "tokens_mean": 1482.2549,
         "within_budget": 1.0
       },
       "prompt": {
         "n": {
-          "precision_at_5": 38,
-          "quiet": 8,
-          "recall_at_5": 38,
-          "reject_hits": 46
+          "precision_at_5": 40,
+          "quiet": 11,
+          "recall_at_5": 40,
+          "reject_hits": 51
         },
-        "precision_at_5": 0.7325,
+        "precision_at_5": 0.7167,
         "quiet": 1.0,
-        "recall_at_5": 0.886,
+        "recall_at_5": 0.8917,
         "reject_hits": 1
       },
       "prompt_delivered": {
         "dedupe": 1.0,
         "n": {
-          "dedupe": 35,
-          "precision_at_5": 38,
-          "quiet": 8,
-          "recall_at_5": 38,
-          "reject_hits": 46,
-          "tokens_max": 35,
-          "tokens_mean": 35
+          "dedupe": 37,
+          "precision_at_5": 40,
+          "quiet": 11,
+          "recall_at_5": 40,
+          "reject_hits": 51,
+          "tokens_max": 37,
+          "tokens_mean": 37
         },
-        "precision_at_5": 0.7325,
+        "precision_at_5": 0.7167,
         "quiet": 1.0,
-        "recall_at_5": 0.886,
+        "recall_at_5": 0.8917,
         "reject_hits": 1,
         "tokens_max": 312,
-        "tokens_mean": 145.8
+        "tokens_mean": 148.5405
       },
-      "tasks": 46
+      "tasks": 51
     },
     "service": {
       "guard": {
@@ -601,7 +609,7 @@
         "recall_at_5": 0.8182,
         "reject_hits": 1,
         "tokens_max": 305,
-        "tokens_mean": 171.2222
+        "tokens_mean": 172.3333
       },
       "tasks": 13
     }
@@ -657,7 +665,61 @@
         "rejected": []
       }
     },
+    "android::crumb migrate": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "ASK_HUMAN"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
     "android::crumb migrate --dry-run": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PROCEED"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "android::crumb migrate --dry-run | sed -n '1,22p'": {
       "control_spoke": {
         "prompt": false,
         "prompt_delivered": false
@@ -754,6 +816,51 @@
         "rejected": []
       }
     },
+    "android::sed -n '867p' app/lint-results.txt | grep -oiE 'migrat(e|ion)'": {
+      "control_spoke": {
+        "prompt": false,
+        "prompt_delivered": false
+      },
+      "guard": {
+        "hook_ok": true,
+        "ok": true,
+        "verdict": "PROCEED"
+      },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "android::why does Gradle get HTTP 429 from Maven Central in a cloud container": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
     "android::why is my robolectric test failing with a KeyStore error": {
       "packet": {
         "missed": [],
@@ -770,6 +877,24 @@
           "att_20260705_ran-the-room-migration-test-against-an-in-memory-database",
           "att_20260701_re-recorded-the-empty-state-artwork-screenshots"
         ]
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "android::write the v21 to v22 Room migration test for the todos table": {
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
       },
       "prompt": {
         "missed": [],

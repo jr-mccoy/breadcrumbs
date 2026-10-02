@@ -27,16 +27,20 @@ from pathlib import PurePosixPath
 # ---- read-only verbs (moved here from cli.py; cli re-exports the names) ----- #
 
 # Commands whose whole job is to report. Deliberately a short allowlist of the
-# unambiguous ones: `sed`, `awk` and `tee` can all write, and anything not named
-# here is simply treated as capable of side effects, which is the safe default.
+# unambiguous ones: `tee` writes, and anything not named here is simply treated
+# as capable of side effects, which is the safe default. `sed` and `awk` can
+# write too, so they are not here: `_sed_read_only` and `_awk_read_only` read
+# their arguments (DoWhat retest of 0.5.0, item 1: `sed -n '867p' f | grep x`
+# got PAUSE).
 READ_ONLY_COMMANDS = frozenset(
     """
-    cat less more head tail nl wc
-    ls dir tree stat file du df pwd realpath basename dirname
+    cat less more head tail nl wc tac rev
+    ls dir tree stat file du df pwd realpath readlink basename dirname
     grep egrep fgrep rg ack ag find fd locate
-    diff cmp md5sum sha1sum sha256sum
+    diff cmp comm md5sum sha1sum sha256sum
     which whereis type man whoami hostname uname date
-    echo printf uniq cut column jq yq sort tr
+    echo printf uniq cut column jq yq sort tr paste fold fmt expand unexpand
+    od xxd hexdump strings
     ps top uptime id groups
     """.split()
 )
@@ -49,6 +53,212 @@ READ_ONLY_GIT_SUBCOMMANDS = frozenset(
     merge-base
     """.split()
 )
+
+# `git <sub>` forms that only list when given no positional argument (or only
+# a listing flag): `git branch` lists, `git branch x` creates.
+_GIT_LISTING_SUBCOMMANDS = {
+    "branch": frozenset(
+        "-a --all -r --remotes -v -vv --verbose -l --list --show-current --merged "
+        "--no-merged --contains --no-contains --sort --format --color --no-color "
+        "--column --no-column --points-at".split()
+    ),
+    "remote": frozenset("-v --verbose show get-url".split()),
+    "tag": frozenset(
+        "-l --list -n --sort --format --contains --no-contains --merged "
+        "--no-merged --points-at --column --no-column".split()
+    ),
+    "stash": frozenset("list show".split()),
+    "config": frozenset(
+        "--get --get-all --get-regexp --list -l --show-origin --show-scope --name-only "
+        "--global --local --system --file -f --null -z --type --bool --int --path".split()
+    ),
+}
+# Listing flags above that take a value (`--sort=x` is one token; `--sort x` two).
+_GIT_LISTING_VALUE_FLAGS = frozenset(
+    "--contains --no-contains --merged --no-merged --points-at --sort --format --file -f "
+    "--type".split()
+)
+
+
+def _git_listing(sub: str, args: list[str]) -> bool:
+    """Is `git <sub> <args>` one of the listing forms in `_GIT_LISTING_SUBCOMMANDS`?"""
+    allowed = _GIT_LISTING_SUBCOMMANDS.get(sub)
+    if allowed is None:
+        return False
+    if sub == "config":
+        # Reading config needs a reading flag; `git config user.name` reads too,
+        # but `git config user.name x` writes, and the two differ only by count.
+        flags = {a.split("=", 1)[0] for a in args if a.startswith("-")}
+        return (
+            bool(flags & {"--get", "--get-all", "--get-regexp", "--list", "-l"})
+            and flags <= allowed
+        )
+    if sub == "stash":
+        # A bare `git stash` is `git stash push`; only `list` and `show` read.
+        return bool(args) and args[0] in allowed
+    if sub == "remote" and args and not args[0].startswith("-"):
+        # `git remote show origin`: the first word decides.
+        return args[0] in allowed
+    rest = list(args)
+    while rest:
+        a = rest.pop(0)
+        if not a.startswith("-"):
+            return False  # a name: create, delete or rename something
+        if a.split("=", 1)[0] not in allowed:
+            return False
+        if a in _GIT_LISTING_VALUE_FLAGS and rest and "=" not in a:
+            rest.pop(0)
+    return True
+
+
+# ---- sed and awk: reporting unless their script writes --------------------- #
+
+
+def _sed_script_writes(script: str) -> bool | None:
+    """Does a sed script write a file or run a command? None when unreadable.
+
+    Walks the commands: addresses (`1`, `$`, `/re/`, `\\cREc`, ranges, `~`,
+    `!`), then one command letter. `w`/`W` write a file, `e` runs a command,
+    and an `s` command's `w`/`e` flags do the same. `a`/`i`/`c` and `r`/`R`
+    take the rest of the line as text or a file to *read*.
+    """
+    i, n = 0, len(script)
+
+    def skip_re(j: int, delim: str) -> int:
+        j += 1
+        while j < n and script[j] != delim:
+            if script[j] == "\\":
+                j += 1
+            elif script[j] == "\n":
+                return -1
+            j += 1
+        return j + 1 if j < n else -1
+
+    while i < n:
+        ch = script[i]
+        if ch in " \t\n;{}":
+            i += 1
+            continue
+        # Addresses.
+        while i < n:
+            ch = script[i]
+            if ch.isdigit() or ch in "$,~+! \t":
+                i += 1
+            elif ch == "/":
+                i = skip_re(i, "/")
+                if i < 0:
+                    return None
+            elif ch == "\\" and i + 1 < n:
+                i = skip_re(i + 1, script[i + 1])
+                if i < 0:
+                    return None
+            else:
+                break
+            # A regex address may carry `I`/`M` modifiers.
+            while i < n and script[i] in "IM" and i > 0 and script[i - 1] in "/":
+                i += 1
+        if i >= n:
+            return False
+        cmd = script[i]
+        i += 1
+        if cmd in "wWe":
+            return True
+        if cmd in "aicrRbtTvq:#lLQ":
+            # Rest of the line is an argument (text, label, file to read).
+            while i < n and script[i] != "\n":
+                if cmd in "btTvqQlL" and script[i] in ";}":
+                    break
+                i += 1
+            continue
+        if cmd in "sy":
+            if i >= n:
+                return None
+            delim = script[i]
+            for _part in range(2):
+                i = skip_re(i, delim) - 1
+                if i < 0:
+                    return None
+            i += 1
+            if cmd == "s":
+                while i < n and script[i] not in ";}\n":
+                    if script[i] in "we":
+                        return True
+                    i += 1
+            continue
+        if cmd in "=dDgGhHnNpPxzF{}":
+            continue
+        return None  # a command this reader does not know
+    return False
+
+
+def _sed_read_only(args: list[str]) -> bool:
+    scripts: list[str] = []
+    rest = list(args)
+    explicit = False
+    while rest:
+        a = rest.pop(0)
+        if a in ("--in-place",) or a.startswith("--in-place="):
+            return False
+        if a in ("-f", "--file") or a.startswith("--file="):
+            return False  # a script file this cannot read
+        if a in ("-e", "--expression"):
+            if not rest:
+                return False
+            scripts.append(rest.pop(0))
+            explicit = True
+            continue
+        if a.startswith("--expression="):
+            scripts.append(a.split("=", 1)[1])
+            explicit = True
+            continue
+        if a.startswith("--"):
+            continue  # --quiet, --regexp-extended, --posix, --debug, ...
+        if a.startswith("-") and len(a) > 1:
+            letters = a[1:]
+            if "i" in letters:
+                return False  # -i, -i.bak, -ni
+            if "f" in letters:
+                return False
+            if letters.endswith("e"):
+                if not rest:
+                    return False
+                scripts.append(rest.pop(0))
+                explicit = True
+            continue
+        if not explicit and not scripts:
+            scripts.append(a)  # the first operand is the script
+        # Later operands are input files.
+    if not scripts:
+        return False
+    return all(_sed_script_writes(s) is False for s in scripts)
+
+
+_AWK_WRITE_RE = re.compile(
+    r"\bsystem\s*\(|\b(?:print|printf)\b[^;}\n]*(?:>|\|)|\|\s*getline|\|&|\bfflush\b"
+)
+
+
+def _awk_read_only(args: list[str]) -> bool:
+    rest = list(args)
+    program = None
+    while rest:
+        a = rest.pop(0)
+        if a in ("-f", "--file", "-i", "--include", "-l", "--load", "-E", "--exec"):
+            return False  # a program file, an extension, `-i inplace`
+        if a.startswith(("-f", "--file=", "-i", "--include=", "--exec=")) and a != "-":
+            return False
+        if a in ("-F", "-v", "--field-separator", "--assign"):
+            if rest:
+                rest.pop(0)
+            continue
+        if a.startswith("-"):
+            continue  # -F:, -vX=1, --posix, ...
+        program = a
+        break
+    if program is None:
+        return False
+    return not _AWK_WRITE_RE.search(program)
+
 
 # Flags that make an otherwise-reporting command act (`find . -delete`,
 # `find . -exec rm {} +`, `sort -o out`). Matched as whole tokens.
@@ -356,7 +566,13 @@ def _verb_read_only(tokens: list[str]) -> bool:
             opt = rest.pop(0)
             if opt in ("-C", "-c", "--git-dir", "--work-tree") and rest:
                 rest.pop(0)
-        return bool(rest) and rest[0] in READ_ONLY_GIT_SUBCOMMANDS
+        if not rest:
+            return False
+        return rest[0] in READ_ONLY_GIT_SUBCOMMANDS or _git_listing(rest[0], rest[1:])
+    if verb in ("sed", "gsed"):
+        return _sed_read_only(tokens[1:])
+    if verb in ("awk", "gawk", "mawk", "nawk"):
+        return _awk_read_only(tokens[1:])
     if verb == "xargs":
         rest = tokens[1:]
         while rest and rest[0].startswith("-"):
@@ -401,6 +617,42 @@ def matching_text(command: str) -> str:
     """What retrieval should match against: here-document bodies removed (a
     5,000-character commit message matched 27-37 words of unrelated records)."""
     return strip_heredocs(command or "")
+
+
+def without_crumb(command: str) -> str:
+    """`matching_text(command)` with every crumb invocation left out.
+
+    crumb's own words (`crumb`, `migrate`, `reindex`, `capture`, `session`)
+    name crumb's operations, not the project's. Matched against the store they
+    found every record tagged crumb, migration or memory (DoWhat retest of
+    0.5.0, items 3 and 5). A crumb command meets memory through the files it
+    writes (`crumb_writes`) and through records naming the exact command.
+    """
+    text = matching_text(command)
+    segs = segments(command or "")
+    if segs is None:
+        return text
+    kept = [seg for seg in segs if crumb_invocation(words(seg)) is None]
+    if len(kept) == len(segs):
+        return text
+    return " ; ".join(kept)
+
+
+# Code-shaped identifiers in written content: camelCase, PascalCase with two
+# humps, snake_case, CONSTANT_CASE, and dotted calls. Prose has almost none.
+_IDENTIFIER_RE = re.compile(
+    r"\b(?:[a-z][a-z0-9]*[A-Z][A-Za-z0-9]*"
+    r"|[A-Z][a-z0-9]+[A-Z][A-Za-z0-9]*"
+    r"|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+)\b"
+)
+
+
+def code_identifiers(content: str) -> list[str]:
+    """The code identifiers in `content`, in order, without repeats."""
+    seen: dict[str, None] = {}
+    for m in _IDENTIFIER_RE.finditer(content or ""):
+        seen.setdefault(m.group(0), None)
+    return list(seen)
 
 
 # ---- high-impact actions with no memory (operator decision D3) ------------ #

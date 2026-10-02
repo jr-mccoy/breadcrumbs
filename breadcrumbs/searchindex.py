@@ -318,6 +318,7 @@ def candidate_items(
     *,
     include_ideas: bool,
     explain: dict | None = None,
+    df_out: dict | None = None,
 ) -> tuple[list[dict], frozenset[str]] | None:
     """The search corpus narrowed to possible matches, plus the ubiquitous stems.
 
@@ -325,6 +326,10 @@ def candidate_items(
     stale, too small, unreadable, or a query with nothing to look up — and the
     caller falls back to the full scan. Every failure mode lands there, and
     `explain["reason"]` says which (audit WP10), so the caller can report it.
+
+    `df_out`, when given, is filled with the corpus size (`n`) and, for each of
+    the query's stems, how many records carry it as a word (`words`) and as a
+    tag (`tags`): what guard needs to tell a common word from a rare one.
     """
     memory_dir = Path(memory_dir)
     project_root = Path(project_root)
@@ -379,15 +384,16 @@ def candidate_items(
             )
         ]
         df_indexed: dict[str, int] = {}
+        df_tags_indexed: dict[str, int] = {}
         if stems:
             marks = ",".join("?" * len(stems))
-            for token, count in conn.execute(
-                "SELECT p.token, COUNT(DISTINCT p.rid) FROM postings p JOIN records r "
-                f"ON r.rid = p.rid WHERE p.field = 's' AND p.token IN ({marks}) "
-                "AND (r.speculative = 0 OR ?) GROUP BY p.token",
+            for field, token, count in conn.execute(
+                "SELECT p.field, p.token, COUNT(DISTINCT p.rid) FROM postings p JOIN records r "
+                f"ON r.rid = p.rid WHERE p.field IN ('s', 't') AND p.token IN ({marks}) "
+                "AND (r.speculative = 0 OR ?) GROUP BY p.field, p.token",
                 (*stems, spec),
             ):
-                df_indexed[token] = count
+                (df_indexed if field == "s" else df_tags_indexed)[token] = count
     except Exception:
         explain["reason"] = "the search index is unreadable"
         return None
@@ -430,12 +436,21 @@ def candidate_items(
 
     # Ubiquity, for the only stems scoring will ask about: the query's own.
     n = n_indexed + len(direct)
+    words = {
+        stem: df_indexed.get(stem, 0) + sum(1 for it in direct if stem in it["specific"])
+        for stem in stems
+    }
     ubiquitous: set[str] = set()
     if n >= cli.GUARD_DF_MIN_CORPUS:
         cutoff = n * cli.GUARD_DF_UBIQUITY
-        for stem in stems:
-            df = df_indexed.get(stem, 0) + sum(1 for it in direct if stem in it["specific"])
-            if df > cutoff:
-                ubiquitous.add(stem)
+        ubiquitous = {stem for stem, df in words.items() if df > cutoff}
+    if df_out is not None:
+        df_out["n"] = n
+        df_out["words"] = words
+        df_out["tags"] = {
+            stem: df_tags_indexed.get(stem, 0)
+            + sum(1 for it in direct if stem in (it.get("tag_stems") or ()))
+            for stem in stems
+        }
 
     return cli._disambiguate_item_ids(items + direct), frozenset(ubiquitous)
