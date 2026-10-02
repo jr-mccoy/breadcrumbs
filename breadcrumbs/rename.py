@@ -121,8 +121,31 @@ def history_path(handoff: Path) -> Path:
     return handoff.with_name(handoff.stem + ".history.md")
 
 
-def trim_handoff(memory_dir: Path, root: Path, keep: int) -> dict:
-    """Move all but the newest `keep` Next Action entries to the history file."""
+# A dated bold lead-in at the start of a line: how a hand-kept log marks its
+# entries (`**2026-10-01 (Claude Code web session, …): headline**`).
+DATED_LEAD_IN = r"^\*\*\d{4}-\d{2}-\d{2}\b"
+_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def trim_handoff(
+    memory_dir: Path,
+    root: Path,
+    keep: int | None = 10,
+    *,
+    before: str | None = None,
+    split_on: str | None = None,
+) -> dict:
+    """Move older Next Action entries to the history file; none is deleted.
+
+    Entries are the dated `### …` blocks crumb writes and, inside a hand-kept
+    log (`### Earlier, as written`, or text with no header at all), each line
+    starting like `DATED_LEAD_IN` (DoWhat retest of 0.5.0, item 11: an
+    11,309-character log was one entry, so `--keep 10` could not move any of
+    it). `split_on` is another lead-in regex. `before` (a `YYYY-MM-DD`) moves
+    the first entry dated before it and everything below it, instead of
+    keeping a count. Bytes are unchanged: the section keeps a prefix of its
+    text and the history file receives the rest verbatim.
+    """
     from breadcrumbs import handoffs as _handoffs
     from breadcrumbs import mutations as _mutations
 
@@ -130,6 +153,10 @@ def trim_handoff(memory_dir: Path, root: Path, keep: int) -> dict:
     path = _handoffs.write_path(memory_dir, root, cli.git_branch(root))
     if not path.is_file():
         return {"ok": False, "error": f"no handoff at {path.relative_to(memory_dir).as_posix()}"}
+    try:
+        lead_in = re.compile(split_on or DATED_LEAD_IN, re.M)
+    except re.error as exc:
+        return {"ok": False, "error": f"--split-on is not a valid regex: {exc}"}
     text = path_policy.read_text(path)
     spans = {h.strip(): (a, b) for a, b, h in cli._md_heading_spans(text)}
     if "Next Action" not in spans:
@@ -137,11 +164,25 @@ def trim_handoff(memory_dir: Path, root: Path, keep: int) -> dict:
     start, end = spans["Next Action"]
     section = text[start:end]
     head, _, content = section.partition("\n")
-    blocks = _entry_blocks(content)
-    if len(blocks) <= keep:
-        return {"ok": True, "moved": 0, "kept": len(blocks), "history": None}
-    kept, moved = blocks[:keep], blocks[keep:]
-    new_section = head + "\n" + "\n\n".join(b.strip("\n") for b in kept).rstrip() + "\n\n"
+    offsets = entry_offsets(content, lead_in)
+    if before is not None:
+        cut = next(
+            (
+                i
+                for i, off in enumerate(offsets)
+                if (d := _entry_date(content, off)) is not None and d < before
+            ),
+            len(offsets),
+        )
+    else:
+        cut = min(len(offsets), max(1, int(keep or 10)))
+    if cut >= len(offsets) or cut == 0 and before is None:
+        return {"ok": True, "moved": 0, "kept": len(offsets), "history": None}
+    boundary = offsets[cut]
+    kept_text, moved_text = content[:boundary], content[boundary:]
+    if not kept_text.strip():
+        return {"ok": True, "moved": 0, "kept": len(offsets), "history": None}
+    new_section = head + "\n" + kept_text.rstrip("\n") + "\n\n"
     hist = history_path(path)
     rel = path.relative_to(memory_dir).as_posix()
     marker = "<!-- entries below, newest first -->"
@@ -155,24 +196,60 @@ def trim_handoff(memory_dir: Path, root: Path, keep: int) -> dict:
                 "`crumb handoff trim`. `resume` does not read this file._\n\n"
             )
             older = ("\n" + prior) if prior.strip() else ""
-        moved_text = "\n\n".join(b.strip("\n") for b in moved).rstrip()
-        new_hist = header + marker + "\n" + moved_text + "\n" + older.rstrip("\n") + "\n"
+        new_hist = (
+            header + marker + "\n" + moved_text.rstrip("\n") + "\n" + older.rstrip("\n") + "\n"
+        )
         cli.write_text_atomic(hist, new_hist)
         cli.write_text_atomic(path, text[:start] + new_section + text[end:], expected=text)
     return {
         "ok": True,
-        "moved": len(moved),
-        "kept": len(kept),
+        "moved": len(offsets) - cut,
+        "kept": cut,
         "history": hist.relative_to(memory_dir).as_posix(),
     }
 
 
-def _entry_blocks(content: str) -> list[str]:
-    """The Next Action section's entries with their header lines, newest first."""
-    blocks: list[list[str]] = []
-    for line in content.splitlines():
-        if cli.NEXT_ENTRY_HEADER_RE.match(line) or not blocks:
-            blocks.append([line])
-        else:
-            blocks[-1].append(line)
-    return ["\n".join(b) for b in blocks if "\n".join(b).strip()]
+def entry_offsets(content: str, lead_in: "re.Pattern | None" = None) -> list[int]:
+    """Where each Next Action entry starts in `content`, newest first.
+
+    An entry starts at a crumb header (`### 2026-10-01 …` or `### Earlier, as
+    written`) and, inside a hand-kept block (one under `### Earlier, as
+    written`, or text before any header), at each line matching `lead_in`.
+    """
+    lead_in = lead_in or re.compile(DATED_LEAD_IN, re.M)
+    offsets: list[int] = []
+    pos = 0
+    hand_kept = True  # text before any header is a hand-kept log
+    for line in content.splitlines(keepends=True):
+        bare = line.rstrip("\r\n")
+        if cli.NEXT_ENTRY_HEADER_RE.match(bare):
+            offsets.append(pos)
+            hand_kept = bare.startswith(cli.NEXT_LEGACY_HEADER)
+        elif hand_kept and lead_in.match(bare):
+            if (
+                not offsets
+                or content[offsets[-1] : pos].strip()
+                and not _only_header(content[offsets[-1] : pos])
+            ):
+                offsets.append(pos)
+        elif not offsets and bare.strip():
+            offsets.append(pos)
+        pos += len(line)
+    return offsets
+
+
+def _only_header(block: str) -> bool:
+    lines = [ln for ln in block.splitlines() if ln.strip()]
+    return len(lines) == 1 and bool(cli.NEXT_ENTRY_HEADER_RE.match(lines[0]))
+
+
+def _entry_date(content: str, offset: int) -> str | None:
+    first = content[offset:].split("\n", 1)[0]
+    m = _DATE_RE.search(first)
+    return m.group(0) if m else None
+
+
+def count_entries(section: str, split_on: str | None = None) -> int:
+    """How many entries `trim` would see in a Next Action section's text."""
+    lead_in = re.compile(split_on or DATED_LEAD_IN, re.M)
+    return len(entry_offsets(section or "", lead_in))

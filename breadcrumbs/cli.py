@@ -12387,7 +12387,8 @@ def cmd_rename(args: argparse.Namespace) -> int:
 
 
 def cmd_handoff(args: argparse.Namespace) -> int:
-    """`crumb handoff trim --keep N` (field report issue 1)."""
+    """`crumb handoff trim [--keep N | --before DATE] [--split-on REGEX]` (field
+    report issue 1; DoWhat retest of 0.5.0, item 11)."""
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
     if not memory_dir.is_dir():
@@ -12400,9 +12401,23 @@ def cmd_handoff(args: argparse.Namespace) -> int:
     from breadcrumbs import mutations as _mutations
     from breadcrumbs import rename as _rename
 
+    before = getattr(args, "before", None)
+    if before is not None:
+        if args.keep is not None:
+            _emit_error(args, "give --keep N or --before DATE, not both")
+            return 2
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", before):
+            _emit_error(args, f"--before needs a date as YYYY-MM-DD, not {before!r}")
+            return 2
     try:
         with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
-            result = _rename.trim_handoff(memory_dir, root, max(1, int(args.keep)))
+            result = _rename.trim_handoff(
+                memory_dir,
+                root,
+                max(1, int(args.keep if args.keep is not None else 10)),
+                before=before,
+                split_on=getattr(args, "split_on", None),
+            )
     except _lock.StoreLocked as exc:
         _emit_error(args, str(exc))
         return 1
@@ -13592,14 +13607,22 @@ def doctor_report(root: Path) -> dict:
                 "limit — shorten with `crumb rename <id> --slug <short>`",
             )
         handoff_text, _p, handoff_path = _handoffs.read_text(memory_dir, root)
-        next_len = len(split_md_sections(handoff_text or "").get("Next Action", ""))
-        if next_len > NEXT_ACTION_LOG_WARN_CHARS:
+        next_text = split_md_sections(handoff_text or "").get("Next Action", "")
+        if len(next_text) > NEXT_ACTION_LOG_WARN_CHARS:
+            # Counted the way `trim` counts: a hand-kept log's dated bold
+            # lead-ins are entries (DoWhat retest of 0.5.0, item 11).
+            n_entries = _rename.count_entries(next_text)
             add(
                 "next_action_log",
                 False,
-                f"the handoff's Next Action is {next_len} characters "
-                f"({len(split_next_entries(split_md_sections(handoff_text).get('Next Action', '')))}"
-                " entries); `crumb handoff trim --keep 10` moves the older ones to a history file",
+                f"the handoff's Next Action is {len(next_text)} characters "
+                f"({n_entries} entries); `crumb handoff trim --keep 10` moves the older ones to "
+                "a history file"
+                + (
+                    ""
+                    if n_entries > 1
+                    else " (a hand-kept log with another entry shape: add `--split-on REGEX`)"
+                ),
             )
         degraded = _related.load_degraded(memory_dir)
         if degraded:

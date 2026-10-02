@@ -137,3 +137,85 @@ class TrimTests(Case):
             ],
             [],
         )
+
+
+class HandKeptLogTests(Case):
+    """DoWhat retest of 0.5.0, item 11: a hand-kept log of dated paragraphs under
+    `### Earlier, as written` was one entry, so `trim --keep 10` could not
+    move any of it and doctor reported "11309 characters (1 entries)"."""
+
+    def _hand_kept_log(self, n: int = 12) -> str:
+        paras = []
+        for i in range(n):
+            day = 30 - i
+            paras.append(
+                f"**2026-09-{day:02d} (Claude Code web session, branch `ccr-{i}`, NOT on `main`): "
+                f"headline {i}**\n"
+                + ("Details of what happened and what to do next. " * 30).strip()
+                + f"\nMore on item {i}.\n"
+            )
+        return "\n".join(paras)
+
+    def _write_handoff(self) -> tuple[str, str]:
+        run(["capture", "session", "--project", str(self.root), "--next", "seed"])
+        path = self.mem / "handoff.md"
+        text = path.read_text(encoding="utf-8")
+        sec = crumb.split_md_sections(text)["Next Action"]
+        log = self._hand_kept_log()
+        body = f"### 2026-10-01 · `abc1234`\nnewest crumb entry\n\n### Earlier, as written\n{log}"
+        path.write_text(text.replace(sec, body + "\n"), encoding="utf-8")
+        return path.read_text(encoding="utf-8"), body
+
+    def test_doctor_counts_the_dated_paragraphs(self):
+        self._write_handoff()
+        code, out = run(["doctor", "--project", str(self.root)])
+        self.assertIn("(13 entries)", out)
+
+    def test_trim_moves_paragraphs_and_keeps_every_byte(self):
+        before, body = self._write_handoff()
+        code, out = run(["handoff", "trim", "--keep", "3", "--project", str(self.root), "--json"])
+        self.assertEqual(code, 0, out)
+        doc = json.loads(out)
+        self.assertEqual((doc["kept"], doc["moved"]), (3, 10))
+        sec = crumb.split_md_sections((self.mem / "handoff.md").read_text())["Next Action"]
+        self.assertIn("headline 1**", sec)
+        self.assertNotIn("headline 2**", sec)
+        hist = (self.mem / "handoff-history.md").read_text(encoding="utf-8")
+        moved = hist.split("<!-- entries below, newest first -->\n", 1)[1]
+        kept = sec.strip("\n")
+        # The kept text and the moved text together are the original, byte for
+        # byte; only the blank line at the cut is not repeated.
+        self.assertEqual(kept + "\n\n" + moved.rstrip("\n"), body.rstrip("\n"))
+
+    def test_trim_before_a_date(self):
+        self._write_handoff()
+        code, out = run(
+            ["handoff", "trim", "--before", "2026-09-25", "--project", str(self.root), "--json"]
+        )
+        self.assertEqual(code, 0, out)
+        sec = crumb.split_md_sections((self.mem / "handoff.md").read_text())["Next Action"]
+        self.assertIn("2026-09-25", sec)
+        self.assertNotIn("2026-09-24", sec)
+        self.assertIn("2026-09-24", (self.mem / "handoff-history.md").read_text())
+
+    def test_split_on_another_lead_in(self):
+        run(["capture", "session", "--project", str(self.root), "--next", "seed"])
+        path = self.mem / "handoff.md"
+        text = path.read_text(encoding="utf-8")
+        sec = crumb.split_md_sections(text)["Next Action"]
+        log = "\n".join(f"Day {i}: did thing {i}.\nmore {i}\n" for i in range(6))
+        path.write_text(text.replace(sec, f"### Earlier, as written\n{log}"), encoding="utf-8")
+        code, out = run(
+            [
+                "handoff",
+                "trim",
+                "--keep",
+                "2",
+                "--split-on",
+                r"^Day \d+:",
+                "--project",
+                str(self.root),
+                "--json",
+            ]
+        )
+        self.assertEqual(json.loads(out)["moved"], 4)
