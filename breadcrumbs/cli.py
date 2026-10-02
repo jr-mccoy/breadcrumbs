@@ -14519,14 +14519,34 @@ def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
     recorded = rec.meta.get("dirty_files")
     if not isinstance(recorded, list):
         return False
-    if not _same_commit(rec.meta.get("commit") or "", git_commit(root)):
-        return False
+    head = git_commit(root)
+    if not _same_commit(rec.meta.get("commit") or "", head):
+        # HEAD moved — but a commit that touches only the memory store (the
+        # agent committing the previous snapshot, or its own capture) is not
+        # work. Re-snapshotting on it rewrote the record with the sha of the
+        # commit that committed it, which left the store dirty again, which
+        # the agent committed again: the tree could never settle (0.6.0).
+        if _work_commits_between(root, rec.meta.get("commit") or "", head):
+            return False
     # The record holds the capped list (`derive_fields`), so compare with the
     # live list capped the same way: comparing a capped list with an uncapped
     # one made every firing with more than DIRTY_FILES_MAX dirty files look
     # like new work, and re-snapshot every turn (field report 2026-10-01, N5).
     live = _cap_dirty_files(git_dirty_files(root, include_memory=False))
     return _work_dirty_files(recorded) == _work_dirty_files(live)
+
+
+def _work_commits_between(root: Path, base: str, head: str) -> bool:
+    """True when `base..head` holds a commit touching anything outside the
+    memory store — the same filter `_session_commits` applies. A base this
+    clone cannot resolve (rebase, shallow fetch) counts as work: there is no
+    honest way to say nothing moved."""
+    if not base or not head or NO_GIT_COMMIT in (base, head):
+        return True
+    out = _git_out(
+        root, "log", "--format=%H", f"{base}..{head}", "--", ".", f":(exclude){MEMORY_DIRNAME}"
+    )
+    return out is None or bool(out.strip())
 
 
 def _same_commit(a: str, b: str) -> bool:

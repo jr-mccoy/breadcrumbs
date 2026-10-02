@@ -33,6 +33,14 @@ def git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=str(root), check=True, capture_output=True, text=True)
 
 
+def dirty(root: Path) -> list[str]:
+    """`git status --porcelain` lines: what a Stop firing left uncommitted."""
+    r = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=str(root), capture_output=True, text=True, check=True
+    )
+    return [ln for ln in r.stdout.splitlines() if ln.strip()]
+
+
 def make_repo(tmp: str) -> Path:
     root = Path(tmp)
     git(root, "init", "-q")
@@ -285,6 +293,66 @@ class HookCaptureTests(unittest.TestCase):
             out = run_hook("capture", {"cwd": str(root), "stop_hook_active": True})
             self.assertEqual(out, {})
             self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
+
+    def test_committing_the_snapshot_is_not_new_work(self):
+        """Committing the store must not earn another snapshot (0.6.0).
+
+        The snapshot records HEAD; committing the snapshot moves HEAD; the next
+        Stop saw "work moved", rewrote the snapshot with the new sha, and left
+        the store dirty again — which the agent committed again, forever.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            sid = {"cwd": str(root), "session_id": "s1"}
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "store")
+            run_hook("session", {**sid, "hook_event_name": "SessionStart"})
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+            run_hook("capture", {**sid, "stop_hook_active": True})
+            self.assertTrue(dirty(root), "the continuation's snapshot dirties the store")
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "Project memory: snapshot")
+            for _ in range(3):
+                self.assertEqual(run_hook("capture", sid), {})
+                self.assertEqual(dirty(root), [], "a memory-only commit re-snapshotted")
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
+            # Real work after the memory commits is still new work.
+            (root / "h.txt").write_text("c\n")
+            git(root, "add", "h.txt")
+            git(root, "commit", "-qm", "more work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+
+    def test_the_agents_own_capture_is_the_capture(self):
+        """The extraction turn ends with `capture session`; the agent commits
+        it. The continuation used to stack a machine snapshot beside that
+        authored record because the commit moved HEAD."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            sid = {"cwd": str(root), "session_id": "s1"}
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "store")
+            run_hook("session", {**sid, "hook_event_name": "SessionStart"})
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+            code = crumb.main(
+                ["capture", "session", "--project", str(root), "--next", "ship g.txt"]
+            )
+            self.assertEqual(code, 0)
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "Project memory: session capture")
+            self.assertEqual(run_hook("capture", {**sid, "stop_hook_active": True}), {})
+            self.assertEqual(dirty(root), [])
+            files = list((mem / "sessions").glob("*.md"))
+            self.assertEqual(len(files), 1, [f.name for f in files])
+            self.assertEqual(run_hook("capture", sid), {})
+            self.assertEqual(dirty(root), [])
 
     def test_no_store_is_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
