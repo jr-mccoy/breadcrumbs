@@ -981,6 +981,61 @@ class SessionCursorTests(unittest.TestCase):
             self._start(root, "S")  # a resumed session keeps its start
             self.assertEqual(hooks_common.session_baseline(mem, "S")["head"], first)
 
+    def _clone_pair(self, tmp: str) -> tuple[Path, Path]:
+        """A local checkout with a store and a 'cloud' clone of the same origin."""
+        base = Path(tmp)
+        git(base, "init", "-q", "--bare", "-b", "main", "origin.git")
+        local = base / "local"
+        git(base, "clone", "-q", "origin.git", str(local))
+        for repo in (local,):
+            git(repo, "config", "user.email", "l@l")
+            git(repo, "config", "user.name", "local")
+        self._commit(local, "a.txt", "initial")
+        init_store(local)
+        git(local, "add", "-A")
+        git(local, "commit", "-qm", "store")
+        git(local, "push", "-q", "origin", "main")
+        cloud = base / "cloud"
+        git(base, "clone", "-q", "origin.git", str(cloud))
+        git(cloud, "config", "user.email", "c@c")
+        git(cloud, "config", "user.name", "cloud")
+        return local, cloud
+
+    def test_a_pulled_commit_made_during_the_session_is_not_this_sessions(self):
+        # DoWhat retest of 0.5.0, F1: a cloud session commits while the local
+        # session runs; the local `git pull` brings it in after the session's
+        # start, so the author-time filter alone counted it as this session's.
+        with tempfile.TemporaryDirectory() as tmp:
+            local, cloud = self._clone_pair(tmp)
+            self._start(local, "S")
+            self._commit(cloud, "cloud.txt", "cloud session work")
+            git(cloud, "push", "-q", "origin", "main")
+            git(local, "pull", "-q", "--ff-only", "origin", "main")
+            payload = {"cwd": str(local), "session_id": "S"}
+            self.assertEqual(run_hook("capture", payload), {})
+            # This session's own commit is still asked about, once.
+            self._commit(local, "mine.txt", "my own work")
+            out = run_hook("capture", payload)
+            self.assertEqual(out.get("decision"), "block", out)
+            self.assertIn("my own work", out["reason"])
+            self.assertNotIn("cloud session work", out["reason"])
+            self.assertIn("1 new commit(s)", out["reason"])
+            run_hook("capture", {**payload, "stop_hook_active": True})
+            self.assertEqual(run_hook("capture", payload), {})
+
+    def test_a_merged_pull_and_a_rebased_pull_count_only_local_commits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local, cloud = self._clone_pair(tmp)
+            self._start(local, "S")
+            self._commit(local, "mine.txt", "my own work")
+            self._commit(cloud, "cloud.txt", "cloud session work")
+            git(cloud, "push", "-q", "origin", "main")
+            git(local, "pull", "-q", "--rebase", "origin", "main")
+            out = run_hook("capture", {"cwd": str(local), "session_id": "S"})
+            self.assertEqual(out.get("decision"), "block", out)
+            self.assertIn("my own work", out["reason"])
+            self.assertNotIn("cloud session work", out["reason"])
+
     def test_short_shas_of_different_lengths_are_the_same_commit(self):
         self.assertTrue(_cli._same_commit("abc1234", "abc1234de"))
         self.assertFalse(_cli._same_commit("abc1234", "abc1235"))

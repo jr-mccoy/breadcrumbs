@@ -14599,23 +14599,59 @@ def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]
         root,
         "log",
         "--no-decorate",
-        "--format=%at %h %s",
+        "--format=%at %H %h %s",
         f"{base}..{head}",
         "--",
         ".",
         f":(exclude){MEMORY_DIRNAME}",
     )
     started = _epoch(entry.get("started_at"))
+    made_here = _commits_made_here(root) if out else None
     lines: list[str] = []
     for line in (out or "").splitlines():
         stamp, _, rest = line.strip().partition(" ")
+        full, _, rest = rest.partition(" ")
         if not rest:
             continue
         if started is not None and stamp.isdigit():
             if int(stamp) < started - EXTRACTION_AUTHOR_MARGIN_SECONDS:
                 continue
+        if made_here is not None and full not in made_here:
+            continue
         lines.append(rest)
     return lines
+
+
+# Reflog actions that create a commit in this checkout. Everything else that
+# moves HEAD (`pull: Fast-forward`, `merge`, `reset`, `checkout`, `clone`)
+# brings in commits someone else made.
+_LOCAL_COMMIT_ACTIONS = ("commit", "cherry-pick", "revert", "rebase", "am")
+_REFLOG_SCAN = 2000
+
+
+def _commits_made_here(root: Path) -> set[str] | None:
+    """Full shas HEAD's reflog says were created in this checkout, or None
+    when there is no reflog to ask (then every commit in range counts).
+
+    A `git pull` of a commit a cloud session made *after* this session started
+    passed the author-time filter, and the Stop hook asked about it as this
+    session's work (DoWhat retest of 0.5.0, F1). The reflog tells the two apart:
+    a local commit is logged as `commit: …`, a pulled one arrives by `pull:`.
+    """
+    out = _git_out(root, "reflog", "show", f"-n{_REFLOG_SCAN}", "--format=%H%x09%gs", "HEAD")
+    if not out:
+        return None
+    made: set[str] = set()
+    for line in out.splitlines():
+        sha, _, action = line.partition("\t")
+        verb = action.strip().lower()
+        if "(start)" in verb or "(abort)" in verb:
+            continue  # a rebase's start checks out the upstream: not made here
+        if verb.startswith(_LOCAL_COMMIT_ACTIONS) or (
+            verb.startswith("pull") and "--rebase" in verb and "(pick)" in verb
+        ):
+            made.add(sha.strip())
+    return made
 
 
 def _epoch(stamp) -> int | None:
