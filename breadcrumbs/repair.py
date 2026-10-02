@@ -72,6 +72,55 @@ def _adding_commit(root: Path, path: Path) -> dict:
     return {"author": parts[0], "commit": parts[1], "date": parts[2]}
 
 
+# Trailing characters prose leaves on a path: "see Asia/Tokyo." or "(app/x.kt)".
+_TRAILING_PUNCT = ".,;:!?)]}'\"`"
+
+
+def _head_files(root: Path) -> frozenset[str]:
+    """Every path in HEAD's tree (one git call per repair run)."""
+    return cli.op_memo(
+        ("repair_head_files", str(root)),
+        lambda: frozenset(
+            (
+                cli._git_out(root, "ls-tree", "-r", "--name-only", "--full-tree", "HEAD") or ""
+            ).splitlines()
+        ),
+    )
+
+
+def citable_paths(root: Path, candidates) -> list[str]:
+    """The candidates that are files this project has: in the working tree or
+    in HEAD, relative to the project root.
+
+    A path-*shaped* word is not evidence (DoWhat retest of 0.5.0, item 10):
+    repair suggested `Asia/Tokyo.`, `APPDATA/npm`, `/home/user/android-sdk`,
+    part of a database push key and an API route. Guard keeps the structural
+    test on purpose (a record may name a file since deleted); a *suggestion*
+    to cite a file should only name one that is there.
+    """
+    root = Path(root)
+    out: set[str] = set()
+    head: frozenset[str] | None = None
+    for raw in candidates:
+        p = str(raw).strip().rstrip(_TRAILING_PUNCT).replace("\\", "/")
+        if not p or p.startswith(("/", "~")) or ":" in p or ".." in p.split("/"):
+            continue  # absolute, a drive, or outside the project
+        p = p[2:] if p.startswith("./") else p
+        try:
+            on_disk = (root / p).exists()
+        except OSError:
+            on_disk = False
+        if not on_disk:
+            if head is None:
+                head = _head_files(root) if cli.is_git_repo(root) else frozenset()
+            if p.rstrip("/") not in head and not any(
+                f.startswith(p.rstrip("/") + "/") for f in head
+            ):
+                continue
+        out.add(p)
+    return sorted(out)
+
+
 def plan_record(rec: "cli.Record", memory_dir: Path, root: Path, sets: dict) -> dict | None:
     """What repair would change in one record: `{path, id, changes, meta,
     needs, proposals}`, or None when it needs nothing."""
@@ -181,7 +230,7 @@ def plan_record(rec: "cli.Record", memory_dir: Path, root: Path, sets: dict) -> 
     ):
         meta["confidence"] = "low"
         changes.append("confidence: low (no evidence recorded)")
-        found = sorted(cli._paths_from_text(rec.body or ""))[:3]
+        found = citable_paths(root, cli._paths_from_text(rec.body or ""))[:3]
         if found:
             proposals.append(
                 f"{rid}: evidence it could cite: "
