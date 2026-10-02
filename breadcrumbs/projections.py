@@ -99,7 +99,10 @@ def generation_current(memory_dir: Path, root: Path) -> bool:
 
 
 def verified(memory_dir: Path, root: Path, name: str) -> bytes | None:
-    """`generated/<name>`'s bytes, only if the current generation vouches for them.
+    """A projection's bytes, only if the current generation vouches for them.
+
+    `name` is the published name; `cli.projection_path` says where it lives
+    (`generated/`, or `index/` for the guard pre-filter).
 
     None means "do not rely on this file": no manifest, an unstable publication,
     a file that is missing or not the one published, or canonical files that
@@ -110,9 +113,11 @@ def verified(memory_dir: Path, root: Path, name: str) -> bytes | None:
     doc = load_manifest(memory_dir)
     if doc is None or not doc.get("stable"):
         return None
+    from breadcrumbs import cli
+
     expected = (doc.get("files") or {}).get(name)
     try:
-        data = path_policy.read_bytes(Path(memory_dir) / "generated" / name)
+        data = path_policy.read_bytes(cli.projection_path(Path(memory_dir), name))
     except OSError:
         return None
     if expected != _sha(data):

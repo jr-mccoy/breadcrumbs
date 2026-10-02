@@ -8,6 +8,107 @@ prints both.
 
 ## [Unreleased]
 
+**The retest release** (proposed version **0.6.0**). Fixes what the DoWhat
+project's 0.5.0 retest and its schema 1 → 4 migration turned up on Windows:
+`docs/reviews/2026-10-02-dowhat-retest-plan.md` has each item, the
+corrections to the report, the decisions (D7, D8, D14) and each item's test.
+
+**Upgrading.** `schema_version` is unchanged (4). This is a minor release
+because behaviour people rely on changed:
+- guard gives different verdicts: most routine and read-only firings that
+  0.5.0 warned on are now silent, and high-impact verdicts cite only records
+  about the action;
+- the guard pre-filter is machine-local (`index/`). The first reindex by this
+  version deletes the committed `generated/guard-prefilter.json`; commit that
+  deletion once;
+- `crumb migrate` (also on a store that is already at schema 4) refreshes
+  untouched template files and sets `min_crumb_version: 0.5.0` with
+  `requires: min-crumb-version`. After that, crumb-kit 0.4.x **and 0.5.0**
+  refuse to write the store until upgraded (reads still work). Upgrade every
+  machine that shares the store, and the cloud setup that installs crumb-kit,
+  before running it.
+
+### Changed
+
+- **Guard reads more pipelines as read-only** (item 1). `sed` and `awk` are
+  read-only unless they write (`sed -i`, a `w`/`W`/`e` command or `s///w`;
+  `awk` with `system()`, `print >`, a pipe or `-i inplace`), and so are
+  `tac`, `rev`, `paste`, `comm`, `od`, `xxd`, `strings` and git's listing
+  forms (`git branch`, `git remote -v`, `git tag -l`, `git stash list`,
+  `git config --get`).
+- **crumb's own commands keep their effect in a pipeline** (item 2):
+  `crumb migrate --dry-run | sed -n '1,22p'` is a read, not a migration.
+- **High-impact verdicts cite only records about the action** (item 3): a
+  file it names or writes, its exact command, or a topical match. A real
+  `crumb migrate` no longer cites a Gradle rate-limit attempt.
+- **Edits are matched on their path, not their prose** (item 4), plus the
+  code identifiers they write. An edit inside `.project-memory/` is a memory
+  write, matched on its path and capped at `READ_FIRST`.
+- **Records that turned up everywhere** (item 5):
+  - crumb's own words (`crumb`, `migrate`, `reindex`) are no longer matched
+    against the store, in guard and in the prompt hook. A crumb command meets
+    memory through the files it writes and records naming the exact command.
+  - In a store of 25+ records, a tag or word on more than 8% (and more than
+    10) of them is *common*: it scores half, cannot make a record topical,
+    and cannot raise a verdict on its own.
+  - The guard hook shows an advisory record once per session unless the
+    action names its file or command. 0.5.0's repeat filter only caught the
+    same record set on the same target at `READ_FIRST`. Objections and
+    high-impact actions are never damped.
+- **A read-only command never shows a record as `[objects]`** (item 6).
+- **No `git` processes on the guard path** (item 7, decision D7). The branch,
+  HEAD and the default branch are read from `.git` (`breadcrumbs/gitrefs.py`;
+  reftable stores and `GIT_DIR` still ask git). HEAD's history is cached in
+  `index/commit-order.txt` per HEAD. A full guard firing at a stable HEAD
+  started 5 `git` processes and now starts 0. The hook log records `git_ms`
+  and `import_ms`, and `crumb doctor --hook-log` prints their medians, so the
+  next Windows measurement shows where the time goes.
+- **The guard pre-filter is machine-local, compact and stably sorted**
+  (item 8, decision D8): `index/guard-prefilter.json`, one line. The hook only
+  ever trusted a copy this machine's generation manifest vouched for, so the
+  committed copy bought nothing and conflicted on merges.
+- **The pre-filter carries no secret-shaped or opaque token** (item 9), and
+  `scan-secrets` / `audit` now scan `generated/`. An action holding a long
+  token with a digit always runs full guard, so the pre-filter is still a
+  superset of what guard can match.
+- **`crumb repair` suggests only evidence files that exist** (item 10): on
+  disk or in HEAD, with trailing punctuation stripped. No more `Asia/Tokyo.`
+  or `/home/user/android-sdk`.
+- **`doctor` points a current store at `crumb repair`** (item 13), and at
+  `crumb migrate` only when the store is at an older schema.
+
+### Added
+
+- **`crumb handoff trim --before DATE` and `--split-on REGEX`** (item 11).
+  Inside a hand-kept log (`### Earlier, as written`), a line starting with a
+  bold date (`**2026-10-01 …**`) starts an entry, so `--keep 10` can move a
+  hand-kept log's older paragraphs. Kept text stays where it was and moved
+  text goes to the history file verbatim. `doctor` counts entries the same
+  way.
+- **`migrate` maintains the store's template files** (item 12). A store
+  `README.md` (and the `generated/`, `index/` and `private/` READMEs) still
+  matching a shipped template is replaced with the current one; an edited one
+  is kept with a warning. The untouched 0.1.x `evidence/refs.yml` is removed.
+  `--dry-run` lists all of it.
+- **`min_crumb_version`** (item 14, decision D14). It names the oldest
+  crumb-kit that may write a store.
+  - A build older than it refuses writes at the store lock and warns on
+    reads.
+  - `crumb migrate` raises it to 0.5.0 (never lowers it) and adds
+    `requires: min-crumb-version`, so builds that predate the field refuse
+    too.
+  - `migrate` refuses a store this build may not write. `doctor` shows the
+    floor.
+
+### Fixed
+
+- **The Stop hook counted a pulled commit as this session's work** (F1, found
+  while checking the report's section F). A cloud session's commit, made
+  while the local session ran and then brought in by `git pull`, was asked
+  about. Only commits HEAD's reflog says were created in this checkout count
+  now (`commit`, `cherry-pick`, `revert`, rebase picks).
+- `tests/test_json_envelope.py` no longer modifies the checked-in fixture.
+
 ## [0.5.0] — 2026-10-01
 
 **The field-report release.** Fixes everything a real Android project's store

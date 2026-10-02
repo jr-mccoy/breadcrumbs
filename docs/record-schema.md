@@ -40,9 +40,8 @@ write through one, and `validate` reports each as `path-link`. See
   generated/
     README.md
     resume-packet.md          # placeholder until the first resume/reindex
-    # guard-prefilter.json    — these three are not created by `init`; written by
-    # related.json            — the first `resume`/`reindex` (or any record write)
-    # conflicts.json
+    # related.json            — these two are not created by `init`; written by
+    # conflicts.json          — the first `resume`/`reindex` (or any record write)
 
   private/
     README.md
@@ -67,6 +66,8 @@ write through one, and `validate` reports each as `path-link`. See
     # search.sqlite           — disposable search index, built at reindex once
     #                           the store has 200+ indexable records (§12)
     # generation.json         — manifest of the last publication, written last (§12, audit WP07)
+    # guard-prefilter.json    — the guard hook's pre-filter (machine-local since 0.6.0)
+    # commit-order.txt        — HEAD's history, cached per HEAD for guard's decay (0.6.0)
 ```
 
 **Two local telemetry files under `private/`.** Neither is a record, and
@@ -164,7 +165,7 @@ legacy values are in [`compatibility.md`](compatibility.md).
 Recorded in `manifest.yml` so every later command stays consistent:
 
 1. **`commit_generated_projections`** (default `true`). When `true`, the generated
-   projections (`generated/resume-packet.md`, `guard-prefilter.json`, `related.json`, `conflicts.json`) are committed — this serves the "cloud
+   projections (`generated/resume-packet.md`, `related.json`, `conflicts.json`) are committed — this serves the "cloud
    agent with no CLI" user story (a read-only agent gets a pre-built catch-up
    file). Each Markdown projection carries a source commit/hash header so
    staleness is visible. Flip to `false` (`init --no-commit-generated`) to keep a
@@ -794,7 +795,7 @@ Rebuilt by every reindex; never a source of truth.
 | File | Committed | Contents |
 |---|---|---|
 | `generated/resume-packet.md` | per `commit_generated_projections` | The bounded resume packet, with a `source_commit` / `inputs_hash` / `generated_at` header and, since audit WP08, a `view` / `budget` / `rules` header. It is the portable `markdown` view: within 5,000 `approx_tokens`, and promoted records are kept with their rules. |
-| `generated/guard-prefilter.json` | per `commit_generated_projections` | Token/path index the `PreToolUse` hook reads, with a top-level `inputs_hash` since audit WP07 (one written by an older version has none and is not drift-checked). The hook uses it only while `index/generation.json` vouches for it. Since audit WP11 it has `format: 3`: `tokens`, `titles`, `tags`, `paths` and `commands` (`[kind, *tokens]`) over every record that could drive a guard verdict, a strict superset of what full guard can surface; a pre-filter of another format is not trusted. |
+| `index/guard-prefilter.json` | never (machine-local since 0.6.0; `generated/` before, removed by the first 0.6.0 reindex) | Compact, stably sorted token/path index the `PreToolUse` hook reads, with a top-level `inputs_hash` since audit WP07 (one written by an older version has none and is not drift-checked). The hook uses it only while `index/generation.json` vouches for it. Since audit WP11 it has `format: 3`: `tokens`, `titles`, `tags`, `paths` and `commands` (`[kind, *tokens]`) over every record that could drive a guard verdict, a strict superset of what full guard can surface (format 4 adds per-record `token_sets`); a pre-filter of another format is not trusted. Since 0.6.0 it leaves out secret-shaped and opaque tokens (a token inside anything `scan-secrets` flags, or 24+ letters and digits), and the hook runs full guard for an action holding a 12+ character token with a digit, so the superset still holds. |
 | `generated/related.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "related": {id: [up to 3 ids]}, "skipped": null, "degraded"?: {reason, dropped_features, largest_dropped_posting}}` — "see also" for every live item, read by `crumb show` and `memory_show`. |
 | `generated/conflicts.json` | per `commit_generated_projections` | `{"_generated", "inputs_hash", "conflicts": [{"rule", "ids", "similarity", "message"}]}` — pairs of live records that may contradict each other (WM-34). |
 | `index/search.sqlite` | never (gitignored) | The disposable search index. |

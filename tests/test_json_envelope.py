@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -38,7 +39,18 @@ def run_json(argv: list[str]) -> tuple[int, dict]:
 
 
 class EnvelopeTests(unittest.TestCase):
-    STORE = str(FIXTURES / "fixture-01-fresh-resume")
+    # A copy: `resume` publishes projections, and the checked-in fixture must
+    # not change when the suite runs.
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        dest = Path(cls._tmp.name) / "fixture-01-fresh-resume"
+        shutil.copytree(FIXTURES / "fixture-01-fresh-resume", dest)
+        cls.STORE = str(dest)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
 
     def _commands(self) -> list[list[str]]:
         return [

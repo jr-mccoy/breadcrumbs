@@ -36,3 +36,27 @@ tasks:
     note: "issue 7d: a read-only preview matched old Room migration records"
     expect: []
     verdict: [PROCEED, READ_FIRST]
+
+  # ---- the DoWhat retest of 0.5.0 (docs/reviews/2026-10-02-dowhat-retest-plan.md)
+  - task: "crumb migrate --dry-run | sed -n '1,22p'"
+    note: "items 1-2: a crumb preview piped into sed is still a preview"
+    expect: []
+    verdict: [PROCEED, READ_FIRST]
+
+  - task: "sed -n '867p' app/lint-results.txt | grep -oiE 'MigrationV21ToV22Test|todos'"
+    note: "item 1: sed -n is read-only, so the attempt it names is context, never a stop"
+    expect: [att_20260910_migrationv21tov22test-s-todos-inserts-named-5-of-the-10]
+    verdict: [PROCEED, READ_FIRST]
+
+  - task: "crumb migrate"
+    note: "item 3: high-impact, and no project memory about crumb's own migration (critical cases pin what it cites)"
+    expect: []
+    verdict: [ASK_HUMAN]
+
+  - task: "why does Gradle get HTTP 429 from Maven Central in a cloud container"
+    note: "the 429 attempt is still found when the task is about it"
+    expect: [att_20260912_retrying-gradle-against-maven-central-on-a-cold-web]
+
+  - task: "write the v21 to v22 Room migration test for the todos table"
+    note: "the todos attempt is still found when the task is about it"
+    expect: [att_20260910_migrationv21tov22test-s-todos-inserts-named-5-of-the-10]

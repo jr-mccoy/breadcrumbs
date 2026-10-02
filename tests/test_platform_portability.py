@@ -117,7 +117,9 @@ class LineEndingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             mem = _store(root)
-            name = crumb.GUARD_PREFILTER_FILENAME
+            # A committed projection: the guard pre-filter is machine-local
+            # (index/) since 0.6.0, so a checkout never rewrites its endings.
+            name = "related.json"
             generated = mem / "generated" / name
             generated.write_bytes(
                 generated.read_bytes().replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")

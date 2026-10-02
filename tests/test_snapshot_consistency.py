@@ -141,7 +141,8 @@ class StampTests(SnapshotCase):
         gen = self.mem / "generated"
         self.assertIn(f"inputs_hash: {digest}", (gen / "resume-packet.md").read_text())
         for name in (cli.GUARD_PREFILTER_FILENAME, "related.json", "conflicts.json"):
-            self.assertEqual(json.loads((gen / name).read_text())["inputs_hash"], digest, name)
+            path = cli.projection_path(self.mem, name)
+            self.assertEqual(json.loads(path.read_text())["inputs_hash"], digest, name)
         manifest = projections.load_manifest(self.mem)
         self.assertEqual((manifest["inputs_hash"], manifest["stable"]), (digest, True))
         self.assertEqual(
@@ -174,7 +175,7 @@ class GenerationTests(SnapshotCase):
     def test_mixed_generation_is_not_consumed(self):
         self._attempt("src/billing.py", "Batched the billing reconciler writes")
         cli.try_reindex_projections(self.mem, self.root)
-        prefilter = self.mem / "generated" / cli.GUARD_PREFILTER_FILENAME
+        prefilter = cli.guard_prefilter_path(self.mem)
         self.assertTrue(self._edit_warns("src/billing.py"))
         # A verified generation keeps an unrelated action quiet, cheaply.
         self.assertFalse(self._edit_warns("docs/unrelated.md"))

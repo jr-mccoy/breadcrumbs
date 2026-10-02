@@ -553,6 +553,8 @@ CRITICAL_KEYS = {
 }
 CRITICAL_CHECKS = {
     "guard_not": "cli.guard(task) must not return any of `verdict_not`",
+    "guard_cites_none": "cli.guard(task) must cite none of `forbid` among its matches",
+    "guard_no_blocking": "cli.guard(task) must show no match as blocking (`[objects]`)",
     "hook_guard_warns": "`crumb hook guard` on the task must deliver a warning",
     "never_delivered": "no `forbid` id is delivered as an entry (`via`: prompt, packet)",
     "delivered": "every `require` id is delivered as an entry (`via`: prompt, packet)",
@@ -743,6 +745,17 @@ def run_critical(case: dict, memory_dir: Path, project: Path, rows: list[dict], 
         ]
         ok = verdict not in case["verdict_not"]
         detail = f"guard said {verdict}"
+    elif check in ("guard_cites_none", "guard_no_blocking"):
+        matches = cli.guard(memory_dir, project, case["task"], files=case["files"] or None)[
+            "matches"
+        ]
+        if check == "guard_cites_none":
+            bad = [m["id"] for m in matches if m["id"] in case["forbid"]]
+            detail = f"cited {bad}" if bad else "none cited"
+        else:
+            bad = [m["id"] for m in matches if m.get("stance") == "blocking"]
+            detail = f"blocking: {bad}" if bad else "nothing blocking"
+        ok = not bad
     elif check == "hook_guard_warns":
         hook = deliver_guard_hook(project, case["task"], case["files"], session)
         ok = hook["spoke"] and not hook["malformed"]

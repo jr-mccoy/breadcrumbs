@@ -25,6 +25,12 @@ __version__ = "0.5.0"
 
 __all__ = ["main", "get_version", "SCHEMA_VERSION", "__version__"]
 
+import time as _time  # noqa: E402
+
+# When the package started loading. `cli.IMPORT_MS` measures from here, so the
+# guard hook's log can say how much of a slow firing was start-up.
+_IMPORT_STARTED = _time.perf_counter()
+
 
 # The re-exports are resolved lazily (PEP 562), so the claim above — that
 # importing this package does not require importing the CLI module — holds for a

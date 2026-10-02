@@ -182,6 +182,30 @@ def advisory_seen(
     return bool(seen)
 
 
+def delivered_records(memory_dir: Path, session_id: str, *, filename: str | None = None) -> set:
+    """The record ids the guard hook has already shown this session."""
+    entry = read_state(memory_dir, filename or GUARD_SEEN_FILENAME).get(session_id) or {}
+    ids = entry.get("delivered") if isinstance(entry, dict) else None
+    return {str(i) for i in ids} if isinstance(ids, list) else set()
+
+
+def add_delivered_records(
+    memory_dir: Path, session_id: str, ids: list[str], *, filename: str | None = None
+) -> None:
+    """Remember that the guard hook showed `ids` in this session. Best-effort."""
+    if not ids:
+        return
+
+    def mutate(entry: dict):
+        have = entry.get("delivered") if isinstance(entry.get("delivered"), list) else []
+        new = have + [i for i in ids if i not in have]
+        if new == have:
+            return None
+        return {**entry, "delivered": new[-MAX_KEYS_PER_SESSION:]}
+
+    update_state(memory_dir, filename or GUARD_SEEN_FILENAME, session_id, mutate)
+
+
 # --------------------------------------------------------------------------- #
 # The miner's state (audit F02, WP09)
 # --------------------------------------------------------------------------- #

@@ -44,9 +44,9 @@ stores (this page).
 |---|---|---|---|---|
 | `package` | `__version__` | `breadcrumbs/__init__.py` (the one place it is written) | every release | `crumb --version` reports it; nothing reads it from a store |
 | `schema_version` | 4 | `cli.SCHEMA_VERSION`, written to `manifest.yml` | on-disk record format | older: read as is, `crumb migrate` upgrades; newer: writes refused, reads warned (§4) |
-| `requires` | review-profiles | `compat.KNOWN_FEATURES`, `manifest.yml` `requires:` | a change old readers must not ignore without a format change | an unknown feature is treated like a newer `schema_version` |
+| `requires` | min-crumb-version, review-profiles | `compat.KNOWN_FEATURES`, `manifest.yml` `requires:` | a change old readers must not ignore without a format change | an unknown feature is treated like a newer `schema_version` |
 | `generation-manifest` | 1 | `projections.MANIFEST_FORMAT` (`index/generation.json`) | projection publication format | treated as unverified; the next publication rewrites it |
-| `guard-prefilter` | 4 | `cli.GUARD_PREFILTER_FORMAT` (`generated/guard-prefilter.json`) | pre-filter contents | treated as unverified (the hook runs full guard) until republished |
+| `guard-prefilter` | 4 | `cli.GUARD_PREFILTER_FORMAT` (`index/guard-prefilter.json`, machine-local since 0.6.0; earlier `generated/`) | pre-filter contents | treated as unverified (the hook runs full guard) until republished |
 | `search-index` | 2 | `searchindex.INDEX_FORMAT` (`index/search.sqlite`) | index schema | ignored (full scan); `crumb reindex` rebuilds it |
 | `miner-state` | 2 | `hooks_common.MINER_STATE_VERSION` (`private/miner/`) | transcript cursor state | started fresh; the acknowledged-event ledger prevents duplicates |
 | `usage-event` | 1 | `usage.py` event `v` (`private/usage-events/`) | usage event shape | an unreadable event is dropped and counted (`accounting`) |
@@ -92,10 +92,11 @@ either (`RELEASING.md` → *Tag / PyPI history*).
 
 ### A newer store, read by this build
 
-"Newer" means one of two things:
+"Newer" means one of three things:
 - the store's `schema_version` is above this build's;
 - the store's manifest lists a `requires:` feature this build does not
-  implement.
+  implement;
+- the store's `min_crumb_version` is above this build's version (0.6.0 on).
 
 The approved rule is **refuse writes, warn reads** (`breadcrumbs/compat.py`).
 
@@ -133,6 +134,18 @@ that such readers must not misread is designed to **fail safe for them**:
 3. **Keep the new meaning out of what old readers already interpret.** Put it
    in a field they ignore (unknown keys are ignored and kept) or a directory
    they do not read, never in a changed meaning of an existing field or value.
+
+**A minimum writer version** (DoWhat retest of 0.5.0, item 14).
+`min_crumb_version: 0.5.0` in `manifest.yml` names the oldest crumb-kit that
+may write the store. It is for a change in how a build *writes* that needs no
+format change: 0.5.0 made `capture session --next` add an entry to the Next
+Action log, and a 0.4.x capture still replaced the whole log. `crumb migrate`
+raises it to `compat.MIN_SAFE_WRITER` (never lowers it), on a current store
+too, and lists `min-crumb-version` under `requires:`. That bridge makes 0.4.0
+and 0.5.0, which predate the field, refuse to write until upgraded; every
+build from 0.6.0 compares the version itself. It can also be set by hand, and
+`crumb doctor` shows it. A release that changes how a store must be written
+raises `MIN_SAFE_WRITER`.
 
 **Review profiles** (audit WP14) are an opt-in change. A team store declares
 `requires: review-profiles`. Its proposals use an existing value,

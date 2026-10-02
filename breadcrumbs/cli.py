@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -45,6 +46,7 @@ if TYPE_CHECKING:  # annotations only; the parser lives in `cli_parser`
 from breadcrumbs import validation as _validation
 
 # What the store may read and write on disk (audit F17). Stdlib-only too.
+import breadcrumbs as _breadcrumbs_pkg
 from breadcrumbs import path_policy
 from breadcrumbs import shellcmd as _shellcmd
 from breadcrumbs.adapters import claude as _claude
@@ -464,7 +466,15 @@ def is_git_repo(root: Path) -> bool:
     cached = _IS_GIT_REPO_CACHE.get(key)
     if cached is not None:
         return cached
+    from breadcrumbs import gitrefs
+
+    # A `.git` found by walking up answers without a process (DoWhat retest of
+    # 0.5.0, item 7); anything unusual still asks git.
+    if gitrefs.git_dir(Path(root)) is not None:
+        _IS_GIT_REPO_CACHE[key] = True
+        return True
     GIT_CALLS[0] += 1
+    started = time.perf_counter()
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--is-inside-work-tree"],
@@ -476,6 +486,7 @@ def is_git_repo(root: Path) -> bool:
         answer = result.returncode == 0 and result.stdout.strip() == "true"
     except (FileNotFoundError, OSError):
         answer = False
+    GIT_MS[0] += (time.perf_counter() - started) * 1000
     _IS_GIT_REPO_CACHE[key] = answer
     return answer
 
@@ -546,9 +557,9 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     lines.append(f"{MEMORY_DIRNAME}/generated/*.tmp")
     if not commit_generated:
         # flip generated projections to local-only, but keep the explainer README.
-        # *.json covers guard-prefilter.json, which is a projection like any other
-        # (rebuilt on every write) and used to escape this policy entirely — the
-        # user asked for local-only projections and got a tracked, churning one.
+        # *.json covers related.json and conflicts.json (and the guard
+        # pre-filter, which lived here until it moved to index/ in 0.6.0): the
+        # user asked for local-only projections, so none may stay tracked.
         lines.append(f"{MEMORY_DIRNAME}/generated/*.md")
         lines.append(f"{MEMORY_DIRNAME}/generated/*.json")
         lines.append(f"!{MEMORY_DIRNAME}/generated/README.md")
@@ -1529,10 +1540,14 @@ def records_in(directory: Path, rtype: str) -> list[Record]:
 # Windows each costs tens of milliseconds, and a count says at once whether a
 # slow firing was git or Python (field report 2026-10-01, issue 6).
 GIT_CALLS = [0]
+# ...and the milliseconds they took, for the hook log's `git_ms` (item 7 of the
+# 0.5.0 retest: the next Windows measurement should say where the time went).
+GIT_MS = [0.0]
 
 
 def _git_out(root: Path, *args: str) -> str | None:
     GIT_CALLS[0] += 1
+    started = time.perf_counter()
     try:
         r = subprocess.run(
             ["git", *args],
@@ -1543,6 +1558,8 @@ def _git_out(root: Path, *args: str) -> str | None:
         )
     except (FileNotFoundError, OSError):
         return None
+    finally:
+        GIT_MS[0] += (time.perf_counter() - started) * 1000
     if r.returncode != 0:
         return None
     # Trailing newline only. A whole-output strip() also ate the leading space of
@@ -1562,6 +1579,11 @@ def git_branch(root: Path) -> str:
 def _git_branch(root: Path) -> str:
     if not is_git_repo(root):
         return NO_GIT_BRANCH
+    from breadcrumbs import gitrefs
+
+    fast = gitrefs.branch(root)
+    if fast:
+        return fast
     out = _git_out(root, "rev-parse", "--abbrev-ref", "HEAD")
     if out:
         return out
@@ -4121,9 +4143,77 @@ def _trap_block(
 
 
 # Machine-readable trap-token index consumed by the PreToolUse hook's cheap risk
-# pre-filter. Lives under generated/ (rebuilt on every reindex,
-# never canonical, skipped by the secret scan like the rest of generated/).
+# pre-filter. Rebuilt on every reindex, never canonical.
+#
+# Machine-local since the DoWhat retest of 0.5.0 (item 8, decision D8): it lives
+# in index/, which is gitignored. Committed under generated/ it grew to 476 KB,
+# one token per line, so every rebuild was a ~33,000-line diff that conflicted
+# on every merge, and a committed copy was never used anyway: the hook trusts it
+# only when this machine's generation manifest vouches for it. The name stays
+# the manifest key; `guard_prefilter_path` says where the file is.
 GUARD_PREFILTER_FILENAME = "guard-prefilter.json"
+GUARD_PREFILTER_DIR = "index"
+
+
+def guard_prefilter_path(memory_dir: Path) -> Path:
+    return Path(memory_dir) / GUARD_PREFILTER_DIR / GUARD_PREFILTER_FILENAME
+
+
+def legacy_guard_prefilter_path(memory_dir: Path) -> Path:
+    """Where 0.5.0 and earlier wrote it (committed); removed by the next reindex."""
+    return Path(memory_dir) / "generated" / GUARD_PREFILTER_FILENAME
+
+
+def projection_path(memory_dir: Path, name: str) -> Path:
+    """Where the projection published under `name` lives."""
+    if name == GUARD_PREFILTER_FILENAME:
+        return guard_prefilter_path(memory_dir)
+    return Path(memory_dir) / "generated" / name
+
+
+# Tokens the pre-filter never holds (item 9 of the 0.5.0 retest). It copies
+# words out of records, so it must not carry a secret-shaped or opaque value: a
+# token inside anything `scan-secrets` would flag, or a long letters-and-digits
+# run (an id, a key, a hash). The hook makes up for the gap: an action holding
+# a token of the `_prefilter_opaque_action_token` shape always runs full guard,
+# so the pre-filter stays a superset of what guard can match.
+_PREFILTER_OPAQUE_MIN = 24
+_PREFILTER_SPAN_TOKEN_MIN = 12
+
+
+def _prefilter_unsafe_stems(text: str) -> set[str]:
+    """Stems of `text` the pre-filter must not hold (see above)."""
+    out: set[str] = set()
+    spans = [m.group(0) for _name, pat in SECRET_PATTERNS for m in pat.finditer(text or "")]
+    spans += [
+        m.group(0)
+        for m in _HIGH_ENTROPY_TOKEN.finditer(text or "")
+        if _looks_high_entropy(m.group(0))
+    ]
+    for span in spans:
+        for t in _tokenize(span):
+            if len(t) >= _PREFILTER_SPAN_TOKEN_MIN and any(c.isdigit() for c in t):
+                out.add(_stem(t))
+    for t in _tokenize(text):
+        if _prefilter_opaque_token(t):
+            out.add(_stem(t))
+    return out
+
+
+def _prefilter_opaque_token(t: str) -> bool:
+    return (
+        len(t) >= _PREFILTER_OPAQUE_MIN
+        and any(c.isdigit() for c in t)
+        and any(c.isalpha() for c in t)
+    )
+
+
+def _prefilter_opaque_action_token(action: str) -> bool:
+    """Does the action hold a token the pre-filter may have left out?"""
+    return any(
+        len(t) >= _PREFILTER_SPAN_TOKEN_MIN and any(c.isdigit() for c in t)
+        for t in _tokenize(action)
+    )
 
 
 def _build_guard_prefilter(memory_dir: Path) -> dict:
@@ -4159,12 +4249,21 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     tags: set[str] = set()
     paths: set[str] = set()
     commands: list[list[str]] = []
-    token_sets: list[list[str]] = []
+    token_sets: set[tuple[str, ...]] = set()
+    unsafe: set[str] = set()
     for it in _candidate_items(memory_dir, include_ideas=False):
         if not _may_drive_verdict(it):
             continue
+        rec = it.get("record")
+        source = (
+            f"{it.get('title') or ''}\n{rec.body if rec is not None else ''}\n"
+            + " ".join(sorted(it.get("tags") or ()))
+            + "\n"
+            + " ".join(sorted(set(it.get("files") or ()) | set(it.get("mentioned_files") or ())))
+        )
+        unsafe |= _prefilter_unsafe_stems(source)
         tokens |= set(it["specific"])
-        token_sets.append(sorted(it["specific"]))
+        token_sets.add(tuple(sorted(it["specific"])))
         titles |= set(it.get("title_specific") or ())
         tags |= set(it.get("tag_stems") or {t: t for t in it.get("tags") or ()})
         paths |= set(it.get("files") or ()) | set(it.get("mentioned_files") or ())
@@ -4172,7 +4271,9 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
             if len(head) > _COMMAND_MIN_TOKENS and head[:9] not in commands:
                 commands.append(head[:9])  # the kind, then up to 8 tokens
     for trap in active_traps(memory_dir):
-        paths |= _paths_from_text(trap["heading"] + "\n" + trap["content"])
+        text = trap["heading"] + "\n" + trap["content"]
+        unsafe |= _prefilter_unsafe_stems(text)
+        paths |= _paths_from_text(text)
     for rec in active_attempts(memory_dir):
         if _attempt_has_do_not_retry(rec):
             text = (
@@ -4180,18 +4281,26 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
             )
             paths |= _paths_from_text(text)
             paths |= set(_evidence_refs(rec, ("file", "path")))
+
+    def safe_path(p: str) -> bool:
+        return not ({_stem(t) for t in _tokenize(p)} & unsafe) and not any(
+            _prefilter_opaque_token(t) for t in _tokenize(p)
+        )
+
+    # Every list sorted, so the same records give the same bytes whatever order
+    # they were read in (item 8 of the 0.5.0 retest).
     return {
         "format": GUARD_PREFILTER_FORMAT,
-        "tokens": sorted(tokens),
-        "titles": sorted(titles),
-        "tags": sorted(tags),
-        "paths": sorted(paths),
-        "commands": sorted(commands),
+        "tokens": sorted(tokens - unsafe),
+        "titles": sorted(titles - unsafe),
+        "tags": sorted(tags - unsafe),
+        "paths": sorted(p for p in paths if safe_path(p)),
+        "commands": sorted(h for h in commands if not (set(h[1:]) & unsafe)),
         # Each record's own stems. Guard's keyword gate is per record (two
         # shared words in *one* record), so the pre-filter is too: against
         # the union of every record's words, 12 of 20 everyday commands
         # escalated to a full guard run (field report 2026-10-01, issue 6).
-        "token_sets": token_sets,
+        "token_sets": sorted({tuple(t for t in ts if t not in unsafe) for ts in token_sets} - {()}),
     }
 
 
@@ -4301,7 +4410,11 @@ def _publish_projections_inner(
             prefilter = {**_build_guard_prefilter(memory_dir), "inputs_hash": digest}
             outputs = {
                 "resume-packet.md": render_packet_markdown(packet),
-                GUARD_PREFILTER_FILENAME: json.dumps(prefilter, indent=0, sort_keys=True) + "\n",
+                # Compact, one line (item 8 of the 0.5.0 retest).
+                GUARD_PREFILTER_FILENAME: json.dumps(
+                    prefilter, separators=(",", ":"), sort_keys=True
+                )
+                + "\n",
                 # "See also" for every live item (WM-25).
                 _related.RELATED_FILENAME: _related.render_related(
                     memory_dir, project_root, inputs_hash=digest
@@ -4340,7 +4453,13 @@ def _publish_projections_inner(
             with contextlib.suppress(FileNotFoundError):
                 _projections.manifest_path(memory_dir).unlink()
             for name, text in outputs.items():
-                write_text_atomic(gen / name, text)
+                target = projection_path(memory_dir, name)
+                path_policy.mkdirs(target.parent)
+                write_text_atomic(target, text)
+            # The pre-filter moved to index/ (machine-local); the copy 0.5.0
+            # committed under generated/ goes, and the user commits that once.
+            with contextlib.suppress(FileNotFoundError):
+                legacy_guard_prefilter_path(memory_dir).unlink()
             _searchindex.publish_index(memory_dir, live_index)
             published_index = live_index
         finally:
@@ -6444,6 +6563,43 @@ _REVLIST_INDEX_CAP = 5000
 _EXACT_LOOKUPS = 3
 
 
+# HEAD's topo-ordered history, cached per HEAD in the machine-local index/
+# (DoWhat retest of 0.5.0, item 7). The `rev-list` it replaces ran on every
+# guard firing that scored a record; HEAD moves far less often than that.
+COMMIT_ORDER_RELPATH = ("index", "commit-order.txt")
+
+
+def _cached_commit_order(root: Path) -> list[str]:
+    """HEAD's history, newest first, up to `_REVLIST_INDEX_CAP` shas.
+
+    Read from `index/commit-order.txt` when its first line names the current
+    HEAD (read from .git without a process); otherwise asked of git and
+    written back. A store-less checkout, an unreadable HEAD or a failed write
+    simply asks git each time, as before.
+    """
+    from breadcrumbs import gitrefs
+
+    head = gitrefs.head_sha(root)
+    cache = Path(root) / MEMORY_DIRNAME / Path(*COMMIT_ORDER_RELPATH)
+    if head:
+        try:
+            text = path_policy.read_text(cache)
+        except OSError:
+            text = ""
+        first, _, rest = text.partition("\n")
+        if first == f"{head} {_REVLIST_INDEX_CAP}":
+            return rest.split()
+    out = _git_out(root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD")
+    order = (out or "").split()
+    if head and order and order[0] == head and cache.parent.parent.is_dir():
+        try:
+            path_policy.mkdirs(cache.parent)
+            write_text_atomic(cache, f"{head} {_REVLIST_INDEX_CAP}\n" + "\n".join(order) + "\n")
+        except OSError:
+            pass
+    return order
+
+
 class CommitDistanceIndex:
     """Commit-distance for a whole scoring pass, in one git call instead of N.
 
@@ -6475,10 +6631,8 @@ class CommitDistanceIndex:
 
     def _index(self) -> dict[str, int]:
         if self._pos is None:
-            out = _git_out(
-                self._root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD"
-            )
-            self._pos = {sha: i for i, sha in enumerate((out or "").split())}
+            order = _cached_commit_order(self._root)
+            self._pos = {sha: i for i, sha in enumerate(order)}
         return self._pos
 
     def _position(self, commit: str) -> int | None:
@@ -8534,6 +8688,21 @@ GUARD_MIN_KEYWORD_OVERLAP = 2  # specific shared tokens for a pure-text match
 # are author-curated, deliberate signal.
 GUARD_DF_UBIQUITY = 1 / 3
 GUARD_DF_MIN_CORPUS = 8
+# Rarity, a softer tier below ubiquity (DoWhat retest of 0.5.0, item 5). In a
+# 400-record store full of migration and memory records, a `migration` tag or
+# the word `memory` says little about *this* action, yet one shared tag plus one
+# shared word made a record topical, and the same two records were cited on
+# `git status`, `cp`, a reindex and a README edit. A tag or word carried by more
+# than GUARD_DF_COMMON of the corpus is *common*: it scores half, and it cannot
+# make a match topical on its own, so it cannot floor a verdict or make a
+# do-not-retry line blocking. Unlike ubiquity this covers tags too: a tag on
+# most records is author-curated, but it still names the whole store's topic.
+# Below GUARD_DF_COMMON_MIN_CORPUS records nothing is common, and a stem must
+# also be on more than GUARD_DF_COMMON_MIN_RECORDS records: in a 40-record
+# store, four records sharing a tag is a topic, not the store's whole subject.
+GUARD_DF_COMMON = 0.08
+GUARD_DF_COMMON_MIN_CORPUS = 25
+GUARD_DF_COMMON_MIN_RECORDS = 10
 
 # scoring weights (§11.4 signals)
 GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
@@ -9248,19 +9417,36 @@ def classify_action(action: str) -> tuple[str, list[str]]:
     a real `crumb migrate` is a migration.
     """
     edit = _EDIT_ACTION_RE.match((action or "").strip())
+    effects: set[str] = set()
     if edit:
         text = f"{edit.group(1)} {edit.group(2)}"
     else:
-        crumb = _shellcmd.crumb_commands(action or "")
-        if crumb and len(crumb) == len(_shellcmd.segments(action or "") or [None]):
-            effects = {effect for effect, _args in crumb}
-            if effects <= {"read_only", "memory_write"}:
-                return "routine_edit", ["routine_edit"]
-            if effects <= {"read_only", "memory_write", "migration"}:
-                return "migration", ["migration"]
-        text = _shellcmd.classification_text(action or "")
+        # Segment by segment (DoWhat retest of 0.5.0, item 2): a crumb command
+        # counts by its effect, a read-only segment counts for nothing, and only
+        # the rest is read for class words. Judging the whole command at once
+        # made `crumb migrate --dry-run | sed -n '1,22p'` a migration, because
+        # the `| sed` stopped it being "all crumb" and `migrate` was a word.
+        segs = _shellcmd.segments(action or "")
+        if segs is None:
+            text = _shellcmd.classification_text(action or "")
+        else:
+            other: list[str] = []
+            for seg in segs:
+                args = _shellcmd.crumb_invocation(_shellcmd.words(seg))
+                if args is not None:
+                    effect = _shellcmd.crumb_effect(args)
+                    effects.add(effect)
+                    if effect == "other":
+                        other.append(seg)
+                    continue
+                if _shellcmd.is_read_only(seg):
+                    continue
+                other.append(seg)
+            text = _shellcmd.classification_text(" ; ".join(other))
     toks = _tokenize(text)
     matched = {cls for cls, kws in ACTION_CLASS_KEYWORDS.items() if toks & kws}
+    if "migration" in effects:
+        matched.add("migration")
     if not matched:
         return "routine_edit", ["routine_edit"]
     primary = next(c for c in _CLASS_SEVERITY if c in matched)
@@ -9634,8 +9820,15 @@ def _score_item(
     q_writes: set[str] = frozenset(),
     do_not_retry_boost: bool = True,
     reached: "HeadTree | None" = None,
+    common: frozenset[str] = frozenset(),
+    common_tags: frozenset[str] = frozenset(),
 ) -> dict | None:
-    """Score one item against the query. None if it does not clear the candidate gate."""
+    """Score one item against the query. None if it does not clear the candidate gate.
+
+    `common` / `common_tags` are the query's stems that too many records carry
+    as a word / as a tag to say much (`GUARD_DF_COMMON`): they score half and
+    never make a match topical by themselves.
+    """
 
     # _norm_files stores each file as both its full path and its bare basename,
     # so the intersection can hold both variants of one physical file. Count each
@@ -9704,6 +9897,8 @@ def _score_item(
 
     signals: list[str] = []
     score = 0.0
+    rare_tag_stems = matched_tag_stems - common_tags
+    rare_kw = kw_overlap - common
     if matched_files:
         score += GUARD_W_FILE * file_count
         signals.append("file")
@@ -9711,21 +9906,28 @@ def _score_item(
         score += GUARD_W_MENTION * mention_count
         signals.append("mention")
     if matched_tags:
-        score += GUARD_W_TAG * len(matched_tag_stems)
-        signals.append("tag")
+        score += GUARD_W_TAG * len(rare_tag_stems)
+        score += GUARD_W_TAG / 2 * (len(matched_tag_stems) - len(rare_tag_stems))
+        # Only a rare tag is a surfacing signal; a tag half the store carries
+        # is a topic, and on its own it is said as such (`common-tag`).
+        signals.append("tag" if rare_tag_stems else "common-tag")
     if matched_writes:
         score += GUARD_W_WRITES * writes_count
         signals.append("writes-file")
     if kw_count:
         # Capped for guard: overlap grew with the command's length, so a long
         # commit message scored 39 against records it had nothing to do with
-        # (issue 7c). Plain search keeps the uncapped count.
-        score += GUARD_W_KEYWORD * (min(kw_count, keyword_cap) if keyword_cap else kw_count)
+        # (issue 7c). Plain search keeps the uncapped count. A common word
+        # counts half (item 5 of the 0.5.0 retest).
+        weighted = len(rare_kw) + (kw_count - len(rare_kw)) / 2
+        score += GUARD_W_KEYWORD * (min(weighted, keyword_cap) if keyword_cap else weighted)
         if kw_count >= min_keyword:
             signals.append("keyword")
     if title_overlap:
-        score += GUARD_W_TITLE * len(title_overlap)
-        signals.append("title")
+        score += GUARD_W_TITLE * len(title_overlap - common)
+        score += GUARD_W_TITLE / 2 * len(title_overlap & common)
+        if title_overlap - common:
+            signals.append("title")
 
     rec = item.get("record")
     if item["status"] == "active":
@@ -9741,13 +9943,17 @@ def _score_item(
     # attempt to the PAUSE band and pushed the relevant record out (issue 8).
     # Words beyond the tags: a tag's own word is in the record's text too, so it
     # would otherwise count as the "shared word" that makes a tag hit topical.
-    kw_beyond_tags = len(kw_overlap - matched_tag_stems)
+    # Only rare evidence counts (item 5 of the 0.5.0 retest): a common tag
+    # plus one common word is what a store says about everything. In a store
+    # too small to have common words, these are the rules they always were.
+    kw_beyond_tags = len(rare_kw - matched_tag_stems)
     topical = bool(
         matched_files
-        or (title_overlap - matched_tag_stems)
+        or (title_overlap - matched_tag_stems - common)
         or matched_writes
-        or (matched_tags and kw_beyond_tags >= 1)
-        or len(matched_tag_stems) >= 2
+        or (rare_tag_stems and kw_beyond_tags >= 1)
+        or (len(matched_tag_stems) >= 2 and rare_tag_stems)
+        or (matched_tag_stems and kw_beyond_tags >= 2)
         or kw_beyond_tags >= GUARD_TOPICAL_KEYWORDS
     )
     if item["do_not_retry"] and do_not_retry_boost and topical:
@@ -9861,6 +10067,17 @@ def _match_reason(
     return "; ".join(parts) if parts else "keyword overlap"
 
 
+def _common_stems(df: dict) -> tuple[frozenset[str], frozenset[str]]:
+    """(common words, common tags) among the query's stems (`GUARD_DF_COMMON`)."""
+    n = int(df.get("n") or 0)
+    if n < GUARD_DF_COMMON_MIN_CORPUS:
+        return frozenset(), frozenset()
+    cutoff = max(n * GUARD_DF_COMMON, GUARD_DF_COMMON_MIN_RECORDS)
+    words = frozenset(s for s, c in (df.get("words") or {}).items() if c > cutoff)
+    tags = frozenset(s for s, c in (df.get("tags") or {}).items() if c > cutoff)
+    return words, tags
+
+
 def search(
     memory_dir: Path,
     root: Path,
@@ -9878,14 +10095,17 @@ def search(
     keyword_cap: int | None = None,
     writes: list[str] | None = None,
     do_not_retry_boost: bool = True,
+    command_text: str | None = None,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Deterministic search over the canonical records (§20.10).
 
     Guard's own knobs: `path_text` is where query paths are read from (default
     the query), `keyword_cap` bounds the keyword contribution so a longer
     command does not score higher for being long, `writes` are files the
-    action writes without naming them (crumb's own commands, issue 11), and
-    `do_not_retry_boost=False` ranks by relevance alone (the prompt hook).
+    action writes without naming them (crumb's own commands, issue 11),
+    `command_text` is the command matched against the commands records name
+    (default the query), and `do_not_retry_boost=False` ranks by relevance
+    alone (the prompt hook).
 
     Returns (matches sorted best-first, items_by_id). Matching signals: exact/
     keyword text, tag/component, and file path. No embeddings; same input ->
@@ -9911,13 +10131,14 @@ def search(
         _paths_from_text(query if path_text is None else path_text) | set(files or [])
     )
     q_writes = _norm_files(writes or []) - q_files
-    q_command = _command_tokens(query)
+    q_command = _command_tokens(query if command_text is None else command_text)
     # The search index narrows the corpus to records that could possibly match
     # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
     # the full scan below is then exactly what it always was.
     from breadcrumbs import searchindex as _searchindex
 
     explain: dict = {}
+    df: dict = {}
     narrowed = _searchindex.candidate_items(
         memory_dir,
         root,
@@ -9925,6 +10146,7 @@ def search(
         q_files | q_writes,
         include_ideas=include_ideas,
         explain=explain,
+        df_out=df,
     )
     info = info if info is not None else {}
     if narrowed is not None:
@@ -9937,6 +10159,14 @@ def search(
             return [], {}
         items = _candidate_items(memory_dir, include_ideas=include_ideas)
         ubiquitous = _ubiquitous_stems(items)
+        df = {
+            "n": len(items),
+            "words": {q: sum(1 for it in items if q in it["specific"]) for q in q_specific},
+            "tags": {
+                q: sum(1 for it in items if q in (it.get("tag_stems") or ())) for q in q_specific
+            },
+        }
+    common, common_tags = _common_stems(df)
     info["candidates"] = len(items)
     by_id = {it["id"]: it for it in items}
     cur_branch = git_branch(root)
@@ -9966,6 +10196,8 @@ def search(
             q_writes=q_writes,
             do_not_retry_boost=do_not_retry_boost,
             reached=reached,
+            common=common,
+            common_tags=common_tags,
         )
         if it.get("command_heads") and _names_command(q_command, it["command_heads"]):
             m = _with_command_signal(m, it, do_not_retry_boost=do_not_retry_boost)
@@ -10103,6 +10335,16 @@ def _min_verdict(*verdicts: str) -> str:
     return min(verdicts, key=lambda v: _VERDICT_RANK[v])
 
 
+def _only_common_evidence(m: dict) -> bool:
+    """A match carried only by common tags and words (`GUARD_DF_COMMON`)."""
+    sig = set(m.get("signals") or ())
+    return (
+        "common-tag" in sig
+        and not m.get("topical")
+        and not ({"tag", "file", "mention", "writes-file", "command", "open-blocker"} & sig)
+    )
+
+
 def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "") -> str:
     """Pick one verdict from the ranked matches + action class. Deterministic.
 
@@ -10125,7 +10367,9 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
         # (`topical`; field report 2026-10-01, issue 7: every git-tagged
         # decision floored every git command at READ_FIRST). A file, or a file
         # the action writes, always does.
-        specific = bool({"file", "writes-file"} & sig) or ("tag" in sig and m.get("topical", True))
+        specific = bool({"file", "writes-file"} & sig) or (
+            bool({"tag", "common-tag"} & sig) and m.get("topical", True)
+        )
         floor = "PROCEED"
         if "do-not-retry" in sig and specific:
             floor = "PAUSE"  # a failed attempt on these files/component
@@ -10150,7 +10394,12 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
 
         stance = m.get("stance") or _match_stance(m.get("signals"))
         ceiling = GUARD_BLOCKING_CEILING if stance == "blocking" else GUARD_ADVISORY_CEILING
-        verdicts.append(_min_verdict(_max_verdict(floor, _score_band(m["score"])), ceiling))
+        band = _score_band(m["score"])
+        if _only_common_evidence(m):
+            # Shared vocabulary the whole store speaks (DoWhat retest of 0.5.0,
+            # item 5): it may be shown, but it cannot raise a verdict.
+            band = "PROCEED"
+        verdicts.append(_min_verdict(_max_verdict(floor, band), ceiling))
 
     verdict = _max_verdict(*verdicts)
 
@@ -10241,6 +10490,28 @@ def _recommended_action(
     )
 
 
+def _direct_evidence(m: dict) -> bool:
+    """Is a match about this action itself, not just its vocabulary?"""
+    sig = set(m.get("signals") or ())
+    return bool({"file", "writes-file", "command"} & sig) or (
+        bool(m.get("topical")) and bool({"tag", "title"} & sig)
+    )
+
+
+def _is_memory_path(path: str, root: Path) -> bool:
+    """Is `path` (as an edit names it) inside this project's memory store?"""
+    norm = str(path or "").replace("\\", "/")
+    if norm.startswith(f"{MEMORY_DIRNAME}/") or f"/{MEMORY_DIRNAME}/" in f"/{norm}":
+        try:
+            target = Path(path)
+            if target.is_absolute():
+                return target.resolve().is_relative_to((Path(root) / MEMORY_DIRNAME).resolve())
+        except (OSError, ValueError):
+            return False
+        return True
+    return False
+
+
 def guard(
     memory_dir: Path,
     root: Path,
@@ -10265,11 +10536,23 @@ def guard(
     # paths only from the command and the edited file — never from the content
     # being written (issue 10: `mentions: CLAUDE.md` came from prose).
     edit = _EDIT_ACTION_RE.match((action or "").strip())
-    path_text = f"{edit.group(1)} {edit.group(2)}" if edit else _shellcmd.matching_text(action)
+    memory_edit = bool(edit) and _is_memory_path(edit.group(2), root)
+    if edit:
+        # An edit is about its file, not the prose it writes (DoWhat retest of
+        # 0.5.0, item 4: a handoff note that said "migrated the schema" was
+        # PAUSEd by a Room migration attempt). Code identifiers in the new
+        # content still count; an edit inside the store is a memory write and
+        # is matched on its path alone.
+        path_text = f"{edit.group(1)} {edit.group(2)}"
+        content = "" if memory_edit else (edit.group(3) or "")
+        query = " ".join([path_text, *_shellcmd.code_identifiers(content)])
+    else:
+        path_text = _shellcmd.without_crumb(action)
+        query = path_text
     matches, by_id = search(
         memory_dir,
         root,
-        _shellcmd.matching_text(action),
+        query,
         files=files,
         stale_days=stale_days,
         min_keyword=GUARD_MIN_KEYWORD_OVERLAP,
@@ -10278,6 +10561,7 @@ def guard(
         path_text=path_text,
         keyword_cap=GUARD_KEYWORD_CAP,
         writes=_shellcmd.crumb_writes(action, MEMORY_DIRNAME) if not edit else None,
+        command_text=_shellcmd.matching_text(action) if not edit else path_text,
     )
 
     active, history = [], []
@@ -10317,13 +10601,31 @@ def guard(
         )
         (active if live else history).append(m)
 
-    top = active[:GUARD_MAX_WARNINGS]
-    verdict = _decide_verdict(top, classes, action)
+    read_only = _is_read_only_action(action)
     # Operator decision D3 (2026-10-01): a short, literal list of high-impact
     # actions asks a human even when no record is about them. Without it, the
     # only thing that ever made `git push --force origin main` ASK_HUMAN was
     # unrelated records that happened to share the word "git".
     high_impact = _shellcmd.high_impact(action) if not edit else None
+    if high_impact:
+        # The verdict is the action's, so a record is cited only with direct
+        # evidence that it is about *this* action: a file it names or writes,
+        # the exact command, or a topical match. A real `crumb migrate` cited a
+        # Gradle rate-limit attempt and a Room migration test (DoWhat retest of
+        # 0.5.0, item 3); the rest is "no project memory about it".
+        demoted = [m for m in active if not _direct_evidence(m)]
+        active = [m for m in active if _direct_evidence(m)]
+        history = history + demoted
+    if read_only or memory_edit:
+        # An action that changes nothing — or a memory write — cannot be what a
+        # record objects to (item 6: `git status` showed a git attempt as
+        # `[objects]`). The verdict was already capped; now the stance agrees.
+        for m in active:
+            m["stance"] = "advisory"
+    top = active[:GUARD_MAX_WARNINGS]
+    verdict = _decide_verdict(top, classes, action)
+    if memory_edit:
+        verdict = _min_verdict(verdict, GUARD_READ_ONLY_CEILING)
     if high_impact:
         verdict = "ASK_HUMAN"
 
@@ -10368,7 +10670,7 @@ def guard(
         # The other end of the same axis: an action that cannot change anything
         # caps at READ_FIRST however strong the retrieval overlap (G2). Reported
         # so a caller can see *why* a loud-looking match did not raise a verdict.
-        "read_only": _is_read_only_action(action),
+        "read_only": read_only,
         "matches": top,
         "history": history[:GUARD_MAX_WARNINGS],
         "staleness": staleness,
@@ -10617,9 +10919,10 @@ DECAY_DAYS_DEFAULT = 180
 AUDIT_DECAY_MAX = 10
 
 # Directories under .project-memory/ the secret scan skips: private/ is gitignored
-# local context, index/ is a disposable accelerator, generated/ holds derived
-# projections rebuilt from canonical records (scanned for drift, not secrets).
-_SECRET_SKIP_DIRS = {"private", "index", "generated"}
+# local context and index/ a gitignored, disposable accelerator. generated/ is
+# scanned (DoWhat retest of 0.5.0, item 9): it is committed, and its projections
+# copy record text, so a secret there would be published like any other.
+_SECRET_SKIP_DIRS = {"private", "index"}
 
 # Common secret SHAPES. Deliberately conservative: better to miss
 # an exotic secret than to flag every git sha. The covered set is this tuple; the
@@ -10853,7 +11156,7 @@ _SECRET_SCAN_GLOBS = ("*.md", "*.yml", "*.yaml", "*.json", "*.txt")
 
 
 def _iter_committed_memory_files(memory_dir: Path):
-    """Yield committed-memory text files (skips private/index/generated subtrees)."""
+    """Yield committed-memory text files (skips the private/ and index/ subtrees)."""
     memory_dir = Path(memory_dir)
     paths: list[Path] = []
     for pattern in _SECRET_SCAN_GLOBS:
@@ -10931,7 +11234,7 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
     """Scan committed memory for secret-like strings.
 
     Each hit is {pattern, path, line} — the pattern NAME and location, never the
-    matched value. Skips private/index/generated. This must run before any
+    matched value. Skips private/ and index/. This must run before any
     "commit memory" recommendation (§2.6, §15).
 
     A file that cannot be read cleanly yields a blocking `unscannable-file` hit
@@ -12008,8 +12311,23 @@ def cmd_migrate(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
         return 1
+    maint = result.get("maintenance") or {}
+
+    def print_maintenance() -> None:
+        # Template files and the writer floor (DoWhat retest of 0.5.0, items 12, 14).
+        if maint.get("changes"):
+            print("Store files:" if not args.dry_run else "Store files it would update:")
+            for line in maint["changes"]:
+                print(f"  {line}")
+        for line in maint.get("warnings") or []:
+            print(f"  warning: {line}")
+
     if not result["steps"]:
-        print(f"migrate: nothing to do — store is schema_version {result['to']}.")
+        if maint.get("changes") or maint.get("warnings"):
+            print(f"migrate: store is schema_version {result['to']}; no format steps.")
+            print_maintenance()
+        else:
+            print(f"migrate: nothing to do — store is schema_version {result['to']}.")
         return 0
     verb = "would apply" if args.dry_run else "applied"
     print(f"migrate: {verb} {len(result['steps'])} step(s), {result['from']} -> {result['target']}")
@@ -12042,8 +12360,10 @@ def cmd_migrate(args: argparse.Namespace) -> int:
                 print(f"    {line}")
             if len(items) > 50:
                 print(f"    … and {len(items) - 50} more (`crumb validate` lists every one)")
+        print_maintenance()
         print("\nRe-run without --dry-run to apply.")
     else:
+        print_maintenance()
         print(f"\nBackup of the pre-migration store: {result['backup']}")
         print("To undo: crumb migrate --restore")
     return 0
@@ -12084,7 +12404,8 @@ def cmd_rename(args: argparse.Namespace) -> int:
 
 
 def cmd_handoff(args: argparse.Namespace) -> int:
-    """`crumb handoff trim --keep N` (field report issue 1)."""
+    """`crumb handoff trim [--keep N | --before DATE] [--split-on REGEX]` (field
+    report issue 1; DoWhat retest of 0.5.0, item 11)."""
     root = resolve_root(args.project)
     memory_dir = root / MEMORY_DIRNAME
     if not memory_dir.is_dir():
@@ -12097,9 +12418,23 @@ def cmd_handoff(args: argparse.Namespace) -> int:
     from breadcrumbs import mutations as _mutations
     from breadcrumbs import rename as _rename
 
+    before = getattr(args, "before", None)
+    if before is not None:
+        if args.keep is not None:
+            _emit_error(args, "give --keep N or --before DATE, not both")
+            return 2
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", before):
+            _emit_error(args, f"--before needs a date as YYYY-MM-DD, not {before!r}")
+            return 2
     try:
         with _lock.store_lock(memory_dir, timeout=_lock.CLI_TIMEOUT):
-            result = _rename.trim_handoff(memory_dir, root, max(1, int(args.keep)))
+            result = _rename.trim_handoff(
+                memory_dir,
+                root,
+                max(1, int(args.keep if args.keep is not None else 10)),
+                before=before,
+                split_on=getattr(args, "split_on", None),
+            )
     except _lock.StoreLocked as exc:
         _emit_error(args, str(exc))
         return 1
@@ -13273,8 +13608,24 @@ def doctor_report(root: Path) -> dict:
             "every record passes `crumb validate`"
             if not failures
             else f"{len(failures)} validation failure(s) (first: {failures[0]['message']}) "
-            "— run `crumb validate`; an older store layout is fixed by `crumb migrate`",
+            "— run `crumb validate`; "
+            # On a current store `migrate` has nothing to fix (DoWhat retest of
+            # 0.5.0, item 13): records written by hand are `repair`'s job.
+            + (
+                "an older store layout is fixed by `crumb migrate`"
+                if compatibility.state == _compat.OLDER
+                else "`crumb repair` previews fixes for hand-written records"
+            ),
         )
+        if compatibility.min_version is None:
+            floor = (load_manifest(memory_dir) or {}).get(_compat.MIN_VERSION_KEY)
+            if floor not in (None, ""):
+                add(
+                    "min_writer",
+                    True,
+                    f"crumb-kit {floor} or newer may write this store "
+                    f"(`{_compat.MIN_VERSION_KEY}`); this is {get_version()}",
+                )
         from breadcrumbs import handoffs as _handoffs
         from breadcrumbs import rename as _rename
 
@@ -13289,14 +13640,22 @@ def doctor_report(root: Path) -> dict:
                 "limit — shorten with `crumb rename <id> --slug <short>`",
             )
         handoff_text, _p, handoff_path = _handoffs.read_text(memory_dir, root)
-        next_len = len(split_md_sections(handoff_text or "").get("Next Action", ""))
-        if next_len > NEXT_ACTION_LOG_WARN_CHARS:
+        next_text = split_md_sections(handoff_text or "").get("Next Action", "")
+        if len(next_text) > NEXT_ACTION_LOG_WARN_CHARS:
+            # Counted the way `trim` counts: a hand-kept log's dated bold
+            # lead-ins are entries (DoWhat retest of 0.5.0, item 11).
+            n_entries = _rename.count_entries(next_text)
             add(
                 "next_action_log",
                 False,
-                f"the handoff's Next Action is {next_len} characters "
-                f"({len(split_next_entries(split_md_sections(handoff_text).get('Next Action', '')))}"
-                " entries); `crumb handoff trim --keep 10` moves the older ones to a history file",
+                f"the handoff's Next Action is {len(next_text)} characters "
+                f"({n_entries} entries); `crumb handoff trim --keep 10` moves the older ones to "
+                "a history file"
+                + (
+                    ""
+                    if n_entries > 1
+                    else " (a hand-kept log with another entry shape: add `--split-on REGEX`)"
+                ),
             )
         degraded = _related.load_degraded(memory_dir)
         if degraded:
@@ -13437,6 +13796,16 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
         rate = f"{ev['spoke_rate'] * 100:.0f}%" if ev["spoke_rate"] is not None else "-"
         print(f"  {name:<9} {ev['count']:>5}  spoke {rate:>4}  ({outcomes})")
         print(f"            ms p50 {ev['ms_p50']}  p95 {ev['ms_p95']}  max {ev['ms_max']}")
+        phases = ev.get("phases_p50") or {}
+        if phases:
+            parts = []
+            if "import_ms" in phases:
+                parts.append(f"import {phases['import_ms']:.0f} ms")
+            if "git_ms" in phases:
+                parts.append(f"git {phases['git_ms']:.0f} ms")
+            if "git" in phases:
+                parts.append(f"{phases['git']:.0f} git process(es)")
+            print(f"            p50 phases: {', '.join(parts)}")
         if ev.get("verdicts"):
             verdicts = ", ".join(f"{k} {v}" for k, v in sorted(ev["verdicts"].items()))
             print(f"            verdicts: {verdicts}")
@@ -13450,10 +13819,19 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
         )
     guard_p50 = (summary["events"].get("guard") or {}).get("ms_p50")
     if isinstance(guard_p50, (int, float)) and guard_p50 > HOOK_GUARD_BUDGET_MS:
+        phases = (summary["events"].get("guard") or {}).get("phases_p50") or {}
+        rest = guard_p50 - (phases.get("git_ms") or 0)
+        where = (
+            f" Of that, git processes took {phases['git_ms']:.0f} ms and crumb's own work "
+            f"{rest:.0f} ms; loading crumb took a further {phases.get('import_ms', 0):.0f} ms "
+            "(Python's own start-up is not measured)."
+            if phases
+            else ""
+        )
         print(
             f"\nguard p50 {guard_p50:.0f} ms is over the {HOOK_GUARD_BUDGET_MS} ms budget for a "
-            "hook on every tool call. `prefilter: unverified` above means the pre-filter was "
-            "out of date (run `crumb reindex`); otherwise see docs/field-test.md."
+            f"hook on every tool call.{where} `prefilter: unverified` above means the "
+            "pre-filter was out of date (run `crumb reindex`); otherwise see docs/field-test.md."
         )
     if summary.get("incompatible"):
         print(
@@ -13527,6 +13905,10 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
         _hooklog.note(prefilter="unverified")
         return True
+    # The pre-filter leaves secret-shaped and opaque tokens out (item 9 of the
+    # 0.5.0 retest), so an action holding one is checked in full.
+    if _prefilter_opaque_action_token(action):
+        return True
     # Each test mirrors one way `_score_item` lets a match through (see
     # `_build_guard_prefilter`), so this can only admit more than full guard
     # would surface, never less (audit WP11). Stems are re-stemmed at read time
@@ -13567,7 +13949,10 @@ def _prefilter_exact_hit(memory_dir: Path, action: str, files: list[str] | None)
     if _names_command(_command_tokens(action), idx.get("commands") or ()):
         return True
     action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
-    return bool(action_paths & _norm_files(idx.get("paths") or ()))
+    if action_paths & _norm_files(idx.get("paths") or ()):
+        return True
+    # A path or command the pre-filter left out as opaque (item 9).
+    return _prefilter_opaque_action_token(action)
 
 
 # How much of an edit's new content, and of a subagent's launch prompt, feeds
@@ -13602,6 +13987,49 @@ def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] 
 _HOOK_SEEN_FILENAME = "hook-guard-seen.json"
 _HOOK_SEEN_MAX_SESSIONS = 8
 _HOOK_SEEN_MAX_KEYS = 200
+
+
+def _hook_damp_repeats(memory_dir: Path, session_id: str, result: dict) -> dict:
+    """`result` without the advisory matches this session was already shown.
+
+    A match stays when it objects to the action (blocking) or when the action
+    itself names its file, the file a command writes, or its exact command:
+    that is news about *this* action, not a repeat. The verdict is decided
+    again from what is left (a high-impact action keeps ASK_HUMAN), so a
+    firing whose every match was a repeat goes quiet. Never raises: without
+    damping state the firing is left as it was.
+    """
+    try:
+        from breadcrumbs import hooks_common as _hooks_common
+
+        seen = _hooks_common.delivered_records(memory_dir, session_id, filename=_HOOK_SEEN_FILENAME)
+    except Exception:  # pragma: no cover - damping is best-effort
+        return result
+    if not seen:
+        return result
+
+    def keep(m: dict) -> bool:
+        if m["id"] not in seen:
+            return True
+        if (m.get("stance") or _match_stance(m.get("signals"))) == "blocking":
+            return True
+        return bool({"file", "writes-file", "command"} & set(m.get("signals") or ()))
+
+    matches = result.get("matches") or []
+    kept = [m for m in matches if keep(m)]
+    if len(kept) == len(matches):
+        return result
+    verdict = _decide_verdict(kept, result.get("action_classes") or [], result.get("action", ""))
+    # Never louder than guard said: its caps (read-only, a memory edit) hold.
+    verdict = _min_verdict(verdict, result["verdict"])
+    if result.get("high_impact"):
+        verdict = "ASK_HUMAN"
+    return {
+        **result,
+        "verdict": verdict,
+        "matches": kept,
+        "damped": [m["id"] for m in matches if not keep(m)],
+    }
 
 
 def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bool:
@@ -13944,6 +14372,18 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     ):
         verdict = GUARD_READ_ONLY_CEILING
         result = {**result, "verdict": verdict}
+    session_id = str(payload.get("session_id") or "unknown")
+    # Session damping (DoWhat retest of 0.5.0, item 5): an advisory record the
+    # agent was already shown this session is not shown again, unless this
+    # action names its file or command. Two records came back on most firings
+    # of one session — `git status`, `cp`, a reindex, a README edit — with a
+    # different verdict each time, which the per-target repeat filter below
+    # never caught. A blocking record, and a high-impact action, always speak.
+    if verdict != "PROCEED":
+        result = _hook_damp_repeats(memory_dir, session_id, result)
+        verdict = result["verdict"]
+        if result.get("damped"):
+            _hooklog.note(damped=len(result["damped"]))
     _hooklog.note(verdict=verdict)
     if verdict == "PROCEED":
         print(json.dumps({}))
@@ -13971,6 +14411,14 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
             session_id=str(payload.get("session_id") or "") or None,
         )
         _hooklog.note(emitted=len(emitted))
+        try:
+            from breadcrumbs import hooks_common as _hooks_common
+
+            _hooks_common.add_delivered_records(
+                memory_dir, session_id, [m["id"] for m in emitted], filename=_HOOK_SEEN_FILENAME
+            )
+        except Exception:  # pragma: no cover - damping state is best-effort
+            pass
 
     if verdict == "READ_FIRST":
         # Dedupe within the host session: the same records surfacing for the
@@ -13980,7 +14428,6 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         # PAUSE/ASK_HUMAN is never swallowed.
         target = (files or [None])[0] or result["action"]
         key = f"{target}|" + ",".join(sorted(m["id"] for m in shown))
-        session_id = str(payload.get("session_id") or "unknown")
         try:
             if _hook_guard_advisory_seen(memory_dir, session_id, key):
                 _hooklog.note(deduped=True)
@@ -14152,23 +14599,59 @@ def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]
         root,
         "log",
         "--no-decorate",
-        "--format=%at %h %s",
+        "--format=%at %H %h %s",
         f"{base}..{head}",
         "--",
         ".",
         f":(exclude){MEMORY_DIRNAME}",
     )
     started = _epoch(entry.get("started_at"))
+    made_here = _commits_made_here(root) if out else None
     lines: list[str] = []
     for line in (out or "").splitlines():
         stamp, _, rest = line.strip().partition(" ")
+        full, _, rest = rest.partition(" ")
         if not rest:
             continue
         if started is not None and stamp.isdigit():
             if int(stamp) < started - EXTRACTION_AUTHOR_MARGIN_SECONDS:
                 continue
+        if made_here is not None and full not in made_here:
+            continue
         lines.append(rest)
     return lines
+
+
+# Reflog actions that create a commit in this checkout. Everything else that
+# moves HEAD (`pull: Fast-forward`, `merge`, `reset`, `checkout`, `clone`)
+# brings in commits someone else made.
+_LOCAL_COMMIT_ACTIONS = ("commit", "cherry-pick", "revert", "rebase", "am")
+_REFLOG_SCAN = 2000
+
+
+def _commits_made_here(root: Path) -> set[str] | None:
+    """Full shas HEAD's reflog says were created in this checkout, or None
+    when there is no reflog to ask (then every commit in range counts).
+
+    A `git pull` of a commit a cloud session made *after* this session started
+    passed the author-time filter, and the Stop hook asked about it as this
+    session's work (DoWhat retest of 0.5.0, F1). The reflog tells the two apart:
+    a local commit is logged as `commit: …`, a pulled one arrives by `pull:`.
+    """
+    out = _git_out(root, "reflog", "show", f"-n{_REFLOG_SCAN}", "--format=%H%x09%gs", "HEAD")
+    if not out:
+        return None
+    made: set[str] = set()
+    for line in out.splitlines():
+        sha, _, action = line.partition("\t")
+        verb = action.strip().lower()
+        if "(start)" in verb or "(abort)" in verb:
+            continue  # a rebase's start checks out the upstream: not made here
+        if verb.startswith(_LOCAL_COMMIT_ACTIONS) or (
+            verb.startswith("pull") and "--rebase" in verb and "(pick)" in verb
+        ):
+            made.add(sha.strip())
+    return made
 
 
 def _epoch(stamp) -> int | None:
@@ -14462,12 +14945,19 @@ def cmd_hook(args: argparse.Namespace) -> int:
         # Everything a hook does runs in one application context on the hook
         # channel (audit F18, WP16): admission, the store's aliases, one parse
         # cache for the firing.
-        before = GIT_CALLS[0]
+        before, before_ms = GIT_CALLS[0], GIT_MS[0]
         try:
             with _service.active(_service.Context(root, memory_dir, "hook")):
                 return _run_hook(event, memory_dir, root, payload)
         finally:
-            _hooklog.note(git=GIT_CALLS[0] - before)
+            # Where a slow firing's time went (DoWhat retest of 0.5.0, item 7):
+            # `git` processes and their milliseconds, and the module import
+            # (Python's own start-up is the rest of the host's wall time).
+            _hooklog.note(
+                git=GIT_CALLS[0] - before,
+                git_ms=round(GIT_MS[0] - before_ms, 1),
+                import_ms=IMPORT_MS,
+            )
 
     return _hooklog.run_logged(event, memory_dir, payload, handler, now_iso)
 
@@ -14880,6 +15370,12 @@ def main(argv: list[str] | None = None) -> int:
             args, path_policy.describe_copy_error(exc) if isinstance(exc, OSError) else str(exc)
         )
         return 1
+
+
+# How long importing the package and this module took, for the hook log's
+# `import_ms` (DoWhat retest of 0.5.0, item 7): on Windows start-up is a large
+# share of the hook's budget. The clock starts in `breadcrumbs/__init__.py`.
+IMPORT_MS = round((time.perf_counter() - _breadcrumbs_pkg._IMPORT_STARTED) * 1000, 1)
 
 
 if __name__ == "__main__":

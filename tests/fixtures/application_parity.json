@@ -738,7 +738,7 @@
    "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "ask",
-    "permissionDecisionReason": "breadcrumbs guard: PAUSE for this action.\n- Tried an in-memory cache for pricing (same file(s): cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition)\n- Cache TTL is five minutes for the pricing API (same file(s): cache.py; same component/tag: cache, pricing; +3 shared keyword(s); named in the record's title)\n- trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency (2 shared keyword(s); named in the record's title)"
+    "permissionDecisionReason": "breadcrumbs guard: PAUSE for this action.\n- Tried an in-memory cache for pricing (same file(s): cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title; has an explicit do-not-retry condition)\n- Cache TTL is five minutes for the pricing API (same file(s): cache.py; same component/tag: cache, pricing; +2 shared keyword(s); named in the record's title)\n- trap_pricing-cache-keys-must-include-currency: Pricing cache keys must include currency (2 shared keyword(s); named in the record's title)"
    }
   }
  ],

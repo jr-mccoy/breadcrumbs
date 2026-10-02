@@ -314,7 +314,7 @@ class ResumeReindexTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_store(tmp, "full", git_repo=False)
             mem = root / crumb.MEMORY_DIRNAME
-            prefilter = mem / "generated" / crumb.GUARD_PREFILTER_FILENAME
+            prefilter = crumb.guard_prefilter_path(mem)
             with (mem / "known-traps.md").open("a", encoding="utf-8") as fh:
                 fh.write(self.TRAP)
             prefilter.unlink(missing_ok=True)
@@ -359,36 +359,39 @@ class GeneratedJsonPolicyTests(unittest.TestCase):
             f"{crumb.MEMORY_DIRNAME}/generated/*.json", crumb.gitignore_block("full", True)
         )
 
-    def test_prefilter_is_git_ignored_under_no_commit_generated(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            git(root, "init", "-q")
-            run(
-                [
-                    "init",
-                    "--project",
-                    str(root),
-                    "--session-tracking",
-                    "full",
-                    "--no-commit-generated",
-                    "--no-adapter",
-                    "--no-mcp",
-                    "--no-hooks",
-                ]
-            )
-            run(["reindex", "--project", str(root)])
-            rel = f"{crumb.MEMORY_DIRNAME}/generated/{crumb.GUARD_PREFILTER_FILENAME}"
-            self.assertTrue((root / rel).is_file())
-            r = subprocess.run(
-                ["git", "check-ignore", rel], cwd=str(root), capture_output=True, text=True
-            )
-            self.assertEqual(r.returncode, 0, f"{rel} escaped the local-only policy")
+    def test_prefilter_is_git_ignored_under_either_policy(self):
+        # Machine-local since the DoWhat retest of 0.5.0 (item 8, decision D8):
+        # it lives in index/, whatever the store's commit policy.
+        for policy in ("--no-commit-generated", None):
+            with self.subTest(policy), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                git(root, "init", "-q")
+                run(
+                    [
+                        "init",
+                        "--project",
+                        str(root),
+                        "--session-tracking",
+                        "full",
+                        *([policy] if policy else []),
+                        "--no-adapter",
+                        "--no-mcp",
+                        "--no-hooks",
+                    ]
+                )
+                run(["reindex", "--project", str(root)])
+                rel = f"{crumb.MEMORY_DIRNAME}/index/{crumb.GUARD_PREFILTER_FILENAME}"
+                self.assertTrue((root / rel).is_file())
+                gen = root / crumb.MEMORY_DIRNAME / "generated" / crumb.GUARD_PREFILTER_FILENAME
+                self.assertFalse(gen.exists())
+                r = subprocess.run(
+                    ["git", "check-ignore", rel], cwd=str(root), capture_output=True, text=True
+                )
+                self.assertEqual(r.returncode, 0, f"{rel} is not machine-local")
 
-    def test_template_readme_documents_the_prefilter(self):
-        readme = (
-            Path(bcli.__file__).parent / "templates" / "project-memory" / "generated" / "README.md"
-        ).read_text(encoding="utf-8")
-        self.assertIn(crumb.GUARD_PREFILTER_FILENAME, readme)
+    def test_template_readmes_say_where_the_prefilter_is(self):
+        tpl = Path(bcli.__file__).parent / "templates" / "project-memory"
+        self.assertIn(crumb.GUARD_PREFILTER_FILENAME, (tpl / "index" / "README.md").read_text())
 
 
 # --------------------------------------------------------------------------- #
@@ -404,7 +407,6 @@ class MultiMachineFixtureTests(unittest.TestCase):
         self.assertEqual(manifest["commit_generated_projections"], "true")
         self.assertFalse((mem / "sessions").exists(), "a distillate clone has no sessions/")
         self.assertTrue((mem / "generated" / "resume-packet.md").is_file())
-        self.assertTrue((mem / "generated" / crumb.GUARD_PREFILTER_FILENAME).is_file())
 
     def test_fixture_packet_carries_no_host_path_and_a_live_stamp(self):
         mem = FIXTURE / ".project-memory"

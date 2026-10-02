@@ -54,11 +54,24 @@ def default_branch(root: Path) -> str | None:
 def _default_branch(root: Path) -> str | None:
     if not cli.is_git_repo(root):
         return None
-    ref = cli._git_out(root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
+    from breadcrumbs import gitrefs
+
+    # Read from .git when it can be (no `git` process on the guard path; DoWhat
+    # retest of 0.5.0, item 7); `git` answers whatever that cannot.
+    readable = gitrefs.has_ref(root, "refs/heads/main") is not None
+    if readable:
+        ref = gitrefs.symbolic_target(root, "refs/remotes/origin/HEAD")
+    else:
+        ref = cli._git_out(root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
     if ref and ref.strip().startswith("refs/remotes/origin/"):
         return ref.strip()[len("refs/remotes/origin/") :]
     for name in ("main", "master"):
-        if cli._git_out(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}") is not None:
+        if readable:
+            if gitrefs.has_ref(root, f"refs/heads/{name}"):
+                return name
+        elif (
+            cli._git_out(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}") is not None
+        ):
             return name
     return None
 

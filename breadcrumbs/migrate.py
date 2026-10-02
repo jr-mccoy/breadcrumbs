@@ -45,6 +45,7 @@ disposable, so there is nothing there another checkout could disagree about.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -219,6 +220,146 @@ def set_manifest_version(memory_dir: Path, version: int) -> None:
     if not replaced:
         out.insert(0, f"schema_version: {version}")
     cli.write_text_atomic(path, "\n".join(out).rstrip("\n") + "\n")
+
+
+def set_manifest_field(memory_dir: Path, key: str, value: str, comment: str = "") -> None:
+    """Set one top-level `key: value` line in manifest.yml, keeping every other
+    line (comments, keys this build does not know). A missing key is appended,
+    after `comment` when one is given."""
+    path = Path(memory_dir) / "manifest.yml"
+    text = cli.read_text_lenient(path)[0] if path.is_file() else ""
+    out: list[str] = []
+    replaced = False
+    for line in text.splitlines():
+        if (
+            not replaced
+            and not line.startswith((" ", "\t", "#"))
+            and line.split(":", 1)[0].strip() == key
+        ):
+            out.append(f"{key}: {value}")
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        if comment:
+            out.append(f"# {comment}")
+        out.append(f"{key}: {value}")
+    cli.write_text_atomic(path, "\n".join(out).rstrip("\n") + "\n")
+
+
+# --------------------------------------------------------------------------- #
+# Store maintenance: template files and the minimum writer version
+# --------------------------------------------------------------------------- #
+
+# Files `crumb init` copies from the template tree that explain the store.
+TEMPLATE_FILES = ("README.md", "generated/README.md", "index/README.md", "private/README.md")
+# The scaffold 0.1.7 and earlier made, which nothing has read since.
+LEGACY_REFS = "evidence/refs.yml"
+
+
+def _template_hash(data: bytes) -> str:
+    return hashlib.sha256(data.replace(b"\r\n", b"\n")).hexdigest()
+
+
+def maintenance(memory_dir: Path, *, dry_run: bool) -> dict:
+    """Bring a store's template files and writer floor up to this build.
+
+    `{changes, warnings}`; nothing is written when `dry_run`. Runs after a
+    migration and on a store that is already current (DoWhat retest of 0.5.0,
+    items 12 and 14):
+
+    - a template file (`TEMPLATE_FILES`) still byte-identical to a version
+      crumb-kit shipped is replaced by the current one; an edited one is kept,
+      with a warning. After the DoWhat migration the store README still said
+      traps live in `known-traps.md`, by then a generated index.
+    - `evidence/refs.yml` is removed when it is the untouched scaffold, and
+      named when someone added to it.
+    - `min_crumb_version` is raised to `compat.MIN_SAFE_WRITER` (never
+      lowered) and `requires:` gains `min-crumb-version`, so builds that
+      predate the field refuse to write too (decision D14).
+    """
+    from breadcrumbs import compat, template_history
+
+    memory_dir = Path(memory_dir)
+    changes: list[str] = []
+    warnings: list[str] = []
+    for rel in TEMPLATE_FILES:
+        target = memory_dir / rel
+        template = cli.TEMPLATE_DIR / rel
+        if not (target.is_file() and template.is_file()):
+            continue
+        try:
+            current = path_policy.read_bytes(target)
+        except OSError as exc:
+            warnings.append(f"{rel}: not checked ({exc})")
+            continue
+        new = template.read_bytes()
+        have = _template_hash(current)
+        if have == _template_hash(new):
+            continue
+        if have in template_history.SHIPPED.get(rel, frozenset()):
+            changes.append(
+                f"{rel}: replaced with the current template (it was an unedited older one)"
+            )
+            if not dry_run:
+                cli.write_text_atomic(target, new.decode("utf-8"))
+        else:
+            warnings.append(
+                f"{rel}: kept as it is: it was edited, so it may describe the store as it used "
+                f"to be. Compare it with the current template ({template.as_posix()})."
+            )
+    refs = memory_dir / LEGACY_REFS
+    if refs.is_file():
+        try:
+            unchanged = _template_hash(path_policy.read_bytes(refs)) in (
+                template_history.SHIPPED.get(LEGACY_REFS, frozenset())
+            )
+        except OSError:
+            unchanged = False
+        if unchanged:
+            changes.append(
+                f"{LEGACY_REFS}: removed (the unedited 0.1.x scaffold; nothing reads it)"
+            )
+            if not dry_run:
+                refs.unlink()
+                with contextlib.suppress(OSError):
+                    refs.parent.rmdir()
+        else:
+            warnings.append(
+                f"{LEGACY_REFS}: kept: someone added to it, but nothing has read it since 0.1.7. "
+                "Cite what matters with `--evidence` on the records it concerns, then delete it."
+            )
+    manifest = cli.load_manifest(memory_dir) or {}
+    raw_min = manifest.get(compat.MIN_VERSION_KEY)
+    floor = compat.parse_version(compat.MIN_SAFE_WRITER)
+    have_min = compat.parse_version(raw_min) if raw_min not in (None, "") else None
+    if raw_min not in (None, "") and have_min is None:
+        warnings.append(
+            f"manifest.yml: {compat.MIN_VERSION_KEY} {raw_min!r} is unreadable; left as it is"
+        )
+    elif have_min is None or have_min < floor:
+        changes.append(
+            f"manifest.yml: {compat.MIN_VERSION_KEY}: {compat.MIN_SAFE_WRITER} (older crumb-kit "
+            "builds refuse to write this store)"
+        )
+        if not dry_run:
+            set_manifest_field(
+                memory_dir,
+                compat.MIN_VERSION_KEY,
+                compat.MIN_SAFE_WRITER,
+                "Oldest crumb-kit allowed to write this store (set by `crumb migrate`; "
+                "docs/compatibility.md section 4).",
+            )
+    features = compat.parse_features(manifest.get(compat.REQUIRES_KEY))
+    if compat.MIN_VERSION_FEATURE not in features:
+        wanted = sorted({*features, compat.MIN_VERSION_FEATURE})
+        changes.append(
+            f"manifest.yml: requires: {', '.join(wanted)} (so 0.4.x and 0.5.0, which predate "
+            f"{compat.MIN_VERSION_KEY}, refuse to write too)"
+        )
+        if not dry_run:
+            set_manifest_field(memory_dir, compat.REQUIRES_KEY, ", ".join(wanted))
+    return {"changes": changes, "warnings": warnings}
 
 
 # --------------------------------------------------------------------------- #
@@ -613,12 +754,29 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
             ),
         }
 
+    from breadcrumbs import compat as _compat
+
+    compatibility = _compat.check(memory_dir)
+    if not compatibility.writable:
+        return {
+            "ok": False,
+            "from": current,
+            "to": current,
+            "target": target,
+            "steps": [],
+            "backup": None,
+            "error": f"{compatibility.message} Nothing was changed.",
+        }
+
     pending = pending_migrations(current)
     if not pending:
         # A migration that finished its last step but stopped before clearing
         # its marker is complete; the marker would only mislead the next run.
         if not dry_run:
             _clear_in_progress(memory_dir)
+        maint = maintenance(memory_dir, dry_run=dry_run)
+        if maint["changes"] and not dry_run and (memory_dir / "generated").is_dir():
+            cli.reindex_projections(memory_dir, project_root)
         return {
             "ok": True,
             "from": current,
@@ -627,6 +785,8 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
             "steps": [],
             "backup": None,
             "error": None,
+            "dry_run": dry_run,
+            "maintenance": maint,
         }
 
     # A migration reads and rewrites the whole store: with a link inside it,
@@ -666,6 +826,7 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
             "dry_run": True,
             # What the backup will hold, and what migration leaves for a person.
             "backup_files": len(store_files(memory_dir)),
+            "maintenance": maintenance(memory_dir, dry_run=True),
             "legacy": legacy,
             "legacy_items": legacy_items,
             "resumes": marker,
@@ -729,6 +890,7 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
         _write_in_progress(memory_dir, {**marker, "at": at})
         steps.append({"version": m.version, "summary": m.summary, "changed": changed})
     _clear_in_progress(memory_dir)
+    maint = maintenance(memory_dir, dry_run=False)
 
     # The store's shape changed, so a projection built from the old shape is
     # suspect — but only refresh one that already exists. A migration that
@@ -748,4 +910,5 @@ def migrate(memory_dir: Path, project_root: Path, *, dry_run: bool = False) -> d
         "backup": str(backup),
         "resumed": resumed,
         "error": None,
+        "maintenance": maint,
     }

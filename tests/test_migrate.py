@@ -90,6 +90,9 @@ class MigrationDriverTests(unittest.TestCase):
     def test_nothing_to_do_is_a_clean_no_op(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
+            # The first run on a current store sets the writer floor (DoWhat
+            # retest of 0.5.0, item 14); after that there is nothing to do.
+            mig.migrate(mem, Path(tmp))
             before = (mem / "manifest.yml").read_bytes()
             res = mig.migrate(mem, Path(tmp))
             self.assertTrue(res["ok"])
@@ -287,6 +290,7 @@ class MigrateCommandTests(unittest.TestCase):
     def test_command_reports_nothing_to_do(self):
         with tempfile.TemporaryDirectory() as tmp:
             init_store(tmp)
+            run(["migrate", "--project", tmp])  # sets the writer floor once
             code, out = run(["migrate", "--project", tmp])
             self.assertEqual(code, 0)
             self.assertIn("nothing to do", out)

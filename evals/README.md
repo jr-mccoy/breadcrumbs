@@ -54,6 +54,8 @@ These are pass/fail assertions, each run against a suite's store:
 
 - a recorded hazard does not get `PROCEED` (`guard_not`), and the guard hook
   warns (`hook_guard_warns`);
+- guard cites none of a list of unrelated records (`guard_cites_none`), or
+  shows nothing as blocking (`guard_no_blocking`);
 - a superseded, retired or speculative record is never delivered
   (`never_delivered`);
 - a relevant record is delivered (`delivered`);

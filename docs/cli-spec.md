@@ -44,7 +44,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | Command | Reads | Writes | Purpose | Phase |
 |---|---|---|---|---|
 | `init` | project root | `.project-memory/`, `manifest.yml`, `.gitignore` edits | Install memory layout; record session + generated-projection policy in `manifest.yml`. | **1 (built)** |
-| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash`: `related.json`, `conflicts.json` and, since audit WP07, `guard-prefilter.json`; the stamp `unstable` is always stale) whose stamped `inputs_hash` no longer matches the live records. Also checks the record contract (`record-schema.md` §4): field vocabularies, evidence shape, timestamps, scope, and `superseded_by` links (a missing target, a self-link or a cycle). Reports every symbolic link or junction inside the store as `path-link` (audit WP13; nothing there may be one, and readers refuse them). Every finding carries a stable `code`, and `--json` includes it. | **2 (built)** |
+| `validate` | all canonical files | validation output | Enforce schema and invariants (deterministic). Includes a projection-freshness check: fails on a `generated/` projection (`*.md`, or a `*.json` carrying a top-level `inputs_hash`: `related.json` and `conflicts.json`; the guard pre-filter is machine-local in `index/` since 0.6.0; the stamp `unstable` is always stale) whose stamped `inputs_hash` no longer matches the live records. Also checks the record contract (`record-schema.md` §4): field vocabularies, evidence shape, timestamps, scope, and `superseded_by` links (a missing target, a self-link or a cycle). Reports every symbolic link or junction inside the store as `path-link` (audit WP13; nothing there may be one, and readers refuse them). Every finding carries a stable `code`, and `--json` includes it. | **2 (built)** |
 | `remember decision` | git state, user input | decision record | Capture a durable choice. Refuses a near-duplicate of a live decision (exit 3) unless `--supersedes ID` or `--allow-duplicate`. | **3 (built)** |
 | `remember attempt` | git state, user input | attempt record | Capture a tried path and its outcome. Same near-duplicate gate as `remember decision`. | **3 (built)** |
 | `verify <subject>` | git state, user input | verification record | Record a verification result (a finding about reality): `--status fixed\|open\|regressed\|not_applicable\|inconclusive`, `--method static\|runtime\|test`. A settled outcome (`fixed`, `not_applicable`) gets an `expires_at` (`ttl_verification_days`, default 90). Near-duplicate gate as on `remember` (`--supersedes ID`, `--allow-duplicate`). `--assert CMD` (repeatable) declares an assertion, the only kind of check a recheck may settle the claim with. `--recheck ID` (repeatable) or `--all`, with `--yes`, reruns a verification's checks instead — see `verify --recheck` below; `--status` is required only when not rechecking (exit 2 without it). `--scope branch` makes the result apply only while the current branch is checked out (default `project`; see [Branch scope](#branch-scope-built-wm-52)). Reindexes on write. | **built** |
@@ -491,7 +491,7 @@ Behavior:
   author's absolute host path.
 - Refreshes the store-global projections through the same reindex every mutation
   uses — `generated/resume-packet.md` (the committed cloud-fallback artifact under
-  the default policy), `generated/guard-prefilter.json`,
+  the default policy), `index/guard-prefilter.json` (machine-local since 0.6.0),
   `generated/related.json` and `generated/conflicts.json`, each written
   atomically (see `reindex`). `--fast`
   and `--task` are **print-only** and never overwrite them.
@@ -555,7 +555,7 @@ Every mutation runs the same reindex; this command runs it on demand. In order:
    below the index under a `Not adopted` comment, the file keeps driving every
    reader, and `audit` reports it (`unadopted-block`). If adoption fails, both
    files are left untouched.
-2. `generated/resume-packet.md` and `generated/guard-prefilter.json`.
+2. `generated/resume-packet.md` and `index/guard-prefilter.json`.
 3. **`generated/related.json`** — up to three related ids for every live item
    (active; for questions, `open`). A pair is scored by what the two share, and
    nothing else: shared declared files ×6, shared tag stems ×4, shared specific
@@ -830,7 +830,7 @@ Behavior (deltas from `search` — everything there applies here too):
 The `PreToolUse` hook path adds three behaviors of its own:
 
 - **The pre-filter is trusted only when verified** (audit WP07). The hook reads
-  `generated/guard-prefilter.json` to decide whether a routine-looking call
+  `index/guard-prefilter.json` to decide whether a routine-looking call
   needs the full guard at all. It relies on that file only when the current
   generation manifest vouches for it (see
   [Coherent projections](#coherent-projections-built-audit-wp07)).

@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "53df2f878112",
+ "inputs_hash": "2e9a4bc53e50",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -35,12 +35,12 @@
   "dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
   ],
   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one": [
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
-   "dec_20260905_path-extraction-is-structural-and-a-mined-path"
+   "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval"
   ],
   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them": [
    "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one",
@@ -73,8 +73,8 @@
    "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
   ],
   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns": [
-   "dec_20260905_path-extraction-is-structural-and-a-mined-path",
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path",
    "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap"
   ],
   "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call": [
@@ -84,13 +84,13 @@
   ],
   "dec_20260905_path-extraction-is-structural-and-a-mined-path": [
    "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
   ],
   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode"
   ],
   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
@@ -140,7 +140,7 @@
   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases": [
    "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
    "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02",
-   "dec_20260922_automatic-memory-writes-land-in-private-inbox-and-earn"
+   "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author"
   ],
   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons": [
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
@@ -170,7 +170,7 @@
   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts": [
    "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
    "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns"
+   "dec_20261002_the-guard-pre-filter-is-machine-local-in-index-compact"
   ],
   "dec_20260927_evals-score-delivered-context-and-critical-cases": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
@@ -180,7 +180,7 @@
   "dec_20260927_installed-hook-launchers-never-pass-a-failure-through": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
-   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer"
+   "dec_20260815_cut-0-1-10-as-the-agent-authorship-release"
   ],
   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
@@ -198,9 +198,9 @@
    "dec_20260922_related-records-use-a-pure-overlap-score-so-the-committed"
   ],
   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer": [
+   "dec_20261002_a-store-names-its-oldest-allowed-writer-with-min-crumb",
    "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
-   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
   ],
   "dec_20260927_projections-are-stamped-from-a-verified-snapshot": [
    "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
@@ -244,13 +244,28 @@
   ],
   "dec_20261001_capture-session-next-adds-a-dated-entry-only-replace": [
    "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+   "dec_20261002_a-store-names-its-oldest-allowed-writer-with-min-crumb",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
   ],
   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect": [
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts"
+  ],
+  "dec_20261002_a-store-names-its-oldest-allowed-writer-with-min-crumb": [
+   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20261001_capture-session-next-adds-a-dated-entry-only-replace"
+  ],
+  "dec_20261002_guard-speed-remove-git-processes-first-remeasure-on-windows": [
+   "dec_20261002_the-guard-pre-filter-is-machine-local-in-index-compact",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+  ],
+  "dec_20261002_the-guard-pre-filter-is-machine-local-in-index-compact": [
+   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
+   "dec_20260927_the-guard-pre-filter-is-a-strict-superset-of-what-full",
+   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
@@ -269,8 +284,13 @@
   ],
   "trap_a-record-s-remedy-fields-are-mined-for-file-paths": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+  ],
+  "trap_a-test-that-runs-resume-or-reindex-on-a-checked-in-fixture": [
+   "trap_a-hand-written-version-literal-in-prose-drifts-silently",
+   "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field",
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
   ],
   "trap_eval-baseline-after-retrieval-change": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
@@ -319,8 +339,8 @@
   ],
   "ver_20260816_release-0-1-10-blocked-by-pypi-invalid-publisher-fixed": [
    "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "trap_hand-tagged-releases"
+   "trap_hand-tagged-releases",
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
   ],
   "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",

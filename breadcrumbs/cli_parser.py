@@ -929,7 +929,19 @@ def _add_handoff(sub, global_parser: argparse.ArgumentParser) -> None:
         parents=[global_parser],
         help="move all but the newest N Next Action entries to a history file (none deleted)",
     )
-    pt.add_argument("--keep", type=int, default=10, help="entries to keep (default 10)")
+    pt.add_argument("--keep", type=int, default=None, help="entries to keep (default 10)")
+    pt.add_argument(
+        "--before",
+        metavar="YYYY-MM-DD",
+        help="instead of --keep: move the first entry dated before this day and every entry "
+        "below it",
+    )
+    pt.add_argument(
+        "--split-on",
+        metavar="REGEX",
+        help="a line pattern that starts an entry inside a hand-kept log (default: a bold date "
+        "lead-in, `**2026-10-01 …`)",
+    )
     pt.set_defaults(func=cli.cmd_handoff, handoff_what="trim")
 
 

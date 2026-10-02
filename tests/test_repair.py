@@ -48,6 +48,8 @@ class RepairTests(unittest.TestCase):
         (self.mem / "verifications" / "2026-09-20-zebra-cache-race-fixed.md").write_text(
             HAND_VERIFICATION
         )
+        (self.root / "src" / "cache").mkdir(parents=True)
+        (self.root / "src" / "cache" / "zebra.py").write_text("x = 1\n")
         run(
             [
                 "remember",
@@ -130,6 +132,57 @@ class RepairTests(unittest.TestCase):
 
         self.assertTrue(shellcmd.is_read_only("crumb repair"))
         self.assertFalse(shellcmd.is_read_only("crumb repair --apply"))
+
+
+class EvidenceSuggestionTests(unittest.TestCase):
+    """DoWhat retest of 0.5.0, item 10: repair suggested evidence that was not a
+    file at all."""
+
+    PROSE = (
+        "# Remote Config quota\n\nThe device clock was Asia/Tokyo. and the fetch "
+        "errors/skips/cache path ran through Route/ViewModel/coordinator. Note/Shopping "
+        "and admission/binding were fine; npm lives in APPDATA/npm and the SDK in "
+        "/home/user/android-sdk. The push key families/-OzbgqHU and the route "
+        "/v1/projects/<id>/remoteConfig were checked. The fix is in app/src/main/Config.kt "
+        "and tools/remote-config.sh, and docs/old-notes.md is committed.\n"
+    )
+
+    def test_only_files_that_exist_are_suggested(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            git(root, "init", "-q")
+            git(root, "config", "user.email", "t@t")
+            git(root, "config", "user.name", "Pat")
+            run(["init", "--project", str(root), "--session-tracking", "full"])
+            mem = root / crumb.MEMORY_DIRNAME
+            (root / "app" / "src" / "main").mkdir(parents=True)
+            (root / "app" / "src" / "main" / "Config.kt").write_text("val x = 1\n")
+            (root / "tools").mkdir()
+            (root / "tools" / "remote-config.sh").write_text("#!/bin/sh\n")
+            (root / "docs").mkdir()
+            (root / "docs" / "old-notes.md").write_text("notes\n")
+            git(root, "add", "docs/old-notes.md")
+            git(root, "commit", "-qm", "notes")
+            (root / "docs" / "old-notes.md").unlink()  # still in HEAD
+            (mem / "verifications" / "2026-09-20-remote-config-quota.md").write_text(self.PROSE)
+            code, out = run(["repair", "--project", str(root), "--json"])
+            doc = json.loads(out)
+            proposals = " ".join(doc["proposals"])
+            self.assertIn("app/src/main/Config.kt", proposals)
+            self.assertIn("tools/remote-config.sh", proposals)
+            self.assertIn("docs/old-notes.md", proposals)
+            for bogus in (
+                "Asia/Tokyo",
+                "errors/skips/cache",
+                "Route/ViewModel",
+                "Note/Shopping",
+                "admission/binding",
+                "APPDATA/npm",
+                "android-sdk",
+                "families/",
+                "/v1/projects",
+            ):
+                self.assertNotIn(bogus, proposals)
 
 
 if __name__ == "__main__":

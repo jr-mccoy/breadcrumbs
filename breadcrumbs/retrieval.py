@@ -180,10 +180,16 @@ def prompt_lookup(memory_dir: Path, root: Path, prompt: str, *, limit: int = 5) 
     if records == 0:
         return Lookup(mode="empty", reason="the store has no records", records=0)
     info: dict = {}
+    from breadcrumbs import shellcmd as _shellcmd
+
     matches, _ = cli.search(
         memory_dir,
         root,
-        prompt,
+        # A prompt that is a crumb command (`crumb migrate --dry-run`) is read
+        # the way guard reads it: crumb's own words name crumb's operations,
+        # not the project's (DoWhat retest of 0.5.0, item 5). Prose is unchanged.
+        _shellcmd.without_crumb(prompt),
+        command_text=prompt,
         min_keyword=cli.GUARD_MIN_KEYWORD_OVERLAP,
         noise_floor=cli.GUARD_NOISE_FLOOR,
         include_ideas=False,
