@@ -750,7 +750,7 @@ class MediumLowRegressionTests(unittest.TestCase):
                 ]
             )
             self.assertEqual(code, 0)
-            index_path = mem / "generated" / crumb.GUARD_PREFILTER_FILENAME
+            index_path = crumb.guard_prefilter_path(mem)
             self.assertTrue(index_path.is_file())
             self.assertTrue(crumb._prefilter_trap_hit(mem, "pytest -n auto", None))
             self.assertFalse(crumb._prefilter_trap_hit(mem, "edit README.md", None))

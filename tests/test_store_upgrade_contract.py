@@ -432,7 +432,7 @@ class VersionPolicyTests(unittest.TestCase):
             run(["reindex", "--project", str(root)])
             gen = json.loads((mem / "index" / "generation.json").read_text())
             self.assertEqual(gen["format"], projections.MANIFEST_FORMAT)
-            pre = json.loads((mem / "generated" / "guard-prefilter.json").read_text())
+            pre = json.loads(_cli.guard_prefilter_path(mem).read_text())
             self.assertEqual(pre["format"], _cli.GUARD_PREFILTER_FORMAT)
             usage.record_surfaced(mem, ["dec_x"], "resume")
             with mock.patch.object(usage, "fold", return_value=False):

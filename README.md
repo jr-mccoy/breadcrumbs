@@ -504,9 +504,9 @@ prompt as the task.
 Mutations (`remember`, `note`, `verify`, `capture session`, `mark-status`, and
 their MCP equivalents) **reindex on write**, so `generated/resume-packet.md`
 never silently desyncs from the records. `crumb resume` and `crumb reindex` go
-through that same reindex — every projection (`resume-packet.md`, the hook's
-`guard-prefilter.json`, `related.json` and `conflicts.json`), each written
-atomically — and
+through that same reindex — every projection (`resume-packet.md`, `related.json`
+and `conflicts.json`, plus the hook's machine-local `index/guard-prefilter.json`),
+each written atomically — and
 `crumb validate` **fails** on a stale projection with a `Run \`crumb reindex\``
 hint, so the trust primitive no longer certifies drift.
 

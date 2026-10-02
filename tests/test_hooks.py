@@ -466,9 +466,7 @@ class PrefilterEvidencePathTests(unittest.TestCase):
             root = make_repo(tmp)
             mem = init_store(root)
             self._attempt_with_file_evidence(root)
-            idx = json.loads(
-                (mem / "generated" / _cli.GUARD_PREFILTER_FILENAME).read_text(encoding="utf-8")
-            )
+            idx = json.loads(_cli.guard_prefilter_path(mem).read_text(encoding="utf-8"))
             self.assertIn("src/billing.py", idx["paths"], idx)
 
     def test_edit_of_an_evidenced_file_escalates_in_the_hook(self):
@@ -496,7 +494,7 @@ class PrefilterEvidencePathTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             mem = init_store(root)
-            pre = mem / "generated" / _cli.GUARD_PREFILTER_FILENAME
+            pre = _cli.guard_prefilter_path(mem)
             pre.write_text(
                 json.dumps({"tokens": ["reconciler", "batched"], "paths": []}),
                 encoding="utf-8",

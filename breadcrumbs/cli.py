@@ -557,9 +557,9 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     lines.append(f"{MEMORY_DIRNAME}/generated/*.tmp")
     if not commit_generated:
         # flip generated projections to local-only, but keep the explainer README.
-        # *.json covers guard-prefilter.json, which is a projection like any other
-        # (rebuilt on every write) and used to escape this policy entirely — the
-        # user asked for local-only projections and got a tracked, churning one.
+        # *.json covers related.json and conflicts.json (and the guard
+        # pre-filter, which lived here until it moved to index/ in 0.6.0): the
+        # user asked for local-only projections, so none may stay tracked.
         lines.append(f"{MEMORY_DIRNAME}/generated/*.md")
         lines.append(f"{MEMORY_DIRNAME}/generated/*.json")
         lines.append(f"!{MEMORY_DIRNAME}/generated/README.md")
@@ -4143,9 +4143,77 @@ def _trap_block(
 
 
 # Machine-readable trap-token index consumed by the PreToolUse hook's cheap risk
-# pre-filter. Lives under generated/ (rebuilt on every reindex,
-# never canonical, skipped by the secret scan like the rest of generated/).
+# pre-filter. Rebuilt on every reindex, never canonical.
+#
+# Machine-local since the DoWhat retest of 0.5.0 (item 8, decision D8): it lives
+# in index/, which is gitignored. Committed under generated/ it grew to 476 KB,
+# one token per line, so every rebuild was a ~33,000-line diff that conflicted
+# on every merge, and a committed copy was never used anyway: the hook trusts it
+# only when this machine's generation manifest vouches for it. The name stays
+# the manifest key; `guard_prefilter_path` says where the file is.
 GUARD_PREFILTER_FILENAME = "guard-prefilter.json"
+GUARD_PREFILTER_DIR = "index"
+
+
+def guard_prefilter_path(memory_dir: Path) -> Path:
+    return Path(memory_dir) / GUARD_PREFILTER_DIR / GUARD_PREFILTER_FILENAME
+
+
+def legacy_guard_prefilter_path(memory_dir: Path) -> Path:
+    """Where 0.5.0 and earlier wrote it (committed); removed by the next reindex."""
+    return Path(memory_dir) / "generated" / GUARD_PREFILTER_FILENAME
+
+
+def projection_path(memory_dir: Path, name: str) -> Path:
+    """Where the projection published under `name` lives."""
+    if name == GUARD_PREFILTER_FILENAME:
+        return guard_prefilter_path(memory_dir)
+    return Path(memory_dir) / "generated" / name
+
+
+# Tokens the pre-filter never holds (item 9 of the 0.5.0 retest). It copies
+# words out of records, so it must not carry a secret-shaped or opaque value: a
+# token inside anything `scan-secrets` would flag, or a long letters-and-digits
+# run (an id, a key, a hash). The hook makes up for the gap: an action holding
+# a token of the `_prefilter_opaque_action_token` shape always runs full guard,
+# so the pre-filter stays a superset of what guard can match.
+_PREFILTER_OPAQUE_MIN = 24
+_PREFILTER_SPAN_TOKEN_MIN = 12
+
+
+def _prefilter_unsafe_stems(text: str) -> set[str]:
+    """Stems of `text` the pre-filter must not hold (see above)."""
+    out: set[str] = set()
+    spans = [m.group(0) for _name, pat in SECRET_PATTERNS for m in pat.finditer(text or "")]
+    spans += [
+        m.group(0)
+        for m in _HIGH_ENTROPY_TOKEN.finditer(text or "")
+        if _looks_high_entropy(m.group(0))
+    ]
+    for span in spans:
+        for t in _tokenize(span):
+            if len(t) >= _PREFILTER_SPAN_TOKEN_MIN and any(c.isdigit() for c in t):
+                out.add(_stem(t))
+    for t in _tokenize(text):
+        if _prefilter_opaque_token(t):
+            out.add(_stem(t))
+    return out
+
+
+def _prefilter_opaque_token(t: str) -> bool:
+    return (
+        len(t) >= _PREFILTER_OPAQUE_MIN
+        and any(c.isdigit() for c in t)
+        and any(c.isalpha() for c in t)
+    )
+
+
+def _prefilter_opaque_action_token(action: str) -> bool:
+    """Does the action hold a token the pre-filter may have left out?"""
+    return any(
+        len(t) >= _PREFILTER_SPAN_TOKEN_MIN and any(c.isdigit() for c in t)
+        for t in _tokenize(action)
+    )
 
 
 def _build_guard_prefilter(memory_dir: Path) -> dict:
@@ -4181,12 +4249,21 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     tags: set[str] = set()
     paths: set[str] = set()
     commands: list[list[str]] = []
-    token_sets: list[list[str]] = []
+    token_sets: set[tuple[str, ...]] = set()
+    unsafe: set[str] = set()
     for it in _candidate_items(memory_dir, include_ideas=False):
         if not _may_drive_verdict(it):
             continue
+        rec = it.get("record")
+        source = (
+            f"{it.get('title') or ''}\n{rec.body if rec is not None else ''}\n"
+            + " ".join(sorted(it.get("tags") or ()))
+            + "\n"
+            + " ".join(sorted(set(it.get("files") or ()) | set(it.get("mentioned_files") or ())))
+        )
+        unsafe |= _prefilter_unsafe_stems(source)
         tokens |= set(it["specific"])
-        token_sets.append(sorted(it["specific"]))
+        token_sets.add(tuple(sorted(it["specific"])))
         titles |= set(it.get("title_specific") or ())
         tags |= set(it.get("tag_stems") or {t: t for t in it.get("tags") or ()})
         paths |= set(it.get("files") or ()) | set(it.get("mentioned_files") or ())
@@ -4194,7 +4271,9 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
             if len(head) > _COMMAND_MIN_TOKENS and head[:9] not in commands:
                 commands.append(head[:9])  # the kind, then up to 8 tokens
     for trap in active_traps(memory_dir):
-        paths |= _paths_from_text(trap["heading"] + "\n" + trap["content"])
+        text = trap["heading"] + "\n" + trap["content"]
+        unsafe |= _prefilter_unsafe_stems(text)
+        paths |= _paths_from_text(text)
     for rec in active_attempts(memory_dir):
         if _attempt_has_do_not_retry(rec):
             text = (
@@ -4202,18 +4281,26 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
             )
             paths |= _paths_from_text(text)
             paths |= set(_evidence_refs(rec, ("file", "path")))
+
+    def safe_path(p: str) -> bool:
+        return not ({_stem(t) for t in _tokenize(p)} & unsafe) and not any(
+            _prefilter_opaque_token(t) for t in _tokenize(p)
+        )
+
+    # Every list sorted, so the same records give the same bytes whatever order
+    # they were read in (item 8 of the 0.5.0 retest).
     return {
         "format": GUARD_PREFILTER_FORMAT,
-        "tokens": sorted(tokens),
-        "titles": sorted(titles),
-        "tags": sorted(tags),
-        "paths": sorted(paths),
-        "commands": sorted(commands),
+        "tokens": sorted(tokens - unsafe),
+        "titles": sorted(titles - unsafe),
+        "tags": sorted(tags - unsafe),
+        "paths": sorted(p for p in paths if safe_path(p)),
+        "commands": sorted(h for h in commands if not (set(h[1:]) & unsafe)),
         # Each record's own stems. Guard's keyword gate is per record (two
         # shared words in *one* record), so the pre-filter is too: against
         # the union of every record's words, 12 of 20 everyday commands
         # escalated to a full guard run (field report 2026-10-01, issue 6).
-        "token_sets": token_sets,
+        "token_sets": sorted({tuple(t for t in ts if t not in unsafe) for ts in token_sets} - {()}),
     }
 
 
@@ -4323,7 +4410,11 @@ def _publish_projections_inner(
             prefilter = {**_build_guard_prefilter(memory_dir), "inputs_hash": digest}
             outputs = {
                 "resume-packet.md": render_packet_markdown(packet),
-                GUARD_PREFILTER_FILENAME: json.dumps(prefilter, indent=0, sort_keys=True) + "\n",
+                # Compact, one line (item 8 of the 0.5.0 retest).
+                GUARD_PREFILTER_FILENAME: json.dumps(
+                    prefilter, separators=(",", ":"), sort_keys=True
+                )
+                + "\n",
                 # "See also" for every live item (WM-25).
                 _related.RELATED_FILENAME: _related.render_related(
                     memory_dir, project_root, inputs_hash=digest
@@ -4362,7 +4453,13 @@ def _publish_projections_inner(
             with contextlib.suppress(FileNotFoundError):
                 _projections.manifest_path(memory_dir).unlink()
             for name, text in outputs.items():
-                write_text_atomic(gen / name, text)
+                target = projection_path(memory_dir, name)
+                path_policy.mkdirs(target.parent)
+                write_text_atomic(target, text)
+            # The pre-filter moved to index/ (machine-local); the copy 0.5.0
+            # committed under generated/ goes, and the user commits that once.
+            with contextlib.suppress(FileNotFoundError):
+                legacy_guard_prefilter_path(memory_dir).unlink()
             _searchindex.publish_index(memory_dir, live_index)
             published_index = live_index
         finally:
@@ -10822,9 +10919,10 @@ DECAY_DAYS_DEFAULT = 180
 AUDIT_DECAY_MAX = 10
 
 # Directories under .project-memory/ the secret scan skips: private/ is gitignored
-# local context, index/ is a disposable accelerator, generated/ holds derived
-# projections rebuilt from canonical records (scanned for drift, not secrets).
-_SECRET_SKIP_DIRS = {"private", "index", "generated"}
+# local context and index/ a gitignored, disposable accelerator. generated/ is
+# scanned (DoWhat retest of 0.5.0, item 9): it is committed, and its projections
+# copy record text, so a secret there would be published like any other.
+_SECRET_SKIP_DIRS = {"private", "index"}
 
 # Common secret SHAPES. Deliberately conservative: better to miss
 # an exotic secret than to flag every git sha. The covered set is this tuple; the
@@ -11058,7 +11156,7 @@ _SECRET_SCAN_GLOBS = ("*.md", "*.yml", "*.yaml", "*.json", "*.txt")
 
 
 def _iter_committed_memory_files(memory_dir: Path):
-    """Yield committed-memory text files (skips private/index/generated subtrees)."""
+    """Yield committed-memory text files (skips the private/ and index/ subtrees)."""
     memory_dir = Path(memory_dir)
     paths: list[Path] = []
     for pattern in _SECRET_SCAN_GLOBS:
@@ -11136,7 +11234,7 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
     """Scan committed memory for secret-like strings.
 
     Each hit is {pattern, path, line} — the pattern NAME and location, never the
-    matched value. Skips private/index/generated. This must run before any
+    matched value. Skips private/ and index/. This must run before any
     "commit memory" recommendation (§2.6, §15).
 
     A file that cannot be read cleanly yields a blocking `unscannable-file` hit
@@ -13751,6 +13849,10 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
         _hooklog.note(prefilter="unverified")
         return True
+    # The pre-filter leaves secret-shaped and opaque tokens out (item 9 of the
+    # 0.5.0 retest), so an action holding one is checked in full.
+    if _prefilter_opaque_action_token(action):
+        return True
     # Each test mirrors one way `_score_item` lets a match through (see
     # `_build_guard_prefilter`), so this can only admit more than full guard
     # would surface, never less (audit WP11). Stems are re-stemmed at read time
@@ -13791,7 +13893,10 @@ def _prefilter_exact_hit(memory_dir: Path, action: str, files: list[str] | None)
     if _names_command(_command_tokens(action), idx.get("commands") or ()):
         return True
     action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
-    return bool(action_paths & _norm_files(idx.get("paths") or ()))
+    if action_paths & _norm_files(idx.get("paths") or ()):
+        return True
+    # A path or command the pre-filter left out as opaque (item 9).
+    return _prefilter_opaque_action_token(action)
 
 
 # How much of an edit's new content, and of a subagent's launch prompt, feeds

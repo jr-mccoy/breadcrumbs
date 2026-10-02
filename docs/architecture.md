@@ -71,7 +71,7 @@ taxonomy, build philosophy, and code map for `breadcrumbs`. It is the conceptual
 | Mined candidate | A jot a hook wrote from a transcript or prompt — unconfirmed | `private/inbox/` | same TTL | **no** — a candidate, never source of truth until promoted |
 | Private note | Local-only personal/sensitive context | `private/` | local policy | local-only |
 | Resume packet | Bounded generated boot summary | `generated/resume-packet.md` | regenerated | no |
-| Guard pre-filter | Token/path index the `PreToolUse` hook reads before a risky call | `generated/guard-prefilter.json` | regenerated | no |
+| Guard pre-filter | Token/path index the `PreToolUse` hook reads before a risky call | `index/guard-prefilter.json` (machine-local since 0.6.0) | regenerated | no |
 | Related records | Up to three "see also" ids per live item, by shared files/tags/stems | `generated/related.json` | regenerated | no |
 | Possible contradictions | Pairs of live records that may argue with each other | `generated/conflicts.json` | regenerated | no |
 | Trap / question index | One line per trap or question, for a reader without the CLI | `known-traps.md`, `open-questions.md` (schema 3) | regenerated | no |

@@ -229,7 +229,7 @@ class IndexFallbackTests(StoreCase):
         self.assertIn(self.rid, [m["id"] for m in doc["matches"]])
 
     def test_store_content_comes_from_the_corpus_not_the_prefilter(self):
-        (self.mem / "generated" / cli.GUARD_PREFILTER_FILENAME).unlink(missing_ok=True)
+        cli.guard_prefilter_path(self.mem).unlink(missing_ok=True)
         self.assertTrue(hooks_prompt._store_has_content(self.mem))
         cli.reindex_projections(self.mem, self.root)
         summary = retrieval.corpus_summary(self.mem, self.root)
@@ -295,7 +295,7 @@ class CommandHazardTests(StoreCase):
         self.assertIn("not an authorization or a safety check", advice)
 
     def test_an_old_format_prefilter_is_not_trusted(self):
-        path = self.mem / "generated" / cli.GUARD_PREFILTER_FILENAME
+        path = cli.guard_prefilter_path(self.mem)
         doc = json.loads(path.read_text("utf-8"))
         del doc["format"]
         path.write_text(json.dumps(doc), encoding="utf-8")
