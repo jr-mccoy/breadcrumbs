@@ -292,7 +292,28 @@ class HookImportTests(unittest.TestCase):
                 cwd=str(root),
             ).stdout
             loaded = set(json.loads(out.splitlines()[-1]))
-            self.assertEqual(sorted(loaded & set(HOOK_UNNEEDED)), [])
+            # What this interpreter's own argparse loads to build a parser is
+            # not crumb's to avoid: on Python 3.14 that is dataclasses,
+            # inspect and ast (argparse colours its help through _colorize).
+            probe = (
+                "import sys, json\n"
+                "before = set(sys.modules)\n"
+                "import argparse\n"
+                "argparse.ArgumentParser().add_argument('--x')\n"
+                "print(json.dumps(sorted(set(sys.modules) - before)))\n"
+            )
+            stdlib = set(
+                json.loads(
+                    subprocess.run(
+                        [sys.executable, "-c", probe],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                        env=env,
+                    ).stdout.splitlines()[-1]
+                )
+            )
+            self.assertEqual(sorted((loaded - stdlib) & set(HOOK_UNNEEDED)), [])
 
 
 # --------------------------------------------------------------------------- #
