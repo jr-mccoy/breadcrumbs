@@ -573,3 +573,44 @@ class HeredocDataTests(_StoreCase):
         ):
             with self.subTest(command=command[:20]):
                 self.assertTrue(scoring._is_destructive(command, []))
+
+
+# --------------------------------------------------------------------------- #
+# Item 8: a 10.2 s Stop firing
+# --------------------------------------------------------------------------- #
+
+
+class StopFiringTimingsTests(unittest.TestCase):
+    """A Stop firing logs where its time went, and doctor names the slowest."""
+
+    def test_a_snapshot_firing_logs_mine_and_snapshot_time(self):
+        from breadcrumbs import hooklog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(Path(tmp) / "repo")
+            quiet(["init", "--project", str(root)])
+            commit_all(root, "store")
+            (root / "work.txt").write_text("changed\n")
+            transcript = Path(tmp) / "t.jsonl"
+            transcript.write_text("")
+            payload = {"cwd": str(root), "session_id": "S", "transcript_path": str(transcript)}
+            old = sys.stdin
+            sys.stdin = io.StringIO(json.dumps(payload))
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    crumb.main(["hook", "capture"])
+            finally:
+                sys.stdin = old
+            memory = root / ".project-memory"
+            last = hooklog.read_log(memory)[-1]
+            self.assertEqual(last.get("snapshot"), "ok")
+            self.assertIsInstance(last.get("mine_ms"), (int, float))
+            self.assertIsInstance(last.get("snapshot_ms"), (int, float))
+            summary = hooklog.summarize(hooklog.read_log(memory))
+            slowest = summary["events"]["capture"]["slowest"]
+            self.assertIn("snapshot_ms", slowest)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                crumb.main(["doctor", "--hook-log", "--project", str(root)])
+            self.assertIn("slowest", out.getvalue())
+            self.assertIn("snapshot", out.getvalue())

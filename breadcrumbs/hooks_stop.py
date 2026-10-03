@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import time
 from pathlib import Path
 
 from breadcrumbs import cli
@@ -350,12 +351,19 @@ def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> str:
         agent=cli.detect_agent(fallback="agent"),
         capture_what="session",
     )
+    from breadcrumbs import hooklog as _hooklog
+
     err = io.StringIO()
+    started = time.perf_counter()
     try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
             code = cli.cmd_capture_session(ns)
     except Exception as exc:  # a capture failure must not block Stop — but it is logged
         return f"failed: {type(exc).__name__}: {exc}"[:200]
+    finally:
+        # The record write, a whole-store validate and the projection rebuild:
+        # seconds on a 400-record store on Windows (item 8).
+        _hooklog.note(snapshot_ms=round((time.perf_counter() - started) * 1000, 1))
     if code != 0:
         detail = " ".join(err.getvalue().split())
         return f"failed: exit {code}" + (f": {detail}" if detail else "")[:200]
@@ -433,6 +441,7 @@ def _hook_capture_inner(memory_dir: Path, root: Path, payload: dict) -> int:
     # transcript shows, because nothing else will read it again.
     from breadcrumbs import hooklog as _hooklog
 
+    started = time.perf_counter()
     mined = _transcript.mine_transcript_into_jots(
         memory_dir,
         root,
@@ -440,6 +449,9 @@ def _hook_capture_inner(memory_dir: Path, root: Path, payload: dict) -> int:
         session_id=session_key,
         use_cursor=True,
     )
+    # Where a slow Stop firing's time went (DoWhat retest of 0.6.0, item 8):
+    # mining, and below, the snapshot with its projection rebuild.
+    _hooklog.note(mine_ms=round((time.perf_counter() - started) * 1000, 1))
     _transcript.note_report(mined)
     try:
         redundant = _hook_capture_is_redundant(memory_dir, root)

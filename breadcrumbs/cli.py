@@ -9222,7 +9222,27 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
                 parts.append(f"git {phases['git_ms']:.0f} ms")
             if "git" in phases:
                 parts.append(f"{phases['git']:.0f} git process(es)")
+            if "mine_ms" in phases:
+                parts.append(f"mine {phases['mine_ms']:.0f} ms")
+            if "snapshot_ms" in phases:
+                parts.append(f"snapshot {phases['snapshot_ms']:.0f} ms")
             print(f"            p50 phases: {', '.join(parts)}")
+        slow = ev.get("slowest") or {}
+        if slow.get("ms") is not None:
+            detail = [
+                f"{label} {slow[key]:.0f} ms"
+                for key, label in (
+                    ("snapshot_ms", "snapshot"),
+                    ("mine_ms", "mine"),
+                    ("git_ms", "git"),
+                    ("import_ms", "import"),
+                )
+                if isinstance(slow.get(key), (int, float))
+            ]
+            print(
+                f"            slowest: {slow['ms']:.0f} ms at {slow.get('at', '?')}"
+                + (f" ({', '.join(detail)})" if detail else "")
+            )
         if ev.get("verdicts"):
             verdicts = ", ".join(f"{k} {v}" for k, v in sorted(ev["verdicts"].items()))
             print(f"            verdicts: {verdicts}")
