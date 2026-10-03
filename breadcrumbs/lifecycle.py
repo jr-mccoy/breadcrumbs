@@ -35,6 +35,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from breadcrumbs import checks as _checks
 from breadcrumbs import cli
 from breadcrumbs import git
+from breadcrumbs import validation as _validation
 
 # --------------------------------------------------------------------------- #
 # WM-30: time-to-live
@@ -89,7 +90,7 @@ def verification_expiry(memory_dir: Path, outcome: str, created_at: str) -> str 
     """`expires_at` for a new verification: settled outcomes only."""
     if outcome not in SETTLED_VERIFICATION_OUTCOMES:
         return None
-    dt = cli._parse_iso(created_at)
+    dt = _validation.parse_timestamp(created_at)
     if dt is None:  # pragma: no cover - created_at is ours and always parseable
         return None
     days = ttl_days(memory_dir, "verification")
@@ -1323,7 +1324,7 @@ def rollup_sessions(
 ) -> dict:
     """Fold old machine snapshots into one session record, then delete them."""
     memory_dir = Path(memory_dir)
-    if cli._parse_iso(before) is None:
+    if _validation.parse_timestamp(before) is None:
         return {"ok": False, "code": 2, "error": f"--before {before!r} is not a YYYY-MM-DD date"}
     recs = rollup_candidates(memory_dir, before)
     ids = [r.meta.get("id", r.stem) for r in recs]

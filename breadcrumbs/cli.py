@@ -4232,7 +4232,9 @@ def _keep_committed_projection(target: Path, name: str, digest: str | None) -> b
     if digest is None or name == GUARD_PREFILTER_FILENAME:
         return None  # an unstable build is always written; the pre-filter is local
     try:
-        data = target.read_bytes()
+        # Under the store's link policy like every other store read: a link here
+        # is refused (an OSError) and the projection is simply rewritten.
+        data = path_policy.read_bytes(target)
         text = data.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return None
@@ -5463,7 +5465,7 @@ def _coalescible_snapshot(
 
     if (rec.meta.get("branch") or "") != git_branch(root):
         return None
-    stamped = _parse_iso(rec.meta.get("updated_at") or rec.meta.get("created_at"))
+    stamped = _validation.parse_timestamp(rec.meta.get("updated_at") or rec.meta.get("created_at"))
     if stamped is None:
         return None
     # Same naive-timestamp localization `_age_days` uses, so the subtraction is
@@ -6399,28 +6401,13 @@ def approx_tokens(text: str) -> int:
     return (ascii_chars + 3) // 4 + (len(text) - ascii_chars)
 
 
-def _parse_iso(value: str | None) -> datetime | None:
-    """Parse an ISO-8601 date or datetime; None if unparseable."""
-    if not value:
-        return None
-    try:
-        text = value.strip()
-        # `fromisoformat` learned `Z` only in 3.11. The record contract accepts
-        # it, so every supported interpreter must read it the same way.
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        return datetime.fromisoformat(text)
-    except (ValueError, TypeError):
-        return None
-
-
 def _age_days(value: str | None) -> int | None:
     """Whole days between `value` (ISO date/datetime) and now; None if unparseable.
 
     Positive means in the past. Naive timestamps are localized so the subtraction
     is always tz-aware.
     """
-    dt = _parse_iso(value)
+    dt = _validation.parse_timestamp(value)
     if dt is None:
         return None
     now = _now()
@@ -6470,7 +6457,7 @@ def _dt_sort_key(value: str | None) -> float:
     sort after '2026-07-01T00:30+00:00' despite being earlier). Unparseable or
     missing timestamps sort oldest.
     """
-    dt = _parse_iso(value)
+    dt = _validation.parse_timestamp(value)
     if dt is None:
         return float("-inf")
     if dt.tzinfo is None:

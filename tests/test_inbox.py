@@ -29,6 +29,7 @@ import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402  (patch target for cli helpers)
 from breadcrumbs import inbox as ibx  # noqa: E402
 from breadcrumbs import mcp_core  # noqa: E402
+from breadcrumbs import validation  # noqa: E402
 
 
 def init_store(tmp: str) -> Path:
@@ -84,8 +85,8 @@ class WriteTests(unittest.TestCase):
             rec = ibx.load_jots(mem)[0]
             self.assertEqual(rec.meta["source"], "agent")
             self.assertTrue(rec.meta["expires_at"])
-            due = _cli._parse_iso(rec.meta["expires_at"])
-            made = _cli._parse_iso(rec.meta["created_at"])
+            due = validation.parse_timestamp(rec.meta["expires_at"])
+            made = validation.parse_timestamp(rec.meta["created_at"])
             self.assertEqual((due - made).days, ibx.JOT_TTL_DAYS)
 
     def test_files_become_file_evidence(self):
@@ -207,8 +208,8 @@ class ExpiryTests(unittest.TestCase):
             self.assertEqual(ibx.jot_ttl_days(mem), 3)
             jot(tmp, "short-lived")
             rec = ibx.load_jots(mem)[0]
-            due = _cli._parse_iso(rec.meta["expires_at"])
-            made = _cli._parse_iso(rec.meta["created_at"])
+            due = validation.parse_timestamp(rec.meta["expires_at"])
+            made = validation.parse_timestamp(rec.meta["created_at"])
             self.assertEqual((due - made).days, 3)
 
     def test_an_unparseable_ttl_falls_back_to_the_default(self):

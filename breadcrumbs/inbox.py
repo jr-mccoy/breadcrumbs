@@ -35,6 +35,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from breadcrumbs import cli, path_policy
+from breadcrumbs import validation as _validation
 
 JOT_TYPE = "jot"
 INBOX_DIRNAME = "inbox"
@@ -212,7 +213,7 @@ def write_jot(
 
 
 def _expiry_from(created_at: str, days: int) -> str | None:
-    dt = cli._parse_iso(created_at)
+    dt = _validation.parse_timestamp(created_at)
     if dt is None:  # pragma: no cover - created_at is ours and always parseable
         return None
     return (dt + timedelta(days=days)).replace(microsecond=0).isoformat()

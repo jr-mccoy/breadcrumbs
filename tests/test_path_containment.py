@@ -118,6 +118,25 @@ def assert_no_leak(test: unittest.TestCase, text: str, base: Path) -> None:
 
 
 class ContainmentTests(unittest.TestCase):
+    def test_a_linked_projection_is_never_kept(self):
+        """The fresh-projection check read the committed file with a plain
+        `read_bytes`, so a link to a copy outside the store passed as fresh and
+        was kept (deferred health review 2.2: one reader, under the policy)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root, mem = make_project(base)
+            packet = mem / "generated" / "resume-packet.md"
+            data = packet.read_bytes()
+            digest = _cli._stamped_inputs_hash(data.decode("utf-8"))
+            self.assertEqual(
+                _cli._keep_committed_projection(packet, "resume-packet.md", digest), data
+            )
+            outside = base / "outside-packet.md"
+            outside.write_bytes(data)
+            packet.unlink()
+            packet.symlink_to(outside)
+            self.assertIsNone(_cli._keep_committed_projection(packet, "resume-packet.md", digest))
+
     def test_mcp_singleton_symlink_cannot_read_external_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)

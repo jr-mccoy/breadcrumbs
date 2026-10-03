@@ -117,8 +117,13 @@ class FieldContractTests(ContractCase):
         for bad in ("20260901", "2026-W35", "2026-09-01T10", "12345", 12345, None):
             with self.subTest(value=bad):
                 self.assertIsNone(validation.parse_timestamp(bad))
-        # ...and a reader accepts what the validator accepts.
-        self.assertIsNotNone(crumb._parse_iso("2026-09-01T10:00:00Z"))
+        # ...and readers parse with the same function, so a stamp validate
+        # rejects is unknown to them too, on every interpreter.
+        self.assertIsNotNone(crumb._age_days("2026-09-01T10:00:00Z"))
+        for bad in ("20260901", "2026-W35", 12345):
+            with self.subTest(reader=bad):
+                self.assertIsNone(crumb._age_days(bad))
+                self.assertEqual(crumb._dt_sort_key(bad), float("-inf"))
 
     def test_every_validate_finding_carries_a_code(self):
         self.decision(confidence="certainly")
