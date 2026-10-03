@@ -486,9 +486,21 @@ def write_atomic(path, data: bytes) -> None:
 
 
 def _plain_atomic(path: Path, data: bytes) -> None:
-    import tempfile
-
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    # The same temp-file name and flags as the descriptor path above, not
+    # `tempfile.mkstemp`: on Windows every hook write comes here, and
+    # importing `tempfile` (with `random`) cost the guard hook a module tree
+    # it otherwise never loads (DoWhat retest of 0.6.0, item 2).
+    tmp = str(path.parent / f".{path.name}.{os.urandom(6).hex()}.tmp")
+    fd = os.open(
+        tmp,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | _CLOEXEC
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOINHERIT", 0),
+        0o600,
+    )
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
