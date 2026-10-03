@@ -313,6 +313,7 @@ ID_FROM_CACHE = "att_20260918_deleting-test-results-to-force-an-independent-seco
 ID_EOL = "att_20260919_hardcoded-a-guessed-post-edit-crlf-count-in-a-line-ending"
 ID_REMOTE = "att_20260920_firebase-remoteconfig-get-output-writes-a-file-named"
 ID_TODOS = "att_20260910_migrationv21tov22test-s-todos-inserts-named-5-of-the-10"
+ID_PROSE_ONLY = "att_20260921_second-full-suite-run-came-back-from-cache"
 ID_ROOM_TEST = "att_20260705_ran-the-room-migration-test-against-an-in-memory-database"
 
 PADDING_WORDS = "results tooling migration version install python script output check".split()
@@ -333,6 +334,7 @@ def _padding(n: int = 40) -> str:
 
 class _StoreCase(unittest.TestCase):
     padded = False
+    extra = ""
 
     @classmethod
     def setUpClass(cls):
@@ -342,6 +344,7 @@ class _StoreCase(unittest.TestCase):
         text = (ANDROID / "store.crumb").read_text("utf-8")
         if cls.padded:
             text += "\n" + _padding()
+        text += cls.extra
         (suite / "store.crumb").write_text(text, "utf-8")
         cls.root = Path(cls._tmp.name) / "project"
         cls.memory = _evals.build_store(suite, cls.root)
@@ -402,6 +405,12 @@ class NamedPathObjectsTests(_StoreCase):
     """Item 4: a path the action names and the record cites makes it topical."""
 
     padded = True
+    extra = """
+@2026-09-21 remember attempt --title "Second full-suite run came back FROM-CACHE"
+  --set Tried "rm -rf app/build/test-results/ and ran the suite again"
+  --set Do\\ Not\\ Retry\\ Unless "you also pass --rerun-tasks"
+  --tags gradle --confidence low --allow-duplicate
+"""
 
     def test_the_from_cache_attempt_objects_to_deleting_its_directory(self):
         result = self.guard("rm -rf app/build/test-results")
@@ -416,31 +425,9 @@ class NamedPathObjectsTests(_StoreCase):
         )
 
     def test_a_path_cited_only_in_prose_counts_too(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = make_repo(Path(tmp) / "repo")
-            quiet(["init", "--project", str(root)])
-            quiet(
-                [
-                    "remember",
-                    "attempt",
-                    "--title",
-                    "Second full-suite run came back FROM-CACHE",
-                    "--set",
-                    "Tried",
-                    "rm -rf app/build/test-results/ and ran the suite again",
-                    "--set",
-                    "Do Not Retry Unless",
-                    "you also pass --rerun-tasks",
-                    "--tags",
-                    "gradle",
-                    "--confidence",
-                    "low",
-                    "--project",
-                    str(root),
-                ]
-            )
-            result = scoring.guard(root / ".project-memory", root, "rm -rf app/build/test-results")
-            self.assertEqual([m["stance"] for m in result["matches"]], ["blocking"])
+        # No file evidence: the path is in what it tried.
+        result = self.guard("rm -rf app/build/test-results")
+        self.assertEqual(self.stance(result, ID_PROSE_ONLY), "blocking")
 
 
 class ObjectionsNeedTheActionTests(_StoreCase):
