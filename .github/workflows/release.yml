@@ -67,6 +67,17 @@ on:
 permissions:
   contents: read
 
+# Git 2.47+ runs its post-commit auto-maintenance detached. In a test's
+# temporary repository it can still be writing to `.git/objects` when the test
+# deletes the directory ("Directory not empty", seen in test_hooks and
+# test_multi_machine). These settings reach every git process the tests start.
+env:
+  GIT_CONFIG_COUNT: "2"
+  GIT_CONFIG_KEY_0: maintenance.auto
+  GIT_CONFIG_VALUE_0: "false"
+  GIT_CONFIG_KEY_1: gc.auto
+  GIT_CONFIG_VALUE_1: "0"
+
 # A publish is irreversible, and the pre-flight's "is this version on PyPI?" check
 # is a read followed much later by a write — two dispatches started together could
 # both pass it and race to upload. Serialize every run of this
