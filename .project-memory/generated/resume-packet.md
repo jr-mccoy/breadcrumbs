@@ -1,22 +1,22 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 78f6691 | inputs_hash: b40f1406c774 | generated_at: 2026-10-03T14:55:14+00:00 -->
-<!-- view: markdown | budget: 3045/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 25bf611 | inputs_hash: 2afe87f5b89a | generated_at: 2026-10-03T17:53:41+00:00 -->
+<!-- view: markdown | budget: 2955/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-4e962709-tubaoe` · commit `78f6691` · 8 uncommitted file(s) · handoff: handoffs/ccr-4e962709-tubaoe.md
+branch `claude/charming-sagan-9o911q` · commit `25bf611` · 8 uncommitted file(s) · handoff: handoffs/claude-charming-sagan-9o911q-612e24.md
 
 ## Current Focus
 0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
 
 ## Next Action
-Health review items 2.2, 2.1 and 1.1 are done on branch ccr-4e962709-tubaoe (PR #59): breadcrumbs.git; the cli.py extraction (hooks_*, packet, textmatch, scoring, validate, audit, secretscan); audit decision staleness keyed on evidence. Next: get PR #59 reviewed and merged; then 1.2 (close or schedule the PreCompact question), 3.2 (coverage job), and 3.3 (WP tracker triage, needs the operator). 0.6.0 is still unpublished: check the native-full Windows job on main, then run the release workflow; the next CHANGELOG entry must cover the audit change (age line gone from packet and audit; new decision-evidence-* and decision-aged checks).
-
-_(2 earlier entries in handoffs/ccr-4e962709-tubaoe.md)_
+DoWhat 0.6.0 retest fixes are on claude/charming-sagan-9o911q (plan: docs/reviews/2026-10-03-dowhat-0.6.0-retest-plan.md, CHANGELOG [Unreleased], proposed 0.6.1). Waiting on the operator: the launcher DECIDE (item 2) and the go to release. To release: bump __version__ to 0.6.1, move [Unreleased] to [0.6.1] with the date, add the docs/compatibility.md section 3 row, merge to main, run release.yml dry-run then publish. Then remeasure the hook on Windows with doctor --hook-log.
 
 ## Active Decisions
+- `dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached` — At a stable HEAD a full firing now starts 0 processes, including on a shallow blob-filtered clone; after HEAD moves at most 2 (rev-list, ls-tree), neither needing a blob.
+- `dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about` — Stance is what interrupts a human; ranking and labels are what find memory. Applying the rule to lookups changed crumb search's wire output (parity fixture) and, with the weight removed too, lost the service eval's logout/cookie attempt from the prompt hook.
 - `dec_20261003_code-moves-out-of-cli-py-by-mechanical-ast-move-into` — A mechanical move behind the parity fixture, the evals and the full suite cannot change behaviour. A patch on cli no longer reaches a moved function's callers, so tests patch the owning module; tests/test_extracted_modules.py enforces the contract.
 - `dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence` — Measured on this store: 6 warnings on main where the age rule gave 17 and 'touched since' gave 48, each a real candidate. Two git processes for the whole store. The staleness eval suite (split: checks) asserts every true staleness kind is questioned and an old untouched decision is not.
 - `dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps` — A reader that accepts more than validate acts on stamps validate rejects, and differently per interpreter. One spelling for POSIX paths keeps the store-relative POSIX rule in one place. Exact and loose tokenizing serve different jobs; merging them would change guard verdicts and the eval baseline.
@@ -30,9 +30,7 @@ _(2 earlier entries in handoffs/ccr-4e962709-tubaoe.md)_
 - `dec_20261001_guard-reads-shell-commands-by-segment-and-effect` — Field report issues 7/8/N4: 23 of 23 firings warned, and find | xargs rm -rf was capped as read-only. Operator decision D3 (built-in floor).
 - `dec_20261001_capture-session-next-adds-a-dated-entry-only-replace` — Field report 2026-10-01 issue 1: a one-line --next destroyed a 139-line hand-kept log with no copy. Operator decision D1 (append unless --replace); D1b: no requires: flag.
 - `dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand` — Keeps per-push cost low while main and a weekly run still see platform regressions; run it by hand on a branch before merging platform-sensitive changes.
-- `dec_20260928_store-relative-paths-are-posix-and-line-endings` — A store is shared across machines and platforms; a value that differs by OS makes stamps stale everywhere and made rollback and the write gate silently wrong on Windows.
-- `dec_20260927_transports-reach-the-store-through-breadcrumbs-service` — CLI, MCP and hooks call service functions (record, mark_status, search, guard, resume_packet, prompt_lookup, admit) inside service.active(ctx); wording, exit codes and envelopes stay in the adapters. Parser lives in cli_parser.py. Aliases and clock are per-thread scoped state. Any further move out o… [excerpt: 300 of 379 chars; full text: crumb show dec_20260927_transports-reach-the-store-through-breadcrumbs-service]
-_(… 45 more omitted to stay within the per-section cap)_
+_(… 47 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -55,9 +53,13 @@ _(none recorded)_
 
 ## Inbox (unsorted, expires)
 _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or drop with `crumb inbox drop <id>`)_
-- `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (10d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
+- `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (11d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/cli.py
+- breadcrumbs/hooks_guard.py
+- tests/test_retest_060.py
+- breadcrumbs/scoring.py
 - tests/test_extracted_modules.py
 - docs/architecture.md
 - breadcrumbs/audit.py
@@ -68,17 +70,13 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/validation.py
 - breadcrumbs/git.py
 - tests/test_git.py
-- breadcrumbs/cli.py
 - breadcrumbs/hooks_common.py
 - breadcrumbs/hooks_compact.py
 - breadcrumbs/gitrefs.py
 - breadcrumbs/compat.py
 - breadcrumbs/migrate.py
 - docs/reviews/2026-10-02-dowhat-retest-plan.md
-- .github/workflows/ci.yml
-- tests/test_platform_portability.py
-- breadcrumbs/service.py
-_(… 49 more omitted to stay within the per-section cap)_
+_(… 52 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime

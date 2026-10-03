@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "b40f1406c774",
+ "inputs_hash": "2afe87f5b89a",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -18,9 +18,9 @@
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
   ],
   "dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword": [
+   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
    "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
-   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap"
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
   ],
   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
@@ -68,9 +68,9 @@
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches"
   ],
   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head": [
+   "dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached",
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
-   "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns"
+   "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction"
   ],
   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
@@ -263,9 +263,9 @@
    "dec_20261001_capture-session-next-adds-a-dated-entry-only-replace"
   ],
   "dec_20261002_guard-speed-remove-git-processes-first-remeasure-on-windows": [
+   "dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached",
    "dec_20261002_the-guard-pre-filter-is-machine-local-in-index-compact",
-   "dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+   "dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas"
   ],
   "dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input": [
    "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new",
@@ -281,6 +281,11 @@
    "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new",
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author"
+  ],
+  "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about": [
+   "dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached",
+   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
+   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
   ],
   "dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
@@ -301,6 +306,11 @@
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
    "dec_20261001_guard-reads-shell-commands-by-segment-and-effect",
    "dec_20260905_path-extraction-is-structural-and-a-mined-path"
+  ],
+  "dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached": [
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
