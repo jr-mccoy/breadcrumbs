@@ -21,6 +21,17 @@ on:
 permissions:
   contents: read
 
+# Git 2.47+ runs its post-commit auto-maintenance detached. In a test's
+# temporary repository it can still be writing to `.git/objects` when the test
+# deletes the directory ("Directory not empty", seen in test_hooks and
+# test_multi_machine). These settings reach every git process the tests start.
+env:
+  GIT_CONFIG_COUNT: "2"
+  GIT_CONFIG_KEY_0: maintenance.auto
+  GIT_CONFIG_VALUE_0: "false"
+  GIT_CONFIG_KEY_1: gc.auto
+  GIT_CONFIG_VALUE_1: "0"
+
 # `push` and `pull_request` both fire on a PR branch, so every PR ran the whole
 # matrix twice. Supersede the older run instead of racing it; never cancel a run
 # on a protected branch, where the result is the branch's status.
