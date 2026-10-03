@@ -61,7 +61,12 @@ These are pass/fail assertions, each run against a suite's store:
 - a relevant record is delivered (`delivered`);
 - a control prompt is silent (`quiet`);
 - every delivery is well-formed and within its declared budget
-  (`delivery_bounded`).
+  (`delivery_bounded`);
+- `crumb audit` questions every decision whose evidence moved — a cited file
+  rewritten, changed or gone, a contradicting or restating newer record, or
+  nothing at all far past the age cutoff (`audit_flags`) — and none that is
+  merely old, or whose only "change" is its own landing commit (`audit_quiet`).
+  The `staleness` suite holds these cases (health review 1.1).
 
 **No baseline can approve a critical case.** It fails the run however the
 aggregates compare, and `--write-baseline` refuses to write while one fails.
@@ -114,11 +119,16 @@ Each directory under `suites/` is one store:
 - `store.crumb`: the commands that build it. Each command starts on an
   `@YYYY-MM-DD` line, and indented lines continue it. Every command runs
   through `crumb.main` with the clock set to its date, so the store is written
-  by the same code a user's is, and ids and ages are reproducible.
+  by the same code a user's is, and ids and ages are reproducible. A command
+  starting with `!` works on the project's files and git history instead:
+  `!lines PATH N [TAG]` writes N numbered lines, `!append PATH TEXT`,
+  `!rm PATH`, and `!commit MESSAGE` commits everything, dated that day. The
+  first `!` line makes the project a git repository before the store exists.
 - `files/` (optional): copied into the store as-is, for example
   `aliases.txt`.
 - `tasks.yml`: `as_of` (the clock the queries run at), optionally
-  `split: holdout`, and `tasks`. Each task has `task`, and optionally `expect`,
+  `split: holdout` or `split: checks`, and `tasks`. A `checks` suite has no
+  tasks: it backs critical cases only and is left out of every scope. Each task has `task`, and optionally `expect`,
   `reject`, `verdict`, `files` and `note`. The file is a strict YAML subset:
   one-line values and one-line `[a, b]` lists.
 
@@ -130,6 +140,7 @@ Stores are built in a temporary directory on every run.
 | `service`     | dev     | Python backend: auth, Postgres, Celery  | store aliases (`pg` → `database`), stale and superseded decisions, an answered question, the fixture 2/3 guard pair |
 | `library`     | dev     | pure-Python CLI on PyPI                 | one-word actions (`upgrade ruff`), release records that disagree on one area, an idea that must never surface |
 | `holdout-ops` | holdout | Terraform, Kubernetes, a deploy workflow | destructive infra commands, a superseded secrets decision, an idea, controls |
+| `staleness`   | checks  | a small app with a git history          | decision staleness in `audit`: evidence rewritten, changed, deleted; a decision against a do-not-retry attempt; a very old decision; an old untouched one and a decision's own landing, which stay quiet |
 
 ### Holdout
 

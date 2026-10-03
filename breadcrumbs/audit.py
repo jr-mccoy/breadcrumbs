@@ -10,15 +10,17 @@ Moved out of `cli.py` (health review 2.1). `cli.cmd_audit` renders it.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from breadcrumbs import cli
+from breadcrumbs import git as _git
 from breadcrumbs import packet as _packet
 from breadcrumbs import path_policy
 from breadcrumbs import scoring as _scoring
 from breadcrumbs import secretscan as _secretscan
 from breadcrumbs import textmatch as _textmatch
 from breadcrumbs import validate as _validate
+from breadcrumbs import validation as _validation
 
 
 # --------------------------------------------------------------------------- #
@@ -203,6 +205,315 @@ def _audit_finding(check: str, severity: str, path: str | None, message: str, **
     return f
 
 
+# ---- decision staleness (health review 1.1) -------------------------------- #
+#
+# A decision staying unchanged for a month is the normal case, not a finding.
+# "Active decision … is N days old with no update — is this still true?" was 17
+# of this store's 21 audit warnings, and when most of the output is noise the
+# one warning that matters is not read. Nor is "a cited file changed since":
+# in a codebase under work, the files a decision cites usually do, and keyed on
+# that alone 48 of this store's 56 active decisions warned. Staleness is keyed
+# on how much the evidence moved:
+#
+# - `decision-evidence-rewritten` (WARN): since the decision was written, a
+#   file it cites has been churned by at least AUDIT_EVIDENCE_REWRITE_SHARE of
+#   its current size. Not counted: a hub file (one most commits touch, so a
+#   change to it says nothing about this decision), and the decision's own
+#   landing — the commit that created a cited file, or the first commit that
+#   touched a file that was uncommitted when the decision was recorded.
+# - `decision-evidence-changed` (INFO, one line): the decisions whose cited
+#   files changed by less than that; `--json` lists them.
+# - `possible-contradiction` and `evidence-missing-file` (WARN, lifecycle): a
+#   newer record argues with it, or a file it cites is gone.
+# - `decision-aged` (INFO): none of the above, and older than
+#   AUDIT_DECISION_AGE_FACTOR times the age cutoff. Once per record, and only
+#   here: the resume packet carries no age line for a decision.
+#
+# On this store at the start of this work (main at b8266a3) that is 6 warnings
+# where the age rule gave 17. The history costs two git processes for the whole
+# store, both bounded by `cli._REVLIST_INDEX_CAP`: HEAD's ancestry with parents,
+# and the commits that touched any cited file, with line counts.
+
+AUDIT_EVIDENCE_REWRITE_SHARE = 0.5
+AUDIT_EVIDENCE_HUB_SHARE = 0.15
+# Below this many commits of history nothing is a hub: in a young repository
+# every file is touched by a large share of a handful of commits.
+AUDIT_EVIDENCE_HUB_MIN_COMMITS = 40
+AUDIT_DECISION_AGE_FACTOR = 8
+AUDIT_EVIDENCE_FILES_SHOWN = 3
+AUDIT_EVIDENCE_IDS_SHOWN = 5
+
+
+class _Touch:
+    __slots__ = ("sha", "time", "subject", "churn", "created")
+
+    def __init__(self, sha: str, time: int, subject: str):
+        self.sha, self.time, self.subject = sha, time, subject
+        self.churn: dict[str, int] = {}  # path -> lines added + deleted
+        self.created: set[str] = set()
+
+
+class _EvidenceHistory:
+    """HEAD's recent ancestry, and the commits that touched the cited files."""
+
+    def __init__(self, root: Path, files: list[str]):
+        self.root = root
+        self.parents: dict[str, list[str]] = {}
+        self.touching: list[_Touch] = []  # newest first
+        self._ancestors: dict[str, set[str]] = {}
+        cap = cli._REVLIST_INDEX_CAP
+        graph = _git.run(
+            root, "rev-list", "--topo-order", "--parents", f"--max-count={cap}", "HEAD"
+        )
+        for line in (graph or "").splitlines():
+            shas = line.split()
+            if shas:
+                self.parents[shas[0]] = shas[1:]
+        if not self.parents or not files:
+            return
+        # Paths relative to the project root on both sides (`--relative`),
+        # unquoted, and no rename pairing: a renamed evidence file is gone,
+        # which `evidence-missing-file` reports.
+        log = _git.run(
+            root,
+            "-c",
+            "core.quotepath=off",
+            "log",
+            f"--max-count={cap}",
+            "--relative",
+            "--no-renames",
+            "--numstat",
+            "--summary",
+            "--format=%x00%H %ct %s",
+            "HEAD",
+            "--",
+            *files,
+        )
+        for chunk in (log or "").split("\0")[1:]:
+            head, _, rest = chunk.partition("\n")
+            sha, _, tail = head.partition(" ")
+            stamp, _, subject = tail.partition(" ")
+            if not sha or not stamp.isdigit():
+                continue
+            touch = _Touch(sha, int(stamp), subject)
+            for line in rest.splitlines():
+                cols = line.split("\t")
+                if len(cols) == 3:
+                    added, deleted, path = cols
+                    lines = (int(added) if added.isdigit() else 0) + (
+                        int(deleted) if deleted.isdigit() else 0
+                    )
+                    touch.churn[_git.unquote_path(path.strip())] = lines
+                elif line.startswith(" create mode "):
+                    touch.created.add(_git.unquote_path(line.split(" ", 4)[-1].strip()))
+            self.touching.append(touch)
+
+    def hubs(self) -> set[str]:
+        """Paths most commits touch: a change to one says nothing in particular."""
+        if len(self.parents) < AUDIT_EVIDENCE_HUB_MIN_COMMITS:
+            return set()
+        counts: dict[str, int] = {}
+        for t in self.touching:
+            for path in t.churn:
+                counts[path] = counts.get(path, 0) + 1
+        bar = AUDIT_EVIDENCE_HUB_SHARE * len(self.parents)
+        return {path for path, n in counts.items() if n > bar}
+
+    def _resolve(self, commit: str) -> str | None:
+        """The full sha in the window that `commit` (any abbreviation) names."""
+        if not commit or commit == cli.NO_GIT_COMMIT:
+            return None
+        hits = [sha for sha in self.parents if _git.same_commit(commit, sha)]
+        return hits[0] if len(hits) == 1 else None
+
+    def _ancestors_of(self, sha: str) -> set[str]:
+        if sha not in self._ancestors:
+            seen, stack = set(), [sha]
+            while stack:
+                cur = stack.pop()
+                if cur in seen:
+                    continue
+                seen.add(cur)
+                stack.extend(p for p in self.parents.get(cur, ()) if p in self.parents)
+            self._ancestors[sha] = seen
+        return self._ancestors[sha]
+
+    def since(self, commit: str, written_at) -> list[_Touch]:
+        """The touching commits made after the one a record was written at.
+
+        By ancestry when the record's commit is in the window: a commit that
+        is not its ancestor landed afterwards (a side branch merged later
+        included). For an older commit git confirms it exists, and every
+        commit in the window is then newer. A commit this clone does not have
+        (a rebase, a record written elsewhere) falls back to commit time
+        against the record's own timestamp.
+        """
+        base = self._resolve(commit)
+        if base is not None:
+            before = self._ancestors_of(base)
+            return [t for t in self.touching if t.sha in self.parents and t.sha not in before]
+        if commit and commit != cli.NO_GIT_COMMIT:
+            known = _git.run(self.root, "rev-parse", "--verify", "--quiet", f"{commit}^{{commit}}")
+            if known:
+                return [t for t in self.touching if t.sha in self.parents]
+        when = _validation.parse_timestamp(written_at)
+        if when is None:
+            return []
+        if when.tzinfo is None:
+            when = when.astimezone()
+        return [t for t in self.touching if t.time > when.timestamp()]
+
+
+def _covers(cited: str, path: str) -> bool:
+    return path == cited or path.startswith(cited + "/")
+
+
+def _cited_files(root: Path, rec) -> list[str]:
+    """The files a record cites as evidence that exist here, store files aside."""
+    out = []
+    for ref in cli._evidence_refs(rec, ("file",)):
+        p = path_policy.to_posix(ref).strip()
+        while p.startswith("./"):
+            p = p[2:]
+        p = p.rstrip("/")
+        parts = PurePosixPath(p).parts
+        if not p or PurePosixPath(p).is_absolute() or ".." in parts:
+            continue
+        if parts[0] == cli.MEMORY_DIRNAME:
+            continue
+        if (Path(root) / p).exists():  # a gone file is `evidence-missing-file`'s
+            out.append(p)
+    return sorted(set(out))
+
+
+def _line_count(path: Path) -> int | None:
+    """Lines in a text file; None for a directory or a binary file."""
+    try:
+        data = path.read_bytes() if path.is_file() else None
+    except OSError:
+        return None
+    if data is None or b"\0" in data[:8192]:
+        return None
+    return max(1, data.count(b"\n") + (0 if data.endswith(b"\n") or not data else 1))
+
+
+def evidence_churn(rec, files: list[str], history: _EvidenceHistory) -> dict[str, list[int]]:
+    """`{file: [lines churned, commits]}` since `rec` was written, its landing excluded."""
+    dirty = [
+        path_policy.to_posix(d).rstrip("/")
+        for d in rec.meta.get("dirty_files") or []
+        if isinstance(d, str)
+    ]
+    was_dirty = lambda f: any(_covers(d, f) or _covers(f, d) for d in dirty)  # noqa: E731
+    written = rec.meta.get("updated_at") or rec.meta.get("created_at")
+    landed: set[str] = set()
+    out: dict[str, list[int]] = {}
+    for t in reversed(history.since(str(rec.meta.get("commit") or ""), written)):  # oldest first
+        hit = {f for f in files if any(_covers(f, path) for path in t.churn)}
+        made = {f for f in hit if any(_covers(f, path) for path in t.created)}
+        land = {f for f in hit - made if was_dirty(f) and f not in landed}
+        landed |= made | land
+        for f in hit - made - land:
+            row = out.setdefault(f, [0, 0])
+            row[0] += sum(n for path, n in t.churn.items() if _covers(f, path))
+            row[1] += 1
+    return out
+
+
+def _questioned_ids(findings) -> set[str]:
+    ids: set[str] = set()
+    for f in findings:
+        if f.get("severity") in (AUDIT_WARN, AUDIT_FAIL):
+            if f.get("id"):
+                ids.add(str(f["id"]))
+            ids.update(str(i) for i in f.get("ids") or ())
+    return ids
+
+
+def decision_staleness_findings(
+    memory_dir: Path, root: Path, decisions: list, stale_days: int, prior=()
+) -> list[dict]:
+    """`decision-evidence-rewritten`, `decision-evidence-changed` and `decision-aged`."""
+    findings: list[dict] = []
+    cited = {id(rec): _cited_files(root, rec) for rec in decisions}
+    every = sorted({f for files in cited.values() for f in files})
+    history = _EvidenceHistory(root, every) if every and _git.is_repo(root) else None
+    hubs = history.hubs() if history is not None else set()
+    sizes = {f: _line_count(Path(root) / f) for f in every}
+    rewritten_ids: set[str] = set()
+    changed: list[dict] = []
+    for rec in decisions:
+        rid = rec.meta.get("id", rec.stem)
+        files = [f for f in cited[id(rec)] if f not in hubs]
+        if not files or history is None:
+            continue
+        churn = evidence_churn(rec, files, history)
+        if not churn:
+            continue
+        rewritten = sorted(
+            f
+            for f, (lines, _n) in churn.items()
+            if sizes.get(f) and lines >= AUDIT_EVIDENCE_REWRITE_SHARE * sizes[f]
+        )
+        if not rewritten:
+            changed.append({"id": rid, "files": sorted(churn)})
+            continue
+        shown = ", ".join(
+            f"{f} ({churn[f][0] / sizes[f]:.0%} in {churn[f][1]} commit(s))"
+            for f in rewritten[:AUDIT_EVIDENCE_FILES_SHOWN]
+        )
+        more = len(rewritten) - AUDIT_EVIDENCE_FILES_SHOWN
+        findings.append(
+            _audit_finding(
+                "decision-evidence-rewritten",
+                AUDIT_WARN,
+                path_policy.posix_rel(rec.path, memory_dir),
+                f"{rid}: its evidence was rewritten since it was written — {shown}"
+                + (f" (+{more} more)" if more > 0 else "")
+                + " — is it still true?",
+                id=rid,
+                files=rewritten,
+                churn={f: churn[f][0] for f in rewritten},
+            )
+        )
+        rewritten_ids.add(rid)
+    if changed:
+        ids = [c["id"] for c in changed]
+        more = len(ids) - AUDIT_EVIDENCE_IDS_SHOWN
+        findings.append(
+            _audit_finding(
+                "decision-evidence-changed",
+                AUDIT_INFO,
+                None,
+                f"{len(ids)} active decision(s) cite files changed since they were written, "
+                f"none rewritten: {', '.join(ids[:AUDIT_EVIDENCE_IDS_SHOWN])}"
+                + (f" (+{more} more; `crumb audit --json` lists them)" if more > 0 else ""),
+                ids=ids,
+                decisions=changed,
+            )
+        )
+    questioned = rewritten_ids | {c["id"] for c in changed} | _questioned_ids(prior)
+    limit = stale_days * AUDIT_DECISION_AGE_FACTOR
+    for rec in decisions:
+        rid = rec.meta.get("id", rec.stem)
+        if rid in questioned:
+            continue
+        age = cli._age_days(rec.meta.get("updated_at") or rec.meta.get("created_at"))
+        if age is not None and age > limit:
+            findings.append(
+                _audit_finding(
+                    "decision-aged",
+                    AUDIT_INFO,
+                    path_policy.posix_rel(rec.path, memory_dir),
+                    f"{rid} is {age} days old and nothing has questioned or updated it — "
+                    "confirm it still holds, or retire it.",
+                    id=rid,
+                    age_days=age,
+                )
+            )
+    return findings
+
+
 def run_audit(memory_dir: Path, root: Path, *, stale_days: int = cli.STALE_AGE_DAYS) -> list[dict]:
     """Heuristic health + safety audit.
 
@@ -287,6 +598,15 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = cli.STALE_AGE_D
     from breadcrumbs import promote as _promote
 
     findings.extend(_promote.audit_findings(memory_dir, root))
+
+    # Decision staleness keyed on evidence, not elapsed time (health review 1.1).
+    # After the lifecycle findings, so a decision they already question is not
+    # questioned again for its age.
+    findings.extend(
+        decision_staleness_findings(
+            memory_dir, root, cli.active_decisions(memory_dir), stale_days, findings
+        )
+    )
 
     # A (cont). Re-surface the validate-failing health conditions for the health view
     # (missing evidence, invalid status, private-path violation, id/frontmatter

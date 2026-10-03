@@ -163,7 +163,7 @@ def compute_staleness(
     `risks_only` is the guard-context view (0.1.10 field test, P0-4): only
     warnings that flag an *abnormal* state — cold handoff, detached HEAD,
     handoff branch mismatch — are emitted. The full view additionally reports
-    routine per-store facts (handoff age when fresh, aged records, low
+    routine per-store facts (handoff age when fresh, aged open questions, low
     confidence, other-branch records); repeating those on every guard call was
     invariant noise, so they stay in resume/doctor/audit where they are read
     once per session, not once per edit.
@@ -239,14 +239,11 @@ def compute_staleness(
     if risks_only:
         return warnings
 
-    # (6) Aged-unresolved decisions + open questions.
-    for r in decisions:
-        a = cli._age_days(r.meta.get("updated_at") or r.meta.get("created_at"))
-        if a is not None and a > stale_days:
-            warnings.append(
-                f"active decision {r.meta.get('id', r.stem)} is {a} days old with no "
-                "update — is this still true?"
-            )
+    # (6) Aged-unresolved open questions. A decision's age alone is not a
+    # warning: one that stays unchanged for a month is the normal case, and
+    # the line was most of every packet's and audit's warnings (health review
+    # 1.1). `crumb audit` keys decision staleness on its evidence instead
+    # (`audit.decision_staleness_findings`).
     for q in questions:
         if (q.get("status") or "open") != "open":
             continue

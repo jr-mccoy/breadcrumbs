@@ -1,0 +1,54 @@
+# Decision staleness (health review 1.1). Audit questions a decision when its
+# evidence moved — a cited file rewritten, changed, gone, or a newer record
+# arguing with it — and stays quiet about one that is merely old. This suite
+# has a git history so those cases can happen; `split: checks` keeps it out of
+# every aggregate. The critical cases in evals/critical/cases.yml assert that no
+# true staleness case goes quiet and that the merely old one does.
+
+@2025-05-01 !lines docs/onboarding.md 20
+@2025-05-01 !commit "Onboarding notes"
+@2025-05-01 remember decision --title "All timestamps are stored in UTC"
+  --set Decision "Every stored timestamp is UTC; local time is a display concern."
+  --evidence commit 0000000 --tags time
+
+@2025-12-01 !lines docs/logging.md 20
+@2025-12-01 !commit "Logging notes"
+@2025-12-01 remember decision --title "Application logs are JSON lines"
+  --set Decision "Every service writes one JSON object per log line to stdout."
+  --evidence file docs/logging.md --tags logging
+
+@2026-01-05 !lines src/payments.py 40
+@2026-01-05 !lines src/rates.toml 30
+@2026-01-05 !lines src/legacy_export.py 20
+@2026-01-05 !lines src/webhooks.py 30
+@2026-01-05 !commit "Initial code"
+@2026-01-06 remember decision --title "Payment amounts round half-even"
+  --set Decision "src/payments.py rounds every amount half-even, to the cent, once, at the end."
+  --evidence file src/payments.py --tags payments,rounding
+@2026-01-06 remember decision --title "Exchange rates load once from rates.toml at startup"
+  --set Decision "src/rates.toml is read at boot; a rate change needs a restart."
+  --evidence file src/rates.toml --tags rates,config
+@2026-01-06 remember decision --title "The legacy export job keeps its own module"
+  --set Decision "src/legacy_export.py stays separate so the nightly export can be retired alone."
+  --evidence file src/legacy_export.py --tags export
+@2026-01-06 !commit "Record decisions"
+
+@2026-01-10 !lines src/cache.py 30
+@2026-01-10 remember decision --title "Cache entries expire after one hour"
+  --set Decision "src/cache.py expires every entry an hour after it is written."
+  --evidence file src/cache.py --tags cache
+@2026-01-10 !commit "Add the cache"
+
+@2026-01-12 remember attempt --title "Retrying failed webhook deliveries immediately with no backoff"
+  --set Tried "Failed webhook deliveries were retried immediately, with no backoff between attempts."
+  --set Result "Partners rate-limited us within minutes and dropped every delivery for an hour."
+  --set "Do Not Retry Unless" "partners publish a burst allowance for webhook retries"
+  --evidence file src/webhooks.py --tags webhooks,retry
+@2026-01-20 !lines src/payments.py 40 v2
+@2026-01-20 !append src/rates.toml "timeout_seconds = 5"
+@2026-01-20 !rm src/legacy_export.py
+@2026-01-20 !commit "Rework payments, add a rate timeout, drop the legacy export"
+@2026-01-25 remember decision --title "Retry failed webhook deliveries immediately with no backoff"
+  --set Decision "Failed webhook deliveries are retried immediately, with no backoff between attempts."
+  --evidence file src/webhooks.py --tags webhooks,retry
+@2026-01-25 !commit "Record webhook decisions"

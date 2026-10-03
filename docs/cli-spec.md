@@ -900,7 +900,7 @@ carry a severity:
 - **warn** — flag for human review; never changes the exit code. Covers: stale
   handoff (age + commit-distance, measured on the handoff this branch reads —
   see `resume`; the finding's path is that file), branch mismatch (incl. detached HEAD),
-  aged-unresolved questions/decisions, expired + low-confidence records,
+  aged-unresolved open questions, expired + low-confidence records,
   **instruction-like text** (override phrasing such as "ignore the tests" — flagged,
   never executed: matched memory is data, not command), **generated-packet drift**
   (a committed projection — `generated/*.md`, `related.json` or `conflicts.json` — whose stamped
@@ -912,7 +912,10 @@ carry a severity:
   **`unadopted-block`** (at schema 3, a hand-written trap/question block in a
   singleton whose id already has a file with different content — merge it into
   the file by hand, then delete the block), **`aliases`** (a malformed line in
-  `aliases.txt`, which is ignored), and four lifecycle checks over live
+  `aliases.txt`, which is ignored), **`decision-evidence-rewritten`** (an
+  active decision whose cited file has been churned, since the decision was
+  written, by at least half its current size — lines added plus deleted by later
+  commits; see *Decision staleness* below), and four lifecycle checks over live
   (active, unexpired) records:
   - **`evidence-missing-file`** — a decision, attempt or verification cites
     `file`/`path` evidence that is neither on disk nor in HEAD (same rules as
@@ -959,7 +962,25 @@ carry a severity:
   - **`never-surfaced`** — an active record at least 90 days old with no entry
     in `private/usage.json` (up to 10). A record already reported as a
     `decay-candidate` is not reported again here. Both checks run only when
-    `usage.json` holds some history.
+    `usage.json` holds some history;
+  - **`decision-evidence-changed`** — one line: the active decisions whose
+    cited files changed since they were written, by less than the rewrite bar.
+    `--json` carries every id and its files;
+  - **`decision-aged`** — an active decision older than eight times the age
+    cutoff (168 days at the default 21) that nothing else questions: no
+    evidence finding, no contradiction or near-duplicate. One per record.
+
+**Decision staleness** (health review 1.1). A decision's age alone is not a
+warning, in `audit` or in the `resume` packet: one that stays unchanged for a
+month is the normal case, and "is N days old with no update" was most of every
+report. `audit` asks whether its evidence moved instead. A change counts from
+the commit the decision was written at (by ancestry; by commit time when this
+clone does not have that commit). Two kinds of commit never count: the
+decision's own landing (the commit that created a cited file, or the first one
+that touched a file that was uncommitted when the decision was recorded), and
+a commit to a *hub* (a file touched by more than 15% of the last 5000 commits,
+once there are at least 40; a change to it says nothing about one decision).
+The history costs two `git` processes for the whole store.
 
 Exit codes: `1` when any **fail** finding is present (a secret), else `0`; `2` when no
 `.project-memory/` store is present.
