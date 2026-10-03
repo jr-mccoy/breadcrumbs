@@ -34,7 +34,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from breadcrumbs import checks as _checks
 from breadcrumbs import cli
-from breadcrumbs import git
+from breadcrumbs import git, path_policy
 from breadcrumbs import validation as _validation
 
 # --------------------------------------------------------------------------- #
@@ -126,7 +126,7 @@ def expired_items(memory_dir: Path) -> list[dict]:
                 "title": rec.meta.get("title") or rec.stem,
                 "expires_at": rec.meta.get("expires_at"),
                 "days_ago": cli._age_days(rec.meta.get("expires_at")),
-                "path": rec.path.relative_to(memory_dir).as_posix(),
+                "path": path_policy.posix_rel(rec.path, memory_dir),
             }
         )
     out.sort(key=lambda r: (cli._dt_sort_key(r["expires_at"]), r["id"]))

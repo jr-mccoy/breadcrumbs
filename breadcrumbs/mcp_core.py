@@ -78,7 +78,7 @@ def _rel(path: str | Path, memory_dir: Path) -> str:
     """
     p = Path(path)
     try:
-        return p.relative_to(memory_dir).as_posix()
+        return path_policy.posix_rel(p, memory_dir)
     except ValueError:
         # Not under the store (should not happen): the bare name still tells the
         # client which file, without naming a directory on this machine.
@@ -207,7 +207,7 @@ def resource_handoff(root: str | Path | None = None) -> str:
 
     project_root, mem = resolve(root)
     path, _label = _handoffs.read_path(mem, project_root)
-    return _read_singleton(mem, path.relative_to(mem).as_posix())
+    return _read_singleton(mem, path_policy.posix_rel(path, mem))
 
 
 @_data_view

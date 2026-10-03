@@ -436,7 +436,7 @@ def store_files(directory: Path) -> dict[str, str]:
     windows = top != os.fspath(directory)
     out: dict[str, str] = {}
     for dirpath, dirnames, filenames in os.walk(top, followlinks=False):
-        rel_parts = [p for p in dirpath[len(top) :].replace("\\", "/").split("/") if p]
+        rel_parts = [p for p in path_policy.to_posix(dirpath[len(top) :]).split("/") if p]
         if not rel_parts:
             dirnames[:] = [d for d in dirnames if d not in _BACKUP_SKIP_DIRS]
         dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
@@ -494,7 +494,7 @@ def _discard(path: Path) -> None:
 
 def _rel(path: Path, memory_dir: Path) -> str:
     try:
-        return Path(path).relative_to(Path(memory_dir).parent).as_posix()
+        return path_policy.posix_rel(Path(path), Path(memory_dir).parent)
     except ValueError:
         return Path(path).name
 

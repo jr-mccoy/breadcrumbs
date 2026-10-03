@@ -24,6 +24,8 @@ import re
 import shlex
 from pathlib import PurePosixPath
 
+from breadcrumbs.path_policy import to_posix
+
 # ---- read-only verbs (moved here from cli.py; cli re-exports the names) ----- #
 
 # Commands whose whole job is to report. Deliberately a short allowlist of the
@@ -435,7 +437,7 @@ def words(segment: str) -> list[str]:
 
 
 def verb_of(tokens: list[str]) -> str:
-    return PurePosixPath((tokens[0] if tokens else "").replace("\\", "/")).name.lower()
+    return PurePosixPath(to_posix(tokens[0] if tokens else "")).name.lower()
 
 
 # ---- crumb's own commands ------------------------------------------------- #
@@ -489,7 +491,7 @@ def crumb_invocation(tokens: list[str]) -> list[str] | None:
             rest = rest[1:]
         if rest[:2] == ["-m", "breadcrumbs"]:
             return rest[2:]
-        if rest and PurePosixPath(rest[0].replace("\\", "/")).name == "crumb.py":
+        if rest and PurePosixPath(to_posix(rest[0])).name == "crumb.py":
             return rest[1:]
     return None
 
@@ -708,7 +710,7 @@ def _rm_rf_outside_build(tokens: list[str]) -> str | None:
         return None
     targets = [t for t in tokens[1:] if not t.startswith("-")]
     for t in targets:
-        parts = [p for p in t.replace("\\", "/").split("/") if p not in ("", ".")]
+        parts = [p for p in to_posix(t).split("/") if p not in ("", ".")]
         if t.startswith("/tmp/") or any(
             p in _BUILD_DIR_NAMES or p.endswith(".egg-info") for p in parts
         ):

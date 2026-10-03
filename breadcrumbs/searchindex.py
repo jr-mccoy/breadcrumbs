@@ -238,7 +238,7 @@ def build_index(
                     "INSERT INTO records VALUES (?, ?, ?, ?)",
                     (
                         rid,
-                        rpath.relative_to(memory_dir).as_posix(),
+                        path_policy.posix_rel(rpath, memory_dir),
                         rtype,
                         int(rtype in speculative),
                     ),

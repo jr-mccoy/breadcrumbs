@@ -791,7 +791,7 @@ def import_drafts(memory_dir: Path, project_root: Path, *, agent: str | None = N
         text = " ".join((body or title or "").split())
         if not text:
             continue
-        rel = path.relative_to(memory_dir.parent).as_posix()
+        rel = path_policy.posix_rel(path, memory_dir.parent)
         long = len(text) > JOT_MAX_CHARS
         result = write_jot(
             memory_dir,

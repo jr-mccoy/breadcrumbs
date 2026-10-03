@@ -210,7 +210,37 @@ class RelativePathRenderingTests(unittest.TestCase):
                     and node.value.func.attr == "relative_to"
                 ):
                     offenders.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno}")
-        self.assertEqual(offenders, [], "use .as_posix() for a store-relative path")
+        self.assertEqual(offenders, [], "use path_policy.posix_rel() for a store-relative path")
+
+    def test_posix_conversion_is_path_policys(self):
+        """`x.relative_to(y).as_posix()` and `.replace("\\", "/")` were open-coded
+        some 30 times across 12 modules (deferred health review 2.2). One spelling,
+        `path_policy.posix_rel` / `path_policy.to_posix`, keeps the store-relative
+        POSIX rule in one place."""
+        offenders = []
+        for path in sorted((ROOT / "breadcrumbs").rglob("*.py")):
+            if path.name == "path_policy.py":
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                    continue
+                inner = node.func.value
+                if (
+                    node.func.attr == "as_posix"
+                    and isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "relative_to"
+                ):
+                    offenders.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno}")
+                if (
+                    node.func.attr == "replace"
+                    and len(node.args) == 2
+                    and all(isinstance(a, ast.Constant) for a in node.args)
+                    and [a.value for a in node.args] == ["\\", "/"]
+                ):
+                    offenders.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno}")
+        self.assertEqual(offenders, [], "use path_policy.posix_rel() / path_policy.to_posix()")
 
 
 class ConsoleMarkerTests(unittest.TestCase):

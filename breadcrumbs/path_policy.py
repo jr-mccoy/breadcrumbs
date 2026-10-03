@@ -185,6 +185,22 @@ def is_store_path(path) -> bool:
     return split_store(path) is not None
 
 
+def posix_rel(path, base) -> str:
+    """`path` relative to `base`, with `/` separators on every platform.
+
+    How the store names a path: a value that differs by OS makes stamps stale
+    everywhere and made rollback and the write gate silently wrong on Windows
+    (decision: store-relative paths are POSIX). Raises ValueError, as
+    `relative_to` does, when `path` is not under `base`.
+    """
+    return Path(path).relative_to(base).as_posix()
+
+
+def to_posix(text) -> str:
+    """A path written as text — by a person, an agent or git — with `/` separators."""
+    return str(text).replace("\\", "/")
+
+
 def shown(path) -> str:
     """How a path appears in a diagnostic: store-relative, else the bare name."""
     split = split_store(path)
@@ -531,7 +547,7 @@ def find_links(memory_dir) -> list[str]:
             p = Path(dirpath) / name
             try:
                 if _is_link(os.lstat(p)):
-                    out.append(p.relative_to(memory_dir).as_posix())
+                    out.append(posix_rel(p, memory_dir))
             except OSError:
                 continue
         # os.walk does not descend into a linked directory; a junction on

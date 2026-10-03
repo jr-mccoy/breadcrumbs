@@ -463,7 +463,7 @@ def render_trap_index(memory_dir: Path, unadopted: list[str] | None = None) -> s
     if not traps:
         lines.append("_(none recorded)_")
     for t in sorted(traps, key=lambda t: t["id"]):
-        rel = Path(t["record_path"]).relative_to(Path(memory_dir)).as_posix()
+        rel = path_policy.posix_rel(Path(t["record_path"]), Path(memory_dir))
         lines.append(f"- `{t['id']}` [{t['status']}] {t['summary']} — `{rel}`")
     lines += _unadopted_tail(unadopted or [], "trap")
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -487,7 +487,7 @@ def render_question_index(memory_dir: Path, unadopted: list[str] | None = None) 
     if not questions:
         lines.append("_(none recorded)_")
     for q in sorted(questions, key=lambda q: (q["status"] != "open", q["id"])):
-        rel = Path(q["record_path"]).relative_to(Path(memory_dir)).as_posix()
+        rel = path_policy.posix_rel(Path(q["record_path"]), Path(memory_dir))
         lines.append(f"- `{q['id']}` [{q['status']}] {q['question']} — `{rel}`")
     lines += _unadopted_tail(unadopted or [], "question")
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -815,7 +815,7 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
         # One validate pass over everything just written. A failure removes
         # those files and raises: the singletons have not been rewritten, so the
         # store still reads exactly as it did.
-        written = {p.relative_to(memory_dir).as_posix() for p in new_paths}
+        written = {path_policy.posix_rel(p, memory_dir) for p in new_paths}
         fails = [
             f
             for f in cli.run_validate(memory_dir)

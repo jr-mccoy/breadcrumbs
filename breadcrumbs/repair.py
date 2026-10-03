@@ -102,7 +102,7 @@ def citable_paths(root: Path, candidates) -> list[str]:
     out: set[str] = set()
     head: frozenset[str] | None = None
     for raw in candidates:
-        p = str(raw).strip().rstrip(_TRAILING_PUNCT).replace("\\", "/")
+        p = path_policy.to_posix(str(raw).strip().rstrip(_TRAILING_PUNCT))
         if not p or p.startswith(("/", "~")) or ":" in p or ".." in p.split("/"):
             continue  # absolute, a drive, or outside the project
         p = p[2:] if p.startswith("./") else p
@@ -242,7 +242,7 @@ def plan_record(rec: "cli.Record", memory_dir: Path, root: Path, sets: dict) -> 
         return None
     return {
         "path": rec.path,
-        "rel": rec.path.relative_to(memory_dir).as_posix(),
+        "rel": path_policy.posix_rel(rec.path, memory_dir),
         "id": str(rid),
         "changes": changes,
         "meta": meta,

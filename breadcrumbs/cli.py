@@ -1783,7 +1783,7 @@ def record_contract_entries(records: list["Record"], memory_dir: Path) -> list[t
     for rec in records:
         ident = derive_identity(rec.stem, rec.rtype)
         out.append(
-            (rec.path.relative_to(memory_dir).as_posix(), ident[0] if ident else None, rec.meta)
+            (path_policy.posix_rel(rec.path, memory_dir), ident[0] if ident else None, rec.meta)
         )
     return out
 
@@ -1881,7 +1881,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
     seen_ids: dict[str, str] = {}
 
     for rec in records:
-        rel = rec.path.relative_to(memory_dir).as_posix()
+        rel = path_policy.posix_rel(rec.path, memory_dir)
 
         # 16.3 — valid frontmatter (parses + required keys present).
         if rec.error:
@@ -1979,7 +1979,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
                     "privacy: secret-prohibited must not be stored in memory",
                 )
             )
-        elif privacy == "local-private" and not rel.replace("\\", "/").startswith("private/"):
+        elif privacy == "local-private" and not rel.startswith("private/"):
             # A local-private record has to live where git cannot see it. Most
             # record directories are committed, so this used to be unconditional
             # — `private/inbox/` is the first record directory that is not, and
@@ -1992,7 +1992,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
                     "privacy: local-private record is under a committed path (must live under private/)",
                 )
             )
-        elif rel.replace("\\", "/").startswith("private/") and privacy == "repo-safe":
+        elif rel.startswith("private/") and privacy == "repo-safe":
             findings.append(
                 _finding(
                     "privacy",
@@ -2132,7 +2132,7 @@ def run_validate(memory_dir: Path) -> list[dict]:
         for p in sorted(gen_dir.glob("*.md")):
             if p.name == "README.md":
                 continue
-            rel = p.relative_to(memory_dir).as_posix()
+            rel = path_policy.posix_rel(p, memory_dir)
             try:
                 head = "\n".join(path_policy.read_text(p).splitlines()[:5])
             except (OSError, UnicodeDecodeError) as exc:
@@ -2847,7 +2847,7 @@ def _validate_new_file(memory_dir: Path, path: Path, original: str | None = None
     would leave the bad record live. Found by re-checking the original, which is
     only done when the new text fails, so the common path costs nothing extra.
     """
-    rel = Path(path).relative_to(memory_dir).as_posix()
+    rel = path_policy.posix_rel(Path(path), memory_dir)
 
     def fails_here() -> list[dict]:
         return [f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel]
@@ -5778,7 +5778,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         hp = _handoffs.write_path(memory_dir, root, git_branch(root))
         old_next = split_md_sections(_handoffs.seed_text(memory_dir, hp)).get("Next Action", "")
         if not _is_placeholder(old_next) and old_next.strip() != (next_action or "").strip():
-            replaced[f"Next Action ({hp.relative_to(memory_dir).as_posix()})"] = old_next.strip()
+            replaced[f"Next Action ({path_policy.posix_rel(hp, memory_dir)})"] = old_next.strip()
         if recent:
             cur_path = memory_dir / "current.md"
             old_recent = (
@@ -5883,7 +5883,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     else:
         print(f"{'Updated' if coalesce is not None else 'Captured'} session: {meta['id']}")
         print(f"  file:    {path}")
-        print(f"  handoff: {handoff_path.relative_to(memory_dir).as_posix()} (updated)")
+        print(f"  handoff: {path_policy.posix_rel(handoff_path, memory_dir)} (updated)")
         print("  current: updated")
         if tracking == "distillate":
             print("  note: session_tracking=distillate — sessions/ stays local (gitignored);")
@@ -6999,7 +6999,7 @@ class HeadTree:
         prefix = _git.run(self._root, "rev-parse", "--show-prefix")
         if prefix is None:
             return
-        self._prefix = prefix.strip().replace("\\", "/")
+        self._prefix = path_policy.to_posix(prefix.strip())
         # None on an unborn HEAD (repo with no commits yet): nothing has reached
         # a HEAD that does not exist, so every mismatch stays a mismatch.
         out = _git.run(
@@ -7008,7 +7008,7 @@ class HeadTree:
         if out is None:
             return
         self._tracked = frozenset(p for p in out.split("\0") if p)
-        self._dirty = frozenset(p.replace("\\", "/") for p in git_dirty_files(self._root))
+        self._dirty = frozenset(path_policy.to_posix(p) for p in git_dirty_files(self._root))
 
     def contains(self, path: Path | None) -> bool:
         """Is `path` committed at HEAD with no worktree modification? (False when unknowable.)"""
@@ -7018,7 +7018,7 @@ class HeadTree:
         if not self._tracked:
             return False
         try:
-            rel = Path(path).resolve().relative_to(self._root.resolve()).as_posix()
+            rel = path_policy.posix_rel(Path(path).resolve(), self._root.resolve())
         except (ValueError, OSError):
             return False
         full = self._prefix + rel
@@ -7269,7 +7269,7 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
     rels = []
     for d in dirs:
         try:
-            rels.append(d.resolve().relative_to(Path(project_root).resolve()).as_posix())
+            rels.append(path_policy.posix_rel(d.resolve(), Path(project_root).resolve()))
         except ValueError:  # pragma: no cover - store outside the project root
             return set()
     matches = _git.check_ignore(project_root, rels)
@@ -7281,7 +7281,7 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
         # and it means the opposite of ignored.
         if not path or pattern.startswith("!"):
             continue
-        if not source or Path(source).is_absolute() or ".git/" in source.replace("\\", "/"):
+        if not source or Path(source).is_absolute() or ".git/" in path_policy.to_posix(source):
             continue
         out.add(Path(path.strip()).name)
     return out
@@ -7409,7 +7409,7 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
         # are filename-derived, so a rename changes every id in the packet
         # while leaving a contents-only hash untouched — the freshness gate
         # then certifies a projection full of ids that no longer exist.
-        rel = p.relative_to(memory_dir).as_posix()
+        rel = path_policy.posix_rel(p, memory_dir)
         h.update(rel.encode())
         h.update(b"\0")
         # Line endings are not content: git's autocrlf checks a store out with
@@ -10425,7 +10425,7 @@ def _direct_evidence(m: dict) -> bool:
 
 def _is_memory_path(path: str, root: Path) -> bool:
     """Is `path` (as an edit names it) inside this project's memory store?"""
-    norm = str(path or "").replace("\\", "/")
+    norm = path_policy.to_posix(path or "")
     if norm.startswith(f"{MEMORY_DIRNAME}/") or f"/{MEMORY_DIRNAME}/" in f"/{norm}":
         try:
             target = Path(path)
@@ -11188,7 +11188,7 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
         )
 
     for p in _iter_committed_memory_files(memory_dir):
-        rel = p.relative_to(memory_dir).as_posix()
+        rel = path_policy.posix_rel(p, memory_dir)
         text, problem = read_text_lenient(p)
         if problem:
             record("unscannable-file", rel, 0, detail=problem)
@@ -11228,7 +11228,7 @@ def scan_instruction_like(memory_dir: Path) -> list[dict]:
         if p in seen or not p.is_file():
             continue
         seen.add(p)
-        rel = p.relative_to(memory_dir).as_posix()
+        rel = path_policy.posix_rel(p, memory_dir)
         # Lenient: scan_secrets already reports the unreadable
         # file; this pass just must not abort audit on it.
         text = _strip_html_comments(read_text_lenient(p)[0])
@@ -11281,7 +11281,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
         if stamped != current:
             findings.append(
                 {
-                    "path": p.relative_to(memory_dir).as_posix(),
+                    "path": path_policy.posix_rel(p, memory_dir),
                     "stamped": stamped,
                     "current": current,
                 }
@@ -11299,7 +11299,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
         if isinstance(stamped, str) and stamped != current:
             findings.append(
                 {
-                    "path": p.relative_to(memory_dir).as_posix(),
+                    "path": path_policy.posix_rel(p, memory_dir),
                     "stamped": stamped,
                     "current": current,
                 }
@@ -11342,7 +11342,7 @@ def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
     canon: list[tuple[str, str]] = []
     for rec in load_records(memory_dir):
         if not rec.error and rec.body.strip():
-            canon.append((rec.path.relative_to(memory_dir).as_posix(), rec.body.strip()))
+            canon.append((path_policy.posix_rel(rec.path, memory_dir), rec.body.strip()))
     for name in ADAPTER_FILENAMES:
         ap = Path(root) / name
         if not ap.is_file():
@@ -11519,7 +11519,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
         # health context, not a problem.
         sev = AUDIT_INFO if (w.startswith("handoff is") and not w.startswith("⚠")) else AUDIT_WARN
         findings.append(
-            _audit_finding("staleness", sev, handoff_path.relative_to(memory_dir).as_posix(), w)
+            _audit_finding("staleness", sev, path_policy.posix_rel(handoff_path, memory_dir), w)
         )
 
     # WM-31 / WM-32 / WM-34: evidence that points at a vanished file, live
@@ -11664,7 +11664,7 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS)
             _audit_finding(
                 "unreachable",
                 AUDIT_WARN,
-                rec.path.relative_to(memory_dir).as_posix(),
+                path_policy.posix_rel(rec.path, memory_dir),
                 "no tags and no file references — guard can reach this record "
                 "only through generic keyword overlap; add tags or file/path "
                 "evidence so it can drive a verdict",
@@ -13282,7 +13282,7 @@ def discover_adapter_blocks(root: Path) -> list[str]:
         pass
     for path in candidates:
         try:
-            rel = path.relative_to(root).as_posix()
+            rel = path_policy.posix_rel(path, root)
         except ValueError:  # pragma: no cover - candidates are all under root
             continue
         if rel in seen or not path.is_file():

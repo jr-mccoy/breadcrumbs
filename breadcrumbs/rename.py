@@ -81,7 +81,7 @@ def rename_record(memory_dir: Path, root: Path, rid: str, slug: str) -> dict:
             text = path_policy.read_text(path)
             if word.search(text):
                 cli.write_text_atomic(path, word.sub(new_id, text), expected=text)
-                updated.append(path.relative_to(memory_dir).as_posix())
+                updated.append(path_policy.posix_rel(path, memory_dir))
         fails = cli._validate_new_file(memory_dir, new_path)
         if fails:
             raise _mutations.MutationFailed(
@@ -102,7 +102,7 @@ def long_record_paths(root: Path, memory_dir: Path, limit: int) -> list[tuple[st
     """`(path from the project root, length)` for each store file over `limit`."""
     out = []
     for path in _store_text_files(memory_dir):
-        rel = path.relative_to(Path(root)).as_posix()
+        rel = path_policy.posix_rel(path, Path(root))
         if len(rel) > limit:
             out.append((rel, len(rel)))
     return sorted(out, key=lambda x: -x[1])
@@ -152,7 +152,7 @@ def trim_handoff(
     memory_dir = Path(memory_dir)
     path = _handoffs.write_path(memory_dir, root, cli.git_branch(root))
     if not path.is_file():
-        return {"ok": False, "error": f"no handoff at {path.relative_to(memory_dir).as_posix()}"}
+        return {"ok": False, "error": f"no handoff at {path_policy.posix_rel(path, memory_dir)}"}
     try:
         lead_in = re.compile(split_on or DATED_LEAD_IN, re.M)
     except re.error as exc:
@@ -184,7 +184,7 @@ def trim_handoff(
         return {"ok": True, "moved": 0, "kept": len(offsets), "history": None}
     new_section = head + "\n" + kept_text.rstrip("\n") + "\n\n"
     hist = history_path(path)
-    rel = path.relative_to(memory_dir).as_posix()
+    rel = path_policy.posix_rel(path, memory_dir)
     marker = "<!-- entries below, newest first -->"
     with _mutations.transaction(memory_dir, "handoff-trim"):
         prior = path_policy.read_text(hist) if hist.is_file() else ""
@@ -205,7 +205,7 @@ def trim_handoff(
         "ok": True,
         "moved": len(offsets) - cut,
         "kept": cut,
-        "history": hist.relative_to(memory_dir).as_posix(),
+        "history": path_policy.posix_rel(hist, memory_dir),
     }
 
 
