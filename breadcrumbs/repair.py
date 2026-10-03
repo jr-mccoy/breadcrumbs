@@ -32,7 +32,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from breadcrumbs import cli, path_policy
+from breadcrumbs import cli, git, path_policy
 from breadcrumbs import validation as _validation
 
 # Status words people use for "this no longer applies"; the same reading as the
@@ -52,9 +52,9 @@ def _mapped_status(rtype: str, raw: str) -> str:
 
 def _adding_commit(root: Path, path: Path) -> dict:
     """`{author, commit, date}` of the commit that added `path`, or `{}`."""
-    if not cli.is_git_repo(root):
+    if not git.is_repo(root):
         return {}
-    out = cli._git_out(
+    out = git.run(
         root,
         "log",
         "--diff-filter=A",
@@ -82,7 +82,7 @@ def _head_files(root: Path) -> frozenset[str]:
         ("repair_head_files", str(root)),
         lambda: frozenset(
             (
-                cli._git_out(root, "ls-tree", "-r", "--name-only", "--full-tree", "HEAD") or ""
+                git.run(root, "ls-tree", "-r", "--name-only", "--full-tree", "HEAD") or ""
             ).splitlines()
         ),
     )
@@ -112,7 +112,7 @@ def citable_paths(root: Path, candidates) -> list[str]:
             on_disk = False
         if not on_disk:
             if head is None:
-                head = _head_files(root) if cli.is_git_repo(root) else frozenset()
+                head = _head_files(root) if git.is_repo(root) else frozenset()
             if p.rstrip("/") not in head and not any(
                 f.startswith(p.rstrip("/") + "/") for f in head
             ):

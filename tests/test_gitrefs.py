@@ -24,8 +24,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
-from breadcrumbs import cli as _cli  # noqa: E402
-from breadcrumbs import gitrefs, handoffs  # noqa: E402
+from breadcrumbs import git as _git  # noqa: E402
+from breadcrumbs import gitrefs  # noqa: E402
 
 
 def git(root: Path, *args: str) -> str:
@@ -70,7 +70,7 @@ class ReadsLikeGitTests(unittest.TestCase):
         git(self.root, "checkout", "-q", "--detach")
         self.assertEqual(gitrefs.branch(self.root), "HEAD")
         self.assertEqual(
-            _cli._git_branch(self.root), git(self.root, "rev-parse", "--abbrev-ref", "HEAD")
+            _git.branch(self.root), git(self.root, "rev-parse", "--abbrev-ref", "HEAD")
         )
 
     def test_an_unborn_branch(self):
@@ -100,7 +100,7 @@ class ReadsLikeGitTests(unittest.TestCase):
         self.assertEqual(
             gitrefs.symbolic_target(clone, "refs/remotes/origin/HEAD"), "refs/remotes/origin/main"
         )
-        self.assertEqual(handoffs._default_branch(clone), "main")
+        self.assertEqual(_git.default_branch(clone), "main")
 
     def test_no_repo_is_none(self):
         bare = self.tmp / "plain"
@@ -150,8 +150,8 @@ class NoGitProcessesTests(unittest.TestCase):
             }
 
             def fire() -> tuple[dict, int]:
-                _cli._IS_GIT_REPO_CACHE.clear()
-                before = _cli.GIT_CALLS[0]
+                _git._IS_REPO_CACHE.clear()
+                before = _git.CALLS[0]
                 old = sys.stdin
                 sys.stdin = io.StringIO(json.dumps(payload))
                 buf = io.StringIO()
@@ -160,7 +160,7 @@ class NoGitProcessesTests(unittest.TestCase):
                         crumb.main(["hook", "guard"])
                 finally:
                     sys.stdin = old
-                return json.loads(buf.getvalue()), _cli.GIT_CALLS[0] - before
+                return json.loads(buf.getvalue()), _git.CALLS[0] - before
 
             first, _spawned = fire()  # may build the commit-order cache
             self.assertIn("hookSpecificOutput", first)

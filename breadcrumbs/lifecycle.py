@@ -34,6 +34,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from breadcrumbs import checks as _checks
 from breadcrumbs import cli
+from breadcrumbs import git
 
 # --------------------------------------------------------------------------- #
 # WM-30: time-to-live
@@ -164,16 +165,16 @@ def _current_md_age(memory_dir: Path, root: Path) -> int | None:
     if not path.is_file():
         return None
     root = Path(root)
-    if cli.is_git_repo(root):
+    if git.is_repo(root):
         try:
             rel = path.resolve().relative_to(root.resolve())
         except ValueError:
             rel = None
         if rel is not None:
-            dirty = cli._git_out(root, "status", "--porcelain", "--", str(rel))
+            dirty = git.run(root, "status", "--porcelain", "--", str(rel))
             if dirty:
                 return 0
-            stamp = cli._git_out(root, "log", "-1", "--format=%cI", "--", str(rel))
+            stamp = git.run(root, "log", "-1", "--format=%cI", "--", str(rel))
             if stamp:
                 return cli._age_days(stamp.strip())
     mtime = datetime.fromtimestamp(path.stat().st_mtime).astimezone()

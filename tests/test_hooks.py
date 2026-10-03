@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402  (patch target: `_hook_guard` resolves `guard` here)
+from breadcrumbs import git as _git  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -276,7 +277,7 @@ class HookCaptureTests(unittest.TestCase):
                 self.assertEqual(len(files), 1, [f.name for f in files])
                 return crumb.Record.from_file(files[0], "session").meta
 
-            self.assertEqual(newest(mem)["commit"], crumb.git_commit(root))
+            self.assertEqual(newest(mem)["commit"], _git.short_head(root))
             # an uncommitted edit outside the store is new work too, but not
             # commit-shaped — snapshot only, no prompt.
             (root / "h.txt").write_text("c\n")
@@ -436,7 +437,7 @@ class ExtractionTurnTests(unittest.TestCase):
             self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
             # Snapshot taken with no prompt, coalesced into the same record (F-6):
             # it now points at the new HEAD.
-            self.assertEqual(self._snapshot(mem)["commit"], crumb.git_commit(root))
+            self.assertEqual(self._snapshot(mem)["commit"], _git.short_head(root))
 
     def test_commit_listing_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1105,9 +1106,9 @@ class SessionCursorTests(unittest.TestCase):
             self.assertNotIn("cloud session work", out["reason"])
 
     def test_short_shas_of_different_lengths_are_the_same_commit(self):
-        self.assertTrue(_cli._same_commit("abc1234", "abc1234de"))
-        self.assertFalse(_cli._same_commit("abc1234", "abc1235"))
-        self.assertFalse(_cli._same_commit("abc", "abcdef0"))
+        self.assertTrue(_git.same_commit("abc1234", "abc1234de"))
+        self.assertFalse(_git.same_commit("abc1234", "abc1235"))
+        self.assertFalse(_git.same_commit("abc", "abcdef0"))
 
 
 class StopLifecycleTests(unittest.TestCase):
@@ -1176,7 +1177,7 @@ class StopLifecycleTests(unittest.TestCase):
             run_hook("session", {"cwd": str(root), "hook_event_name": "SessionStart"})
             second = hooks_common.session_baseline(mem, key)
             self.assertNotEqual(first["head"], second["head"])
-            self.assertEqual(second["head"], _cli._git_out(root, "rev-parse", "HEAD").strip())
+            self.assertEqual(second["head"], _git.head(root))
 
     def test_an_amend_of_an_asked_commit_is_not_asked_again(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -89,11 +89,17 @@ functions, one primitive") with whichever module gets `_inputs_hash`.
 
 **Found.**
 
-- **Git state is read two ways.** `cli._git_out` spawns `git`, while
+- ~~**Git state is read two ways.** `cli._git_out` spawns `git`, while
   `breadcrumbs/gitrefs.py` reads `.git` directly. `cli.git_commit` returns a
   short sha from a subprocess and `gitrefs.head_sha` a full one; the
   short-versus-full mismatch is what field-report item N8 was. Five other
-  modules call the private `cli._git_out`.
+  modules call the private `cli._git_out`.~~ **Done** on branch
+  `ccr-4e962709-tubaoe`: `breadcrumbs/git.py` owns every git spawn and is the
+  only importer of `gitrefs` (`tests/test_git.py::OwnershipTests` enforces
+  both). HEAD identity is the full sha (`git.head`); the record's `commit`
+  field keeps git's short form (`git.short_head`), compared with
+  `git.same_commit`. Storing full shas in records was left out: it changes a
+  stored format and needs its own decision.
 - **Timestamps are parsed by two near-identical functions:**
   `cli._parse_iso` and `validation.parse_timestamp`.
 - **Text is read by three helpers:** `cli.read_text_lenient`,

@@ -49,6 +49,9 @@ from breadcrumbs import validation as _validation
 import breadcrumbs as _breadcrumbs_pkg
 from breadcrumbs import path_policy
 from breadcrumbs import shellcmd as _shellcmd
+
+# Every git question goes through `breadcrumbs.git`. Stdlib-only too.
+from breadcrumbs import git as _git
 from breadcrumbs.adapters import claude as _claude
 
 # --------------------------------------------------------------------------- #
@@ -82,8 +85,8 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "project-memory"
 
 # Non-git fallback sentinels.
 # Used everywhere git-derived fields cannot be populated.
-NO_GIT_BRANCH = "(no-git)"
-NO_GIT_COMMIT = "(no-git)"
+NO_GIT_BRANCH = _git.NO_BRANCH
+NO_GIT_COMMIT = _git.NO_COMMIT
 
 # --------------------------------------------------------------------------- #
 # Output safety (W1)
@@ -450,45 +453,6 @@ def clock(fn):
 def now_iso() -> str:
     """Local time, ISO-8601, timezone-aware (e.g. 2026-06-25T14:30:00-05:00)."""
     return _now().replace(microsecond=0).isoformat()
-
-
-# Memo for `is_git_repo`, keyed by (path, does `.git` exist there) so the answer is
-# re-probed the moment that changes — `git init` after a negative probe re-keys the
-# entry instead of returning a stale False. Five of one guard call's ten remaining
-# subprocess spawns were this same question asked five times; a stat is
-# ~1000x cheaper than a process, and much more so on Windows.
-_IS_GIT_REPO_CACHE: dict[tuple[str, bool], bool] = {}
-
-
-def is_git_repo(root: Path) -> bool:
-    """True if `root` is inside a git work tree."""
-    key = (str(root), (Path(root) / ".git").exists())
-    cached = _IS_GIT_REPO_CACHE.get(key)
-    if cached is not None:
-        return cached
-    from breadcrumbs import gitrefs
-
-    # A `.git` found by walking up answers without a process (DoWhat retest of
-    # 0.5.0, item 7); anything unusual still asks git.
-    if gitrefs.git_dir(Path(root)) is not None:
-        _IS_GIT_REPO_CACHE[key] = True
-        return True
-    GIT_CALLS[0] += 1
-    started = time.perf_counter()
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        answer = result.returncode == 0 and result.stdout.strip() == "true"
-    except (FileNotFoundError, OSError):
-        answer = False
-    GIT_MS[0] += (time.perf_counter() - started) * 1000
-    _IS_GIT_REPO_CACHE[key] = answer
-    return answer
 
 
 def derive_project_name(root: Path) -> str:
@@ -861,7 +825,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     commit_generated = not args.no_commit_generated
 
     # Non-git detection (notice only; gitignore is still written for later git init).
-    git_present = is_git_repo(root)
+    git_present = _git.is_repo(root)
 
     # Build the new scaffold in a staging dir and swap it in. An existing store
     # (--force) is destroyed only after the replacement is fully built, so a
@@ -1536,117 +1500,10 @@ def records_in(directory: Path, rtype: str) -> list[Record]:
 # separately.
 
 
-# git processes started by this process, for the hook log's `git` count: on
-# Windows each costs tens of milliseconds, and a count says at once whether a
-# slow firing was git or Python (field report 2026-10-01, issue 6).
-GIT_CALLS = [0]
-# ...and the milliseconds they took, for the hook log's `git_ms` (item 7 of the
-# 0.5.0 retest: the next Windows measurement should say where the time went).
-GIT_MS = [0.0]
-
-
-def _git_out(root: Path, *args: str) -> str | None:
-    GIT_CALLS[0] += 1
-    started = time.perf_counter()
-    try:
-        r = subprocess.run(
-            ["git", *args],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except (FileNotFoundError, OSError):
-        return None
-    finally:
-        GIT_MS[0] += (time.perf_counter() - started) * 1000
-    if r.returncode != 0:
-        return None
-    # Trailing newline only. A whole-output strip() also ate the leading space of
-    # the *first* line, which for `status --porcelain` is a status column — a
-    # worktree-only modification is " M path", so the caller's line[3:] then
-    # chopped three characters off the path. Every other caller
-    # reads single-line output or regex-matches, so both forms suit them.
-    return r.stdout.rstrip("\n")
-
-
 def git_branch(root: Path) -> str:
     # The guard path asked this three times per firing; within one operation
     # the branch cannot change (field report 2026-10-01, issue 6).
-    return op_memo(("git_branch", str(root)), lambda: _git_branch(root))
-
-
-def _git_branch(root: Path) -> str:
-    if not is_git_repo(root):
-        return NO_GIT_BRANCH
-    from breadcrumbs import gitrefs
-
-    fast = gitrefs.branch(root)
-    if fast:
-        return fast
-    out = _git_out(root, "rev-parse", "--abbrev-ref", "HEAD")
-    if out:
-        return out
-    # An unborn HEAD (fresh repo, no commits yet) fails rev-parse but still has
-    # a real branch name — read it so records don't pair `branch: (no-git)` with
-    # populated dirty_files.
-    out = _git_out(root, "symbolic-ref", "--short", "HEAD")
-    return out if out else NO_GIT_BRANCH
-
-
-def git_commit(root: Path) -> str:
-    if not is_git_repo(root):
-        return NO_GIT_COMMIT
-    out = _git_out(root, "rev-parse", "--short", "HEAD")
-    return out if out else NO_GIT_COMMIT
-
-
-# git C-style escapes used in quoted porcelain paths (paths with spaces/quotes/
-# non-ASCII are emitted as "caf\303\251.txt"; octal escapes are raw UTF-8 bytes).
-_GIT_PATH_ESCAPES = {
-    "n": 0x0A,
-    "t": 0x09,
-    "r": 0x0D,
-    '"': 0x22,
-    "\\": 0x5C,
-    "a": 0x07,
-    "b": 0x08,
-    "f": 0x0C,
-    "v": 0x0B,
-}
-
-
-def _unquote_git_path(path: str) -> str:
-    """Decode git's C-style quoted path form back to the real path.
-
-    Unquoted paths pass through unchanged. Storing the quoted form verbatim
-    persisted strings like '"caf\\303\\251.txt"' into frontmatter, which could
-    then trip the R3 round-trip refusal on a later status change.
-    """
-    if not (len(path) >= 2 and path[0] == '"' and path[-1] == '"'):
-        return path
-    body = path[1:-1]
-    out = bytearray()
-    i = 0
-    while i < len(body):
-        ch = body[i]
-        if ch == "\\" and i + 1 < len(body):
-            nxt = body[i + 1]
-            if nxt in _GIT_PATH_ESCAPES:
-                out.append(_GIT_PATH_ESCAPES[nxt])
-                i += 2
-                continue
-            if nxt in "01234567":
-                val, j = 0, 0
-                while j < 3 and i + 1 + j < len(body) and body[i + 1 + j] in "01234567":
-                    val = val * 8 + int(body[i + 1 + j])
-                    j += 1
-                out.append(val)
-                i += 1 + j
-                continue
-        out.extend(ch.encode("utf-8"))
-        i += 1
-    return out.decode("utf-8", errors="replace")
+    return op_memo(("git_branch", str(root)), lambda: _git.branch(root))
 
 
 # A record's `dirty_files` is capped here. In the field store the *shortest*
@@ -1675,21 +1532,7 @@ def git_dirty_files(root: Path, *, include_memory: bool = True) -> list[str]:
     sessions' memory records. Callers that are asking about the *store* (the
     staleness check, the Stop-hook dedupe) keep the default.
     """
-    if not is_git_repo(root):
-        return []
-    out = _git_out(root, "status", "--porcelain")
-    if not out:
-        return []
-    files: list[str] = []
-    for line in out.splitlines():
-        # porcelain: 2 status chars + space + path
-        path = line[3:].strip() if len(line) > 3 else line.strip()
-        if " -> " in path:
-            # rename/copy entries are "R  old -> new"; record the destination.
-            path = path.split(" -> ", 1)[1].strip()
-        path = _unquote_git_path(path)
-        if path:
-            files.append(path)
+    files = _git.status_paths(root)
     if not include_memory:
         files = list(_work_dirty_files(files))
     return files
@@ -1757,7 +1600,7 @@ def derive_fields(
         "agent": agent or detect_agent(),
         "project": derive_project_name(root),
         "branch": git_branch(root),
-        "commit": git_commit(root),
+        "commit": _git.short_head(root),
         "dirty_files": _cap_dirty_files(git_dirty_files(root, include_memory=include_memory)),
     }
 
@@ -5711,7 +5554,7 @@ def _git_prefill(root: Path, since: str | None, *, include_memory: bool = False)
     Either way the prefill states the window it used, so a big number can be read
     for what it is instead of taken as a claim about one sitting.
     """
-    if not is_git_repo(root):
+    if not _git.is_repo(root):
         return {
             "Work Completed": "_(no git history available)_",
             "Files Touched": "_(no git history available)_",
@@ -5719,33 +5562,33 @@ def _git_prefill(root: Path, since: str | None, *, include_memory: bool = False)
         }
     # Validate the since-ref; if bad, fall back to recent history.
     recorded = since
-    if since and _git_out(root, "rev-parse", "--verify", f"{since}^{{commit}}") is None:
+    if since and _git.run(root, "rev-parse", "--verify", f"{since}^{{commit}}") is None:
         since = recorded = None
 
     # Cap the lookback. Dropping `since` here re-uses the bounded
     # recent-history window below rather than inventing a second one.
     ahead = 0
     if since:
-        raw = _git_out(root, "rev-list", "--count", f"{since}..HEAD")
+        raw = _git.run(root, "rev-list", "--count", f"{since}..HEAD")
         ahead = int(raw) if (raw or "").strip().isdigit() else 0
         if ahead > GIT_PREFILL_MAX_COMMITS:
             since = None
 
     if since:
-        log = _git_out(root, "log", "--oneline", "--no-decorate", f"{since}..HEAD")
+        log = _git.run(root, "log", "--oneline", "--no-decorate", f"{since}..HEAD")
         base: str | None = since
     else:
-        log = _git_out(
+        log = _git.run(
             root, "log", "--oneline", "--no-decorate", "-n", str(GIT_PREFILL_MAX_COMMITS)
         )
-        rev_list = _git_out(root, "rev-list", f"--max-count={GIT_PREFILL_MAX_COMMITS}", "HEAD")
+        rev_list = _git.run(root, "rev-list", f"--max-count={GIT_PREFILL_MAX_COMMITS}", "HEAD")
         base = None
         if rev_list:
             oldest = rev_list.splitlines()[-1]
-            parent = _git_out(root, "rev-parse", "--verify", f"{oldest}^")
+            parent = _git.run(root, "rev-parse", "--verify", f"{oldest}^")
             if parent:
                 base = parent
-            elif _git_out(root, "rev-parse", "--is-shallow-repository") == "true":
+            elif _git.run(root, "rev-parse", "--is-shallow-repository") == "true":
                 # In a shallow clone the oldest visible commit is the shallow
                 # boundary, not the root — diffing from the empty tree would
                 # record the entire repo as "Files Touched".
@@ -5756,7 +5599,7 @@ def _git_prefill(root: Path, since: str | None, *, include_memory: bool = False)
             else:
                 base = _GIT_EMPTY_TREE
 
-    shortstat = _git_out(root, "diff", "--shortstat", base, "HEAD") if base else None
+    shortstat = _git.run(root, "diff", "--shortstat", base, "HEAD") if base else None
 
     work = "\n".join(f"- {line}" for line in log.splitlines()) if log else "_(no new commits)_"
 
@@ -6641,11 +6484,11 @@ def git_commit_distance(root: Path, commit: str | None) -> int | None:
     None when there is no git, no recorded commit, or the commit is unknown to
     this checkout (e.g. a since-rebased sha) — callers degrade gracefully.
     """
-    if not is_git_repo(root) or commit in (None, "", NO_GIT_COMMIT):
+    if not _git.is_repo(root) or commit in (None, "", NO_GIT_COMMIT):
         return None
-    if _git_out(root, "rev-parse", "--verify", f"{commit}^{{commit}}") is None:
+    if _git.run(root, "rev-parse", "--verify", f"{commit}^{{commit}}") is None:
         return None
-    out = _git_out(root, "rev-list", "--count", f"{commit}..HEAD")
+    out = _git.run(root, "rev-list", "--count", f"{commit}..HEAD")
     try:
         return int(out) if out is not None else None
     except ValueError:
@@ -6670,13 +6513,11 @@ def _cached_commit_order(root: Path) -> list[str]:
     """HEAD's history, newest first, up to `_REVLIST_INDEX_CAP` shas.
 
     Read from `index/commit-order.txt` when its first line names the current
-    HEAD (read from .git without a process); otherwise asked of git and
+    HEAD (read from .git without a process where it can be); otherwise asked of git and
     written back. A store-less checkout, an unreadable HEAD or a failed write
     simply asks git each time, as before.
     """
-    from breadcrumbs import gitrefs
-
-    head = gitrefs.head_sha(root)
+    head = _git.head(root)
     cache = Path(root) / MEMORY_DIRNAME / Path(*COMMIT_ORDER_RELPATH)
     if head:
         try:
@@ -6686,7 +6527,7 @@ def _cached_commit_order(root: Path) -> list[str]:
         first, _, rest = text.partition("\n")
         if first == f"{head} {_REVLIST_INDEX_CAP}":
             return rest.split()
-    out = _git_out(root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD")
+    out = _git.run(root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD")
     order = (out or "").split()
     if head and order and order[0] == head and cache.parent.parent.is_dir():
         try:
@@ -6701,7 +6542,7 @@ class CommitDistanceIndex:
     """Commit-distance for a whole scoring pass, in one git call instead of N.
 
     `_score_item` called `git_commit_distance` per scored record, and that is three
-    subprocess spawns each (`is_git_repo`, `rev-parse --verify`, `rev-list --count`).
+    subprocess spawns each (`git.is_repo`, `rev-parse --verify`, `rev-list --count`).
     Guard therefore cost ~3 process spawns per record and got monotonically slower
     as the store grew — while the Stop hook adds a record per qualifying turn, so
     the tool degraded the hot path it had installed. Measured before this: 6.4
@@ -7166,15 +7007,15 @@ class HeadTree:
         if self._loaded:
             return
         self._loaded = True
-        if not is_git_repo(self._root):
+        if not _git.is_repo(self._root):
             return
-        prefix = _git_out(self._root, "rev-parse", "--show-prefix")
+        prefix = _git.run(self._root, "rev-parse", "--show-prefix")
         if prefix is None:
             return
         self._prefix = prefix.strip().replace("\\", "/")
         # None on an unborn HEAD (repo with no commits yet): nothing has reached
         # a HEAD that does not exist, so every mismatch stays a mismatch.
-        out = _git_out(
+        out = _git.run(
             self._root, "ls-tree", "-r", "-z", "--full-name", "--name-only", "HEAD", "--", "."
         )
         if out is None:
@@ -7228,7 +7069,7 @@ def compute_staleness(
     """
     warnings: list[str] = []
     cur_branch = git_branch(root)
-    detached = is_git_repo(root) and cur_branch == "HEAD"
+    detached = _git.is_repo(root) and cur_branch == "HEAD"
     reached = HeadTree(root)
     if handoff_path is None and memory_dir is not None:
         handoff_path = Path(memory_dir) / "handoff.md"
@@ -7255,7 +7096,7 @@ def compute_staleness(
     # (7) Branch mismatch (§15) — handoff first, then records, capped.
     if detached:
         warnings.append(
-            f"git HEAD is detached at {git_commit(root)}; records may be stale "
+            f"git HEAD is detached at {_git.short_head(root)}; records may be stale "
             "relative to the current HEAD."
         )
     hb = handoff_meta.get("branch")
@@ -7337,14 +7178,14 @@ def _commits_since(root: Path, ref: str | None, limit: int) -> list[str]:
     commit-distance staleness warning already covers that case; inventing a
     bogus range here would present guesses as history.
     """
-    if not ref or not is_git_repo(root):
+    if not ref or not _git.is_repo(root):
         return []
-    cur = git_commit(root)
-    if cur == NO_GIT_COMMIT or ref == cur:
+    cur = _git.head(root)
+    if cur is None or _git.same_commit(ref, cur):
         return []
     # Commits that touch only the memory store are the handoff and its
     # projections being committed, not work that landed (0.6.0).
-    out = _git_out(
+    out = _git.run(
         root,
         "log",
         "--oneline",
@@ -7436,7 +7277,7 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
     the project root, the source of a worktree `.gitignore` is a relative path,
     while both machine-local sources are absolute. That is the whole filter.
     """
-    if not dirs or not is_git_repo(project_root):
+    if not dirs or not _git.is_repo(project_root):
         return set()
     rels = []
     for d in dirs:
@@ -7444,26 +7285,11 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
             rels.append(d.resolve().relative_to(Path(project_root).resolve()).as_posix())
         except ValueError:  # pragma: no cover - store outside the project root
             return set()
-    # `-z`: NUL-separated bytes both ways. Text-mode stdin sent each path with
-    # "\r\n" on Windows, git read `ideas\r`, and nothing ever matched there
-    # (audit WP17); `-z` also leaves unusual names unquoted.
-    try:
-        r = subprocess.run(
-            ["git", "check-ignore", "-v", "-z", "--no-index", "--stdin"],
-            cwd=str(project_root),
-            input=b"".join(rel.encode("utf-8") + b"\0" for rel in rels),
-            capture_output=True,
-            check=False,
-        )
-    except (FileNotFoundError, OSError):
+    matches = _git.check_ignore(project_root, rels)
+    if matches is None:
         return set()
-    if r.returncode not in (0, 1):  # 1 = nothing ignored; anything else is an error
-        return set()
-    fields = r.stdout.decode("utf-8", errors="replace").split("\0")
     out: set[str] = set()
-    # Each match is four fields: source, line number, pattern, path.
-    for i in range(0, len(fields) - 3, 4):
-        source, _line, pattern, path = fields[i : i + 4]
+    for source, pattern, path in matches:
         # A negation (`!fixtures/**/…`) is reported as the deciding pattern too,
         # and it means the opposite of ignored.
         if not path or pattern.startswith("!"):
@@ -7856,7 +7682,7 @@ def _build_resume_packet_once(
         # developers work at different paths.
         "path": ".",
         "branch": git_branch(root),
-        "commit": git_commit(root),
+        "commit": _git.short_head(root),
         "dirty": len(dirty),
         "dirty_state": (f"{len(dirty)} uncommitted file(s)" if dirty else "clean"),
         "handoff": handoff_label,
@@ -7882,7 +7708,7 @@ def _build_resume_packet_once(
 
     packet: dict = {
         "source": {
-            "commit": git_commit(root),
+            "commit": _git.short_head(root),
             "inputs_hash": inputs_hash,
             "generated_at": now_iso(),
         },
@@ -14369,7 +14195,7 @@ def _record_session_start(memory_dir: Path, root: Path, payload: dict) -> None:
     try:
         from breadcrumbs import hooks_common
 
-        head = _git_out(root, "rev-parse", "HEAD") if is_git_repo(root) else None
+        head = _git.head(root)
         if head:
             key = hooks_common.session_id_of(payload)
             hooks_common.set_session_baseline(
@@ -14691,8 +14517,8 @@ def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
     recorded = rec.meta.get("dirty_files")
     if not isinstance(recorded, list):
         return False
-    head = git_commit(root)
-    if not _same_commit(rec.meta.get("commit") or "", head):
+    head = _git.head(root) or NO_GIT_COMMIT
+    if not _git.same_commit(rec.meta.get("commit") or "", head):
         # HEAD moved — but a commit that touches only the memory store (the
         # agent committing the previous snapshot, or its own capture) is not
         # work. Re-snapshotting on it rewrote the record with the sha of the
@@ -14715,22 +14541,10 @@ def _work_commits_between(root: Path, base: str, head: str) -> bool:
     honest way to say nothing moved."""
     if not base or not head or NO_GIT_COMMIT in (base, head):
         return True
-    out = _git_out(
+    out = _git.run(
         root, "log", "--format=%H", f"{base}..{head}", "--", ".", f":(exclude){MEMORY_DIRNAME}"
     )
     return out is None or bool(out.strip())
-
-
-def _same_commit(a: str, b: str) -> bool:
-    """Two commit ids name the same commit, whatever their abbreviation length.
-
-    Short shas are compared as strings across machines, where `core.abbrev` or
-    a grown object count can make one longer than the other (N8)."""
-    a, b = (a or "").strip(), (b or "").strip()
-    if not a or not b or NO_GIT_COMMIT in (a, b):
-        return a == b
-    n = min(len(a), len(b))
-    return n >= 7 and a[:n] == b[:n]
 
 
 def _extraction_enabled(memory_dir: Path) -> bool:
@@ -14777,9 +14591,9 @@ def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]
     """
     from breadcrumbs import hooks_common
 
-    if not is_git_repo(root):
+    if not _git.is_repo(root):
         return []
-    head = _git_out(root, "rev-parse", "HEAD")
+    head = _git.head(root)
     if not head:
         return []
     entry = hooks_common.session_baseline(memory_dir, session_id)
@@ -14791,14 +14605,14 @@ def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]
         return []
     asked = None  # set only when history was rewritten under the baseline
     rewritten = False
-    if _git_out(root, "merge-base", "--is-ancestor", base, head) is None:
-        fork = (_git_out(root, "merge-base", base, head) or "").strip()
+    if _git.run(root, "merge-base", "--is-ancestor", base, head) is None:
+        fork = (_git.run(root, "merge-base", base, head) or "").strip()
         if not fork:
             hooks_common.set_session_baseline(memory_dir, session_id, head)
             return []
         base, rewritten = fork, True
         asked = _epoch(entry.get("asked_at"))
-    out = _git_out(
+    out = _git.run(
         root,
         "log",
         "--no-decorate",
@@ -14848,7 +14662,7 @@ def _commits_made_here(root: Path) -> set[str] | None:
     session's work (DoWhat retest of 0.5.0, F1). The reflog tells the two apart:
     a local commit is logged as `commit: …`, a pulled one arrives by `pull:`.
     """
-    out = _git_out(root, "reflog", "show", f"-n{_REFLOG_SCAN}", "--format=%H%x09%gs", "HEAD")
+    out = _git.run(root, "reflog", "show", f"-n{_REFLOG_SCAN}", "--format=%H%x09%gs", "HEAD")
     if not out:
         return None
     made: set[str] = set()
@@ -14869,28 +14683,6 @@ def _epoch(stamp) -> int | None:
 
     when = _validation.parse_timestamp(stamp) if stamp else None
     return int(when.timestamp()) if when is not None else None
-
-
-def _extraction_commits(memory_dir: Path, root: Path) -> list[str]:
-    """One-line subjects for commits since the last session record.
-
-    Superseded on the Stop hook by `_session_commits` (per-session baseline);
-    kept for callers that ask about the store as a whole. Empty means nothing
-    new, no git, or no prior session record.
-    """
-    last = _last_session_commit(memory_dir)
-    if not last:
-        return []
-    cur = git_commit(root)
-    if cur == NO_GIT_COMMIT or cur == last:
-        return []
-    out = _git_out(root, "log", "--oneline", "--no-decorate", f"{last}..HEAD")
-    if out is None:
-        # `last` unknown to this clone (rebase / shallow fetch): HEAD still
-        # moved, which is the signal — say so without a bogus range.
-        return [f"(history rewritten; HEAD is now {_short_ref(cur)})"]
-    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    return lines or [f"(HEAD moved to {_short_ref(cur)})"]
 
 
 # Mined candidates the extraction prompt lists. Six is enough to cover a busy
@@ -15097,7 +14889,7 @@ def _same_as_settled(memory_dir: Path, root: Path, session_key: str) -> bool:
     settled = hooks_common.session_baseline(memory_dir, session_key).get("settled")
     if not isinstance(settled, dict) or not settled.get("head"):
         return False
-    head = (_git_out(root, "rev-parse", "HEAD") or "").strip()
+    head = _git.head(root)
     if not head:
         return False
     if head != settled["head"] and _work_commits_between(root, settled["head"], head):
@@ -15139,12 +14931,10 @@ def _hook_capture_inner(memory_dir: Path, root: Path, payload: dict) -> int:
             # had not committed before the ask, committed with its records — is
             # what its capture describes: count from here, and no machine
             # snapshot beside the record it wrote (0.6.0).
-            head = _git_out(root, "rev-parse", "HEAD") if is_git_repo(root) else None
+            head = _git.head(root)
             if head:
-                hooks_common.set_session_baseline(memory_dir, session_key, head.strip())
-                hooks_common.set_settled(
-                    memory_dir, session_key, head.strip(), _live_work_dirty(root)
-                )
+                hooks_common.set_session_baseline(memory_dir, session_key, head)
+                hooks_common.set_settled(memory_dir, session_key, head, _live_work_dirty(root))
             _hooklog.note(answered=True)
         elif not redundant:
             # It ignored the instruction (or another hook blocked this Stop):
@@ -15195,9 +14985,9 @@ def _hook_capture_inner(memory_dir: Path, root: Path, payload: dict) -> int:
             # or not the agent's capture (or the continuation's snapshot)
             # then lands. Without this a failed snapshot re-asked every turn.
             # `asked_at` dates the ask (see `set_session_baseline`).
-            head = _git_out(root, "rev-parse", "HEAD")
+            head = _git.head(root)
             if head:
-                hooks_common.set_session_baseline(memory_dir, session_key, head.strip(), asked=True)
+                hooks_common.set_session_baseline(memory_dir, session_key, head, asked=True)
             _hooklog.note(offered=len(jots[:EXTRACTION_MAX_JOTS_SHOWN]), commits=len(commits))
             print(json.dumps({"decision": "block", "reason": _extraction_reason(commits, jots)}))
             return 0
@@ -15239,7 +15029,7 @@ def cmd_hook(args: argparse.Namespace) -> int:
         # Everything a hook does runs in one application context on the hook
         # channel (audit F18, WP16): admission, the store's aliases, one parse
         # cache for the firing.
-        before, before_ms = GIT_CALLS[0], GIT_MS[0]
+        before, before_ms = _git.CALLS[0], _git.MS[0]
         try:
             with _service.active(_service.Context(root, memory_dir, "hook")):
                 return _run_hook(event, memory_dir, root, payload)
@@ -15248,8 +15038,8 @@ def cmd_hook(args: argparse.Namespace) -> int:
             # `git` processes and their milliseconds, and the module import
             # (Python's own start-up is the rest of the host's wall time).
             _hooklog.note(
-                git=GIT_CALLS[0] - before,
-                git_ms=round(GIT_MS[0] - before_ms, 1),
+                git=_git.CALLS[0] - before,
+                git_ms=round(_git.MS[0] - before_ms, 1),
                 import_ms=IMPORT_MS,
             )
 

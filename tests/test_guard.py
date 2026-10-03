@@ -700,7 +700,7 @@ class CommitDistanceIndexTests(unittest.TestCase):
 
     def test_git_calls_do_not_grow_with_the_record_count(self):
         with tempfile.TemporaryDirectory() as tmp:
-            # The root the CLI resolves to. `is_git_repo` memoizes per spelling,
+            # The root the CLI resolves to. `git.is_repo` memoizes per spelling,
             # so an unresolved temp path (macOS `/var`, a Windows 8.3 name) would
             # add one probe to the first count only.
             root = self._repo(tmp).resolve()

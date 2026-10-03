@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
+from breadcrumbs import git as _git  # noqa: E402
 from breadcrumbs import shellcmd  # noqa: E402
 
 
@@ -452,7 +453,7 @@ class SpeedTests(unittest.TestCase):
             (root / f"s{i}.txt").write_text("x\n")
             git(root, "add", f"s{i}.txt")
             git(root, "commit", "-qm", f"side {i}")
-            shas.append(crumb.git_commit(root))
+            shas.append(_git.short_head(root))
         git(root, "checkout", "-q", base)
         for i, sha in enumerate(shas):
             run(
@@ -475,7 +476,7 @@ class SpeedTests(unittest.TestCase):
             )
             rec = sorted((mem / "decisions").glob("*.md"))[-1]
             text = rec.read_text()
-            rec.write_text(text.replace(f"commit: {crumb.git_commit(root)}", f"commit: {sha}"))
+            rec.write_text(text.replace(f"commit: {_git.short_head(root)}", f"commit: {sha}"))
         return root, mem
 
     def test_git_spawns_do_not_grow_with_unmerged_record_commits(self):
