@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "6205a8df8373",
+ "inputs_hash": "3639cbfd3cf7",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -183,9 +183,9 @@
    "dec_20260815_cut-0-1-10-as-the-agent-authorship-release"
   ],
   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches": [
+   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
-   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest"
+   "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written"
   ],
   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted": [
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
@@ -235,7 +235,7 @@
   "dec_20260928_store-relative-paths-are-posix-and-line-endings": [
    "trap_linux-cannot-show-a-windows-path-separator-bug",
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
-   "dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input"
+   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
   ],
   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand": [
    "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
@@ -248,9 +248,9 @@
    "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new"
   ],
   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect": [
+   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts"
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
   ],
   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new": [
    "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction",
@@ -283,9 +283,14 @@
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author"
   ],
   "dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas": [
+   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
-   "dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input"
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+  ],
+  "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps": [
+   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect",
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
@@ -340,7 +345,7 @@
   "trap_linux-cannot-show-a-windows-path-separator-bug": [
    "dec_20260928_store-relative-paths-are-posix-and-line-endings",
    "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
-   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo"
+   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
   ],
   "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field": [
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",

@@ -1,20 +1,23 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 7d941f4 | inputs_hash: 6205a8df8373 | generated_at: 2026-10-03T13:07:58+00:00 -->
-<!-- view: markdown | budget: 3626/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: aedc62a | inputs_hash: 3639cbfd3cf7 | generated_at: 2026-10-03T13:37:11+00:00 -->
+<!-- view: markdown | budget: 3618/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-4e962709-tubaoe` · commit `7d941f4` · 2 uncommitted file(s) · handoff: handoffs/ccr-4e962709-tubaoe.md
+branch `ccr-4e962709-tubaoe` · commit `aedc62a` · 6 uncommitted file(s) · handoff: handoffs/ccr-4e962709-tubaoe.md
 
 ## Current Focus
 0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
 
 ## Next Action
-2.2 git half is on branch ccr-4e962709-tubaoe (breadcrumbs/git.py). Next for 2.2: one timestamp parser (cli._parse_iso vs validation.parse_timestamp), one lenient reader, path_policy for store-relative POSIX paths, one shell tokenizer; then 2.1 seam 1 (hooks_stop). 0.6.0 is still unpublished: run the release workflow on main (dry-run, then publish) after checking the native-full Windows job.
+Item 2.2 of docs/reviews/2026-10-02-deferred-health-review.md is done on branch ccr-4e962709-tubaoe (git module, timestamps, reads, POSIX paths, command text; full suite 1519 OK, evals at baseline). Next: open a PR for the branch; then 2.1 seam 1 (extract the Stop hook into hooks_stop behind tests/fixtures/application_parity.json). 0.6.0 is still unpublished: check the native-full Windows job on main, then run the release workflow (dry-run, then publish).
+
+_(1 earlier entry in handoffs/ccr-4e962709-tubaoe.md)_
 
 ## Active Decisions
+- `dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps` — A reader that accepts more than validate acts on stamps validate rejects, and differently per interpreter. One spelling for POSIX paths keeps the store-relative POSIX rule in one place. Exact and loose tokenizing serve different jobs; merging them would change guard verdicts and the eval baseline.
 - `dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas` — One implementation per question removes the class of drift that produced N8, and moving HEAD reads to the disk reader removes git spawns from the Stop hook path on Windows. Storing full shas in records would change a stored format, so it was kept out.
 - `dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction` — The ask's instruction ends with the capture, so a capture after the ask is the answer, whatever else the turn committed. Amend and rebase preserve author time, which is what tells an already-asked commit from new work.
 - `dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input` — inputs_hash equality is already the definition of fresh that validate gates on. The kept file stays internally consistent: its commit, ages and dirty count all describe the store as of its own generated_at.
@@ -29,8 +32,7 @@ branch `ccr-4e962709-tubaoe` · commit `7d941f4` · 2 uncommitted file(s) · han
 - `dec_20260927_transports-reach-the-store-through-breadcrumbs-service` — CLI, MCP and hooks call service functions (record, mark_status, search, guard, resume_packet, prompt_lookup, admit) inside service.active(ctx); wording, exit codes and envelopes stay in the adapters. Parser lives in cli_parser.py. Aliases and clock are per-thread scoped state. Any further move out o… [excerpt: 300 of 379 chars; full text: crumb show dec_20260927_transports-reach-the-store-through-breadcrumbs-service]
 - `dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering` — related, conflicts and the near-duplicate sweep score only pairs that can reach their thresholds; pairwise versions stay as test oracles. Past RELATED_PAIR_BUDGET the related map reports degraded (audit: related-degraded) instead of skipping. Parses are shared per operation via cli.operation() keyed… [excerpt: 300 of 332 chars; full text: crumb show dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering]
 - `dec_20260927_review-profiles-solo-by-default-team-makes-agent-written` — Proportional: ordinary capture never waits for a person; only the writes that make memory authoritative are gated. Opt-in semantics use requires: instead of a store-wide schema bump.
-- `dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer` — The lock is the one place every committed write already passes, and every caller already handles StoreLocked, so the refusal needs no per-writer code. Released readers (<=0.3.1) cannot be changed, so semantic changes must also be designed to fail safe for them (schema bump, meaning kept out of field… [excerpt: 300 of 456 chars; full text: crumb show dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer]
-_(… 42 more omitted to stay within the per-section cap)_
+_(… 43 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -56,6 +58,9 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (10d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- breadcrumbs/shellcmd.py
+- breadcrumbs/path_policy.py
+- breadcrumbs/validation.py
 - breadcrumbs/git.py
 - tests/test_git.py
 - breadcrumbs/cli.py
@@ -65,7 +70,6 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/compat.py
 - breadcrumbs/migrate.py
 - docs/reviews/2026-10-02-dowhat-retest-plan.md
-- breadcrumbs/shellcmd.py
 - .github/workflows/ci.yml
 - tests/test_platform_portability.py
 - breadcrumbs/service.py
@@ -74,9 +78,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/lifecycle.py
 - breadcrumbs/admission.py
 - tests/test_admission_policy.py
-- docs/reviews/2026-09-27-breadcrumbs-wp14/README.md
-- docs/compatibility.md
-_(… 43 more omitted to stay within the per-section cap)_
+_(… 44 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
