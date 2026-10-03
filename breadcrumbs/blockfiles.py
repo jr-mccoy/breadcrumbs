@@ -35,6 +35,7 @@ from pathlib import Path
 from breadcrumbs import cli
 from breadcrumbs import path_policy
 from breadcrumbs import scoring as _scoring
+from breadcrumbs import validate as _validate
 
 FILES_SCHEMA = 3
 TRAP_DIR = "traps"
@@ -819,7 +820,7 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
         written = {path_policy.posix_rel(p, memory_dir) for p in new_paths}
         fails = [
             f
-            for f in cli.run_validate(memory_dir)
+            for f in _validate.run_validate(memory_dir)
             if f["status"] == "fail" and f["path"] in written
         ]
         if fails:

@@ -29,6 +29,7 @@ from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import projections  # noqa: E402
 from breadcrumbs import hooks_guard  # noqa: E402
 from breadcrumbs import scoring as _scoring  # noqa: E402
+from breadcrumbs import secretscan as _secretscan  # noqa: E402
 
 AWS_SHAPED = "AKIAZ7QW4ERTY8UIOP3A"
 RANDOM_SHAPED = "Xk9fQ2mZ7pL4vR8tW3nB6yH1cJ5sD0gA"
@@ -151,7 +152,7 @@ class NoSecretsInThePrefilterTests(StoreCase):
         packet.write_text(
             packet.read_text(encoding="utf-8") + f"\n{AWS_SHAPED}\n", encoding="utf-8"
         )
-        hits = [h for h in _cli.scan_secrets(self.mem) if h["path"].startswith("generated/")]
+        hits = [h for h in _secretscan.scan_secrets(self.mem) if h["path"].startswith("generated/")]
         self.assertTrue(hits, "a secret in a committed projection went unreported")
 
 

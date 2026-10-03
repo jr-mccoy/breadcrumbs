@@ -26,6 +26,9 @@ from pathlib import Path
 from breadcrumbs import cli
 from breadcrumbs import path_policy
 from breadcrumbs import packet as _packet
+from breadcrumbs import validate as _validate
+from breadcrumbs import secretscan as _secretscan
+from breadcrumbs import audit as _audit
 
 MEMORY_DIRNAME = cli.MEMORY_DIRNAME
 
@@ -596,27 +599,27 @@ def tool_build_resume_packet(
 
 @_data_tree
 def tool_validate(root: str | Path | None = None) -> dict:
-    """`memory_validate` — wraps `cli.run_validate`."""
+    """`memory_validate` — wraps `validate.run_validate`."""
     _, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    findings = cli.run_validate(mem)
+    findings = _validate.run_validate(mem)
     fails = [f for f in findings if f["status"] == "fail"]
     return {"ok": not fails, "fail_count": len(fails), "findings": findings}
 
 
 @_data_tree
 def tool_scan_secrets(root: str | Path | None = None) -> dict:
-    """`memory_scan_secrets` — wraps `cli.scan_secrets` (pattern names + locations only)."""
+    """`memory_scan_secrets` — wraps `secretscan.scan_secrets` (pattern names + locations only)."""
     _, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    findings = cli.scan_secrets(mem)
+    findings = _secretscan.scan_secrets(mem)
     # `ok` mirrors memory_validate's semantics (safe ⇔ true); `clean` is kept for
     # compatibility with existing consumers. Only blocking findings decide `ok`:
     # `high-entropy-string` is a heuristic and no longer gates a commit (R5), so a
     # tool caller that acts on `ok` sees the same policy the CLI's exit code does.
-    blocking = [f for f in findings if f.get("severity", cli.AUDIT_FAIL) == cli.AUDIT_FAIL]
+    blocking = [f for f in findings if f.get("severity", _audit.AUDIT_FAIL) == _audit.AUDIT_FAIL]
     return {
         "ok": not blocking,
         "clean": not findings,

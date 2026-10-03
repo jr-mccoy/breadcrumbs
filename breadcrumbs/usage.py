@@ -55,6 +55,7 @@ from typing import Iterable
 from breadcrumbs import cli
 from breadcrumbs import path_policy
 from breadcrumbs import scoring as _scoring
+from breadcrumbs import audit as _audit
 
 USAGE_FILENAME = "usage.json"
 
@@ -474,7 +475,7 @@ def has_usage_data(memory_dir: Path) -> bool:
 
 # A record with no surfacing in this many days of usage history, and at least
 # this old itself, is a decay candidate.
-DECAY_DAYS = cli.DECAY_DAYS_DEFAULT
+DECAY_DAYS = _audit.DECAY_DAYS_DEFAULT
 # What decays. Verifications and questions already have TTLs (WM-30); an idea or
 # a jot is not meant to be reached.
 DECAY_TYPES = ("decision", "attempt", "trap")

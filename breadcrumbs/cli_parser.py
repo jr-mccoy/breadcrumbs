@@ -13,6 +13,8 @@ import argparse
 from breadcrumbs import cli
 from breadcrumbs import packet as _packet
 from breadcrumbs import textmatch as _textmatch
+from breadcrumbs import secretscan as _secretscan
+from breadcrumbs import audit as _audit
 
 
 def _add_duplicate_flags(parser: argparse.ArgumentParser, *, supersede: bool = True) -> None:
@@ -838,7 +840,7 @@ def _add_scan_secrets(sub, global_parser: argparse.ArgumentParser) -> None:
             "Scan committed memory for secret-like strings. A structured credential "
             "shape (AWS key, PEM block, bearer token, …) exits non-zero; the "
             "high-entropy heuristic warns without blocking. Add one regex per line to "
-            f"{cli.MEMORY_DIRNAME}/{cli.CRUMBIGNORE_FILENAME} to silence a shape this project "
+            f"{cli.MEMORY_DIRNAME}/{_secretscan.CRUMBIGNORE_FILENAME} to silence a shape this project "
             "has already decided is not a secret."
         ),
     )
@@ -988,7 +990,7 @@ def _add_usage(sub, global_parser: argparse.ArgumentParser) -> None:
         "--decay",
         nargs="?",
         type=int,
-        const=cli.DECAY_DAYS_DEFAULT,
+        const=_audit.DECAY_DAYS_DEFAULT,
         default=None,
         metavar="DAYS",
         help="list active decisions, attempts and traps at least DAYS old (default 180) "

@@ -36,6 +36,7 @@ from pathlib import Path
 
 from breadcrumbs import cli, path_policy
 from breadcrumbs import validation as _validation
+from breadcrumbs import secretscan as _secretscan
 
 JOT_TYPE = "jot"
 INBOX_DIRNAME = "inbox"
@@ -455,7 +456,7 @@ def promote_jot(
     text = jot_text(rec)
     new_title = (title or jot_title(rec)).strip()
     private = is_private(memory_dir, rec)
-    if private and cli.secret_pattern_hits(f"{text}\n{new_title}"):
+    if private and _secretscan.secret_pattern_hits(f"{text}\n{new_title}"):
         return {
             "ok": False,
             "error": f"{source_id} carries a credential-shaped string; promoting it would "

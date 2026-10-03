@@ -23,7 +23,6 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import math
 import os
 import re
 import shlex
@@ -1653,530 +1652,8 @@ def load_manifest(memory_dir: Path) -> dict | None:
 
 
 # --------------------------------------------------------------------------- #
-# validate — fully deterministic; NO heuristic content scanning
+# validate — the CLI side (the checks are `breadcrumbs.validate`)
 # --------------------------------------------------------------------------- #
-
-
-def _finding(
-    check: str, status: str, path: str | None, message: str, code: str | None = None
-) -> dict:
-    """One validate result. `code` is the stable identifier (defaults to `check`)."""
-    return {
-        "check": check,
-        "status": status,
-        "path": path,
-        "message": message,
-        "code": code or check,
-    }
-
-
-# The validate `check` each record-contract code reports under.
-_CONTRACT_CHECK = {
-    _validation.CONFIDENCE_INVALID: "confidence",
-    _validation.REVIEW_STATUS_INVALID: "review",
-    _validation.SCOPE_UNSUPPORTED: "scope",
-    _validation.EVIDENCE_MALFORMED: "evidence",
-    _validation.TIMESTAMP_INVALID: "timestamp",
-    _validation.SUPERSEDED_BY_MALFORMED: "superseded",
-    _validation.SUPERSESSION_SELF: "superseded",
-    _validation.SUPERSEDED_BY_MISSING: "superseded",
-    _validation.SUPERSESSION_CYCLE: "superseded",
-}
-
-
-def _contract_finding(rel: str, issue: dict) -> dict:
-    return _finding(
-        _CONTRACT_CHECK.get(issue["code"], "contract"),
-        "fail",
-        rel,
-        issue["message"],
-        code=issue["code"],
-    )
-
-
-CONTRACT_WARNING_EXAMPLES = 3
-
-
-def record_contract_warnings(memory_dir: Path) -> list[str]:
-    """The packet's one-line notice that some records break the record contract.
-
-    Readers tolerate a malformed record — it never takes a hook or the packet
-    down — but tolerating it silently is how a `confidence: certainly` or an
-    `expires_at` nothing can parse goes unnoticed for months. This says so where
-    every session looks. Committed directories only: the packet is a committed
-    projection, and a machine-local jot must not make it differ between checkouts.
-    """
-    memory_dir = Path(memory_dir)
-    records = [
-        rec
-        for dirname, rtype in DIR_TYPES.items()
-        for rec in records_in(memory_dir / dirname, rtype)
-    ]
-    entries = record_contract_entries(records, memory_dir)
-    linked = _validation.store_issues(entries)
-    problems: dict[str, list[str]] = {}
-    hidden = 0
-    for rec, (rel, rid, meta) in zip(records, entries):
-        codes = ["frontmatter-malformed"] if rec.error else []
-        codes += [i["code"] for i in _validation.record_issues(meta, rec.rtype, rid)]
-        codes += [i["code"] for i in linked.get(rel, [])]
-        codes += _reader_visible_problems(rec)
-        if "status-invalid" in codes:
-            hidden += 1
-        if codes:
-            problems[rid or rel] = codes
-    if not problems:
-        return []
-    shown = [
-        f"{rid} ({', '.join(dict.fromkeys(codes))})"
-        for rid, codes in sorted(problems.items())[:CONTRACT_WARNING_EXAMPLES]
-    ]
-    more = len(problems) - len(shown)
-    # Say what the readers actually do with them. "They are still read" was
-    # untrue for an invalid status: such a decision is dropped from every
-    # active list, and guard then PROCEEDs past it (field report 2026-10-01, N3).
-    effect = (
-        f" — {hidden} with an invalid status are left out of resume and guard; "
-        if hidden
-        else " — they are still read; "
-    )
-    return [
-        f"⚠ {len(problems)} record(s) break the record contract: {'; '.join(shown)}"
-        + (f"; +{more} more" if more > 0 else "")
-        + effect
-        + "run `crumb validate`."
-    ]
-
-
-def _reader_visible_problems(rec: "Record") -> list[str]:
-    """Contract breaks that change what readers show, which `record_issues` does
-    not cover: a status outside the vocabulary (readers drop the record), no
-    frontmatter at all (hand-written), a verification with no subject or no
-    valid outcome (shown as outcome `unknown`)."""
-    if rec.error:
-        return []
-    if not rec.meta:
-        codes = ["no-frontmatter"]
-        return codes + (["outcome-missing"] if rec.rtype == "verification" else [])
-    codes: list[str] = []
-    status = rec.meta.get("status")
-    vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
-    if status is not None and str(status) not in vocab and rec.rtype != "jot":
-        codes.append("status-invalid")
-    if rec.rtype == "verification":
-        if rec.meta.get("outcome") not in VALID_VERIFICATION_OUTCOME:
-            codes.append("outcome-missing")
-        if rec.meta.get("subject") in (None, ""):
-            codes.append("subject-missing")
-    return codes
-
-
-def record_contract_entries(records: list["Record"], memory_dir: Path) -> list[tuple]:
-    """`(relative path, derived id, meta)` per record, for `validation.store_issues`.
-
-    A record whose frontmatter did not parse is still a link target: its id comes
-    from its filename, so a replacement pointing at it is not reported missing.
-    """
-    out = []
-    for rec in records:
-        ident = derive_identity(rec.stem, rec.rtype)
-        out.append(
-            (path_policy.posix_rel(rec.path, memory_dir), ident[0] if ident else None, rec.meta)
-        )
-    return out
-
-
-def run_validate(memory_dir: Path) -> list[dict]:
-    """Run the deterministic validation checks; return a list of findings.
-
-    Every finding is {check, status: pass|fail, path, message}. Heuristic content
-    scanning (secrets, instruction-like text) is intentionally absent — that lives
-    in `audit`.
-    """
-    memory_dir = Path(memory_dir)
-    findings: list[dict] = []
-
-    # Containment (audit F17): nothing in the store may be a link. Every reader
-    # already refuses one; this says where they are.
-    for rel in path_policy.find_links(memory_dir):
-        findings.append(
-            _finding(
-                "containment",
-                "fail",
-                rel,
-                "is a symbolic link or junction; memory files and directories must be the "
-                "real thing inside the store (readers refuse it; replace it with the file "
-                "or directory itself)",
-                code="path-link",
-            )
-        )
-
-    # 16.1 — manifest exists + supported schema_version.
-    manifest = load_manifest(memory_dir)
-    if manifest is None:
-        findings.append(_finding("manifest", "fail", "manifest.yml", "manifest.yml is missing"))
-    else:
-        # A version mismatch has two opposite causes and two opposite remedies,
-        # and one message for both sent everyone to the wrong one. An *older*
-        # store needs migrating; a *newer* store means this build is behind and
-        # must not touch it, because writing schema-N records into a schema-N+1
-        # store is how a store gets corrupted by a well-meaning downgrade.
-        sv = manifest.get("schema_version")
-        try:
-            sv_int = int(str(sv).strip())
-        except (TypeError, ValueError):
-            sv_int = None
-        if sv_int is None:
-            findings.append(
-                _finding(
-                    "schema-version",
-                    "fail",
-                    "manifest.yml",
-                    f"unreadable schema_version {sv!r} (this build supports {SCHEMA_VERSION})",
-                )
-            )
-        elif sv_int < SCHEMA_VERSION:
-            findings.append(
-                _finding(
-                    "schema-version",
-                    "fail",
-                    "manifest.yml",
-                    f"store is schema_version {sv_int}, this crumb understands "
-                    f"{SCHEMA_VERSION} — run `crumb migrate`",
-                )
-            )
-        elif sv_int > SCHEMA_VERSION:
-            findings.append(
-                _finding(
-                    "schema-version",
-                    "fail",
-                    "manifest.yml",
-                    f"store is schema_version {sv_int}, this crumb understands "
-                    f"{SCHEMA_VERSION} — upgrade crumb-kit",
-                )
-            )
-        else:
-            findings.append(
-                _finding("schema-version", "pass", "manifest.yml", f"schema_version {sv_int}")
-            )
-        findings.append(_finding("manifest", "pass", "manifest.yml", "manifest.yml present"))
-
-    # 16.2 — required core files exist, and are readable. An undecodable core
-    # file used to pass silently here while aborting `audit` and `resume`
-    # elsewhere — validate is the trust primitive, so it says so.
-    for name in CORE_FILES:
-        if not (memory_dir / name).is_file():
-            findings.append(_finding("core-files", "fail", name, "required core file missing"))
-            continue
-        problem = read_text_lenient(memory_dir / name)[1]
-        if problem:
-            findings.append(_finding("core-files", "fail", name, problem))
-        else:
-            findings.append(_finding("core-files", "pass", name, "present"))
-
-    # Load durable records once for the record-level checks (16.3–10).
-    records = load_records(memory_dir)
-    seen_ids: dict[str, str] = {}
-
-    for rec in records:
-        rel = path_policy.posix_rel(rec.path, memory_dir)
-
-        # 16.3 — valid frontmatter (parses + required keys present).
-        if rec.error:
-            findings.append(
-                _finding("frontmatter", "fail", rel, f"malformed frontmatter: {rec.error}")
-            )
-            continue
-        missing = [k for k in REQUIRED_RECORD_KEYS if rec.meta.get(k) in (None, "")]
-        if missing:
-            findings.append(
-                _finding("frontmatter", "fail", rel, f"missing required keys: {', '.join(missing)}")
-            )
-        else:
-            findings.append(_finding("frontmatter", "pass", rel, "frontmatter valid"))
-
-        # 16.4 — identity: filename canonical; id uniqueness + id/slug agreement.
-        ident = derive_identity(rec.stem, rec.rtype)
-        if ident is None:
-            findings.append(
-                _finding(
-                    "identity",
-                    "fail",
-                    rel,
-                    "filename does not match <YYYY-MM-DD>-<slug>.md with a real calendar "
-                    "date and a lowercase [a-z0-9-] slug; id/slug underivable",
-                )
-            )
-        else:
-            rid, slug = ident
-            is_duplicate = rid in seen_ids
-            if is_duplicate:
-                findings.append(
-                    _finding(
-                        "identity", "fail", rel, f"duplicate id {rid!r} (also {seen_ids[rid]})"
-                    )
-                )
-            else:
-                seen_ids[rid] = rel
-            stored_id = rec.meta.get("id")
-            stored_slug = rec.meta.get("slug")
-            disagree = []
-            if stored_id is not None and stored_id != rid:
-                disagree.append(f"id frontmatter {stored_id!r} != derived {rid!r}")
-            if stored_slug is not None and stored_slug != slug:
-                disagree.append(f"slug frontmatter {stored_slug!r} != derived {slug!r}")
-            stored_type = rec.meta.get("type")
-            if stored_type is not None and stored_type != rec.rtype:
-                disagree.append(f"type frontmatter {stored_type!r} != directory {rec.rtype!r}")
-            if disagree:
-                findings.append(_finding("identity", "fail", rel, "; ".join(disagree)))
-            elif not is_duplicate:
-                # A duplicate already produced a fail; don't also emit a redundant
-                # identity pass that would inflate the passed count.
-                findings.append(_finding("identity", "pass", rel, f"id {rid}"))
-
-        # 16.5 — status in vocabulary. A question has its own (open / answered /
-        # closed); everything else, traps included, uses the record lifecycle.
-        status = rec.meta.get("status")
-        vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
-        if status is not None and status not in vocab:
-            findings.append(
-                _finding(
-                    "status",
-                    "fail",
-                    rel,
-                    f"invalid status {status!r} (allowed: {', '.join(vocab)})",
-                )
-            )
-
-        # 16.6 — superseded requires superseded_by.
-        if status == "superseded" and rec.meta.get("superseded_by") in (None, "", []):
-            findings.append(
-                _finding("superseded", "fail", rel, "status superseded but superseded_by is empty")
-            )
-
-        # 16.7 / 16.8 — privacy placement and prohibition.
-        privacy = rec.meta.get("privacy")
-        if privacy is not None and privacy not in VALID_PRIVACY:
-            # A typo'd value (e.g. "secret-prohibitted") must not silently slip
-            # past the exact-match leak gate below — flag the out-of-vocab value.
-            findings.append(
-                _finding(
-                    "privacy",
-                    "fail",
-                    rel,
-                    f"invalid privacy {privacy!r} (allowed: {', '.join(VALID_PRIVACY)})",
-                )
-            )
-        if privacy == "secret-prohibited":
-            findings.append(
-                _finding(
-                    "privacy",
-                    "fail",
-                    rel,
-                    "privacy: secret-prohibited must not be stored in memory",
-                )
-            )
-        elif privacy == "local-private" and not rel.startswith("private/"):
-            # A local-private record has to live where git cannot see it. Most
-            # record directories are committed, so this used to be unconditional
-            # — `private/inbox/` is the first record directory that is not, and
-            # an unconditional fail would reject every machine-local jot.
-            findings.append(
-                _finding(
-                    "privacy",
-                    "fail",
-                    rel,
-                    "privacy: local-private record is under a committed path (must live under private/)",
-                )
-            )
-        elif rel.startswith("private/") and privacy == "repo-safe":
-            findings.append(
-                _finding(
-                    "privacy",
-                    "fail",
-                    rel,
-                    "privacy: repo-safe record is under private/, where nothing is "
-                    "committed — mark it local-private or move it into the store proper",
-                )
-            )
-
-        # 16.8b — the record contract: vocabularies, evidence shape, timestamps,
-        # scope and self-links (breadcrumbs/validation.py; audit F05).
-        for issue in _validation.record_issues(rec.meta, rec.rtype, ident[0] if ident else None):
-            findings.append(_contract_finding(rel, issue))
-
-        # 16.9 — decisions/attempts/verifications need evidence OR confidence: low.
-        # Only a well-formed pointer counts: any non-empty `evidence` used to
-        # satisfy this, so `[{nonsense: x}]` let a claim stand at medium.
-        if rec.rtype in ("decision", "attempt", "verification"):
-            has_evidence = bool(_validation.well_formed_evidence(rec.meta.get("evidence")))
-            if not has_evidence and rec.meta.get("confidence") != "low":
-                findings.append(
-                    _finding(
-                        "evidence",
-                        "fail",
-                        rel,
-                        f"{rec.rtype} has no evidence and confidence is not 'low'",
-                    )
-                )
-
-        # 16.9c — a jot names where it came from. A hook-written candidate and a
-        # note somebody typed are read very differently by whoever triages the
-        # inbox, and without this the two are indistinguishable on disk.
-        if rec.rtype == "jot":
-            src = rec.meta.get("source")
-            if not (isinstance(src, str) and src.strip()):
-                findings.append(
-                    _finding("jot", "fail", rel, "jot has no source (who or what wrote it)")
-                )
-            else:
-                findings.append(_finding("jot", "pass", rel, f"source {src}"))
-
-        # 16.9b — verifications carry a subject and a valid outcome.
-        if rec.rtype == "verification":
-            subj = rec.meta.get("subject")
-            # A non-string subject (e.g. a hand-edited YAML list) is a finding,
-            # not a crash.
-            if not (isinstance(subj, str) and subj.strip()):
-                findings.append(
-                    _finding(
-                        "verification",
-                        "fail",
-                        rel,
-                        "verification has no subject"
-                        if subj in (None, "")
-                        else f"verification subject must be a string, got {type(subj).__name__}",
-                    )
-                )
-            outcome = rec.meta.get("outcome")
-            if outcome not in VALID_VERIFICATION_OUTCOME:
-                findings.append(
-                    _finding(
-                        "verification",
-                        "fail",
-                        rel,
-                        f"invalid outcome {outcome!r} (allowed: {', '.join(VALID_VERIFICATION_OUTCOME)})",
-                    )
-                )
-            method = rec.meta.get("method")
-            if method not in (None, "") and method not in VALID_VERIFICATION_METHOD:
-                findings.append(
-                    _finding(
-                        "verification",
-                        "fail",
-                        rel,
-                        f"invalid method {method!r} (allowed: {', '.join(VALID_VERIFICATION_METHOD)})",
-                    )
-                )
-
-        # 16.10 — session records need a Next Action (or convergence/done marker).
-        if rec.rtype == "session":
-            has_next = any(re.search(r"next action", h, re.I) for h in rec.sections)
-            body_l = rec.body.lower()
-            # Word-boundary match: a raw substring test let
-            # "done" match "abandoned", false-passing the convergence check.
-            has_done = any(
-                re.search(rf"\b{re.escape(mark)}\b", body_l) for mark in SESSION_DONE_MARKERS
-            )
-            if not (has_next or has_done):
-                findings.append(
-                    _finding(
-                        "session",
-                        "fail",
-                        rel,
-                        "session record lacks a '## Next Action' or convergence/done marker",
-                    )
-                )
-
-    # 16.10b — links between records: a `superseded_by` must name a record in
-    # this store, and a replacement chain must not loop back on itself.
-    for rel, issues in _validation.store_issues(
-        record_contract_entries(records, memory_dir)
-    ).items():
-        findings.extend(_contract_finding(rel, issue) for issue in issues)
-
-    # 16.11 — handoff has branch, commit, next action, stale conditions.
-    handoff = memory_dir / "handoff.md"
-    if handoff.is_file():
-        try:
-            htext = path_policy.read_text(handoff)
-        except (OSError, UnicodeDecodeError) as exc:
-            # A finding, not a crash.
-            findings.append(_finding("handoff", "fail", "handoff.md", f"unreadable file: {exc}"))
-            htext = None
-    else:
-        htext = None
-    if htext is not None:
-        required = {
-            "branch": re.search(r"branch\s*:", htext, re.I),
-            "commit": re.search(r"commit\s*:", htext, re.I),
-            "next action": re.search(r"##\s+next action", htext, re.I),
-            "stale conditions": re.search(r"##\s+stale", htext, re.I),
-        }
-        missing_h = [name for name, hit in required.items() if not hit]
-        if missing_h:
-            findings.append(
-                _finding("handoff", "fail", "handoff.md", f"missing: {', '.join(missing_h)}")
-            )
-        else:
-            findings.append(
-                _finding("handoff", "pass", "handoff.md", "branch/commit/next action/stale present")
-            )
-
-    # 16.12 — generated files are not treated as canonical (carry the projection marker).
-    gen_dir = memory_dir / "generated"
-    if gen_dir.is_dir():
-        for p in sorted(gen_dir.glob("*.md")):
-            if p.name == "README.md":
-                continue
-            rel = path_policy.posix_rel(p, memory_dir)
-            try:
-                head = "\n".join(path_policy.read_text(p).splitlines()[:5])
-            except (OSError, UnicodeDecodeError) as exc:
-                # A finding, not a crash.
-                findings.append(_finding("generated", "fail", rel, f"unreadable file: {exc}"))
-                continue
-            if GENERATED_MARKER in head:
-                findings.append(
-                    _finding("generated", "pass", rel, "carries generated-projection marker")
-                )
-            else:
-                findings.append(
-                    _finding(
-                        "generated",
-                        "fail",
-                        rel,
-                        f"generated file lacks the '{GENERATED_MARKER}' marker",
-                    )
-                )
-
-    # 16.12b — projection freshness: a generated projection stamped
-    # with an inputs_hash that no longer matches the live canonical records is
-    # stale. `validate` is the trust primitive, so it must not stay green while a
-    # projection silently desyncs — that would *certify* drift. Unstamped/older
-    # projections carry no hash and are skipped (handled by detect_packet_drift).
-    for d in detect_packet_drift(memory_dir):
-        findings.append(
-            _finding(
-                "freshness",
-                "fail",
-                d["path"],
-                f"stale projection (built from inputs_hash {d['stamped']}; "
-                f"live is {d['current']}). Run `crumb reindex`.",
-            )
-        )
-
-    # 16.13 — adapter files are not loaded as canonical records. By construction the
-    # loader walks only decisions/attempts/sessions/ideas, so project-root adapter
-    # files (AGENTS.md/CLAUDE.md/etc.) are never treated as records. Recorded as pass.
-    findings.append(
-        _finding(
-            "adapters", "pass", None, "adapter/signpost files are not loaded as canonical records"
-        )
-    )
-
-    return findings
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -2189,7 +1666,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         )
         return 2
 
-    findings = run_validate(memory_dir)
+    findings = _validate.run_validate(memory_dir)
     fails = [f for f in findings if f["status"] == "fail"]
     passes = [f for f in findings if f["status"] == "pass"]
 
@@ -2848,7 +2325,11 @@ def _validate_new_file(memory_dir: Path, path: Path, original: str | None = None
     rel = path_policy.posix_rel(Path(path), memory_dir)
 
     def fails_here() -> list[dict]:
-        return [f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel]
+        return [
+            f
+            for f in _validate.run_validate(memory_dir)
+            if f["status"] == "fail" and f["path"] == rel
+        ]
 
     fails = fails_here()
     if not fails or original is None:
@@ -4025,11 +3506,13 @@ _PREFILTER_SPAN_TOKEN_MIN = 12
 def _prefilter_unsafe_stems(text: str) -> set[str]:
     """Stems of `text` the pre-filter must not hold (see above)."""
     out: set[str] = set()
-    spans = [m.group(0) for _name, pat in SECRET_PATTERNS for m in pat.finditer(text or "")]
+    spans = [
+        m.group(0) for _name, pat in _secretscan.SECRET_PATTERNS for m in pat.finditer(text or "")
+    ]
     spans += [
         m.group(0)
-        for m in _HIGH_ENTROPY_TOKEN.finditer(text or "")
-        if _looks_high_entropy(m.group(0))
+        for m in _secretscan._HIGH_ENTROPY_TOKEN.finditer(text or "")
+        if _secretscan._looks_high_entropy(m.group(0))
     ]
     for span in spans:
         for t in _textmatch._tokenize(span):
@@ -7442,431 +6925,10 @@ def cmd_guard(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# audit + scan-secrets — heuristic safety net
+# audit + scan-secrets — the CLI side, and generated-packet drift
 # --------------------------------------------------------------------------- #
-#
-# Design split: `validate` is deterministic and GATES; `audit`
-# is heuristic and ADVISES. The one hard non-zero in audit is a secret leak — a
-# token-like string in committed memory must block any "commit memory" workflow
-# (§2.6, §15). Everything else — stale handoff, aged/expired/low-confidence
-# records, branch mismatch, instruction-like text, generated-packet drift, bloat,
-# and the validate-failing conditions re-surfaced for the health view — is a WARN
-# (or INFO) and never flips the exit code on its own.
-#
-# Matched memory text is DATA, never instruction (§15, Fixture 7): the
-# instruction-like heuristic only *flags* override phrasing for a human reviewer;
-# audit never acts on it, exactly as `guard` ranks-but-never-executes record text.
-
-# Severity ladder for audit findings.
-AUDIT_FAIL = "fail"  # blocks (non-zero) — secrets only
-AUDIT_WARN = "warn"  # flag for human review — never changes the exit code
-AUDIT_INFO = "info"  # health/context note
-
-# A record has to be old enough that never having been reached is a fact about
-# the record rather than about the week. Bounded, because a neglected store
-# would otherwise report every record it has.
-AUDIT_NEVER_SURFACED_DAYS = 90
-AUDIT_NEVER_SURFACED_MAX = 10
-# WM-60: `crumb usage --decay`'s window, and how many candidates audit names.
-DECAY_DAYS_DEFAULT = 180
-AUDIT_DECAY_MAX = 10
-
-# Directories under .project-memory/ the secret scan skips: private/ is gitignored
-# local context and index/ a gitignored, disposable accelerator. generated/ is
-# scanned (DoWhat retest of 0.5.0, item 9): it is committed, and its projections
-# copy record text, so a secret there would be published like any other.
-_SECRET_SKIP_DIRS = {"private", "index"}
-
-# Common secret SHAPES. Deliberately conservative: better to miss
-# an exotic secret than to flag every git sha. The covered set is this tuple; the
-# three deliberate gaps (bare hex only in a labeled context, path/CamelCase tokens
-# allowlisted, URL credentials floored at 6 characters and placeholder-aware) are
-# written up in `docs/security.md` §2 and pinned by `tests/test_secrets.py`.
-SECRET_PATTERNS: tuple[tuple[str, "_LazyPattern"], ...] = (
-    ("aws-access-key-id", _LazyPattern(r"\bAKIA[0-9A-Z]{16}\b")),
-    ("github-token", _LazyPattern(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
-    ("github-fine-grained-pat", _LazyPattern(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
-    ("slack-token", _LazyPattern(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
-    ("google-api-key", _LazyPattern(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
-    # sk-… covers both the legacy `sk-<base62>` and modern `sk-proj-<base62>`
-    # OpenAI shapes (the hyphen in `proj-` broke the old alnum-only pattern).
-    ("openai-style-key", _LazyPattern(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
-    # Stripe-style secret/restricted/publishable keys: sk_live_…, rk_test_…, etc.
-    ("stripe-style-key", _LazyPattern(r"\b[srp]k_(?:live|test)_[A-Za-z0-9]{16,}\b")),
-    ("jwt", _LazyPattern(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b")),
-    ("pem-private-key", _LazyPattern(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")),
-    ("bearer-token", _LazyPattern(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{20,}")),
-    (
-        "secret-assignment",
-        _LazyPattern(
-            r"(?i)\b(?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token|"
-            r"refresh[_-]?token|id[_-]?token|session[_-]?token|private[_-]?key|"
-            r"signing[_-]?key|client[_-]?secret|password|passwd|pwd)\b"
-            # allow a closing quote on the label so JSON keys ("private_key":)
-            # match too — the scan now covers .json files
-            r"['\"]?\s*[:=]\s*"
-            r"['\"]?([A-Za-z0-9/+_\-]{16,})['\"]?"
-        ),
-    ),
-    # A bare lowercase-hex token is shape-identical to the SHA-1/256 digests
-    # (commit refs, evidence refs, inputs_hash) that fill project memory, so the
-    # standalone high-entropy heuristic deliberately can't flag it (see
-    # `_looks_high_entropy`). We close the leak only in a *labeled* credential
-    # context, where a standalone sha is unlikely — covering the labels the
-    # `secret-assignment` keyword list above misses: bare `token:`,
-    # `Authorization:` (no "Bearer", so `bearer-token` skips it), and
-    # `X-…-Key:` / `X-…-Token:` HTTP headers. No label ⇒ still no flag.
-    # Credentials embedded in a connection string — `postgres://app:pw@host/db`,
-    # `mongodb+srv://…`, `redis://:pw@…`, `https://user:token@host/repo.git`. The
-    # keyword list above cannot see these: the password follows a bare `:` inside
-    # a URL, with no `password=` label anywhere. Conservative on purpose:
-    # a username with no password (`https://user@host`) is not a secret and does
-    # not match; `$VAR` / `${VAR}` / `%VAR%` / `<placeholder>` interpolations and
-    # the obvious doc placeholders are excluded; and the 6-character floor drops
-    # well-known defaults like amqp's `guest:guest`.
-    (
-        "url-embedded-credentials",
-        _LazyPattern(
-            r"(?i)\b[a-z][a-z0-9+.\-]*://[^/\s:@]*:"
-            r"(?!(?:password|passwd|pass|secret|token|changeme|placeholder|redacted|"
-            r"example|user|username|test|xxx+|\*+)@)"
-            r"(?![$%<{])"
-            r"[^/\s:@]{6,}@"
-        ),
-    ),
-    (
-        "labeled-hex-secret",
-        _LazyPattern(
-            r"(?i)\b(?:token|authorization|x-[a-z0-9-]*-(?:key|token))\b\s*[:=]\s*"
-            r"['\"]?[0-9a-fA-F]{32,}\b"
-        ),
-    ),
-)
-
-# Standalone high-entropy tokens (base64-ish). The charset excludes `_`/`-`, so
-# record ids like `dec_20260605_markdown-source-of-truth` never form a long run,
-# and the mixed-class + entropy floor below skips lowercase-only ids and hex shas.
-_HIGH_ENTROPY_TOKEN = _LazyPattern(r"\b[A-Za-z0-9+/=]{32,}\b")
-
-# Override-style phrasing audit flags for human review. A *flag*,
-# never a gate — same content-as-data posture as guard (Fixture 7).
-# A short run of qualifiers between the verb and its object, so natural phrasings
-# ("ignore failing tests", "ignore all prior instructions", "skip the flaky
-# suite's checks") are caught, not just the bare determiner forms.
-_IL_QUALIFIERS = r"(?:(?:all|the|any|every|these|those|prior|previous|earlier|existing|above|failing|flaky|broken|remaining|other)\s+){0,3}"
-
-INSTRUCTION_LIKE_PATTERNS: tuple["_LazyPattern", ...] = (
-    _LazyPattern(
-        r"(?i)\bignore\s+"
-        + _IL_QUALIFIERS
-        + r"(?:tests?|instructions?|previous|above|rules?|warnings?|memory|checks?|errors?|failures?)\b"
-    ),
-    _LazyPattern(
-        r"(?i)\bskip\s+"
-        + _IL_QUALIFIERS
-        + r"(?:tests?|validation|verification|checks?|review|ci)\b"
-    ),
-    _LazyPattern(
-        r"(?i)\bdisable\s+"
-        + _IL_QUALIFIERS
-        + r"(?:tests?|checks?|validation|guard|safety|linter?|ci)\b"
-    ),
-    # Imperative "never run X" only: an auxiliary right before it ("has never
-    # run", "was never run") is a factual claim about history, not an
-    # instruction — the field test's audit fired 7 warnings, all on sentences
-    # like "E2E has never run in production" (P2-11). Python lookbehinds are
-    # fixed-width, hence one per auxiliary.
-    _LazyPattern(
-        r"(?i)(?<!\bis\s)(?<!\bare\s)(?<!\bwas\s)(?<!\bhas\s)(?<!\bhad\s)"
-        r"(?<!\bwere\s)(?<!\bbeen\s)(?<!\bhave\s)"
-        r"\b(?:never|always)\s+run\b"
-    ),
-    _LazyPattern(r"(?i)\bdo\s+not\s+run\b"),
-    _LazyPattern(r"(?i)\b(?:always|never)\s+(?:force[- ]?push|skip|disable|ignore|bypass)\b"),
-    _LazyPattern(
-        r"(?i)\bbypass\s+"
-        + _IL_QUALIFIERS
-        + r"(?:tests?|checks?|(?:code\s+)?review|validation|guard|ci)\b"
-    ),
-)
-
-# Bloat thresholds (heuristic).
-ADAPTER_FILENAMES = (
-    "AGENTS.md",
-    "CLAUDE.md",
-    ".cursorrules",
-    ".clinerules",
-    ".windsurfrules",
-    ".github/copilot-instructions.md",
-)
-ADAPTER_BLOAT_CHARS = 4000  # signpost files should be small pointers, not copies
-SESSIONS_GROWTH_NOTE = 50  # session count above which audit suggests promoting + pruning
-# The always-on trap budget. Generous — a store of real traps is worth carrying —
-# but bounded, because nothing else bounds it: the field store reached 167 KB and
-# 77 active traps with no mechanism for anything to leave.
-TRAPS_TOKEN_BUDGET = 8000
-
-
-# ---- secret scan ----------------------------------------------------------- #
-
-
-def _shannon_entropy(s: str) -> float:
-    if not s:
-        return 0.0
-    counts: dict[str, int] = {}
-    for ch in s:
-        counts[ch] = counts.get(ch, 0) + 1
-    n = len(s)
-    return -sum((c / n) * math.log2(c / n) for c in counts.values())
-
-
-# A path/identifier segment: a run of letters and digits with no separators.
-_IDENT_SEGMENT = re.compile(r"^[A-Za-z0-9]+$")
-# A pronounceable "word": a letter followed by 3+ lowercase letters (e.g. the
-# CamelCase subwords Migration/Database/Test). Random base64 yields at most a stray
-# short run, never enough to cover half the segment.
-_WORD_RE = re.compile(r"[A-Za-z][a-z]{3,}")
-
-
-def _segment_is_wordy(seg: str) -> bool:
-    """True if CamelCase words cover most of the segment (identifier, not a blob).
-
-    Requires vowel-bearing words to span ≥half the segment (and ≥6 chars), so a real
-    identifier (Database/Migration/Helper…) qualifies while a random base64 run with
-    an incidental 4-letter sequence does not.
-    """
-    covered = sum(len(w) for w in _WORD_RE.findall(seg) if any(c in "aeiouAEIOU" for c in w))
-    return covered >= 6 and covered * 2 >= len(seg)
-
-
-# A Firebase Realtime Database push id: 20 characters of base64url, timestamp-
-# prefixed and therefore lexicographically sortable — a public, structurally
-# recognizable document key, which is exactly what a real secret is not. Split on
-# `-`, the leading dash goes with the separator, so both lengths are accepted.
-# These are the ids that appear in a record citing a concrete production path,
-# which is to say in the most useful records a store has (R5).
-_PUSH_ID_SEGMENT_RE = _LazyPattern(r"^[A-Za-z0-9]{19,20}$")
-
-
-def _is_push_id_segment(seg: str) -> bool:
-    return bool(_PUSH_ID_SEGMENT_RE.match(seg))
-
-
-def _looks_like_path_or_identifier(tok: str) -> bool:
-    """True for path- or dotted-identifier-shaped tokens that only *look* random.
-
-    Long CamelCase identifiers like ``DatabaseMigrationHelperV2Factory`` and paths
-    like ``app/src/MigrationV14ToV15Test`` clear the mixed-class + entropy bar yet
-    are obviously not secrets. The discriminator is deliberately narrow
-    so it cannot launder a real secret: base64 padding/charset (`+`, `=`) disqualifies
-    outright; every segment must be alphanumeric; and any segment long enough to be a
-    blob (≥12 chars) must read as CamelCase words, with at least one wordy segment
-    overall. A bare random run has no words and stays flagged.
-    """
-    if "+" in tok or "=" in tok:
-        return False  # base64-specific characters never occur in paths/identifiers
-    segments = [s for s in re.split(r"[/._-]", tok) if s]
-    if not segments:
-        return False
-    has_word = False
-    for seg in segments:
-        if not _IDENT_SEGMENT.match(seg):
-            return False
-        if _segment_is_wordy(seg):
-            has_word = True
-        elif len(seg) >= 12 and not _is_push_id_segment(seg):
-            return False  # a long, word-free segment is a blob, not a path component
-    return has_word
-
-
-def _looks_high_entropy(tok: str) -> bool:
-    """True only for mixed-class, genuinely-random-looking tokens.
-
-    Requires lower + upper + digit (so hex shas and lowercase ids never qualify) and
-    a real entropy floor. Conservative by design — misses some secrets, flags ~no ids.
-    Path- and identifier-shaped tokens are allowlisted without lowering
-    the entropy floor, so real secrets are unaffected.
-
-    A bare lowercase-hex token (a 32–64 char hex API key) is intentionally NOT
-    caught here: it is indistinguishable from the git shas / inputs_hash digests
-    that fill memory. Such tokens are flagged only in a labeled credential
-    context by the `labeled-hex-secret` pattern above (issue #5).
-    """
-    if not (
-        any(c.islower() for c in tok)
-        and any(c.isupper() for c in tok)
-        and any(c.isdigit() for c in tok)
-    ):
-        return False
-    if _looks_like_path_or_identifier(tok):
-        return False
-    return _shannon_entropy(tok) >= 3.5
-
-
-# Text-file suffixes the secret scan covers. A `.yaml`/`.json`/`.txt` dropped
-# under memory was previously never scanned.
-_SECRET_SCAN_GLOBS = ("*.md", "*.yml", "*.yaml", "*.json", "*.txt")
-
-
-def _iter_committed_memory_files(memory_dir: Path):
-    """Yield committed-memory text files (skips the private/ and index/ subtrees)."""
-    memory_dir = Path(memory_dir)
-    paths: list[Path] = []
-    for pattern in _SECRET_SCAN_GLOBS:
-        paths.extend(memory_dir.rglob(pattern))
-    for p in sorted(set(paths)):
-        rel_parts = p.relative_to(memory_dir).parts
-        if rel_parts and rel_parts[0] in _SECRET_SKIP_DIRS:
-            continue
-        yield p
-
-
-CRUMBIGNORE_FILENAME = ".crumbignore"
-
-# `high-entropy-string` is a heuristic with no structure behind it, and it gated
-# every commit of the memory store. A project that has decided a given shape is
-# not a secret should be able to say so once, rather than re-deciding it — and
-# hand-overriding a gate on every commit is how a gate stops being read at all.
-SECRET_WARNING_PATTERNS = frozenset({"high-entropy-string"})
-
-
-def load_crumbignore(memory_dir: Path) -> list:
-    """Patterns from `.project-memory/.crumbignore`, newest-wins order irrelevant.
-
-    One pattern per line; `#` starts a comment. Each line is used as a regex, or
-    as a literal substring if it does not compile. A hit whose *line text*
-    matches any pattern is dropped by `scan_secrets` — the project has said, in a
-    file its reviewers can see, that this shape is not a secret here.
-    """
-    path = Path(memory_dir) / CRUMBIGNORE_FILENAME
-    if not path.is_file():
-        return []
-    text, _problem = read_text_lenient(path)
-    patterns = []
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip() if not raw.lstrip().startswith("#") else ""
-        if not line:
-            continue
-        try:
-            patterns.append(re.compile(line))
-        except re.error:
-            patterns.append(re.compile(re.escape(line)))
-    return patterns
-
-
-def _secret_severity(pattern: str) -> str:
-    """`warning` for the heuristics, `blocking` for shapes with real structure."""
-    return AUDIT_WARN if pattern in SECRET_WARNING_PATTERNS else AUDIT_FAIL
-
-
-def secret_pattern_hits(text: str, *, blocking_only: bool = True) -> list[str]:
-    """Names of the secret shapes `text` matches — never the matched value.
-
-    Factored out of `scan_secrets` so a caller that holds a string rather than a
-    file can use the same table. The transcript miner is that caller: everything
-    it reads is tool output and user prose, which is exactly where a credential
-    turns up by accident, and a second private copy of these patterns would
-    drift from this one the first time either moved.
-
-    `blocking_only` (the default) consults only the structured shapes. The
-    high-entropy heuristic is deliberately excluded: `scan-secrets` downgraded it
-    to a warning because it has no structure behind it and punished the records
-    that cite a concrete production path, and a caller using this to decide
-    whether to *drop* content needs the stricter, better-evidenced half.
-    """
-    out = []
-    for name, pat in SECRET_PATTERNS:
-        if blocking_only and _secret_severity(name) != AUDIT_FAIL:
-            continue
-        if pat.search(text or ""):
-            out.append(name)
-    return out
-
-
-def scan_secrets(memory_dir: Path) -> list[dict]:
-    """Scan committed memory for secret-like strings.
-
-    Each hit is {pattern, path, line} — the pattern NAME and location, never the
-    matched value. Skips private/ and index/. This must run before any
-    "commit memory" recommendation (§2.6, §15).
-
-    A file that cannot be read cleanly yields a blocking `unscannable-file` hit
-    rather than being skipped: silently exempting it made the whole "secrets are
-    blocking" posture void for that file. Undecodable bytes are
-    replaced and the readable remainder is still scanned, so a real secret next
-    to a bad byte is still found.
-    """
-    findings: list[dict] = []
-    seen: set[tuple[str, str, int]] = set()
-    ignores = load_crumbignore(memory_dir)
-
-    def record(pattern: str, rel: str, i: int, **extra) -> None:
-        key = (pattern, rel, i)
-        if key in seen:
-            return
-        seen.add(key)
-        findings.append(
-            {
-                "pattern": pattern,
-                "path": rel,
-                "line": i,
-                "severity": _secret_severity(pattern),
-                **extra,
-            }
-        )
-
-    for p in _iter_committed_memory_files(memory_dir):
-        rel = path_policy.posix_rel(p, memory_dir)
-        text, problem = read_text_lenient(p)
-        if problem:
-            record("unscannable-file", rel, 0, detail=problem)
-        for i, line in enumerate(text.splitlines(), 1):
-            if any(pat.search(line) for pat in ignores):
-                continue
-            for name, pat in SECRET_PATTERNS:
-                if pat.search(line):
-                    record(name, rel, i)
-            for m in _HIGH_ENTROPY_TOKEN.finditer(line):
-                if _looks_high_entropy(m.group(0)):
-                    record("high-entropy-string", rel, i)
-    return findings
-
-
-# ---- instruction-like heuristic -------------------------------------------- #
-
-
-def scan_instruction_like(memory_dir: Path) -> list[dict]:
-    """Lexical scan of known-traps.md + durable record bodies for override phrasing.
-
-    Flag-only (warn). Never gates `validate` and never instructs `guard` — the same
-    content-as-data posture as Fixture 7.
-    """
-    memory_dir = Path(memory_dir)
-    findings: list[dict] = []
-    targets: list[Path] = []
-    kt = memory_dir / "known-traps.md"
-    if kt.is_file():
-        targets.append(kt)
-    for rec in load_records(memory_dir):
-        if not rec.error:
-            targets.append(rec.path)
-
-    seen: set[Path] = set()
-    for p in targets:
-        if p in seen or not p.is_file():
-            continue
-        seen.add(p)
-        rel = path_policy.posix_rel(p, memory_dir)
-        # Lenient: scan_secrets already reports the unreadable
-        # file; this pass just must not abort audit on it.
-        text = _strip_html_comments(read_text_lenient(p)[0])
-        for i, line in enumerate(text.splitlines(), 1):
-            for pat in INSTRUCTION_LIKE_PATTERNS:
-                m = pat.search(line)
-                if m:
-                    findings.append({"path": rel, "line": i, "phrase": m.group(0).strip()})
-                    break
-    return findings
+# The checks are `breadcrumbs.audit` and `breadcrumbs.secretscan`. Freshness
+# function 2 (`detect_packet_drift`) stays here beside `_inputs_hash`.
 
 
 # ---- generated-packet drift ------------------------------------------------ #
@@ -7945,370 +7007,13 @@ def load_related(memory_dir: Path) -> dict[str, list[str]]:
 # ---- bloat ----------------------------------------------------------------- #
 
 
-def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
-    """Bloat heuristics: over-budget packet, adapter duplication,
-    runaway sessions/ growth."""
-    memory_dir = Path(memory_dir)
-    findings: list[dict] = []
-
-    # Packet over budget.
-    pkt = memory_dir / "generated" / "resume-packet.md"
-    if pkt.is_file():
-        # Lenient throughout: audit is the gate command, so an
-        # undecodable file must cost it one heuristic, not every finding it had.
-        toks = _packet.approx_tokens(read_text_lenient(pkt)[0])
-        if toks > _packet.TOKEN_BUDGET_MAX:
-            findings.append(
-                {
-                    "kind": "packet-over-budget",
-                    "path": "generated/resume-packet.md",
-                    "message": f"resume packet ~{toks} tokens exceeds the {_packet.TOKEN_BUDGET_MAX}-token budget",
-                }
-            )
-
-    # Adapter/signpost files duplicating canonical memory rather than pointing to it.
-    canon: list[tuple[str, str]] = []
-    for rec in load_records(memory_dir):
-        if not rec.error and rec.body.strip():
-            canon.append((path_policy.posix_rel(rec.path, memory_dir), rec.body.strip()))
-    for name in ADAPTER_FILENAMES:
-        ap = Path(root) / name
-        if not ap.is_file():
-            continue
-        text = read_text_lenient(ap)[0]
-        # The promoted-rules block (WM-40) mirrors records on purpose; only the
-        # rest of the file is judged for copying memory into it.
-        from breadcrumbs import promote as _promote
-
-        unpromoted = _promote.strip_block(text)
-        dup = next(
-            (src for src, body in canon if len(body) >= 200 and body[:200] in unpromoted), None
-        )
-        if dup:
-            findings.append(
-                {
-                    "kind": "adapter-duplication",
-                    "path": name,
-                    "message": (
-                        f"adapter '{name}' copies memory record {dup} verbatim; "
-                        "signpost files should point into memory, not duplicate it (§16.13)"
-                    ),
-                }
-            )
-            continue
-        # Measure the managed block, not the host file. A repo's own
-        # CLAUDE.md/AGENTS.md is legitimately large and is not ours to judge; what
-        # §16.13 asks is that *our* signpost stay a small pointer. A file with no
-        # managed block is not a signpost at all, so there is nothing to size —
-        # `adapter-duplication` above still catches records copied into it.
-        block = managed_block_text(text)
-        if block is not None and len(block) > ADAPTER_BLOAT_CHARS:
-            findings.append(
-                {
-                    "kind": "adapter-bloat",
-                    "path": name,
-                    "message": (
-                        f"the breadcrumbs managed block in '{name}' is {len(block)} chars; "
-                        "the signpost should be a small pointer into memory, not a large "
-                        "copy (§16.13)"
-                    ),
-                }
-            )
-
-    # known-traps.md growth. Unlike the packet, nothing bounds this file: traps
-    # are appended and never age out, and every session loads all of them. The
-    # check names the report that makes retirement possible — traps are
-    # retired one by one, never rolled up.
-    # From schema 3 the file is a one-line-per-trap index, so measure what the
-    # packet and the hooks actually carry: the active traps' own text.
-    from breadcrumbs import blockfiles as _blockfiles
-
-    traps_path = memory_dir / "known-traps.md"
-    if traps_path.is_file():
-        traps = [t for t in load_traps(memory_dir) if (t.get("status") or "active") == "active"]
-        if _blockfiles.uses_files(memory_dir):
-            toks = sum(_packet.approx_tokens(f"## {t['heading']}\n{t['body']}") for t in traps)
-        else:
-            toks = _packet.approx_tokens(read_text_lenient(traps_path)[0])
-        if toks > TRAPS_TOKEN_BUDGET:
-            findings.append(
-                {
-                    "kind": "traps-growth",
-                    "path": "known-traps.md",
-                    "message": (
-                        f"{len(traps)} active trap(s), ~{toks} tokens of always-on context "
-                        f"(budget {TRAPS_TOKEN_BUDGET}) — `crumb traps --stale` lists the "
-                        "ones nobody has confirmed lately; retire one with "
-                        "`crumb mark-status <id> stale`"
-                    ),
-                }
-            )
-
-    # sessions/ growth note. The advice is what a human can do today: promote the
-    # durable parts, then fold old machine snapshots into one record with
-    # `crumb rollup sessions` (WM-35) or drop them with `crumb prune sessions`.
-    sess = memory_dir / "sessions"
-    n = len(list(sess.glob("*.md"))) if sess.is_dir() else 0
-    if n > SESSIONS_GROWTH_NOTE:
-        findings.append(
-            {
-                "kind": "sessions-growth",
-                "path": "sessions/",
-                "message": (
-                    f"{n} session records — promote what still matters with `crumb "
-                    "remember`, then `crumb rollup sessions --before YYYY-MM-DD` to fold "
-                    "old machine snapshots into one record (or `crumb prune sessions` to "
-                    "drop them) so the store stays navigable"
-                ),
-            }
-        )
-    return findings
-
-
-# ---- audit core ------------------------------------------------------------ #
-
-# validate-failing checks audit re-surfaces in its health view. These still gate
-# `validate`; audit reports them so one pass shows the whole health picture (§19b.9).
-_AUDIT_HEALTH_CHECKS = {"evidence", "status", "privacy", "superseded", "identity", "frontmatter"}
-
-
-def _audit_finding(check: str, severity: str, path: str | None, message: str, **extra) -> dict:
-    f = {"check": check, "severity": severity, "path": path, "message": message}
-    f.update(extra)
-    return f
-
-
-def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS) -> list[dict]:
-    """Heuristic health + safety audit.
-
-    Returns findings tagged with a severity. Only `secret` is fail-severity (blocks);
-    everything else advises. Policy-aware: reads tracking policy via the manifest /
-    loaders rather than guessing (§7).
-    """
-    memory_dir = Path(memory_dir)
-    findings: list[dict] = []
-
-    # B. Secret scan — the only blocking check (§15, §17.6, Fixture 6).
-    for s in scan_secrets(memory_dir):
-        if s["pattern"] == "unscannable-file":
-            # Blocking, like a secret: the scan could not certify this file, and
-            # "we didn't look" must never read as "nothing there".
-            findings.append(
-                _audit_finding(
-                    "secret",
-                    AUDIT_FAIL,
-                    s["path"],
-                    f"{s.get('detail') or 'could not be read'} — the secret scan cannot "
-                    "certify this file; fix it before committing memory",
-                    pattern=s["pattern"],
-                )
-            )
-            continue
-        severity = s.get("severity", AUDIT_FAIL)
-        remedy = (
-            "must not be committed to memory; remove before any commit"
-            if severity == AUDIT_FAIL
-            else f"heuristic, not a structured credential shape — confirm, then add a "
-            f"pattern to {MEMORY_DIRNAME}/{CRUMBIGNORE_FILENAME} if it is not a secret here"
-        )
-        findings.append(
-            _audit_finding(
-                "secret",
-                severity,
-                s["path"],
-                f"possible secret ({s['pattern']}) at line {s['line']} — {remedy}",
-                line=s["line"],
-                pattern=s["pattern"],
-            )
-        )
-
-    # A. Staleness / health (reuse compute_staleness): handoff age +
-    # commit-distance, branch mismatch (incl. detached HEAD), aged-unresolved
-    # questions/decisions, expired + low-confidence records.
-    # Lenient read: audit is the gate command, so an undecodable
-    # handoff must not abort it. scan_secrets above already emits the blocking
-    # `unscannable-file` finding that names the file, so this read stays quiet.
-    from breadcrumbs import handoffs as _handoffs
-
-    handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
-    for w in _packet.compute_staleness(
-        root,
-        parse_handoff_meta(handoff_text),
-        active_decisions(memory_dir),
-        active_attempts(memory_dir),
-        load_open_questions(memory_dir),
-        stale_days,
-        memory_dir=memory_dir,
-        handoff_path=handoff_path,
-    ):
-        # The handoff age/distance line is emitted unconditionally; it is only a
-        # *warning* when compute_staleness marked it cold (⚠). "handoff is 0
-        # day(s) old, written 0 commit(s) behind" on a seconds-old store is
-        # health context, not a problem.
-        sev = AUDIT_INFO if (w.startswith("handoff is") and not w.startswith("⚠")) else AUDIT_WARN
-        findings.append(
-            _audit_finding("staleness", sev, path_policy.posix_rel(handoff_path, memory_dir), w)
-        )
-
-    # WM-31 / WM-32 / WM-34: evidence that points at a vanished file, live
-    # records that say the same thing, and records that may argue with each
-    # other. All advisory — each is a question for the author, never a fix.
-    from breadcrumbs import lifecycle as _lifecycle
-
-    findings.extend(_lifecycle.audit_findings(memory_dir, root))
-    # WM-40/42/43: the promoted-rules block — its size, rules whose record is
-    # gone or retired, rules that drifted from their record, and records that
-    # have earned a place there.
-    from breadcrumbs import promote as _promote
-
-    findings.extend(_promote.audit_findings(memory_dir, root))
-
-    # A (cont). Re-surface the validate-failing health conditions for the health view
-    # (missing evidence, invalid status, private-path violation, id/frontmatter
-    # disagreement). These still FAIL `validate`; audit only reports them (§19b.9).
-    for vf in run_validate(memory_dir):
-        if vf["status"] == "fail" and vf["check"] in _AUDIT_HEALTH_CHECKS:
-            findings.append(_audit_finding(vf["check"], AUDIT_WARN, vf["path"], vf["message"]))
-
-    # B (cont). A hand-written trap/question block that reindex could not adopt
-    # (WM-22): its id belongs to an existing file with different content. The
-    # file drives every reader; the block is someone's edit waiting to be merged.
-    from breadcrumbs import blockfiles as _blockfiles
-
-    for rid in _blockfiles.unadopted_blocks(memory_dir):
-        findings.append(
-            _audit_finding(
-                "unadopted-block",
-                AUDIT_WARN,
-                "known-traps.md" if rid.startswith("trap") else "open-questions.md",
-                f"{rid} is a hand-written block whose id already has a file with different "
-                "content — merge the block into that file by hand, then delete the block",
-            )
-        )
-
-    # B (cont). A malformed alias line. Audit, not validate: an unusable line is
-    # simply skipped by the parser, so the store still works — but the author
-    # meant something by it, and silently doing nothing is how a synonym
-    # "doesn't work" for a month before anybody reads `_stem`.
-    alias_path = memory_dir / _textmatch.ALIASES_FILENAME
-    if alias_path.is_file():
-        for problem in _textmatch.parse_store_aliases(read_text_lenient(alias_path)[0])[1]:
-            findings.append(
-                _audit_finding(
-                    "aliases",
-                    AUDIT_WARN,
-                    _textmatch.ALIASES_FILENAME,
-                    f"line {problem['line']}: {problem['problem']} — the line is ignored",
-                    line=problem["line"],
-                )
-            )
-
-    # B (cont). Records nothing has ever reached. `audit`'s [unreachable] check
-    # asks whether a record *could* be found; this asks whether it ever *was* —
-    # the one question only observation can answer. Gated on there being any
-    # history at all, because on a fresh clone the answer is "all of them" and
-    # that is a fact about the clone, not about the records.
-    from breadcrumbs import usage as _usage
-
-    if _usage.has_usage_data(memory_dir):
-        # WM-60: old records nothing has surfaced for the whole decay window.
-        # Only once this machine has counted that long (`decay_candidates`
-        # returns none before). The finding carries the command; nothing runs.
-        decaying = _usage.decay_candidates(memory_dir)["candidates"]
-        for row in decaying[:AUDIT_DECAY_MAX]:
-            findings.append(
-                _audit_finding(
-                    "decay-candidate",
-                    AUDIT_INFO,
-                    None,
-                    f"{row['id']} is {row['age_days']} days old and nothing has surfaced it "
-                    f"in {DECAY_DAYS_DEFAULT} days — if it no longer applies: "
-                    f"`{row['command']}`",
-                    id=row["id"],
-                )
-            )
-        decaying_ids = {row["id"] for row in decaying}
-        never = [r for r in _usage.never_surfaced(memory_dir) if r["id"] not in decaying_ids]
-        for row in never[:AUDIT_NEVER_SURFACED_MAX]:
-            if (row["age_days"] or 0) < AUDIT_NEVER_SURFACED_DAYS:
-                continue
-            findings.append(
-                _audit_finding(
-                    "never-surfaced",
-                    AUDIT_INFO,
-                    None,
-                    f"{row['id']} is {row['age_days']} days old and has never been "
-                    "surfaced by a packet or a guard verdict — consider retiring it "
-                    "(`crumb mark-status`) or making it reachable (--tags / --evidence file)",
-                )
-            )
-
-    # C. Instruction-like text (flag only; never a gate — §16 note, Fixture 7).
-    for il in scan_instruction_like(memory_dir):
-        findings.append(
-            _audit_finding(
-                "instruction-like",
-                AUDIT_WARN,
-                il["path"],
-                f'override-style phrasing "{il["phrase"]}" at line {il["line"]} — '
-                "review (treated as data, never executed)",
-                line=il["line"],
-                phrase=il["phrase"],
-            )
-        )
-
-    # D. Generated-packet drift (§15, §17.8, Fixture 8).
-    for d in detect_packet_drift(memory_dir):
-        findings.append(
-            _audit_finding(
-                "packet-drift",
-                AUDIT_WARN,
-                d["path"],
-                f"generated projection is stale (stamped inputs_hash {d['stamped']} != "
-                f"current {d['current']}) — regenerate with `crumb resume`",
-                stamped=d["stamped"],
-                current=d["current"],
-            )
-        )
-
-    # E. Bloat (§16.13, §12).
-    for b in _audit_bloat(memory_dir, root):
-        sev = AUDIT_INFO if b["kind"] == "sessions-growth" else AUDIT_WARN
-        findings.append(_audit_finding("bloat", sev, b["path"], b["message"], kind=b["kind"]))
-
-    # F. Guard reachability (field test 2026-08-04). Guard's strong signals
-    # are file and tag overlap; a record carrying neither can only surface through
-    # generic keyword overlap, which the stale/branch factors readily push under
-    # the noise floor. That is an authoring rule nothing stated: a prose-only
-    # record is quietly on its way to unreachable, so say so while the author is
-    # still around to add tags or file evidence.
-    for rec in load_records(memory_dir, types=_scoring.JUDGING_ITEM_TYPES):
-        if rec.error or str(rec.meta.get("status") or "active") != "active":
-            continue  # unparseable is its own finding; non-active never drives verdicts
-        item = _scoring._item_from_record(rec)
-        if item["tags"] or item["files"] or item["mentioned_files"]:
-            continue
-        findings.append(
-            _audit_finding(
-                "unreachable",
-                AUDIT_WARN,
-                path_policy.posix_rel(rec.path, memory_dir),
-                "no tags and no file references — guard can reach this record "
-                "only through generic keyword overlap; add tags or file/path "
-                "evidence so it can drive a verdict",
-            )
-        )
-
-    return findings
-
-
 # ---- rendering + command entry points -------------------------------------- #
 
 
 def render_audit_human(findings: list[dict]) -> str:
-    fails = [f for f in findings if f["severity"] == AUDIT_FAIL]
-    warns = [f for f in findings if f["severity"] == AUDIT_WARN]
-    infos = [f for f in findings if f["severity"] == AUDIT_INFO]
+    fails = [f for f in findings if f["severity"] == _audit.AUDIT_FAIL]
+    warns = [f for f in findings if f["severity"] == _audit.AUDIT_WARN]
+    infos = [f for f in findings if f["severity"] == _audit.AUDIT_INFO]
     if not findings:
         # No trailing newline: the sole caller prints this, which adds one.
         return "audit: OK — no problems, warnings, or notes."
@@ -8343,10 +7048,10 @@ def cmd_audit(args: argparse.Namespace) -> int:
         return 2
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
-    findings = run_audit(memory_dir, root, stale_days=stale_days)
-    fails = [f for f in findings if f["severity"] == AUDIT_FAIL]
-    warns = [f for f in findings if f["severity"] == AUDIT_WARN]
-    infos = [f for f in findings if f["severity"] == AUDIT_INFO]
+    findings = _audit.run_audit(memory_dir, root, stale_days=stale_days)
+    fails = [f for f in findings if f["severity"] == _audit.AUDIT_FAIL]
+    warns = [f for f in findings if f["severity"] == _audit.AUDIT_WARN]
+    infos = [f for f in findings if f["severity"] == _audit.AUDIT_INFO]
     exit_code = 1 if fails else 0
 
     if args.json:
@@ -8379,14 +7084,14 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
 
-    hits = scan_secrets(memory_dir)
+    hits = _secretscan.scan_secrets(memory_dir)
     # Only a shape with real structure gates a commit (R5). An entropy heuristic
     # with no allowlist punishes exactly the records that are most useful — the
     # ones citing a concrete production path — and a gate that is hand-overridden
     # every time has stopped being a gate. Warnings are still printed, and still
     # counted; they just do not decide the exit code.
-    blocking = [h for h in hits if h.get("severity", AUDIT_FAIL) == AUDIT_FAIL]
-    warnings = [h for h in hits if h.get("severity", AUDIT_FAIL) != AUDIT_FAIL]
+    blocking = [h for h in hits if h.get("severity", _audit.AUDIT_FAIL) == _audit.AUDIT_FAIL]
+    warnings = [h for h in hits if h.get("severity", _audit.AUDIT_FAIL) != _audit.AUDIT_FAIL]
     if args.json:
         _print_json(
             args,
@@ -8416,13 +7121,13 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         for h in hits:
             where = f"{h['path']}:{h['line']}" if h["line"] else h["path"]
             detail = f" — {h['detail']}" if h.get("detail") else ""
-            mark = MARK_FAIL if h.get("severity", AUDIT_FAIL) == AUDIT_FAIL else "!"
+            mark = MARK_FAIL if h.get("severity", _audit.AUDIT_FAIL) == _audit.AUDIT_FAIL else "!"
             print(f"  {mark} [{h['pattern']}] {where}{detail}")
         if warnings:
             print(
                 f"\nnote: {len(warnings)} warning(s) do not block. If a shape is not a "
                 f"secret in this project, add a pattern to {MEMORY_DIRNAME}/"
-                f"{CRUMBIGNORE_FILENAME} instead of overriding this every time."
+                f"{_secretscan.CRUMBIGNORE_FILENAME} instead of overriding this every time."
             )
         return 1 if blocking else 0
 
@@ -8808,7 +7513,7 @@ def adapter_block() -> str:
 
 def present_adapters(root: Path) -> list[str]:
     """Adapter-guidance files that already exist (we never create new ones)."""
-    return [name for name in ADAPTER_FILENAMES if (root / name).is_file()]
+    return [name for name in _audit.ADAPTER_FILENAMES if (root / name).is_file()]
 
 
 def write_adapter_block(root: Path, name: str) -> bool:
@@ -9742,7 +8447,7 @@ def _adapter_request_note(args: argparse.Namespace, adapters: list[str]) -> str 
         return None
     return (
         "the adapter list resolved to no files, so no signpost was written. "
-        f"Name one to create it, e.g. `--with-adapter={ADAPTER_FILENAMES[0]}`."
+        f"Name one to create it, e.g. `--with-adapter={_audit.ADAPTER_FILENAMES[0]}`."
     )
 
 
@@ -9780,7 +8485,7 @@ def validate_integration_flags(args: argparse.Namespace) -> str | None:
     """
     for flag, value, valid in (
         ("--with-hooks", getattr(args, "hooks", None), HOOK_EVENTS),
-        ("--with-adapter", getattr(args, "adapter", None), ADAPTER_FILENAMES),
+        ("--with-adapter", getattr(args, "adapter", None), _audit.ADAPTER_FILENAMES),
     ):
         requested = _resolve_tristate_list(value, list(valid)) or []
         unknown = [name for name in requested if name not in valid]
@@ -9815,7 +8520,7 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
     # cross-agent standard — so a green-field project gets that one file
     # created rather than nothing. Naming files explicitly still wins.
     if getattr(args, "adapter", None) == "*" and not adapters:
-        adapters = [ADAPTER_FILENAMES[0]]
+        adapters = [_audit.ADAPTER_FILENAMES[0]]
     hooks = _resolve_tristate_list(getattr(args, "hooks", None), list(HOOK_EVENTS))
     mcp = getattr(args, "mcp", None)  # True / False / None
 
@@ -9832,9 +8537,9 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
                 )
             else:
                 adapters = (
-                    [ADAPTER_FILENAMES[0]]
+                    [_audit.ADAPTER_FILENAMES[0]]
                     if _prompt_yes(
-                        f"  No agent-guidance file found. Create {ADAPTER_FILENAMES[0]} "
+                        f"  No agent-guidance file found. Create {_audit.ADAPTER_FILENAMES[0]} "
                         "with the signpost?",
                         True,
                     )
@@ -9903,7 +8608,7 @@ def discover_adapter_blocks(root: Path) -> list[str]:
     """
     names: list[str] = []
     seen: set[str] = set()
-    candidates = [root / name for name in ADAPTER_FILENAMES]
+    candidates = [root / name for name in _audit.ADAPTER_FILENAMES]
     try:
         candidates += sorted(p for p in root.iterdir() if p.is_file())
     except OSError:
@@ -9978,7 +8683,9 @@ def doctor_report(root: Path) -> dict:
     # correct install fail permanently in any repo whose CLAUDE.md is a real
     # instruction file — the check punished the very thing it asks for.
     bloated = [
-        n for n in blocked if len(managed_block_text(adapter_text[n]) or "") > ADAPTER_BLOAT_CHARS
+        n
+        for n in blocked
+        if len(managed_block_text(adapter_text[n]) or "") > _audit.ADAPTER_BLOAT_CHARS
     ]
     add(
         "adapter",
@@ -9994,7 +8701,7 @@ def doctor_report(root: Path) -> dict:
                 # files, so in a project with none it cannot clear this check.
                 else (
                     "no agent-guidance files detected — create one with "
-                    f"`crumb init --with-adapter={ADAPTER_FILENAMES[0]}`"
+                    f"`crumb init --with-adapter={_audit.ADAPTER_FILENAMES[0]}`"
                 )
             )
         )
@@ -10093,7 +8800,7 @@ def doctor_report(root: Path) -> dict:
             add(
                 "promoted_rules",
                 # Per file, exactly as audit's promoted-bloat judges it.
-                all(v["chars"] <= ADAPTER_BLOAT_CHARS for v in promo["files"].values()),
+                all(v["chars"] <= _audit.ADAPTER_BLOAT_CHARS for v in promo["files"].values()),
                 where,
             )
 
@@ -10154,7 +8861,7 @@ def doctor_report(root: Path) -> dict:
             if compatibility.writable
             else f"{compatibility.message} (reads still work; writes are refused)",
         )
-        failures = [f for f in run_validate(memory_dir) if f.get("status") == "fail"]
+        failures = [f for f in _validate.run_validate(memory_dir) if f.get("status") == "fail"]
         add(
             "records",
             not failures,
@@ -10964,11 +9671,24 @@ if __name__ == "__main__":
 # them. They are imported last, after every definition they use, so the cycle
 # is harmless whichever side is imported first. The `crumb.py` shim re-exports
 # their names, as it does this module's.
-EXTRACTED_MODULES = ("hooks_stop", "hooks_session", "hooks_guard", "packet", "textmatch", "scoring")
+EXTRACTED_MODULES = (
+    "hooks_stop",
+    "hooks_session",
+    "hooks_guard",
+    "packet",
+    "textmatch",
+    "scoring",
+    "validate",
+    "secretscan",
+    "audit",
+)
 
+from breadcrumbs import audit as _audit  # noqa: E402
 from breadcrumbs import hooks_guard as _hooks_guard  # noqa: E402
 from breadcrumbs import hooks_session as _hooks_session  # noqa: E402
 from breadcrumbs import hooks_stop as _hooks_stop  # noqa: E402
 from breadcrumbs import packet as _packet  # noqa: E402
 from breadcrumbs import scoring as _scoring  # noqa: E402
+from breadcrumbs import secretscan as _secretscan  # noqa: E402
 from breadcrumbs import textmatch as _textmatch  # noqa: E402
+from breadcrumbs import validate as _validate  # noqa: E402

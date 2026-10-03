@@ -23,6 +23,7 @@ from breadcrumbs import cli
 from breadcrumbs import git as _git
 from breadcrumbs import textmatch as _textmatch
 from breadcrumbs import scoring as _scoring
+from breadcrumbs import validate as _validate
 
 
 # Hard token ceiling for the packet (§12: "3,000 to 5,000 tokens"). Since audit
@@ -719,7 +720,7 @@ def _build_resume_packet_once(
         "warnings": (
             list(lead_warnings or [])
             + [f"⚠ {u}" for u in unreadable]
-            + cli.record_contract_warnings(memory_dir)
+            + _validate.record_contract_warnings(memory_dir)
             + compute_staleness(
                 root,
                 handoff_meta,

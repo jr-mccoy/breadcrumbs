@@ -38,6 +38,7 @@ from breadcrumbs import cli
 
 # Command identity lives with the rest of command reading (`shellcmd`).
 from breadcrumbs.shellcmd import COMMAND_MAX_CHARS, normalize_command
+from breadcrumbs import secretscan as _secretscan
 
 # --------------------------------------------------------------------------- #
 # Reading
@@ -449,7 +450,7 @@ def redact_secrets(text: str) -> str | None:
     it has no structure behind it, and using it here would silently drop
     candidates that merely cite a build hash.
     """
-    return None if cli.secret_pattern_hits(str(text or "")) else text
+    return None if _secretscan.secret_pattern_hits(str(text or "")) else text
 
 
 # --------------------------------------------------------------------------- #

@@ -25,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
+from breadcrumbs import audit as _audit  # noqa: E402
 from _schema2 import downgrade_to_schema2  # noqa: E402
 
 
@@ -195,7 +196,7 @@ class TrapBudgetTests(unittest.TestCase):
             path.write_text(
                 path.read_text("utf-8") + "\n## Notes\n" + self.PADDING, encoding="utf-8"
             )
-            findings = _cli._audit_bloat(mem, Path(tmp))
+            findings = _audit._audit_bloat(mem, Path(tmp))
             growth = [f for f in findings if f["kind"] == "traps-growth"]
             self.assertTrue(growth, findings)
             self.assertIn("crumb traps --stale", growth[0]["message"])
@@ -206,7 +207,7 @@ class TrapBudgetTests(unittest.TestCase):
             add_trap(tmp, "one real trap")
             with (mem / "known-traps.md").open("a", encoding="utf-8") as fh:
                 fh.write("\n" + self.PADDING)
-            kinds = {f["kind"] for f in _cli._audit_bloat(mem, Path(tmp))}
+            kinds = {f["kind"] for f in _audit._audit_bloat(mem, Path(tmp))}
             self.assertNotIn("traps-growth", kinds)
 
     def test_a_schema2_singleton_is_measured_whole(self):
@@ -215,7 +216,7 @@ class TrapBudgetTests(unittest.TestCase):
             add_trap(tmp, "one real trap")
             with (mem / "known-traps.md").open("a", encoding="utf-8") as fh:
                 fh.write("\n" + self.PADDING)
-            findings = _cli._audit_bloat(mem, Path(tmp))
+            findings = _audit._audit_bloat(mem, Path(tmp))
             growth = [f for f in findings if f["kind"] == "traps-growth"]
             self.assertTrue(growth, findings)
             self.assertIn("crumb traps --stale", growth[0]["message"])
@@ -224,7 +225,7 @@ class TrapBudgetTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             add_trap(tmp, "one real trap")
-            kinds = {f["kind"] for f in _cli._audit_bloat(mem, Path(tmp))}
+            kinds = {f["kind"] for f in _audit._audit_bloat(mem, Path(tmp))}
             self.assertNotIn("traps-growth", kinds)
 
 

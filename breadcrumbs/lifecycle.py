@@ -38,6 +38,7 @@ from breadcrumbs import git, path_policy
 from breadcrumbs import validation as _validation
 from breadcrumbs import textmatch as _textmatch
 from breadcrumbs import scoring as _scoring
+from breadcrumbs import audit as _audit
 
 # --------------------------------------------------------------------------- #
 # WM-30: time-to-live
@@ -758,9 +759,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
     missing = missing_evidence_files(root, live)
     for rid, ref in missing[:AUDIT_EVIDENCE_MISSING_MAX]:
         findings.append(
-            cli._audit_finding(
+            _audit._audit_finding(
                 "evidence-missing-file",
-                cli.AUDIT_WARN,
+                _audit.AUDIT_WARN,
                 None,
                 f"{rid} cites {ref}, which is not in HEAD — verify the record still applies",
                 id=rid,
@@ -770,9 +771,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
     conflicts = find_contradictions(memory_dir)
     for c in conflicts[:AUDIT_CONFLICTS_MAX]:
         findings.append(
-            cli._audit_finding(
+            _audit._audit_finding(
                 "possible-contradiction",
-                cli.AUDIT_WARN,
+                _audit.AUDIT_WARN,
                 None,
                 c["message"],
                 ids=c["ids"],
@@ -785,9 +786,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
     pairs = [p for p in near_duplicate_pairs(memory_dir) if (p["a"], p["b"]) not in raised]
     for pair in pairs[:AUDIT_DUP_PAIRS_MAX]:
         findings.append(
-            cli._audit_finding(
+            _audit._audit_finding(
                 "near-duplicates",
-                cli.AUDIT_WARN,
+                _audit.AUDIT_WARN,
                 None,
                 f"{pair['kind']}s {pair['a']} and {pair['b']} are {pair['similarity']:.2f} "
                 "similar — supersede one (`crumb mark-status <id> superseded --superseded-by "
@@ -801,9 +802,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
     degraded = _related.load_degraded(memory_dir)
     if degraded:
         findings.append(
-            cli._audit_finding(
+            _audit._audit_finding(
                 "related-degraded",
-                cli.AUDIT_WARN,
+                _audit.AUDIT_WARN,
                 None,
                 "generated/related.json is incomplete: "
                 f"{degraded.get('reason', 'over the pair budget')} "
