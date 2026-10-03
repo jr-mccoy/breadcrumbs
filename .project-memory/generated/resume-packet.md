@@ -1,22 +1,30 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 1b26438 | inputs_hash: 72d9e99392fd | generated_at: 2026-10-02T20:38:28+00:00 -->
-<!-- view: markdown | budget: 3700/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: b8266a3 | inputs_hash: 8dbcd60f3392 | generated_at: 2026-10-03T13:07:33+00:00 -->
+<!-- view: markdown | budget: 3828/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-e63a7edc-aluyzm` · commit `1b26438` · 26 uncommitted file(s) · handoff: handoffs/ccr-e63a7edc-aluyzm.md
+branch `ccr-4e962709-tubaoe` · commit `b8266a3` · 16 uncommitted file(s) · handoff: handoff.md (no branch handoff)
 
 ## Current Focus
 0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
 
 ## Next Action
-Merge branch ccr-e63a7edc-aluyzm to main, then publish 0.6.0 (release.yml dry-run, then publish). It now also carries the packet-settles fix (dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input) and the Stop lifecycle fixes (dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction). Deferred work with evidence: docs/reviews/2026-10-02-deferred-health-review.md.
+Merge branch ccr-e63a7edc-aluyzm to main, then publish 0.6.0: Actions -> release -> Run workflow on main, mode dry-run, then mode publish (RELEASING.md). Before migrating this repo's or DoWhat's store with 0.6.0, upgrade every machine that shares the store: migrate sets min_crumb_version and 0.4.x/0.5.0 then refuse to write. Open after 0.6.0: an ask-time guard so a code+memory commit after the extraction turn does not stack a machine snapshot beside the agent's capture, and whether the Stop hook should write only under private/.
 
-_(1 earlier entry in handoffs/ccr-e63a7edc-aluyzm.md)_
+_(2 earlier entries in handoff.md (no branch handoff))_
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 5787430 Deferred-work review, decisions, a test trap and the session capture
+- 3e0f49c Packet and Stop hook settle: reads keep a fresh packet; Stop lifecycle gaps closed
+- 1b26438 Release 0.6.0: bump the version, CHANGELOG section, compatibility row
+- 095f908 Stop hook: committing the store is not new work; the snapshot settles
 
 ## Active Decisions
+- `dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas` — One implementation per question removes the class of drift that produced N8, and moving HEAD reads to the disk reader removes git spawns from the Stop hook path on Windows. Storing full shas in records would change a stored format, so it was kept out.
 - `dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction` — The ask's instruction ends with the capture, so a capture after the ask is the answer, whatever else the turn committed. Amend and rebase preserve author time, which is what tells an already-asked commit from new work.
 - `dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input` — inputs_hash equality is already the definition of fresh that validate gates on. The kept file stays internally consistent: its commit, ages and dirty count all describe the store as of its own generated_at.
 - `dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new` — The hook runs after the agent's last commit by construction, so any tracked file it writes is left uncommitted; the one-round cost is acceptable, an unbounded one is not. Reusing the commit counter's definition of work keeps one notion of 'this session's work' across the ask and the snapshot.
@@ -31,8 +39,7 @@ _(1 earlier entry in handoffs/ccr-e63a7edc-aluyzm.md)_
 - `dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering` — related, conflicts and the near-duplicate sweep score only pairs that can reach their thresholds; pairwise versions stay as test oracles. Past RELATED_PAIR_BUDGET the related map reports degraded (audit: related-degraded) instead of skipping. Parses are shared per operation via cli.operation() keyed… [excerpt: 300 of 332 chars; full text: crumb show dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering]
 - `dec_20260927_review-profiles-solo-by-default-team-makes-agent-written` — Proportional: ordinary capture never waits for a person; only the writes that make memory authoritative are gated. Opt-in semantics use requires: instead of a store-wide schema bump.
 - `dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer` — The lock is the one place every committed write already passes, and every caller already handles StoreLocked, so the refusal needs no per-writer code. Released readers (<=0.3.1) cannot be changed, so semantic changes must also be designed to fail safe for them (schema bump, meaning kept out of field… [excerpt: 300 of 456 chars; full text: crumb show dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer]
-- `dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches` — No links at all is the simplest rule to audit and nothing in the tool creates one. Descriptor-relative no-follow opens close the check/use race on POSIX. Raising a sanitized PermissionError, rather than returning placeholder text, keeps a refusal from being mistaken for content. Batching reads per d… [excerpt: 300 of 356 chars; full text: crumb show dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches]
-_(… 41 more omitted to stay within the per-section cap)_
+_(… 42 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -58,6 +65,9 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (10d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- docs/reviews/2026-09-26-breadcrumbs-work-packages.json, docs/releases/reliability-release-checklist.md, RELEASING.md, docs/compatibility.md
+- breadcrumbs/git.py
+- tests/test_git.py
 - breadcrumbs/cli.py
 - breadcrumbs/hooks_common.py
 - breadcrumbs/hooks_compact.py
@@ -75,10 +85,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/admission.py
 - tests/test_admission_policy.py
 - docs/reviews/2026-09-27-breadcrumbs-wp14/README.md
-- docs/compatibility.md
-- tests/test_store_upgrade_contract.py
-- docs/reviews/2026-09-27-breadcrumbs-wp21/README.md
-_(… 41 more omitted to stay within the per-section cap)_
+_(… 44 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -96,6 +103,7 @@ _(… 41 more omitted to stay within the per-section cap)_
 _(… 8 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
+- python -m unittest discover -s tests -p "test_*.py"; python evals/run.py --release
 - tests/test_hooks.py::StopLifecycleTests
 - tests/test_multi_machine.py::ResumeLeavesAFreshPacketTests
 - tests/test_hooks.py::HookCaptureTests::test_committing_the_snapshot_is_not_new_work
@@ -107,27 +115,26 @@ _(… 8 more omitted to stay within the per-section cap)_
 - python -m unittest tests.test_blockfiles
 - python -m unittest tests.test_transcript
 - python -m unittest tests.test_hooks_phase1
-- python -m unittest tests.test_usage
-_(… 11 more omitted to stay within the per-section cap)_
+_(… 12 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
-- active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 27 days old with no update — is this still true?
-- active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 27 days old with no update — is this still true?
-- active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 27 days old with no update — is this still true?
-- active decision dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head is 29 days old with no update — is this still true?
+- handoff is 0 day(s) old, written 5 commit(s) behind current HEAD.
+- active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 28 days old with no update — is this still true?
+- active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 28 days old with no update — is this still true?
+- active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 28 days old with no update — is this still true?
+- active decision dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head is 30 days old with no update — is this still true?
 - active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 45 days old with no update — is this still true?
-- active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 45 days old with no update — is this still true?
-- active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 45 days old with no update — is this still true?
-- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 46 days old with no update — is this still true?
-- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 47 days old with no update — is this still true?
-- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 47 days old with no update — is this still true?
+- active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 46 days old with no update — is this still true?
+- active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 46 days old with no update — is this still true?
+- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 47 days old with no update — is this still true?
+- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 48 days old with no update — is this still true?
+- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 48 days old with no update — is this still true?
 - active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 48 days old with no update — is this still true?
 - active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 48 days old with no update — is this still true?
-- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 48 days old with no update — is this still true?
-- active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 48 days old with no update — is this still true?
-- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 48 days old with no update — is this still true?
-- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 48 days old with no update — is this still true?
-- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 48 days old with no update — is this still true?
-- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 48 days — did this ever get resolved?
+- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 49 days old with no update — is this still true?
+- active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 49 days old with no update — is this still true?
+- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 49 days old with no update — is this still true?
+- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 49 days old with no update — is this still true?
+- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 49 days old with no update — is this still true?
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 49 days — did this ever get resolved?
