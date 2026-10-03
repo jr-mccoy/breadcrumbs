@@ -1493,6 +1493,7 @@ def guard(
     *,
     files: list[str] | None = None,
     stale_days: int = cli.STALE_AGE_DAYS,
+    staleness: bool = True,
 ) -> dict:
     """Guard-before-action (§11): classify -> search -> score -> single verdict.
 
@@ -1607,26 +1608,32 @@ def guard(
     # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
     # Lenient read: guard runs on the PreToolUse path and must not die on a bad
     # byte.
-    from breadcrumbs import handoffs as _handoffs
+    # `staleness=False` is the guard hook: it never shows these warnings, and
+    # computing them asked git for the handoff's commit distance and whether
+    # handoff.md had reached HEAD — 2 to 5 processes on every firing (DoWhat
+    # retest of 0.6.0, item 1). `crumb guard` and MCP still report them.
+    warnings: list[str] = []
+    if staleness:
+        from breadcrumbs import handoffs as _handoffs
 
-    handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
-    # `risks_only`: guard is called once per edit, and the full staleness view
-    # repeated the same store-wide facts verbatim on every call (P0-4). Only
-    # abnormal states — cold handoff, detached HEAD, branch mismatch — belong
-    # on the per-action path; the rest lives in resume/doctor/audit.
-    # The risks-only view reads no records (they feed only the full view), so
-    # none are loaded for it: that re-read every decision on each firing (#6).
-    staleness = _packet.compute_staleness(
-        root,
-        cli.parse_handoff_meta(handoff_text),
-        [],
-        [],
-        [],
-        stale_days,
-        risks_only=True,
-        memory_dir=memory_dir,
-        handoff_path=handoff_path,
-    )[:GUARD_MAX_WARNINGS]
+        handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
+        # `risks_only`: guard is called once per edit, and the full staleness
+        # view repeated the same store-wide facts verbatim on every call (P0-4).
+        # Only abnormal states — cold handoff, detached HEAD, branch mismatch —
+        # belong on the per-action path; the rest lives in resume/doctor/audit.
+        # The risks-only view reads no records (they feed only the full view),
+        # so none are loaded for it: that re-read every decision each firing (#6).
+        warnings = _packet.compute_staleness(
+            root,
+            cli.parse_handoff_meta(handoff_text),
+            [],
+            [],
+            [],
+            stale_days,
+            risks_only=True,
+            memory_dir=memory_dir,
+            handoff_path=handoff_path,
+        )[:GUARD_MAX_WARNINGS]
 
     result = {
         "verdict": verdict,
@@ -1647,7 +1654,7 @@ def guard(
         "read_only": read_only,
         "matches": top,
         "history": history[:GUARD_MAX_WARNINGS],
-        "staleness": staleness,
+        "staleness": warnings,
         # NOT `next_action` — that key is the resume packet's *recorded* Next
         # Action, and one name for two unrelated things read as one thing.
         "high_impact": high_impact,

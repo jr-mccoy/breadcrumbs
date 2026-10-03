@@ -19,5 +19,6 @@ the same results with or without it.
 guard run. It is rebuilt on every write (and by `crumb reindex`), trusted only
 while this machine's `generation.json` vouches for it, and never committed:
 crumb-kit 0.5.0 and earlier kept it in `generated/`, where every rebuild was a
-large diff that conflicted on merges. `commit-order.txt` caches HEAD's history
-so the hook need not ask git for it on every call.
+large diff that conflicted on merges. `commit-order.txt` caches HEAD's history,
+and `head-tree.txt` the store's files at HEAD, so the hook need not ask git
+either question on every call.

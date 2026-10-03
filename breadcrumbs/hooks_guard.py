@@ -353,7 +353,9 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         return 0
     from breadcrumbs import service as _service
 
-    result = _service.guard(_service.Context(root, memory_dir, "hook"), action, files=files)
+    result = _service.guard(
+        _service.Context(root, memory_dir, "hook"), action, files=files, staleness=False
+    )
     verdict = result["verdict"]
     # Launching a subagent is not itself irreversible — the subagent's own tool
     # calls hit this same guard, where the blast radius actually is. So a launch
