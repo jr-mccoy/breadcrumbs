@@ -1,13 +1,16 @@
 # Project Handoff
 
-_Last updated: 2026-10-02T19:30:00+00:00_
-_Branch: ccr-e63a7edc-aluyzm_
-_Commit: 84633e4_
+_Last updated: 2026-10-03T18:00:00+00:00_
+_Branch: claude/charming-sagan-9o911q_
+_Commit: 11ae6d6_
 
 ## Current Focus
-crumb-kit 0.5.0 is on PyPI. 0.6.0 (the DoWhat retest fixes: guard verdicts and speed, machine-local guard pre-filter, `min_crumb_version`, plus the Stop-hook snapshot settle fix) is version-bumped on branch ccr-e63a7edc-aluyzm, ready to merge and publish. docs/reviews/2026-10-02-dowhat-retest-plan.md and dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new are the record; do not redo them.
+crumb-kit 0.6.0 is on PyPI. 0.6.1 (the DoWhat retest of 0.6.0: no git processes on the guard hook, lighter hook imports, objections need evidence about the action, generated indexes are memory, scratch cleanup and heredoc data not destructive, Stop-hook timings) is version-bumped on branch claude/charming-sagan-9o911q and being released. docs/reviews/2026-10-03-dowhat-0.6.0-retest-plan.md is the record; do not redo it.
 
 ## Next Action
+### 2026-10-03 · `11ae6d6`
+Release 0.6.1: merge claude/charming-sagan-9o911q to main (fast-forward), run release.yml on main in dry-run mode, then publish. Then the operator remeasures the guard hook on Windows (crumb doctor --hook-log now prints import, git, mine and snapshot timings and each hook's slowest firing) and decides on a lighter launcher (python -m breadcrumbs hook guard, or a shell pre-check) and whether the Stop snapshot's projection rebuild moves off the hook path.
+
 ### 2026-10-02 · `84633e4`
 Merge branch ccr-e63a7edc-aluyzm to main, then publish 0.6.0: Actions -> release -> Run workflow on main, mode dry-run, then mode publish (RELEASING.md). Before migrating this repo's or DoWhat's store with 0.6.0, upgrade every machine that shares the store: migrate sets min_crumb_version and 0.4.x/0.5.0 then refuse to write. Open after 0.6.0: an ask-time guard so a code+memory commit after the extraction turn does not stack a machine snapshot beside the agent's capture, and whether the Stop hook should write only under private/.
 
@@ -18,7 +21,7 @@ Publish 0.5.0: Actions -> release -> Run workflow on main, mode dry-run, then mo
 A person reviews the work packages the tracker marks `review_required`, then merges the branch to main. The branch already carries the 0.4.0 bump (version, CHANGELOG, compatibility row); the release runs through release.yml with a dry-run first (RELEASING.md). docs/releases/reliability-release-checklist.md lists the gates, exclusions and the operator's steps; read the native-full jobs on the merge commit before publishing. After the merge, reconcile this file on main (docs/operator-guide.md §6).
 
 ## Blockers / Open Questions
-Publishing 0.6.0 needs the operator: release.yml runs only from main and only by hand.
+release.yml runs only from main and only by hand; the operator approved the 0.6.1 release on 2026-10-03.
 
 ## Active Decisions To Respect
 See the resume packet (`crumb resume`); the durable decisions are the records, not this file.

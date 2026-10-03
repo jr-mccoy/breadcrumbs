@@ -24,7 +24,7 @@ installs is built from `GUARDED_TOOLS`, so the two cannot drift apart.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from collections import namedtuple
 
 HOST = "claude-code"
 CONTRACT_VERSION = 2  # 1: Bash|Edit|Write|MultiEdit|Task|Agent; 2: + PowerShell, NotebookEdit
@@ -67,15 +67,20 @@ HOOK_EVENTS = {
 }
 
 
-@dataclass(frozen=True)
-class Action:
-    """What a tool call proposes to do, in the guard's terms."""
+# A `namedtuple`, not a frozen dataclass: `dataclasses` imports `inspect`,
+# `ast` and `tokenize`, about 10 ms on the guard hook's path (DoWhat retest of
+# 0.6.0, item 2). Same fields, defaults, equality and immutability.
+class Action(namedtuple("Action", "tool kind text files supported")):
+    """What a tool call proposes to do, in the guard's terms.
 
-    tool: str
-    kind: str  # shell | edit | subagent | none
-    text: str = ""
-    files: list[str] = field(default_factory=list)
-    supported: bool = True  # False: a tool name this adapter does not know
+    `kind` is shell | edit | subagent | none; `supported` is False for a tool
+    name this adapter does not know.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, tool: str, kind: str, text: str = "", files=None, supported: bool = True):
+        return super().__new__(cls, tool, kind, text, list(files or []), supported)
 
 
 def _snippet(text: object, limit: int) -> str:

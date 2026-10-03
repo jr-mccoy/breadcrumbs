@@ -194,7 +194,11 @@ def _is_destructive(action: str, classes: list[str]) -> bool:
     action, and making it depend on how much of the repo the store cites is the
     conflation this exists to undo.
     """
-    return bool(_DESTRUCTIVE_OP_RE.search(action or "")) or bool(
+    # Not the raw text (DoWhat retest of 0.6.0, items 6-7): a heredoc fed to
+    # `while read` held `git push --force origin main` as a line of data, and
+    # made a loop of `crumb guard` calls ASK_HUMAN. Data heredoc bodies and
+    # scratch-file deletions are left out; quoted text and code heredocs stay.
+    return bool(_DESTRUCTIVE_OP_RE.search(_shellcmd.destructive_text(action or ""))) or bool(
         GUARD_HIGH_IMPACT_CLASSES & set(classes or ())
     )
 
@@ -415,7 +419,12 @@ def classify_action(action: str) -> tuple[str, list[str]]:
             text = _shellcmd.classification_text(action or "")
         else:
             other: list[str] = []
-            for seg in segs:
+            # Deleting a scratch file is cleanup, not a deletion (DoWhat retest
+            # of 0.6.0, item 6): `rm -f "$TEMP/handoff.before"` asked a human.
+            scratch = _shellcmd.scratch_deletions(segs)
+            for seg, cleanup in zip(segs, scratch):
+                if cleanup:
+                    continue
                 args = _shellcmd.crumb_invocation(_shellcmd.words(seg))
                 if args is not None:
                     effect = _shellcmd.crumb_effect(args)
@@ -448,6 +457,30 @@ def _attempt_has_do_not_retry(rec: cli.Record) -> bool:
 _MD_HEADING_LINE_RE = re.compile(r"(?m)^#{1,6}\s.*$")
 
 
+# crumb's generated files inside the store: rebuilt from the records, so a
+# record citing one is citing memory. Store-relative.
+GENERATED_STORE_FILES = ("known-traps.md", "open-questions.md")
+GENERATED_STORE_DIRS = ("generated/", "index/")
+
+
+def _is_generated(path: str) -> bool:
+    """Is `path` (as a record cites it) one of crumb's generated store files?
+
+    `known-traps.md` and `open-questions.md` count bare too: those names are
+    crumb's. `generated/` and `index/` count only inside the store, because a
+    project has its own (`app/build/generated/`).
+    """
+    p = path_policy.to_posix(str(path or "").strip().strip("`"))
+    while p.startswith("./"):
+        p = p[2:]
+    store = cli.MEMORY_DIRNAME + "/"
+    inside = p.startswith(store) or f"/{store}" in p
+    rel = p.split(store, 1)[1] if inside else p
+    if rel in GENERATED_STORE_FILES:
+        return True
+    return inside and rel.startswith(GENERATED_STORE_DIRS)
+
+
 def _item_from_record(rec: cli.Record) -> dict:
     # Body-mined paths minus the ones that are really *commands*. A record whose
     # evidence is `--evidence command "./gradlew test"` or `--evidence test
@@ -457,7 +490,7 @@ def _item_from_record(rec: cli.Record) -> dict:
     # command. Curated `--evidence file/path` refs are unaffected; this only
     # removes paths that the record itself already labelled as a command.
     cmd_paths = _textmatch._paths_from_text(" ".join(cli._evidence_refs(rec, ("command", "test"))))
-    mined = _textmatch._paths_from_text(rec.body) - cmd_paths
+    mined = {p for p in _textmatch._paths_from_text(rec.body) - cmd_paths if not _is_generated(p)}
     # Two tiers, not one (G1). `--evidence file …` is the author *declaring*
     # which files this record is about; a path mined out of its prose is a
     # mention, and the two were scored, displayed and reasoned about
@@ -465,7 +498,13 @@ def _item_from_record(rec: cli.Record) -> dict:
     # get a weaker one and say so, so an agent reading `same file(s)` can still
     # trust it. A trap author knows which files their trap concerns — asking
     # beats any extractor.
-    files = _textmatch._norm_files(set(cli._evidence_refs(rec, ("file", "path"))))
+    # A record citing crumb's generated indexes (`known-traps.md`, …) points at
+    # memory, where it was written up, not at a subject (DoWhat retest of 0.6.0,
+    # item 3): `crumb migrate` rewrites known-traps.md and was paired with a
+    # Gradle attempt that cited it. A trap's declared area is not affected.
+    files = _textmatch._norm_files(
+        {p for p in cli._evidence_refs(rec, ("file", "path")) if not _is_generated(p)}
+    )
     mentioned = _textmatch._norm_files(mined) - files
     tags = {str(t).lower() for t in (rec.meta.get("tags") or [])}
     # Section headings are the template, not the record: "## Why It Failed /
@@ -790,8 +829,13 @@ def _score_item(
     reached: "cli.HeadTree | None" = None,
     common: frozenset[str] = frozenset(),
     common_tags: frozenset[str] = frozenset(),
+    strict_objections: bool = False,
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate.
+
+    `strict_objections` is guard's: a do-not-retry line becomes the blocking
+    signal only with evidence about the action (see below). Lookups keep
+    labelling every topical failed attempt with it.
 
     `common` / `common_tags` are the query's stems that too many records carry
     as a word / as a tag to say much (`GUARD_DF_COMMON`): they score half and
@@ -915,18 +959,34 @@ def _score_item(
     # plus one common word is what a store says about everything. In a store
     # too small to have common words, these are the rules they always were.
     kw_beyond_tags = len(rare_kw - matched_tag_stems)
+    rare_title = title_overlap - matched_tag_stems - common
+    # A path the action names and the record cites, in its evidence or its
+    # prose, is about this action whatever the words around it (DoWhat retest
+    # of 0.6.0, item 4).
     topical = bool(
         matched_files
-        or (title_overlap - matched_tag_stems - common)
+        or matched_mentions
+        or rare_title
         or matched_writes
         or (rare_tag_stems and kw_beyond_tags >= 1)
         or (len(matched_tag_stems) >= 2 and rare_tag_stems)
         or (matched_tag_stems and kw_beyond_tags >= 2)
         or kw_beyond_tags >= GUARD_TOPICAL_KEYWORDS
     )
+    # An objection needs more than being on topic (item 5): a file the action
+    # names or writes, or two rare words of the record's *title* (what was
+    # attempted) beyond its tags. A tag plus a few words from the body, or one
+    # title word, is a match that may be read first, never a "do not retry"
+    # for this action: two tooling attempts PAUSEd `uv tool install` and a
+    # timing loop on `tool`, `python` and `script`. Naming the exact command
+    # is an objection too (`_with_command_signal`).
+    objects = bool(matched_files or matched_mentions or matched_writes or len(rare_title) >= 2)
     if item["do_not_retry"] and do_not_retry_boost and topical:
+        # Still ranked as the failed attempt it is, but for guard only an
+        # objection carries the signal that blocks.
         score += GUARD_W_DO_NOT_RETRY
-        signals.append("do-not-retry")
+        if objects or not strict_objections:
+            signals.append("do-not-retry")
     if item["kind"] == "question" and item["status"] == "open":
         score += GUARD_W_OPEN_BLOCKER
         signals.append("open-blocker")
@@ -1064,6 +1124,7 @@ def search(
     writes: list[str] | None = None,
     do_not_retry_boost: bool = True,
     command_text: str | None = None,
+    strict_objections: bool = False,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Deterministic search over the canonical records (§20.10).
 
@@ -1170,6 +1231,7 @@ def search(
             reached=reached,
             common=common,
             common_tags=common_tags,
+            strict_objections=strict_objections,
         )
         if it.get("command_heads") and _names_command(q_command, it["command_heads"]):
             m = _with_command_signal(m, it, do_not_retry_boost=do_not_retry_boost)
@@ -1493,6 +1555,7 @@ def guard(
     *,
     files: list[str] | None = None,
     stale_days: int = cli.STALE_AGE_DAYS,
+    staleness: bool = True,
 ) -> dict:
     """Guard-before-action (§11): classify -> search -> score -> single verdict.
 
@@ -1536,6 +1599,7 @@ def guard(
         keyword_cap=GUARD_KEYWORD_CAP,
         writes=_shellcmd.crumb_writes(action, cli.MEMORY_DIRNAME) if not edit else None,
         command_text=_shellcmd.matching_text(action) if not edit else path_text,
+        strict_objections=True,
     )
 
     active, history = [], []
@@ -1607,26 +1671,32 @@ def guard(
     # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
     # Lenient read: guard runs on the PreToolUse path and must not die on a bad
     # byte.
-    from breadcrumbs import handoffs as _handoffs
+    # `staleness=False` is the guard hook: it never shows these warnings, and
+    # computing them asked git for the handoff's commit distance and whether
+    # handoff.md had reached HEAD — 2 to 5 processes on every firing (DoWhat
+    # retest of 0.6.0, item 1). `crumb guard` and MCP still report them.
+    warnings: list[str] = []
+    if staleness:
+        from breadcrumbs import handoffs as _handoffs
 
-    handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
-    # `risks_only`: guard is called once per edit, and the full staleness view
-    # repeated the same store-wide facts verbatim on every call (P0-4). Only
-    # abnormal states — cold handoff, detached HEAD, branch mismatch — belong
-    # on the per-action path; the rest lives in resume/doctor/audit.
-    # The risks-only view reads no records (they feed only the full view), so
-    # none are loaded for it: that re-read every decision on each firing (#6).
-    staleness = _packet.compute_staleness(
-        root,
-        cli.parse_handoff_meta(handoff_text),
-        [],
-        [],
-        [],
-        stale_days,
-        risks_only=True,
-        memory_dir=memory_dir,
-        handoff_path=handoff_path,
-    )[:GUARD_MAX_WARNINGS]
+        handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
+        # `risks_only`: guard is called once per edit, and the full staleness
+        # view repeated the same store-wide facts verbatim on every call (P0-4).
+        # Only abnormal states — cold handoff, detached HEAD, branch mismatch —
+        # belong on the per-action path; the rest lives in resume/doctor/audit.
+        # The risks-only view reads no records (they feed only the full view),
+        # so none are loaded for it: that re-read every decision each firing (#6).
+        warnings = _packet.compute_staleness(
+            root,
+            cli.parse_handoff_meta(handoff_text),
+            [],
+            [],
+            [],
+            stale_days,
+            risks_only=True,
+            memory_dir=memory_dir,
+            handoff_path=handoff_path,
+        )[:GUARD_MAX_WARNINGS]
 
     result = {
         "verdict": verdict,
@@ -1647,7 +1717,7 @@ def guard(
         "read_only": read_only,
         "matches": top,
         "history": history[:GUARD_MAX_WARNINGS],
-        "staleness": staleness,
+        "staleness": warnings,
         # NOT `next_action` — that key is the resume packet's *recorded* Next
         # Action, and one name for two unrelated things read as one thing.
         "high_impact": high_impact,

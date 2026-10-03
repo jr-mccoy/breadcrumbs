@@ -41,7 +41,6 @@ as staleness.
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 from breadcrumbs import cli, path_policy
@@ -220,6 +219,8 @@ def build_index(
         path_policy.check(path)
         # A temp file of its own (audit F06): with one fixed `.tmp` name, two
         # builders would write into the same file and publish each other's work.
+        import tempfile  # only when writing; the guard hook only reads (item 2)
+
         fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=".index.", suffix=".tmp")
         os.close(fd)
         tmp = Path(tmp_name)

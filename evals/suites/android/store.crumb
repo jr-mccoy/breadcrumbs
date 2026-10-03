@@ -146,7 +146,7 @@
   --set Tried "Re-ran ./gradlew assembleDebug in a loop until the downloads finished."
   --set Result "Maven Central answered HTTP 429 Too Many Requests and the container was rate limited for an hour."
   --set Do\ Not\ Retry\ Unless "The container has a warm Gradle cache or a mirror is configured."
-  --evidence file settings.gradle.kts --tags gradle,ci,network
+  --evidence file settings.gradle.kts --evidence file .project-memory/known-traps.md --tags gradle,ci,network
 
 @2026-09-13 remember attempt --title "Hunk-filtering discipline applied to the .kt file lost the unrelated hunks"
   --set Problem "One .kt file held two unrelated changes and only one belonged in the commit."
@@ -178,3 +178,27 @@
   --why "crumb capture session writes both files"
   --safe "Pass --next; never --replace unless the log should go"
   --tags crumb,handoff
+
+# ---- The 0.6.0 retest (2026-10-03): the records behind items 3-7. The 429
+# attempt above cites known-traps.md, where it was written up (item 3).
+
+@2026-09-18 remember attempt --title "Deleting test-results/ to force an independent second full-suite run - it came back FROM-CACHE"
+  --set Problem "Wanted a second, independent run of the full unit-test suite."
+  --set Tried "rm -rf app/build/test-results/ and ran ./gradlew :app:testDebugUnitTest again."
+  --set Result "Gradle restored every test task FROM-CACHE; nothing re-ran, so the second run proved nothing."
+  --set Do\ Not\ Retry\ Unless "You also pass --rerun-tasks or --no-build-cache."
+  --evidence file app/build/test-results/ --tags gradle,test
+
+@2026-09-19 remember attempt --title "Hardcoded a GUESSED post-edit CRLF count in a line-ending assertion and the script refused to run"
+  --set Problem "A tooling script checked a file's line endings after an edit on Windows."
+  --set Tried "Asserted a guessed CRLF count in the script instead of measuring it with python first."
+  --set Result "The count was wrong, the assertion fired, and the script refused to run at all."
+  --set Do\ Not\ Retry\ Unless "The count is measured from the file, never guessed."
+  --evidence file tools/check-eol.sh --tags tooling,windows
+
+@2026-09-20 remember attempt --title "firebase remoteconfig:get --output - writes a FILE named '-' instead of stdout"
+  --set Problem "Wanted the Remote Config template on stdout for a tooling pipe."
+  --set Tried "firebase remoteconfig:get --output - | python -m json.tool"
+  --set Result "The CLI wrote a file literally named '-' and the pipe got nothing; the next run printed the old version."
+  --set Do\ Not\ Retry\ Unless "firebase-tools documents - as stdout."
+  --evidence file tools/remote-config.sh --tags tooling,firebase

@@ -721,11 +721,11 @@ class CommitDistanceIndexTests(unittest.TestCase):
                     calls[0] += 1
                     return real(*a, **k)
 
-                cli.subprocess.run = counting
+                subprocess.run = counting
                 try:
                     crumb.guard(mem, root, action)
                 finally:
-                    cli.subprocess.run = real
+                    subprocess.run = real
                 return calls[0]
 
             def add(n: int, start: int) -> None:
@@ -1462,7 +1462,9 @@ class DestructiveActionTests(unittest.TestCase):
             root = self._store(tmp)
             # No memory collision: still destructive, but guard reports on the
             # store and has nothing to say, so the verdict stays PROCEED.
-            res = guard_json(["guard", "rm -rf /tmp/unrelated-scratch", "--project", str(root)])
+            # (Not `rm -rf /tmp/…`: deleting under temp is cleanup since the
+            # DoWhat retest of 0.6.0, item 6.)
+            res = guard_json(["guard", "git reset --hard HEAD~1", "--project", str(root)])
             self.assertTrue(res["destructive"], res)
             self.assertEqual(res["verdict"], "PROCEED", res)
 

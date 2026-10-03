@@ -412,6 +412,11 @@ def _norm_files(paths) -> set[str]:
     out: set[str] = set()
     for p in paths or ():
         p = str(p).strip().strip("`").strip().rstrip(".,;:")
+        # `app/build/test-results/` and `app/build/test-results` are one path
+        # (DoWhat retest of 0.6.0, item 4): the slash made a record citing the
+        # directory miss `rm -rf app/build/test-results` entirely.
+        if len(p) > 1:
+            p = p.rstrip("/")
         if not p:
             continue
         out.add(p)

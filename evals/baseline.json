@@ -47,12 +47,20 @@
       "removed": [
         "android::sed -n '867p' app/lint-results.txt | grep -oiE 'migrat(e|ion)'"
       ]
+    },
+    {
+      "added": 2,
+      "date": "2026-10-03",
+      "improvements": [],
+      "reason": "DoWhat retest of 0.6.0: the android store gains the report's records (FROM-CACHE, two tooling attempts, the 429 attempt citing known-traps.md) and two tasks; guard objections need evidence about the action",
+      "regressions": [],
+      "removed": []
     }
   ],
   "comment": "Written by `python evals/run.py --write-baseline --reason \u2026`. See evals/README.md.",
   "definitions": {
     "guard": {
-      "_system": "cli.guard(task, files): the verdict the library computes",
+      "_system": "scoring.guard(task, files): the verdict the library computes",
       "guard_accuracy": {
         "definition": "share of tasks whose verdict is one of those listed",
         "denominator": "tasks that set `verdict`"
@@ -167,38 +175,38 @@
       },
       "packet": {
         "n": {
-          "precision_at_5": 8,
-          "recall_at_5": 8,
-          "reject_hits": 12
+          "precision_at_5": 10,
+          "recall_at_5": 10,
+          "reject_hits": 14
         },
-        "precision_at_5": 0.3667,
+        "precision_at_5": 0.3217,
         "recall_at_5": 1.0,
         "reject_hits": 5
       },
       "packet_delivered": {
         "n": {
-          "precision_at_5": 8,
-          "recall_in_view": 8,
-          "reject_hits": 12,
-          "tokens_max": 12,
-          "tokens_mean": 12,
-          "within_budget": 12
+          "precision_at_5": 10,
+          "recall_in_view": 10,
+          "reject_hits": 14,
+          "tokens_max": 14,
+          "tokens_mean": 14,
+          "within_budget": 14
         },
         "precision_at_5": 0.0,
         "recall_in_view": 1.0,
         "reject_hits": 5,
-        "tokens_max": 1933,
-        "tokens_mean": 1902.5,
+        "tokens_max": 1674,
+        "tokens_mean": 1642.7857,
         "within_budget": 1.0
       },
       "prompt": {
         "n": {
-          "precision_at_5": 8,
+          "precision_at_5": 10,
           "quiet": 4,
-          "recall_at_5": 8,
-          "reject_hits": 12
+          "recall_at_5": 10,
+          "reject_hits": 14
         },
-        "precision_at_5": 0.7917,
+        "precision_at_5": 0.7833,
         "quiet": 1.0,
         "recall_at_5": 1.0,
         "reject_hits": 0
@@ -206,22 +214,22 @@
       "prompt_delivered": {
         "dedupe": 1.0,
         "n": {
-          "dedupe": 8,
-          "precision_at_5": 8,
+          "dedupe": 10,
+          "precision_at_5": 10,
           "quiet": 4,
-          "recall_at_5": 8,
-          "reject_hits": 12,
-          "tokens_max": 8,
-          "tokens_mean": 8
+          "recall_at_5": 10,
+          "reject_hits": 14,
+          "tokens_max": 10,
+          "tokens_mean": 10
         },
-        "precision_at_5": 0.7917,
+        "precision_at_5": 0.7833,
         "quiet": 1.0,
         "recall_at_5": 1.0,
         "reject_hits": 0,
-        "tokens_max": 221,
-        "tokens_mean": 133.625
+        "tokens_max": 201,
+        "tokens_mean": 139.2
       },
-      "tasks": 12
+      "tasks": 14
     },
     "holdout": {
       "guard": {
@@ -254,8 +262,8 @@
         "precision_at_5": 0.1667,
         "recall_in_view": 1.0,
         "reject_hits": 0,
-        "tokens_max": 984,
-        "tokens_mean": 974.375,
+        "tokens_max": 845,
+        "tokens_mean": 835.875,
         "within_budget": 1.0
       },
       "prompt": {
@@ -285,8 +293,8 @@
         "quiet": 1.0,
         "recall_at_5": 1.0,
         "reject_hits": 0,
-        "tokens_max": 210,
-        "tokens_mean": 155.0
+        "tokens_max": 209,
+        "tokens_mean": 150.0
       },
       "tasks": 8
     },
@@ -321,8 +329,8 @@
         "precision_at_5": 0.1667,
         "recall_in_view": 1.0,
         "reject_hits": 0,
-        "tokens_max": 984,
-        "tokens_mean": 974.375,
+        "tokens_max": 845,
+        "tokens_mean": 835.875,
         "within_budget": 1.0
       },
       "prompt": {
@@ -352,8 +360,8 @@
         "quiet": 1.0,
         "recall_at_5": 1.0,
         "reject_hits": 0,
-        "tokens_max": 210,
-        "tokens_mean": 155.0
+        "tokens_max": 209,
+        "tokens_mean": 150.0
       },
       "tasks": 8
     },
@@ -388,8 +396,8 @@
         "precision_at_5": 0.18,
         "recall_in_view": 1.0,
         "reject_hits": 0,
-        "tokens_max": 1317,
-        "tokens_mean": 1294.3333,
+        "tokens_max": 1088,
+        "tokens_mean": 1064.75,
         "within_budget": 1.0
       },
       "prompt": {
@@ -419,8 +427,8 @@
         "quiet": 1.0,
         "recall_at_5": 0.8167,
         "reject_hits": 0,
-        "tokens_max": 312,
-        "tokens_mean": 154.7778
+        "tokens_max": 302,
+        "tokens_mean": 150.3333
       },
       "tasks": 12
     },
@@ -435,61 +443,61 @@
       },
       "packet": {
         "n": {
-          "precision_at_5": 41,
-          "recall_at_5": 41,
-          "reject_hits": 51
+          "precision_at_5": 43,
+          "recall_at_5": 43,
+          "reject_hits": 53
         },
-        "precision_at_5": 0.5427,
-        "recall_at_5": 0.9797,
+        "precision_at_5": 0.524,
+        "recall_at_5": 0.9806,
         "reject_hits": 7
       },
       "packet_delivered": {
         "n": {
-          "precision_at_5": 41,
-          "recall_in_view": 41,
-          "reject_hits": 51,
-          "tokens_max": 51,
-          "tokens_mean": 51,
-          "within_budget": 51
+          "precision_at_5": 43,
+          "recall_in_view": 43,
+          "reject_hits": 53,
+          "tokens_max": 53,
+          "tokens_mean": 53,
+          "within_budget": 53
         },
-        "precision_at_5": 0.1024,
+        "precision_at_5": 0.0977,
         "recall_in_view": 1.0,
         "reject_hits": 8,
-        "tokens_max": 1933,
-        "tokens_mean": 1482.6078,
+        "tokens_max": 1674,
+        "tokens_mean": 1248.9623,
         "within_budget": 1.0
       },
       "prompt": {
         "n": {
-          "precision_at_5": 41,
+          "precision_at_5": 43,
           "quiet": 10,
-          "recall_at_5": 41,
-          "reject_hits": 51
+          "recall_at_5": 43,
+          "reject_hits": 53
         },
-        "precision_at_5": 0.7236,
+        "precision_at_5": 0.7248,
         "quiet": 1.0,
-        "recall_at_5": 0.8943,
+        "recall_at_5": 0.8992,
         "reject_hits": 1
       },
       "prompt_delivered": {
         "dedupe": 1.0,
         "n": {
-          "dedupe": 38,
-          "precision_at_5": 41,
+          "dedupe": 40,
+          "precision_at_5": 43,
           "quiet": 10,
-          "recall_at_5": 41,
-          "reject_hits": 51,
-          "tokens_max": 38,
-          "tokens_mean": 38
+          "recall_at_5": 43,
+          "reject_hits": 53,
+          "tokens_max": 40,
+          "tokens_mean": 40
         },
-        "precision_at_5": 0.7236,
+        "precision_at_5": 0.7248,
         "quiet": 1.0,
-        "recall_at_5": 0.8943,
+        "recall_at_5": 0.8992,
         "reject_hits": 1,
-        "tokens_max": 312,
-        "tokens_mean": 147.5
+        "tokens_max": 305,
+        "tokens_mean": 145.7
       },
-      "tasks": 51
+      "tasks": 53
     },
     "service": {
       "guard": {
@@ -522,8 +530,8 @@
         "precision_at_5": 0.1167,
         "recall_in_view": 1.0,
         "reject_hits": 0,
-        "tokens_max": 1241,
-        "tokens_mean": 1226.1429,
+        "tokens_max": 1034,
+        "tokens_mean": 1018.6429,
         "within_budget": 1.0
       },
       "prompt": {
@@ -554,7 +562,7 @@
         "recall_at_5": 0.9583,
         "reject_hits": 0,
         "tokens_max": 194,
-        "tokens_mean": 132.6667
+        "tokens_mean": 129.3333
       },
       "tasks": 14
     },
@@ -589,8 +597,8 @@
         "precision_at_5": 0.0909,
         "recall_in_view": 1.0,
         "reject_hits": 3,
-        "tokens_max": 1576,
-        "tokens_mean": 1545.0,
+        "tokens_max": 1274,
+        "tokens_mean": 1242.9231,
         "within_budget": 1.0
       },
       "prompt": {
@@ -621,7 +629,7 @@
         "recall_at_5": 0.8182,
         "reject_hits": 1,
         "tokens_max": 305,
-        "tokens_mean": 172.3333
+        "tokens_mean": 170.1111
       },
       "tasks": 13
     }
@@ -633,6 +641,24 @@
         "ok": true,
         "verdict": "ASK_HUMAN"
       },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "android::assert the CRLF count in the line-ending check script after the edit": {
       "packet": {
         "missed": [],
         "rejected": []
@@ -741,6 +767,24 @@
         "ok": true,
         "verdict": "PROCEED"
       },
+      "packet": {
+        "missed": [],
+        "rejected": []
+      },
+      "packet_delivered": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt": {
+        "missed": [],
+        "rejected": []
+      },
+      "prompt_delivered": {
+        "missed": [],
+        "rejected": []
+      }
+    },
+    "android::delete the test results to force a second independent full-suite run": {
       "packet": {
         "missed": [],
         "rejected": []
@@ -935,7 +979,7 @@
       "guard": {
         "hook_ok": true,
         "ok": true,
-        "verdict": "PAUSE"
+        "verdict": "READ_FIRST"
       },
       "packet": {
         "missed": [],

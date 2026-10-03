@@ -239,9 +239,14 @@ class SuiteError(Exception):
 
 def _strip_comment(line: str) -> str:
     quote = None
+    escaped = False
     for i, ch in enumerate(line):
         if quote:
-            if ch == quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\" and quote == '"':
+                escaped = True
+            elif ch == quote:
                 quote = None
         elif ch in "\"'":
             quote = ch
@@ -250,9 +255,32 @@ def _strip_comment(line: str) -> str:
     return line
 
 
+# Escapes in a double-quoted value: a task that is a multi-line command (a
+# heredoc) needs `\n`, and one holding double quotes needs `\"`.
+_ESCAPES = {"n": "\n", '"': '"', "\\": "\\"}
+
+
+def _unescape(body: str, where: str) -> str:
+    out, i = [], 0
+    while i < len(body):
+        ch = body[i]
+        if ch == "\\":
+            nxt = body[i + 1 : i + 2]
+            if nxt not in _ESCAPES:
+                raise SuiteError(f'{where}: unknown escape \\{nxt} (use \\n, \\" or \\\\)')
+            out.append(_ESCAPES[nxt])
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _scalar(raw: str, where: str) -> str:
     raw = raw.strip()
-    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+        return _unescape(raw[1:-1], where)
+    if len(raw) >= 2 and raw[0] == raw[-1] == "'":
         return raw[1:-1]
     if raw.startswith(("[", "{", '"', "'")):
         raise SuiteError(f"{where}: cannot parse {raw!r}")
@@ -602,6 +630,7 @@ CRITICAL_CHECKS = {
     "guard_not": "scoring.guard(task) must not return any of `verdict_not`",
     "guard_cites_none": "scoring.guard(task) must cite none of `forbid` among its matches",
     "guard_no_blocking": "scoring.guard(task) must show no match as blocking (`[objects]`)",
+    "guard_objects": "scoring.guard(task) must cite every `require` id as blocking (`[objects]`)",
     "hook_guard_warns": "`crumb hook guard` on the task must deliver a warning",
     "never_delivered": "no `forbid` id is delivered as an entry (`via`: prompt, packet)",
     "delivered": "every `require` id is delivered as an entry (`via`: prompt, packet)",
@@ -809,11 +838,15 @@ def run_critical(case: dict, memory_dir: Path, project: Path, rows: list[dict], 
         ]
         ok = verdict not in case["verdict_not"]
         detail = f"guard said {verdict}"
-    elif check in ("guard_cites_none", "guard_no_blocking"):
+    elif check in ("guard_cites_none", "guard_no_blocking", "guard_objects"):
         matches = _scoring.guard(memory_dir, project, case["task"], files=case["files"] or None)[
             "matches"
         ]
-        if check == "guard_cites_none":
+        if check == "guard_objects":
+            blocking = {m["id"] for m in matches if m.get("stance") == "blocking"}
+            bad = [rid for rid in case["require"] if rid not in blocking]
+            detail = f"not blocking: {bad}" if bad else "all blocking"
+        elif check == "guard_cites_none":
             bad = [m["id"] for m in matches if m["id"] in case["forbid"]]
             detail = f"cited {bad}" if bad else "none cited"
         else:

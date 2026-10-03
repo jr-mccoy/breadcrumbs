@@ -47,15 +47,17 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import secrets
 import time
 from pathlib import Path
-from typing import Iterable
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
 from breadcrumbs import scoring as _scoring
 from breadcrumbs import audit as _audit
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # annotations only; `typing` costs the hook ~4 ms
+    from typing import Iterable
 
 USAGE_FILENAME = "usage.json"
 
@@ -291,6 +293,8 @@ def record_surfaced(
         folder = events_dir(memory_dir)
         path_policy.mkdirs(folder)
         stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+        import secrets  # only when a surfacing is written
+
         name = (
             f"{stamp}-{time.monotonic_ns() % 10**9:09d}-{os.getpid()}-{secrets.token_hex(4)}.json"
         )

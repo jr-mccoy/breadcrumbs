@@ -41,7 +41,7 @@ readers fail safe.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from collections import namedtuple
 from pathlib import Path
 
 # Features this build implements, by the name a store lists under `requires`.
@@ -69,13 +69,17 @@ ABSENT = "absent"
 NEEDS_NEWER_BUILD = "needs-newer-build"
 
 
-@dataclass(frozen=True)
-class Compatibility:
-    state: str
-    store_version: int | None
-    build_version: int
-    unknown_features: tuple[str, ...] = field(default_factory=tuple)
-    min_version: str | None = None
+# A `namedtuple`, not a frozen dataclass: `dataclasses` imports `inspect`,
+# `ast` and `tokenize`, about 10 ms on the guard hook's path (DoWhat retest of
+# 0.6.0, item 2). Same fields, defaults, equality and immutability.
+class Compatibility(
+    namedtuple(
+        "Compatibility",
+        "state store_version build_version unknown_features min_version",
+        defaults=((), None),
+    )
+):
+    __slots__ = ()
 
     @property
     def writable(self) -> bool:

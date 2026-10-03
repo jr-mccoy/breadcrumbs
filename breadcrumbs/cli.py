@@ -26,18 +26,12 @@ import json
 import os
 import re
 import shlex
-import shutil
-import subprocess
 import sys
 import threading
 import time
 import types
 from datetime import date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # annotations only; the parser lives in `cli_parser`
-    import argparse
 
 # The record contract. Stdlib-only and import-free, so importing it here costs
 # the hook pre-filter nothing (see StartupCostTests).
@@ -50,6 +44,12 @@ from breadcrumbs import path_policy
 # Every git question goes through `breadcrumbs.git`. Stdlib-only too.
 from breadcrumbs import git as _git
 from breadcrumbs.adapters import claude as _claude
+
+# Not `from typing import TYPE_CHECKING`: importing `typing` costs the guard
+# hook ~4 ms for a constant (DoWhat retest of 0.6.0, item 2).
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # annotations only; the parser lives in `cli_parser`
+    import argparse
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -657,6 +657,8 @@ def _replace_store_contents(memory_dir: Path, staging: Path) -> None:
     # A link is removed as a link, never followed (audit F17).
     def remove(entry: Path) -> None:
         if entry.is_dir() and not entry.is_symlink():
+            import shutil
+
             shutil.rmtree(entry)
         else:
             entry.unlink()
@@ -685,6 +687,8 @@ def copy_template_tree(dest: Path) -> None:
         raise FileNotFoundError(
             f"template tree not found at {TEMPLATE_DIR}; is the package intact?"
         )
+    import shutil
+
     shutil.copytree(TEMPLATE_DIR, dest, dirs_exist_ok=True)
 
 
@@ -834,6 +838,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     if staging.is_symlink():
         staging.unlink()  # a leftover link is removed, never followed (audit F17)
     elif staging.exists():
+        import shutil
+
         shutil.rmtree(staging)
     try:
         copy_template_tree(staging)
@@ -843,6 +849,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
     except Exception:
         if staging.exists():
+            import shutil
+
             shutil.rmtree(staging)
         raise
     if memory_dir.exists():
@@ -6353,6 +6361,8 @@ class HeadTree:
         self._prefix = ""
         self._tracked: frozenset[str] = frozenset()
         self._dirty: frozenset[str] = frozenset()
+        self._store: dict[str, str] | None = None
+        self._store_loaded = False
 
     def _load(self) -> None:
         if self._loaded:
@@ -6378,6 +6388,9 @@ class HeadTree:
         """Is `path` committed at HEAD with no worktree modification? (False when unknowable.)"""
         if path is None:
             return False
+        fast = self._store_contains(Path(path))
+        if fast is not None:
+            return fast
         self._load()
         if not self._tracked:
             return False
@@ -6387,6 +6400,101 @@ class HeadTree:
             return False
         full = self._prefix + rel
         return full in self._tracked and full not in self._dirty
+
+    # A store file, the common case, is answered without starting git (DoWhat
+    # retest of 0.6.0, item 1): the store's part of HEAD's tree is cached in
+    # index/ per HEAD, and a file has reached HEAD when its bytes are that blob.
+    # The three git calls above cost 50-80 ms each on Windows, on every guard
+    # firing that matched a record written on a cloud session's branch.
+
+    def _store_contains(self, path: Path) -> bool | None:
+        """`contains` for a file inside the store; None when this cannot answer."""
+        memory = self._root / MEMORY_DIRNAME
+        try:
+            rel = path_policy.posix_rel(path.resolve(), memory.resolve())
+        except (ValueError, OSError):
+            return None
+        listing = self._store_listing()
+        if listing is None:
+            return None
+        blob = listing.get(rel)
+        if blob is None:
+            return False
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return False
+        if _blob_id(data, len(blob)) == blob:
+            return True
+        # A Windows checkout (`core.autocrlf`) holds the same text with CRLF;
+        # git folds it back to LF before comparing, and so does this.
+        return b"\r\n" in data and _blob_id(data.replace(b"\r\n", b"\n"), len(blob)) == blob
+
+    def _store_listing(self) -> dict[str, str] | None:
+        """{store-relative path: blob id} at HEAD, from `index/` when it is HEAD's."""
+        if self._store_loaded:
+            return self._store
+        self._store_loaded = True
+        head = _git.head(self._root, spawn=False)
+        top = _git.work_tree(self._root)
+        memory = self._root / MEMORY_DIRNAME
+        if not head or top is None or not memory.is_dir():
+            return None
+        try:
+            prefix = path_policy.posix_rel(memory.resolve(), top.resolve())
+        except (ValueError, OSError):
+            return None
+        cache = memory / Path(*HEAD_TREE_RELPATH)
+        stamp = f"{head} {prefix}"
+        try:
+            text = path_policy.read_text(cache)
+        except OSError:
+            text = ""
+        first, _, rest = text.partition("\n")
+        if first == stamp:
+            listing = {}
+            for line in rest.splitlines():
+                blob, sep, rel = line.partition("\t")
+                if sep:
+                    listing[rel] = blob
+            self._store = listing
+            return listing
+        out = _git.run(
+            self._root, "ls-tree", "-r", "-z", "--full-name", "HEAD", "--", MEMORY_DIRNAME
+        )
+        if out is None:
+            return None
+        listing = {}
+        for entry in out.split("\0"):
+            meta, sep, full = entry.partition("\t")
+            parts = meta.split()
+            if not sep or len(parts) != 3 or parts[1] != "blob":
+                continue
+            if full.startswith(prefix + "/") and "\n" not in full and "\t" not in full:
+                listing[full[len(prefix) + 1 :]] = parts[2]
+        if (memory / HEAD_TREE_RELPATH[0]).is_dir() or (memory / "manifest.yml").is_file():
+            try:
+                path_policy.mkdirs(cache.parent)
+                body = "".join(f"{b}\t{r}\n" for r, b in sorted(listing.items()))
+                write_text_atomic(cache, stamp + "\n" + body)
+            except OSError:
+                pass
+        self._store = listing
+        return listing
+
+
+# The store's part of HEAD's tree, cached per HEAD in the machine-local index/
+# (see `HeadTree._store_listing`).
+HEAD_TREE_RELPATH = ("index", "head-tree.txt")
+
+
+def _blob_id(data: bytes, hex_len: int) -> str:
+    """git's object id for a blob holding `data` (SHA-1, or SHA-256 repos)."""
+    algo = "sha256" if hex_len == 64 else "sha1"
+    h = hashlib.new(algo)
+    h.update(b"blob %d\0" % len(data))
+    h.update(data)
+    return h.hexdigest()
 
 
 def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
@@ -7248,10 +7356,14 @@ def local_mcp_command(root: Path) -> list[str]:
 def register_mcp_local(root: Path) -> dict:
     """Run `local_mcp_command`; `{ok, command, error}`. Never raises."""
     cmd = local_mcp_command(root)
+    import shutil
+
     exe = shutil.which("claude")
     if exe is None:
         return {"ok": False, "command": cmd, "error": "the `claude` CLI is not on PATH"}
     try:
+        import subprocess
+
         r = subprocess.run(
             [exe, *cmd[1:]], cwd=str(root), capture_output=True, text=True, timeout=60
         )
@@ -9109,7 +9221,27 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
                 parts.append(f"git {phases['git_ms']:.0f} ms")
             if "git" in phases:
                 parts.append(f"{phases['git']:.0f} git process(es)")
+            if "mine_ms" in phases:
+                parts.append(f"mine {phases['mine_ms']:.0f} ms")
+            if "snapshot_ms" in phases:
+                parts.append(f"snapshot {phases['snapshot_ms']:.0f} ms")
             print(f"            p50 phases: {', '.join(parts)}")
+        slow = ev.get("slowest") or {}
+        if slow.get("ms") is not None:
+            detail = [
+                f"{label} {slow[key]:.0f} ms"
+                for key, label in (
+                    ("snapshot_ms", "snapshot"),
+                    ("mine_ms", "mine"),
+                    ("git_ms", "git"),
+                    ("import_ms", "import"),
+                )
+                if isinstance(slow.get(key), (int, float))
+            ]
+            print(
+                f"            slowest: {slow['ms']:.0f} ms at {slow.get('at', '?')}"
+                + (f" ({', '.join(detail)})" if detail else "")
+            )
         if ev.get("verdicts"):
             verdicts = ", ".join(f"{k} {v}" for k, v in sorted(ev["verdicts"].items()))
             print(f"            verdicts: {verdicts}")

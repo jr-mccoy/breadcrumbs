@@ -427,17 +427,38 @@ def split_redirections(segment: str) -> tuple[str, list[str]]:
     return "".join(pieces), targets
 
 
+# Words that come before a command without being it: shell keywords that open
+# or continue a compound command, and prefixes that run the rest. Read as the
+# command, `do crumb guard "$a"` in a loop was `do`, so crumb's own words were
+# matched against the store and `do git push --force origin main` was not a
+# force-push (DoWhat retest of 0.6.0, item 5b).
+SHELL_KEYWORD_PREFIXES = frozenset(
+    {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "(", "time", "nohup"}
+)
+# Words that close a compound command; a segment of only these runs nothing.
+SHELL_CLOSERS = frozenset({"done", "fi", "esac", "}", ")"})
+
+
 def words(segment: str) -> list[str]:
     """Shell words of one segment (output redirections removed), with leading
-    `VAR=value` assignments dropped. Falls back to whitespace splitting."""
+    `VAR=value` assignments, shell keywords (`do`, `then`, `if`, …) and the
+    `time`/`nohup` prefixes dropped. Falls back to whitespace splitting."""
     body, _targets = split_redirections(segment)
     body = re.sub(r"(?<![\w-])\d*<\s*\S+", " ", body)  # input redirection
     try:
         toks = shlex.split(body, posix=True)
     except ValueError:
         toks = body.split()
-    while toks and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]):
-        toks.pop(0)
+    while toks:
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]) or toks[0] in SHELL_KEYWORD_PREFIXES:
+            if toks.pop(0) == "time" and toks[:1] == ["-p"]:
+                toks.pop(0)
+        elif toks[0].startswith(("(", "{")) and len(toks[0]) > 1:
+            toks[0] = toks[0][1:]
+        else:
+            break
+    if toks and all(t in SHELL_CLOSERS for t in toks):
+        return []
     return toks
 
 
@@ -716,12 +737,192 @@ def _rm_rf_outside_build(tokens: list[str]) -> str | None:
     targets = [t for t in tokens[1:] if not t.startswith("-")]
     for t in targets:
         parts = [p for p in to_posix(t).split("/") if p not in ("", ".")]
-        if t.startswith("/tmp/") or any(
-            p in _BUILD_DIR_NAMES or p.endswith(".egg-info") for p in parts
-        ):
+        if is_temp_path(t) or any(p in _BUILD_DIR_NAMES or p.endswith(".egg-info") for p in parts):
             continue
         return f"rm -rf {t}"
     return None
+
+
+# ---- scratch files (DoWhat retest of 0.6.0, item 6) ------------------------ #
+#
+# `rm -f "$TEMP/handoff.before"`, at the end of a command that made that copy,
+# asked a human: `rm` is a deletion, and a deletion turns any READ_FIRST into
+# ASK_HUMAN. Deleting under the system temp directory, or a file the same
+# command created, is cleanup.
+
+_TEMP_ROOT_RE = re.compile(
+    r"(?i)^(?:"
+    r"\$\{?(?:TEMP|TMP|TMPDIR)(?::?[-=+?][^}]*)?\}?"  # $TEMP, ${TMPDIR:-/tmp}
+    r"|%(?:TEMP|TMP)%"  # cmd.exe
+    r"|\$env:(?:TEMP|TMP)"  # PowerShell
+    r"|/tmp|/var/tmp|/private/tmp|/private/var/tmp"
+    r"|[a-z]:[/\\]windows[/\\]temp"
+    r")[/\\]+[^/\\]"
+)
+_APPDATA_TEMP_RE = re.compile(r"(?i)(?:^|[/\\])appdata[/\\]local[/\\]temp[/\\]+[^/\\]")
+
+
+def is_temp_path(path: str) -> bool:
+    """Is `path` something inside the system temp directory (never the directory itself)?"""
+    p = str(path or "").strip().strip("\"'")
+    if not p or ".." in re.split(r"[/\\]", p):
+        return False
+    return bool(_TEMP_ROOT_RE.match(p) or _APPDATA_TEMP_RE.search(p))
+
+
+def _plain_path(path: str) -> str:
+    p = to_posix(str(path or "").strip().strip("\"'"))
+    while p.startswith("./"):
+        p = p[2:]
+    return p
+
+
+def _created_by(tokens: list[str], segment: str) -> set[str]:
+    """Files a segment creates: output redirects, `cp`/`mv`/`ln`/`install`
+    destinations, and `touch`/`tee`/`mkdir` arguments."""
+    _body, targets = split_redirections(segment)
+    out = {t for t in targets if t not in NEUTRAL_REDIRECT_TARGETS}
+    verb = verb_of(tokens)
+    args = [t for t in tokens[1:] if not t.startswith("-")]
+    if verb in ("cp", "mv", "ln", "install") and len(args) >= 2:
+        out.add(args[-1])
+    elif verb in ("touch", "tee", "mkdir"):
+        out.update(args)
+    return {_plain_path(t) for t in out if t}
+
+
+def _rm_args(tokens: list[str]) -> tuple[list[str], bool] | None:
+    """`(targets, recursive)` for an `rm`, else None."""
+    if verb_of(tokens) != "rm":
+        return None
+    targets, recursive, options = [], False, True
+    for t in tokens[1:]:
+        if options and t == "--":
+            options = False
+        elif options and t.startswith("--"):
+            recursive = recursive or t == "--recursive"
+        elif options and t.startswith("-") and len(t) > 1:
+            recursive = recursive or "r" in t or "R" in t
+        else:
+            targets.append(t)
+    return targets, recursive
+
+
+def scratch_deletions(segs: list[str]) -> list[bool]:
+    """For each segment: does it only delete scratch files?
+
+    Scratch is anything under the system temp directory, or a file an earlier
+    segment of the same command created. A recursive delete counts only under
+    temp: a directory the command made may hold more than it put there.
+    """
+    created: set[str] = set()
+    out: list[bool] = []
+    for seg in segs:
+        toks = words(seg)
+        rm = _rm_args(toks)
+        scratch = False
+        if rm is not None and rm[0]:
+            targets, recursive = rm
+            scratch = all(
+                is_temp_path(t) or (not recursive and _plain_path(t) in created) for t in targets
+            )
+        out.append(scratch)
+        created |= _created_by(toks, seg)
+    return out
+
+
+# ---- here-documents: data or code (DoWhat retest of 0.6.0, item 7) -------- #
+#
+# A heredoc fed to `while read`, `cat >`, `tee` or `python -` is data: its lines
+# say what to do, they are not done here. One fed to a shell, a remote shell or
+# a database client is run as commands.
+HEREDOC_CODE_CONSUMERS = frozenset(
+    """
+    bash sh zsh ksh dash ash fish csh tcsh busybox ssh su sudo doas
+    psql mysql mariadb sqlite3 mongo mongosh redis-cli cqlsh clickhouse-client
+    """.split()
+)
+
+
+def _runs_code(line: str) -> bool:
+    """Does the command on a heredoc's opening line run its input as commands?"""
+    segs = segments(line)
+    if segs is None:
+        return True  # cannot tell: keep the body
+    for seg in segs:
+        for tok in words(seg):
+            if PurePosixPath(to_posix(tok)).name.lower().removesuffix(".exe") in (
+                HEREDOC_CODE_CONSUMERS
+            ):
+                return True
+    return False
+
+
+def _heredoc_lines(command: str):
+    """Yield `(line, kind)`: `command`, or a heredoc body line that is `code` or `data`."""
+    lines = (command or "").split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        yield line, "command"
+        terminators = [
+            (m.group(2), m.group(0).startswith("<<-")) for m in _HEREDOC_RE.finditer(line)
+        ]
+        i += 1
+        kind = "code" if terminators and _runs_code(line) else "data"
+        for word, dash in terminators:
+            while i < len(lines):
+                candidate = lines[i].lstrip("\t") if dash else lines[i]
+                done = candidate.strip() == word
+                yield lines[i], "command" if done else kind
+                i += 1
+                if done:
+                    break
+
+
+def without_data_heredocs(command: str) -> str:
+    """`command` with the bodies of data heredocs removed; code bodies stay."""
+    return "\n".join(line for line, kind in _heredoc_lines(command) if kind != "data")
+
+
+# Package managers whose `install` takes `--force` to mean "reinstall over the
+# copy that is there" (found checking the 0.6.0 retest, N1): reversible, so not
+# the `--force` the destructive check is about.
+PACKAGE_MANAGERS = frozenset(
+    """
+    pip pip3 pipx uv uvx poetry pdm conda mamba npm pnpm yarn bun brew cargo gem
+    go apt apt-get dnf yum choco winget scoop
+    """.split()
+)
+_INSTALL_VERBS = frozenset({"install", "add", "upgrade", "update", "reinstall", "sync"})
+
+
+def _package_install(tokens: list[str]) -> bool:
+    """Is this segment a package manager installing something (`uv tool install …`)?"""
+    if verb_of(tokens).removesuffix(".exe") not in PACKAGE_MANAGERS:
+        return False
+    positional = [t for t in tokens[1:4] if not t.startswith("-")]
+    return bool(_INSTALL_VERBS & set(positional))
+
+
+def destructive_text(command: str) -> str:
+    """What the destructive-shape check reads: the command without data heredoc
+    bodies, segments that only delete scratch files, and package installs (whose
+    `--force` reinstalls). Quoted text stays: `bash -c "rm -rf x"` and
+    `sqlite3 db "DROP TABLE t"` are code."""
+    segs = segments(command or "")
+    if segs is None:
+        return without_data_heredocs(command)
+    scratch = [
+        cleanup or _package_install(words(seg))
+        for seg, cleanup in zip(segs, scratch_deletions(segs))
+    ]
+    if not any(scratch):
+        return without_data_heredocs(command)
+    kept = [seg for seg, s in zip(segs, scratch) if not s]
+    # `segments` dropped every heredoc body; the code ones still count.
+    code = [line for line, kind in _heredoc_lines(command) if kind == "code"]
+    return "\n".join([" ; ".join(kept), *code])
 
 
 def high_impact(command: str) -> str | None:

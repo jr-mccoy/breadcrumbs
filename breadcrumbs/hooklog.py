@@ -42,8 +42,12 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Callable
+
 from breadcrumbs import path_policy
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # annotations only; `typing` costs the hook ~4 ms
+    from typing import Callable
 
 HOOK_LOG_FILENAME = "hook-log.jsonl"
 HOOK_LOG_ROTATED_FILENAME = "hook-log.1.jsonl"
@@ -198,8 +202,9 @@ def read_log(memory_dir: Path) -> list[dict]:
 _BASE_KEYS = frozenset({"event", "at", "ms", "outcome", "session", "verdict"})
 # Per-firing timings, reported as medians rather than summed: `import_ms`
 # (loading crumb's code), `git_ms` (time in `git` processes) and `git` (how
-# many it started).
-PHASE_KEYS = frozenset({"import_ms", "git_ms", "git"})
+# many it started); for Stop, `mine_ms` (reading the transcript) and
+# `snapshot_ms` (the session record and its projection rebuild).
+PHASE_KEYS = frozenset({"import_ms", "git_ms", "git", "mine_ms", "snapshot_ms"})
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -220,6 +225,14 @@ def summarize(entries: list[dict]) -> dict:
             {"count": 0, "outcomes": {}, "ms": [], "verdicts": {}, "counts": {}, "phases": {}},
         )
         ev["count"] += 1
+        # The slowest firing with its own phases: a median hides the one that
+        # cost 10 s (DoWhat retest of 0.6.0, item 8).
+        if isinstance(e.get("ms"), (int, float)) and e["ms"] >= (
+            (ev.get("slowest") or {}).get("ms", -1)
+        ):
+            ev["slowest"] = {
+                k: e[k] for k in ("at", "ms", "outcome", "snapshot", *sorted(PHASE_KEYS)) if k in e
+            }
         outcome = str(e.get("outcome") or "unknown")
         ev["outcomes"][outcome] = ev["outcomes"].get(outcome, 0) + 1
         if isinstance(e.get("ms"), (int, float)):

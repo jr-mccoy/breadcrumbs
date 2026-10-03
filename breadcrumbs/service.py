@@ -27,15 +27,19 @@ not the argument parser (`breadcrumbs.cli_parser`), and it never prints.
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
+from collections import namedtuple
 from datetime import datetime
+
 from pathlib import Path
-from typing import Callable
 
 from breadcrumbs import admission, cli
 from breadcrumbs import packet as _packet
 from breadcrumbs import textmatch as _textmatch
 from breadcrumbs import scoring as _scoring
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # annotations only; `typing` costs the hook ~4 ms
+    from typing import Callable
 
 RECORD_TYPES = ("decision", "attempt")
 
@@ -57,13 +61,15 @@ class ServiceError(Exception):
         self.data = data
 
 
-@dataclass(frozen=True)
-class Context:
-    root: Path
-    memory_dir: Path
-    channel: str = "cli"
-    clock: Callable[[], datetime] | None = None
-    agent: str | None = None
+# A `namedtuple`, not a frozen dataclass: `dataclasses` imports `inspect`,
+# `ast` and `tokenize`, about 10 ms on the guard hook's path (DoWhat retest of
+# 0.6.0, item 2). Same fields, defaults, equality and immutability.
+class Context(
+    namedtuple("Context", "root memory_dir channel clock agent", defaults=("cli", None, None))
+):
+    """root, memory_dir, channel ("cli"), clock (a `() -> datetime`, or None), agent."""
+
+    __slots__ = ()
 
     def admission(self) -> admission.Context:
         """This store's policy as it applies to this channel, read now."""

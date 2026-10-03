@@ -83,6 +83,21 @@ Plain `pip` works too (prefer a virtualenv):
 python -m pip install .              # or: pip install <built-wheel>.whl
 ```
 
+[`uv`](https://docs.astral.sh/uv/) installs it as a tool. Pass
+`--refresh-package crumb-kit` when installing or upgrading to a version
+released today:
+
+```bash
+uv tool install --refresh-package crumb-kit "crumb-kit[mcp]"
+uv tool install --force --refresh-package crumb-kit "crumb-kit[mcp]>=X.Y.Z"   # upgrade to X.Y.Z
+```
+
+uv answers from its cached copy of the PyPI index. For a few hours after a
+release, that copy can predate it, and the install fails with "requirements
+are unsatisfiable" although the version is on PyPI. `--refresh-package
+crumb-kit` makes uv fetch crumb-kit's index entry fresh and leaves the rest of
+the cache alone.
+
 After install, the binary is on PATH and the `.project-memory/` template tree
 ships **inside the package** (`breadcrumbs/templates/`), so `init` finds it
 wherever the package lives — there is no repo-relative path dependency:
@@ -1160,7 +1175,8 @@ the upgrade again. Re-run `crumb mcp register` afterwards to move an existing
 **`uv tool` installs work the same way.** `uv tool install "crumb-kit[mcp]"`
 puts the shims in `~/.local/bin` and the package in uv's own tool environment;
 `crumb mcp register` then names that environment's Python. `uv tool upgrade
-crumb-kit` replaces files in the same environment, so the same rule applies:
+--refresh-package crumb-kit crumb-kit` (the refresh flag: see *Install*)
+replaces files in the same environment, so the same rule applies:
 close the editor sessions running the server first if the upgrade reports a
 file in use, and re-run `crumb mcp register` if the tool environment moved (a
 new `--python`).

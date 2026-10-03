@@ -57,6 +57,32 @@ def git_dir(root: Path) -> Path | None:
     return None
 
 
+def work_tree(root: Path) -> Path | None:
+    """The top of the work tree containing `root` (where its `.git` is), or None.
+
+    None whenever git might put it elsewhere: an environment override, or a
+    `core.worktree` setting (in `config` or `config.worktree`). The caller then
+    asks git (`rev-parse --show-prefix`).
+    """
+    if any(os.environ.get(k) for k in _ENV_OVERRIDES):
+        return None
+    gd = git_dir(root)
+    if gd is None or not _supported(gd):
+        return None
+    for name in ("config", "config.worktree"):
+        for base in {gd, _common_dir(gd)}:
+            if re.search(r"(?im)^\s*worktree\s*=", _read(base / name) or ""):
+                return None
+    try:
+        here = Path(root).resolve()
+    except OSError:
+        return None
+    for d in (here, *here.parents):
+        if (d / ".git").exists():
+            return d
+    return None
+
+
 def _common_dir(gd: Path) -> Path:
     text = _read(gd / "commondir")
     if text and text.strip():
