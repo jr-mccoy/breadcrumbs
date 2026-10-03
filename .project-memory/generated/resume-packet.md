@@ -1,27 +1,18 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: b8266a3 | inputs_hash: 8dbcd60f3392 | generated_at: 2026-10-03T13:07:33+00:00 -->
-<!-- view: markdown | budget: 3828/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 7d941f4 | inputs_hash: 6205a8df8373 | generated_at: 2026-10-03T13:07:58+00:00 -->
+<!-- view: markdown | budget: 3626/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-4e962709-tubaoe` · commit `b8266a3` · 16 uncommitted file(s) · handoff: handoff.md (no branch handoff)
+branch `ccr-4e962709-tubaoe` · commit `7d941f4` · 2 uncommitted file(s) · handoff: handoffs/ccr-4e962709-tubaoe.md
 
 ## Current Focus
 0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
 
 ## Next Action
-Merge branch ccr-e63a7edc-aluyzm to main, then publish 0.6.0: Actions -> release -> Run workflow on main, mode dry-run, then mode publish (RELEASING.md). Before migrating this repo's or DoWhat's store with 0.6.0, upgrade every machine that shares the store: migrate sets min_crumb_version and 0.4.x/0.5.0 then refuse to write. Open after 0.6.0: an ask-time guard so a code+memory commit after the extraction turn does not stack a machine snapshot beside the agent's capture, and whether the Stop hook should write only under private/.
-
-_(2 earlier entries in handoff.md (no branch handoff))_
-
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- 5787430 Deferred-work review, decisions, a test trap and the session capture
-- 3e0f49c Packet and Stop hook settle: reads keep a fresh packet; Stop lifecycle gaps closed
-- 1b26438 Release 0.6.0: bump the version, CHANGELOG section, compatibility row
-- 095f908 Stop hook: committing the store is not new work; the snapshot settles
+2.2 git half is on branch ccr-4e962709-tubaoe (breadcrumbs/git.py). Next for 2.2: one timestamp parser (cli._parse_iso vs validation.parse_timestamp), one lenient reader, path_policy for store-relative POSIX paths, one shell tokenizer; then 2.1 seam 1 (hooks_stop). 0.6.0 is still unpublished: run the release workflow on main (dry-run, then publish) after checking the native-full Windows job.
 
 ## Active Decisions
 - `dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas` — One implementation per question removes the class of drift that produced N8, and moving HEAD reads to the disk reader removes git spawns from the Stop hook path on Windows. Storing full shas in records would change a stored format, so it was kept out.
@@ -65,7 +56,6 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (10d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
-- docs/reviews/2026-09-26-breadcrumbs-work-packages.json, docs/releases/reliability-release-checklist.md, RELEASING.md, docs/compatibility.md
 - breadcrumbs/git.py
 - tests/test_git.py
 - breadcrumbs/cli.py
@@ -85,7 +75,8 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - breadcrumbs/admission.py
 - tests/test_admission_policy.py
 - docs/reviews/2026-09-27-breadcrumbs-wp14/README.md
-_(… 44 more omitted to stay within the per-section cap)_
+- docs/compatibility.md
+_(… 43 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -103,7 +94,6 @@ _(… 44 more omitted to stay within the per-section cap)_
 _(… 8 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
-- python -m unittest discover -s tests -p "test_*.py"; python evals/run.py --release
 - tests/test_hooks.py::StopLifecycleTests
 - tests/test_multi_machine.py::ResumeLeavesAFreshPacketTests
 - tests/test_hooks.py::HookCaptureTests::test_committing_the_snapshot_is_not_new_work
@@ -115,11 +105,12 @@ _(… 8 more omitted to stay within the per-section cap)_
 - python -m unittest tests.test_blockfiles
 - python -m unittest tests.test_transcript
 - python -m unittest tests.test_hooks_phase1
-_(… 12 more omitted to stay within the per-section cap)_
+- python -m unittest tests.test_usage
+_(… 11 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 5 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
 - active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 28 days old with no update — is this still true?
 - active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 28 days old with no update — is this still true?
 - active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 28 days old with no update — is this still true?
