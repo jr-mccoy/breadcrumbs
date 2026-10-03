@@ -6,9 +6,9 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
-## [Unreleased]
+## [0.6.0] — 2026-10-02
 
-**The retest release** (proposed version **0.6.0**). Fixes what the DoWhat
+**The retest release.** Fixes what the DoWhat
 project's 0.5.0 retest and its schema 1 → 4 migration turned up on Windows:
 `docs/reviews/2026-10-02-dowhat-retest-plan.md` has each item, the
 corrections to the report, the decisions (D7, D8, D14) and each item's test.
@@ -108,6 +108,57 @@ because behaviour people rely on changed:
   about. Only commits HEAD's reflog says were created in this checkout count
   now (`commit`, `cherry-pick`, `revert`, rebase picks).
 - `tests/test_json_envelope.py` no longer modifies the checked-in fixture.
+- **Committing the store no longer earns another Stop-hook snapshot.** The
+  snapshot records HEAD, and committing the snapshot moves HEAD, so the next
+  Stop rewrote the record (and the projections) with the sha of the commit
+  that had just committed them and left the store dirty again — which the
+  agent committed again, every turn. A HEAD that moved only by commits inside
+  `.project-memory/` now counts as nothing moved, the filter the commit
+  counter already applied. The agent's own `capture session`, committed in
+  the extraction turn, is therefore the session's capture: the continuation
+  no longer stacks a machine snapshot beside it.
+- **Reading memory no longer dirties the tree.** `crumb resume` and the
+  SessionStart republish (every fresh clone, so every cloud session) rewrote
+  `generated/resume-packet.md` each time, because it embeds HEAD, the clock
+  and the dirty-file count; committing it moved HEAD, and the next read
+  rewrote it again. A committed projection whose stamped `inputs_hash` matches
+  the store is now left as it is: that match is what fresh means to
+  `validate`, and the file describes the store as of its own `generated_at`.
+  A write that changes the inputs still rewrites it, and `crumb reindex` (also
+  `crumb migrate` and the MCP reindex tool) always does. A file with merge
+  conflict markers is never kept. The cost: after a branch merges, the
+  committed packet keeps the branch view it was written with until the next
+  store write or `crumb reindex` (`doctor` says so).
+- **`crumb doctor` no longer calls the packet stale after every commit.** Its
+  render comparison ignores the commit, the dirty count, the token count,
+  jot ages, and the *Landed Since* and *Stale / Risk Warnings* entries, and
+  it now points at `crumb reindex`.
+- ***Landed Since The Handoff Was Written* lists work, not memory commits.**
+  Commits that touch only `.project-memory/` are the handoff being committed.
+- **Stop hook lifecycle:**
+  - a turn where nothing moved exits before the commit scan (a small saving:
+    one git process fewer on this repository);
+  - when the agent answers the extraction turn with its own capture, the
+    commits it made in that turn (code committed together with the records)
+    are covered: no machine snapshot beside its record, and no second ask;
+  - an amend, rebase or `pull --rebase` no longer drops the work silently:
+    commits are counted from where the histories meet, skipping copies of
+    commits already asked about;
+  - a subagent's findings are listed in the ask but no longer earn it alone;
+  - with two sessions in one checkout, each keeps one snapshot instead of
+    stacking a new record every time the other one wrote;
+  - the commit cursor keeps 64 sessions instead of 8, so a long session is
+    not forgotten once eight newer ones have started;
+  - a payload without `session_id` is keyed by its transcript path; only one
+    with neither shares a bucket, and that bucket restarts at SessionStart.
+- **SubagentStop mines the subagent's transcript** (`agent_transcript_path`).
+  `transcript_path` on that event is the parent session's, which was mined
+  whole on every subagent exit and its findings tagged `subagent`.
+- **Expired machine-local jots are deleted at SessionStart** (same rule as
+  `crumb prune jots`: expired or retired and 30 days old). Committed jots are
+  never touched.
+- `tests/test_hooks_phase1.py` no longer fires every hook at the repository
+  it runs in: its empty-payload case fell back to the working directory.
 
 ## [0.5.0] — 2026-10-01
 

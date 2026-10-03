@@ -54,6 +54,11 @@ SESSION_BASELINE_FILENAME = "session-baseline.json"
 # person has open at once and small enough that the files stay a single read.
 MAX_SESSIONS = 8
 
+# The Stop hook's "new commits" cursor keeps far more: its entries are a few
+# dozen bytes, and losing one makes a long session's work invisible to the
+# extraction turn once eight newer sessions have started (0.6.0).
+_MAX_SESSIONS_BY_FILE: dict[str, int] = {SESSION_BASELINE_FILENAME: 64}
+
 # Cap on the keys one session may accumulate in a list-valued entry.
 MAX_KEYS_PER_SESSION = 200
 
@@ -96,7 +101,7 @@ def write_state(
             reverse=True,
         )
         keep = ([current] if current in sessions else []) + others
-        keep = keep[:MAX_SESSIONS]
+        keep = keep[: _MAX_SESSIONS_BY_FILE.get(filename, MAX_SESSIONS)]
         path = private_path(memory_dir, filename)
         path_policy.mkdirs(path.parent)
         cli.write_text_atomic(
@@ -112,9 +117,19 @@ def session_id_of(payload: dict) -> str:
     """The harness session id, or a stable stand-in.
 
     A missing id must not make every firing look like a new session — that would
-    turn every dedupe into a no-op — so one bucket absorbs them all.
+    turn every dedupe into a no-op. The transcript path is the next best name
+    for one session (one file per session); only a payload with neither falls
+    into the one shared bucket, `UNKNOWN_SESSION` (0.6.0: that bucket used to
+    take every id-less payload, pooling the commit cursor, the jots and the
+    asked-about list of every session that ever ran).
     """
-    return str(payload.get("session_id") or "").strip() or UNKNOWN_SESSION
+    sid = str(payload.get("session_id") or "").strip()
+    if sid:
+        return sid
+    transcript = str(payload.get("transcript_path") or "").strip()
+    if transcript:
+        return "transcript-" + hashlib.sha1(transcript.encode("utf-8")).hexdigest()[:16]
+    return UNKNOWN_SESSION
 
 
 def update_state(memory_dir: Path, filename: str, session_id: str, mutate) -> dict | None:
@@ -489,18 +504,85 @@ def session_baseline(memory_dir: Path, session_id: str) -> dict:
 
 
 def set_session_baseline(
-    memory_dir: Path, session_id: str, head: str, *, keep_existing: bool = False
+    memory_dir: Path,
+    session_id: str,
+    head: str,
+    *,
+    keep_existing: bool = False,
+    restart: bool = False,
+    asked: bool = False,
 ) -> None:
     """Record `head` as where this session's new commits are counted from.
 
     `keep_existing=True` (SessionStart) leaves a session that already has one
     alone — a resumed or compacted session keeps its start. `started_at` is
-    set once, by whichever writes first.
+    set once, by whichever writes first, unless `restart` says this is a new
+    session under a reused key (the id-less bucket). `asked=True` stamps
+    `asked_at`: the moment the extraction turn was requested, which tells a
+    commit already asked about (an amend or rebase keeps its author time) from
+    a new one, and an agent's capture made in answer to the ask from a stale one.
     """
 
     def mutate(entry: dict) -> dict | None:
-        if keep_existing and entry.get("head"):
+        if keep_existing and entry.get("head") and not restart:
             return None
-        return {"head": head, "started_at": entry.get("started_at") or cli.now_iso()}
+        new = {} if restart else {k: v for k, v in entry.items() if k != "updated_at"}
+        new["head"] = head
+        new["started_at"] = new.get("started_at") or cli.now_iso()
+        if asked:
+            new["asked_at"] = cli.now_iso()
+            new["ask_pending"] = True
+        return new
 
     update_state(memory_dir, SESSION_BASELINE_FILENAME, session_id, mutate)
+
+
+def close_ask(memory_dir: Path, session_id: str) -> None:
+    """The continuation after an ask has run: the ask is answered or ignored.
+
+    Only that one firing may read a capture as the answer. `stop_hook_active`
+    is true after *any* Stop hook blocked, so without this an old ask plus an
+    old capture covered every later continuation's commits (0.6.0 review).
+    `asked_at` stays: it still dates which commits were asked about.
+    """
+
+    def mutate(entry: dict) -> dict | None:
+        if not entry.get("ask_pending"):
+            return None
+        return {k: v for k, v in entry.items() if k not in ("ask_pending", "updated_at")}
+
+    update_state(memory_dir, SESSION_BASELINE_FILENAME, session_id, mutate)
+
+
+def set_settled(
+    memory_dir: Path, session_id: str, head: str | None, dirty: list[str] | None
+) -> None:
+    """Remember the tree the agent's answer to the ask left (`head`, the dirty
+    work files), or forget it (`head=None`). A Stop that finds the same tree has
+    nothing new to snapshot: the agent's own capture already describes it."""
+
+    def mutate(entry: dict) -> dict | None:
+        new = {k: v for k, v in entry.items() if k != "updated_at"}
+        if head is None:
+            if "settled" not in new:
+                return None
+            new.pop("settled")
+        else:
+            new["settled"] = {"head": head, "dirty": list(dirty or [])}
+        return new
+
+    update_state(memory_dir, SESSION_BASELINE_FILENAME, session_id, mutate)
+
+
+def ensure_session_baseline(memory_dir: Path, session_id: str, root: Path) -> None:
+    """Record a baseline at HEAD if this session has none; read `.git`, spawn
+    nothing. For a Stop firing that is otherwise silent (no SessionStart hook
+    installed, or a session that predates it), so its later commits count
+    from here."""
+    if session_baseline(memory_dir, session_id):
+        return
+    from breadcrumbs import gitrefs
+
+    head = gitrefs.head_sha(root)
+    if head:
+        set_session_baseline(memory_dir, session_id, head)

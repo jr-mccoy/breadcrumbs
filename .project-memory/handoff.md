@@ -1,13 +1,16 @@
 # Project Handoff
 
-_Last updated: 2026-10-01T23:54:12+00:00_
-_Branch: claude/zealous-hamilton-ba7e5m_
-_Commit: 54eeaab_
+_Last updated: 2026-10-02T19:30:00+00:00_
+_Branch: ccr-e63a7edc-aluyzm_
+_Commit: 84633e4_
 
 ## Current Focus
-crumb-kit 0.4.0 is on PyPI. 0.5.0 (the DoWhat field-report fixes: Next Action log, migration safety, Stop-hook session cursor, guard rework and speed, repair/rename/handoff trim) is version-bumped and merged to main, ready to publish. docs/reviews/2026-10-01-dowhat-field-report-plan.md is the record; do not redo it.
+crumb-kit 0.5.0 is on PyPI. 0.6.0 (the DoWhat retest fixes: guard verdicts and speed, machine-local guard pre-filter, `min_crumb_version`, plus the Stop-hook snapshot settle fix) is version-bumped on branch ccr-e63a7edc-aluyzm, ready to merge and publish. docs/reviews/2026-10-02-dowhat-retest-plan.md and dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new are the record; do not redo them.
 
 ## Next Action
+### 2026-10-02 · `84633e4`
+Merge branch ccr-e63a7edc-aluyzm to main, then publish 0.6.0: Actions -> release -> Run workflow on main, mode dry-run, then mode publish (RELEASING.md). Before migrating this repo's or DoWhat's store with 0.6.0, upgrade every machine that shares the store: migrate sets min_crumb_version and 0.4.x/0.5.0 then refuse to write. Open after 0.6.0: an ask-time guard so a code+memory commit after the extraction turn does not stack a machine snapshot beside the agent's capture, and whether the Stop hook should write only under private/.
+
 ### 2026-10-01 · `54eeaab`
 Publish 0.5.0: Actions -> release -> Run workflow on main, mode dry-run, then mode publish (RELEASING.md). Before publishing, run the native Windows job of the ci workflow on main to confirm the long-path migration backup/restore, UTF-8 output under Git Bash and `crumb mcp register --local`, which were only tested on Linux.
 
@@ -15,7 +18,7 @@ Publish 0.5.0: Actions -> release -> Run workflow on main, mode dry-run, then mo
 A person reviews the work packages the tracker marks `review_required`, then merges the branch to main. The branch already carries the 0.4.0 bump (version, CHANGELOG, compatibility row); the release runs through release.yml with a dry-run first (RELEASING.md). docs/releases/reliability-release-checklist.md lists the gates, exclusions and the operator's steps; read the native-full jobs on the merge commit before publishing. After the merge, reconcile this file on main (docs/operator-guide.md §6).
 
 ## Blockers / Open Questions
-Publishing 0.5.0 needs the operator: release.yml runs only from main and only by hand.
+Publishing 0.6.0 needs the operator: release.yml runs only from main and only by hand.
 
 ## Active Decisions To Respect
 See the resume packet (`crumb resume`); the durable decisions are the records, not this file.

@@ -77,12 +77,25 @@ def hook_compact(memory_dir: Path, root: Path, payload: dict) -> dict:
 def hook_subagent(memory_dir: Path, root: Path, payload: dict) -> dict:
     """`SubagentStop` — keep what the subagent found.
 
-    The transcript is the *subagent's* and it is finished, so there is no cursor
-    to keep: mine the whole thing once. Its `agent_type` rides along as a tag so
-    a later review can see which kinds of subagent produce candidates worth
-    promoting and which produce noise.
+    The subagent's transcript is `agent_transcript_path`. `transcript_path` on
+    this event is the *parent* session's (Claude Code hooks reference,
+    SubagentStop input), which this hook used to mine whole, uncursored, on
+    every subagent exit — and tag the parent's findings `subagent` (0.6.0). A
+    payload without `agent_transcript_path` mines nothing: the parent's own
+    Stop mines the parent's transcript with a cursor.
+
+    The subagent's transcript is finished, so there is no cursor to keep: mine
+    the whole thing once. Its `agent_type` rides along as a tag so a later
+    review can see which kinds of subagent produce candidates worth promoting
+    and which produce noise.
     """
     if not memory_dir.is_dir():
+        return {}
+    agent_transcript = str(payload.get("agent_transcript_path") or "").strip()
+    if not agent_transcript:
+        from breadcrumbs import hooklog
+
+        hooklog.note(skipped="no agent_transcript_path")
         return {}
     agent_type = str(payload.get("agent_type") or "").strip()
     extra_tags = ["subagent"]
@@ -91,7 +104,7 @@ def hook_subagent(memory_dir: Path, root: Path, payload: dict) -> dict:
     report = transcript.mine_transcript_into_jots(
         memory_dir,
         root,
-        payload.get("transcript_path"),
+        agent_transcript,
         # Keyed by the parent session so the Stop hook's "what did this session
         # produce" query finds them: the subagent's own id dies with it, and a
         # candidate nobody can retrieve is a candidate nobody promotes.

@@ -723,6 +723,33 @@ def prune_jots(
     }
 
 
+def prune_private_jots(memory_dir: Path, *, after_days: int = PRUNE_JOTS_AFTER_DAYS) -> int:
+    """`prune_jots`, for machine-local jots only, run by the SessionStart hook.
+
+    Same rule (expired or retired, and older than `after_days`), but nothing
+    committed is touched and nothing is republished: a private jot is not an
+    input to any committed projection. Returns how many were deleted.
+    """
+    memory_dir = Path(memory_dir)
+    if not private_inbox(memory_dir).is_dir():
+        return 0
+    deleted = 0
+    for rec in cli.load_records(memory_dir, types=(JOT_TYPE,)):
+        if rec.error or not is_private(memory_dir, rec):
+            continue
+        age = cli._age_days(rec.meta.get("created_at"))
+        if age is None or age < after_days:
+            continue
+        retired = (rec.meta.get("status") or "active") != "active"
+        if retired or is_expired(rec):
+            try:
+                rec.path.unlink()
+                deleted += 1
+            except OSError:
+                continue
+    return deleted
+
+
 # --------------------------------------------------------------------------- #
 # Drafts: notes left by an agent that could not run the CLI
 # --------------------------------------------------------------------------- #

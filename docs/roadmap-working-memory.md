@@ -473,7 +473,7 @@ Common stdin fields on every event: `session_id`, `prompt_id`,
 | `PreToolUse` | `tool_name`, `tool_input` | tool name (regex) | `additionalContext`, `permissionDecision: "ask"` |
 | `PostToolUse` | `tool_name`, `tool_input`, `tool_response` | tool name | not used by this plan; stdout goes to the debug log only |
 | `Stop` | `stop_hook_active`, `last_assistant_message` | none | `decision: "block"` + `reason` (the extraction turn); the reason is fed back to the model |
-| `SubagentStop` | `stop_hook_active`, `agent_id`, `agent_type`, `last_assistant_message`, `stop_reason`; `transcript_path` is the **subagent's** transcript | agent type (`Explore`, `general-purpose`, custom names) | Can block like `Stop`; the reason is fed back to the subagent. This plan does **not** block here (WM-13). |
+| `SubagentStop` | `stop_hook_active`, `agent_id`, `agent_type`, `last_assistant_message`, `stop_reason`; `agent_transcript_path` is the **subagent's** transcript; `transcript_path` is the parent session's (corrected in 0.6.0 against the hooks reference) | agent type (`Explore`, `general-purpose`, custom names) | Can block like `Stop`; the reason is fed back to the subagent. This plan does **not** block here (WM-13). |
 | `PreCompact` | `trigger`: `manual` \| `auto`; `custom_instructions` | the `trigger` value | **Nothing.** stdout goes to the debug log only; no `additionalContext`, no blocking. Side effects only. |
 | `PostCompact` | `trigger` | the `trigger` value | Nothing reaches the model. Not used; `SessionStart` with `source: compact` is the re-injection point. |
 | `SessionEnd` | `reason`: `clear` \| `resume` \| `logout` \| `prompt_input_exit` \| `other` | the `reason` value | side effects only; 1.5 s shared time budget, so not used by this plan |
@@ -749,7 +749,7 @@ files → header only.
 - New event `subagent` → `("SubagentStop", None)`; handler in
   `breadcrumbs/hooks_compact.py` next to WM-11 (same shape: mine, write,
   no blocking).
-- Mine the subagent's `transcript_path` fully (no cursor; the subagent is
+- Mine the subagent's `agent_transcript_path` fully (no cursor; the subagent is
   finished). Write candidates as private jots with `source: transcript`,
   tags `["mined", kind, "subagent"]`.
 - Do **not** emit `decision: "block"` in this item, although the event

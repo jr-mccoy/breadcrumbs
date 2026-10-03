@@ -777,7 +777,7 @@ def tool_reindex(root: str | Path | None = None) -> dict:
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    ok = cli.reindex_projections(mem, project_root)
+    ok = cli.reindex_projections(mem, project_root, force=True)
     return {"ok": ok, "path": "generated/resume-packet.md"}
 
 

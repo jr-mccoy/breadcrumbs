@@ -33,6 +33,14 @@ def git(root: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=str(root), check=True, capture_output=True, text=True)
 
 
+def dirty(root: Path) -> list[str]:
+    """`git status --porcelain` lines: what a Stop firing left uncommitted."""
+    r = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=str(root), capture_output=True, text=True, check=True
+    )
+    return [ln for ln in r.stdout.splitlines() if ln.strip()]
+
+
 def make_repo(tmp: str) -> Path:
     root = Path(tmp)
     git(root, "init", "-q")
@@ -285,6 +293,66 @@ class HookCaptureTests(unittest.TestCase):
             out = run_hook("capture", {"cwd": str(root), "stop_hook_active": True})
             self.assertEqual(out, {})
             self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
+
+    def test_committing_the_snapshot_is_not_new_work(self):
+        """Committing the store must not earn another snapshot (0.6.0).
+
+        The snapshot records HEAD; committing the snapshot moves HEAD; the next
+        Stop saw "work moved", rewrote the snapshot with the new sha, and left
+        the store dirty again — which the agent committed again, forever.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            sid = {"cwd": str(root), "session_id": "s1"}
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "store")
+            run_hook("session", {**sid, "hook_event_name": "SessionStart"})
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+            run_hook("capture", {**sid, "stop_hook_active": True})
+            self.assertTrue(dirty(root), "the continuation's snapshot dirties the store")
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "Project memory: snapshot")
+            for _ in range(3):
+                self.assertEqual(run_hook("capture", sid), {})
+                self.assertEqual(dirty(root), [], "a memory-only commit re-snapshotted")
+            self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 1)
+            # Real work after the memory commits is still new work.
+            (root / "h.txt").write_text("c\n")
+            git(root, "add", "h.txt")
+            git(root, "commit", "-qm", "more work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+
+    def test_the_agents_own_capture_is_the_capture(self):
+        """The extraction turn ends with `capture session`; the agent commits
+        it. The continuation used to stack a machine snapshot beside that
+        authored record because the commit moved HEAD."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            sid = {"cwd": str(root), "session_id": "s1"}
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "store")
+            run_hook("session", {**sid, "hook_event_name": "SessionStart"})
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+            code = crumb.main(
+                ["capture", "session", "--project", str(root), "--next", "ship g.txt"]
+            )
+            self.assertEqual(code, 0)
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "Project memory: session capture")
+            self.assertEqual(run_hook("capture", {**sid, "stop_hook_active": True}), {})
+            self.assertEqual(dirty(root), [])
+            files = list((mem / "sessions").glob("*.md"))
+            self.assertEqual(len(files), 1, [f.name for f in files])
+            self.assertEqual(run_hook("capture", sid), {})
+            self.assertEqual(dirty(root), [])
 
     def test_no_store_is_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1040,3 +1108,272 @@ class SessionCursorTests(unittest.TestCase):
         self.assertTrue(_cli._same_commit("abc1234", "abc1234de"))
         self.assertFalse(_cli._same_commit("abc1234", "abc1235"))
         self.assertFalse(_cli._same_commit("abc", "abcdef0"))
+
+
+class StopLifecycleTests(unittest.TestCase):
+    """The Stop hook's lifecycle gaps closed in 0.6.0."""
+
+    @staticmethod
+    def _sessions(mem: Path) -> list[Path]:
+        return sorted((mem / "sessions").glob("*.md"))
+
+    @staticmethod
+    def _commit_at(root: Path, msg: str, when: int, *, amend: bool = False) -> None:
+        env = {
+            **__import__("os").environ,
+            "GIT_AUTHOR_DATE": f"@{when} +0000",
+            "GIT_COMMITTER_DATE": f"@{when} +0000",
+        }
+        args = (
+            ["git", "commit", "-q", "--amend", "--no-edit"]
+            if amend
+            else ["git", "commit", "-qm", msg]
+        )
+        subprocess.run(args, cwd=str(root), check=True, capture_output=True, env=env)
+
+    def _started(self, root: Path, sid: dict) -> Path:
+        mem = init_store(root)
+        git(root, "add", "-A")
+        git(root, "commit", "-qm", "store")
+        run_hook("session", {**sid, "hook_event_name": "SessionStart"})
+        return mem
+
+    def test_a_redundant_firing_runs_no_commit_scan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            sid = {"cwd": str(root), "session_id": "s1"}
+            run_hook("capture", sid)  # first firing: the snapshot
+            with mock.patch.object(_cli, "_session_commits", side_effect=AssertionError):
+                self.assertEqual(run_hook("capture", sid), {})
+            # No SessionStart ran, so the redundant firing gave the session a start.
+            from breadcrumbs import hooks_common
+
+            self.assertTrue(hooks_common.session_baseline(mem, "s1").get("head"))
+
+    def test_an_id_less_payload_is_keyed_by_its_transcript(self):
+        from breadcrumbs import hooks_common
+
+        a = hooks_common.session_id_of({"transcript_path": "/t/a.jsonl"})
+        b = hooks_common.session_id_of({"transcript_path": "/t/b.jsonl"})
+        self.assertNotEqual(a, b)
+        self.assertEqual(a, hooks_common.session_id_of({"transcript_path": "/t/a.jsonl"}))
+        self.assertEqual(hooks_common.session_id_of({}), hooks_common.UNKNOWN_SESSION)
+        self.assertEqual(hooks_common.session_id_of({"session_id": "x"}), "x")
+
+    def test_each_start_of_the_shared_bucket_is_a_new_session(self):
+        from breadcrumbs import hooks_common
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            key = hooks_common.UNKNOWN_SESSION
+            run_hook("session", {"cwd": str(root), "hook_event_name": "SessionStart"})
+            first = hooks_common.session_baseline(mem, key)
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "between sessions")
+            run_hook("session", {"cwd": str(root), "hook_event_name": "SessionStart"})
+            second = hooks_common.session_baseline(mem, key)
+            self.assertNotEqual(first["head"], second["head"])
+            self.assertEqual(second["head"], _cli._git_out(root, "rev-parse", "HEAD").strip())
+
+    def test_an_amend_of_an_asked_commit_is_not_asked_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            sid = {"cwd": str(root), "session_id": "s1"}
+            self._started(root, sid)
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+            run_hook("capture", {**sid, "stop_hook_active": True})
+            (root / "g.txt").write_text("b2\n")
+            git(root, "add", "g.txt")
+            self._commit_at(root, "", int(__import__("time").time()) - 3600, amend=True)
+            self.assertNotEqual(run_hook("capture", sid).get("decision"), "block")
+
+    def test_work_rewritten_after_the_ask_is_still_asked_about(self):
+        """Before 0.6.0 any rewrite re-baselined silently and the work was lost."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            sid = {"cwd": str(root), "session_id": "s1"}
+            self._started(root, sid)
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+            run_hook("capture", {**sid, "stop_hook_active": True})
+            later = int(__import__("time").time()) + 120
+            (root / "h.txt").write_text("c\n")
+            git(root, "add", "h.txt")
+            self._commit_at(root, "new work", later)
+            # Rewritten before the next Stop: the baseline is no ancestor now.
+            git(root, "reset", "-q", "--soft", "HEAD~2")
+            self._commit_at(root, "squashed", later + 1)
+            out = run_hook("capture", sid)
+            self.assertEqual(out.get("decision"), "block", out)
+            self.assertIn("squashed", out["reason"])
+
+    def test_a_code_and_memory_commit_answering_the_ask_is_the_answer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            sid = {"cwd": str(root), "session_id": "s1"}
+            mem = self._started(root, sid)
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+            # The agent commits the code it had not committed yet together with
+            # its capture, in the extraction turn.
+            (root / "h.txt").write_text("c\n")
+            crumb.main(["capture", "session", "--project", str(root), "--next", "ship h.txt"])
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "finish h.txt and record the session")
+            self.assertEqual(run_hook("capture", {**sid, "stop_hook_active": True}), {})
+            self.assertEqual(dirty(root), [], "no machine snapshot beside the agent's capture")
+            self.assertEqual(len(self._sessions(mem)), 1)
+            self.assertEqual(run_hook("capture", sid), {}, "not asked about again")
+            self.assertEqual(dirty(root), [])
+
+    def test_a_subagent_finding_alone_does_not_earn_the_ask(self):
+        from breadcrumbs import inbox
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            sid = {"cwd": str(root), "session_id": "s1"}
+            kw = {"local": True, "source": "transcript", "host_session": "s1"}
+            inbox.write_jot(
+                mem, root, "pytest -x failed, then passed", tags=["attempt", "subagent"], **kw
+            )
+            self.assertEqual(run_hook("capture", sid), {})
+            # The session's own failed-then-fixed command still earns it.
+            inbox.write_jot(mem, root, "make build failed, then passed", tags=["attempt"], **kw)
+            (root / "g.txt").write_text("b\n")  # new work, so the firing is not redundant
+            out = run_hook("capture", sid)
+            self.assertEqual(out.get("decision"), "block", out)
+
+    def test_parallel_sessions_each_keep_one_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            for n in range(3):
+                for s in ("s1", "s2"):
+                    (root / f"{s}-{n}.txt").write_text("x\n")
+                    run_hook("capture", {"cwd": str(root), "session_id": s})
+            self.assertEqual(len(self._sessions(mem)), 2, self._sessions(mem))
+            # Nothing moved: whichever session fires, the tree is described.
+            self.assertEqual(run_hook("capture", {"cwd": str(root), "session_id": "s1"}), {})
+            before = [p.read_bytes() for p in self._sessions(mem)]
+            run_hook("capture", {"cwd": str(root), "session_id": "s2"})
+            self.assertEqual([p.read_bytes() for p in self._sessions(mem)], before)
+
+    def test_session_start_prunes_old_expired_private_jots(self):
+        from breadcrumbs import inbox
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            old = "2026-01-01T00:00:00+00:00"
+            private = inbox.write_jot(mem, root, "old local note", local=True)
+            committed = inbox.write_jot(mem, root, "old shared note")
+            for made in (private, committed):
+                path = Path(made["path"])
+                text = path.read_text(encoding="utf-8")
+                text = re.sub(r"(?m)^created_at: .*$", f"created_at: {old}", text)
+                text = re.sub(
+                    r"(?m)^expires_at: .*$", "expires_at: 2026-01-15T00:00:00+00:00", text
+                )
+                path.write_text(text, encoding="utf-8")
+            run_hook(
+                "session", {"cwd": str(root), "session_id": "s1", "hook_event_name": "SessionStart"}
+            )
+            self.assertFalse(Path(private["path"]).exists(), "expired private jot pruned")
+            self.assertTrue(Path(committed["path"]).exists(), "a committed jot is never touched")
+
+    def test_the_commit_cursor_outlives_eight_newer_sessions(self):
+        from breadcrumbs import hooks_common
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            hooks_common.set_session_baseline(mem, "long", "a" * 40)
+            for n in range(20):
+                hooks_common.set_session_baseline(mem, f"other{n}", "b" * 40)
+            self.assertEqual(hooks_common.session_baseline(mem, "long").get("head"), "a" * 40)
+
+
+class StopReviewFindingsTests(unittest.TestCase):
+    """Defects the 0.6.0 review found in the first cut of the Stop fixes."""
+
+    @staticmethod
+    def _sessions(mem: Path) -> list[Path]:
+        return sorted((mem / "sessions").glob("*.md"))
+
+    def test_a_coalesced_snapshot_keeps_the_work_it_summarized(self):
+        """Coalescing into this session's own snapshot while another session's
+        is newer used the newer one as the diff base and erased earlier work."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            stamps = iter(
+                [
+                    "2026-10-02T10:00:00+00:00",
+                    "2026-10-02T10:05:00+00:00",
+                    "2026-10-02T10:10:00+00:00",
+                ]
+            )
+
+            def commit(name: str) -> None:
+                (root / name).write_text(name)
+                git(root, "add", name)
+                git(root, "commit", "-qm", name)
+
+            def snapshot(sid: str) -> None:
+                with mock.patch.object(_cli, "now_iso", return_value=next(stamps)):
+                    self.assertEqual(_cli._hook_capture_snapshot(root, sid), "ok")
+
+            commit("a0")
+            snapshot("A")
+            commit("a1")
+            snapshot("B")
+            commit("a2")
+            snapshot("A")
+            own = next(
+                crumb.Record.from_file(p, "session")
+                for p in self._sessions(mem)
+                if crumb.Record.from_file(p, "session").meta.get("host_session") == "A"
+            )
+            work = own.sections.get("Work Completed", "")
+            for subject in ("a1", "a2"):
+                self.assertIn(subject, work)
+
+    def test_an_old_ask_does_not_cover_a_later_continuation(self):
+        """`stop_hook_active` is true after any Stop hook blocked; an old ask
+        plus an old capture used to cover every later continuation's commits."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "store")
+            sid = {"cwd": str(root), "session_id": "s1"}
+            run_hook("session", {**sid, "hook_event_name": "SessionStart"})
+            (root / "g.txt").write_text("b\n")
+            git(root, "add", "g.txt")
+            git(root, "commit", "-qm", "first work")
+            self.assertEqual(run_hook("capture", sid).get("decision"), "block")
+            crumb.main(["capture", "session", "--project", str(root), "--next", "ship g.txt"])
+            git(root, "add", "-A")
+            git(root, "commit", "-qm", "memory")
+            self.assertEqual(run_hook("capture", {**sid, "stop_hook_active": True}), {})
+            (root / "h.txt").write_text("c\n")
+            git(root, "add", "h.txt")
+            git(root, "commit", "-qm", "second work")
+            # Another hook blocks this Stop; ours must not read the old capture
+            # as an answer covering "second work".
+            run_hook("capture", {**sid, "stop_hook_active": True})
+            (root / "i.txt").write_text("d\n")  # the next turn's work moves the tree
+            out = run_hook("capture", sid)
+            self.assertEqual(out.get("decision"), "block", out)
+            self.assertIn("second work", out["reason"])

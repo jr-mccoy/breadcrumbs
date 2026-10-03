@@ -4330,7 +4330,11 @@ PROJECTIONS_PENDING_RELPATH = Path("private") / "projections-pending"
 
 
 def try_reindex_projections(
-    memory_dir: Path, project_root: Path | None = None, *, lock_timeout: float | None = None
+    memory_dir: Path,
+    project_root: Path | None = None,
+    *,
+    lock_timeout: float | None = None,
+    force: bool = False,
 ) -> tuple[bool, str | None]:
     """`reindex_projections` plus the reason it failed, for callers that report it.
 
@@ -4343,30 +4347,67 @@ def try_reindex_projections(
     (default: the CLI's wait) and otherwise publishes nothing, saying why. Four
     files and an index replaced one by one are each atomic but not together, so
     they must not interleave with another writer's.
+
+    `force` rewrites committed projections whose inputs have not changed (see
+    `_keep_committed_projection`); only an explicit refresh asks for that.
     """
     from breadcrumbs import lock as _lock
 
     memory_dir = Path(memory_dir)
     if not memory_dir.is_dir() or _lock.holds_lock(memory_dir):
-        return _publish_projections(memory_dir, project_root)
+        return _publish_projections(memory_dir, project_root, force=force)
     wait = _lock.CLI_TIMEOUT if lock_timeout is None else lock_timeout
     try:
         with _lock.store_lock(memory_dir, timeout=wait):
-            return _publish_projections(memory_dir, project_root)
+            return _publish_projections(memory_dir, project_root, force=force)
     except _lock.StoreLocked as exc:
         return False, f"not published: {exc}"
 
 
 def _publish_projections(
-    memory_dir: Path, project_root: Path | None = None
+    memory_dir: Path, project_root: Path | None = None, *, force: bool = False
 ) -> tuple[bool, str | None]:
     """Build and write every generated projection and the search index. Caller locks."""
     with operation():  # one parse per record for the whole generation (WP15)
-        return _publish_projections_inner(memory_dir, project_root)
+        return _publish_projections_inner(memory_dir, project_root, force=force)
+
+
+def _keep_committed_projection(target: Path, name: str, digest: str | None) -> bytes | None:
+    """The bytes of a committed projection to leave in place, or None to write it.
+
+    A projection under `generated/` is committed, and its render embeds HEAD,
+    the clock and the dirty-file count. Rewriting it whenever it was *read* —
+    `crumb resume`, the SessionStart republish on every fresh clone — left
+    every session with a modified packet before it had done anything, and the
+    commit of that packet moved HEAD, so the next read rewrote it again (0.6.0).
+    Freshness is defined by the inputs hash (`detect_packet_drift`, which
+    `validate` gates on), so a file stamped with the current digest is kept:
+    it is fresh, and it describes the store as of its own `generated_at`. A
+    write that changes the inputs changes the digest and rewrites it; an
+    explicit `crumb reindex` forces it (a renderer change no hash can see).
+    """
+    if digest is None or name == GUARD_PREFILTER_FILENAME:
+        return None  # an unstable build is always written; the pre-filter is local
+    try:
+        data = target.read_bytes()
+        text = data.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    if re.search(r"(?m)^(<<<<<<<|>>>>>>>) ", text):
+        return None  # an unresolved merge: its first stamp vouches for half a file
+    if name.endswith(".json"):
+        try:
+            doc = json.loads(text)
+        except ValueError:
+            return None
+        stamped = doc.get("inputs_hash") if isinstance(doc, dict) else None
+    else:
+        stamped = _stamped_inputs_hash(text)
+    return data if stamped == digest else None
 
 
 def _publish_projections_inner(
-    memory_dir: Path, project_root: Path | None = None
+    memory_dir: Path, project_root: Path | None = None, *, force: bool = False
 ) -> tuple[bool, str | None]:
     memory_dir = Path(memory_dir)
     project_root = Path(project_root) if project_root is not None else memory_dir.parent
@@ -4452,10 +4493,16 @@ def _publish_projections_inner(
             # half-replaced set has no manifest, so no reader trusts it.
             with contextlib.suppress(FileNotFoundError):
                 _projections.manifest_path(memory_dir).unlink()
+            published: dict[str, bytes] = {}
             for name, text in outputs.items():
                 target = projection_path(memory_dir, name)
+                kept = None if force else _keep_committed_projection(target, name, digest)
+                if kept is not None:
+                    published[name] = kept  # the manifest vouches for what is on disk
+                    continue
                 path_policy.mkdirs(target.parent)
                 write_text_atomic(target, text)
+                published[name] = text.encode("utf-8")
             # The pre-filter moved to index/ (machine-local); the copy 0.5.0
             # committed under generated/ goes, and the user commits that once.
             with contextlib.suppress(FileNotFoundError):
@@ -4475,7 +4522,7 @@ def _publish_projections_inner(
             memory_dir,
             digest or _snapshots.UNSTABLE,
             stable=digest is not None,
-            files={name: text.encode("utf-8") for name, text in outputs.items()},
+            files=published,
             fingerprint=fingerprint,
             corpus={"records": _retrieval.count_records(memory_dir)},
         )
@@ -4495,7 +4542,9 @@ def _publish_projections_inner(
         return False, reason
 
 
-def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> bool:
+def reindex_projections(
+    memory_dir: Path, project_root: Path | None = None, *, force: bool = False
+) -> bool:
     """Rebuild the generated/ projections from the canonical records.
 
     Called after every canonical mutation (remember/note/verify/mark-status/
@@ -4510,7 +4559,7 @@ def reindex_projections(memory_dir: Path, project_root: Path | None = None) -> b
     <root>/.project-memory). Returns True iff a projection was written; use
     `try_reindex_projections` when the caller can report *why* it failed.
     """
-    return try_reindex_projections(memory_dir, project_root)[0]
+    return try_reindex_projections(memory_dir, project_root, force=force)[0]
 
 
 # Back-compat alias: the note() writer and tests referenced the original name.
@@ -5436,13 +5485,32 @@ def cmd_mark_status(args: argparse.Namespace) -> int:
 # ---- capture session ------------------------------------------------------- #
 
 
-def _newest_session_record(memory_dir: Path) -> Record | None:
-    """The most recently created session record, or None if there are none."""
+def _session_written_key(rec: Record):
+    """When a session record last described the work.
+
+    A Stop-hook snapshot (it carries `host_session`) is rewritten in place
+    each time its session's work moves, keeping `created_at`, so its
+    `updated_at` is the moment it describes. Everything else — an authored
+    capture, a rollup — is ordered by `created_at`: a rollup stamped later
+    must not pose as the newest state (`rollup`).
+    """
+    stamp = rec.meta.get("created_at")
+    if rec.meta.get("host_session") and rec.meta.get("updated_at"):
+        stamp = rec.meta.get("updated_at")
+    return (_dt_sort_key(stamp), rec.stem)
+
+
+def _newest_session_record(memory_dir: Path, host_session: str | None = None) -> Record | None:
+    """The session record that last described the work, or None if there are none.
+
+    With `host_session`, only that session's own Stop-hook snapshots count.
+    """
     recs = load_records(memory_dir, types=("session",))
+    if host_session:
+        recs = [r for r in recs if str(r.meta.get("host_session") or "") == str(host_session)]
     if not recs:
         return None
-    recs = sorted(recs, key=lambda r: (_dt_sort_key(r.meta.get("created_at")), r.stem))
-    return recs[-1]
+    return max(recs, key=_session_written_key)
 
 
 def _last_session_commit(memory_dir: Path, exclude: Path | None = None) -> str | None:
@@ -5452,13 +5520,23 @@ def _last_session_commit(memory_dir: Path, exclude: Path | None = None) -> str |
     snapshot (F-6), that snapshot is the record being rewritten, so using its own
     commit as the diff base would make the window empty and erase the work the
     earlier firings had already summarized. The previous session boundary is the
-    honest base.
+    honest base: the newest record created *before* the excluded one. Since
+    0.6.0 a session can coalesce into its own snapshot while another session's
+    is newer; that newer record is no boundary of this one, and using it erased
+    the commits this snapshot had already summarized.
     """
     recs = load_records(memory_dir, types=("session",))
+
+    def key(r: Record):
+        return (_dt_sort_key(r.meta.get("created_at")), r.stem)
+
     if exclude is not None:
         exclude = Path(exclude).resolve()
+        own = [r for r in recs if r.path.resolve() == exclude]
         recs = [r for r in recs if r.path.resolve() != exclude]
-    recs = sorted(recs, key=lambda r: (_dt_sort_key(r.meta.get("created_at")), r.stem))
+        if own:
+            recs = [r for r in recs if key(r) < key(own[0])]
+    recs = sorted(recs, key=key)
     commit = recs[-1].meta.get("commit") if recs else None
     if commit in (None, "", NO_GIT_COMMIT):
         return None
@@ -5509,6 +5587,25 @@ def _coalescible_snapshot(
          commits between two Stops is the *common* case, and refusing to coalesce
          across it would leave the audit's exact complaint unfixed.
     """
+    if host_session:
+        # This session's own snapshot, even when another session's snapshot is
+        # newer: with two sessions in one checkout the newest record overall
+        # was usually the other one's, so each Stop stacked a new snapshot
+        # beside its own (0.6.0). An authored capture made after it is still a
+        # boundary: the next snapshot starts fresh, as before.
+        own = _newest_session_record(memory_dir, host_session)
+        if own is not None and _is_machine_snapshot(own):
+            made = _dt_sort_key(own.meta.get("created_at"))
+            authored_since = any(
+                not r.error
+                and not _is_machine_snapshot(r)
+                # A tie (one-second stamps) counts as after: a fresh snapshot
+                # is the behaviour this replaced, never a wrong merge.
+                and _dt_sort_key(r.meta.get("created_at")) >= made
+                for r in load_records(memory_dir, types=("session",))
+            )
+            if not authored_since:
+                return own
     rec = _newest_session_record(memory_dir)
     if rec is None or not _is_machine_snapshot(rec):
         return None
@@ -7245,7 +7342,18 @@ def _commits_since(root: Path, ref: str | None, limit: int) -> list[str]:
     cur = git_commit(root)
     if cur == NO_GIT_COMMIT or ref == cur:
         return []
-    out = _git_out(root, "log", "--oneline", "--no-decorate", f"{ref}..HEAD")
+    # Commits that touch only the memory store are the handoff and its
+    # projections being committed, not work that landed (0.6.0).
+    out = _git_out(
+        root,
+        "log",
+        "--oneline",
+        "--no-decorate",
+        f"{ref}..HEAD",
+        "--",
+        ".",
+        f":(exclude){MEMORY_DIRNAME}",
+    )
     if out is None:
         return []
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
@@ -7402,7 +7510,9 @@ def _hashed_input_dirs(memory_dir: Path, project_root: Path, manifest: dict) -> 
 #
 #   3. `_packet_is_stale(memory_dir, root)` — "would a rebuild produce different
 #      output?" Re-renders the packet and compares bytes, minus the lines that
-#      vary by machine rather than by content. Expensive. Used only by `doctor`.
+#      vary by machine, moment or HEAD rather than by content. Expensive. Used
+#      only by `doctor`, which then points at `crumb reindex` (the forced
+#      rewrite: an ordinary publication keeps a packet whose inputs are unchanged).
 #
 # They can legitimately disagree, in both directions, and neither answer is wrong:
 #
@@ -8616,7 +8726,9 @@ def cmd_reindex(args: argparse.Namespace) -> int:
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
 
-    ok, problem = try_reindex_projections(memory_dir, root)
+    # The explicit refresh: rewrite even projections whose inputs are unchanged
+    # (a renderer upgrade, a hand-edit), which every other publication keeps.
+    ok, problem = try_reindex_projections(memory_dir, root, force=True)
     summary = {"reindexed": ok, "path": str(memory_dir / "generated" / "resume-packet.md")}
     if problem:
         summary["error"] = problem
@@ -13483,10 +13595,10 @@ def doctor_report(root: Path) -> dict:
             add(
                 "resume_packet",
                 not stale,
-                "stale vs HEAD — run `crumb resume`" if stale else "fresh",
+                "renders differently now — run `crumb reindex`" if stale else "fresh",
             )
         else:
-            add("resume_packet", False, "not generated — run `crumb resume`")
+            add("resume_packet", False, "not generated — run `crumb reindex`")
 
         # The search index (WM-23). Absent is healthy below the threshold — the
         # full scan is already fast there — so only a *stale* index is a
@@ -13740,18 +13852,62 @@ def _packet_is_stale(memory_dir: Path, root: Path) -> bool:
 _PACKET_PROJECT_LINE_RE = re.compile(r"^\*\*.*\*\* — `.*`\s*$")
 
 
+# What a packet says about HEAD, the clock and the working tree, rather than
+# about the store: the `branch … · commit … · N uncommitted` line, the view
+# header's token count, and an Inbox jot's age.
+_PACKET_HEAD_LINE_RE = re.compile(r"^branch `.*` · commit `.*`")
+_PACKET_VIEW_LINE_RE = re.compile(r"^<!-- view: ")
+_PACKET_JOT_AGE_RE = re.compile(r"^(- `jot_[^`]*` \()\d+d, ")
+# Sections whose entries come and go with HEAD and the clock. In the warnings
+# section only those entries go (`_PACKET_VOLATILE_WARNING_RE`); a warning
+# about the store itself — an unstable build, a broken record, an unreadable
+# file — is still compared.
+_PACKET_VOLATILE_SECTIONS = ("## Landed Since The Handoff Was Written", "## Stale / Risk Warnings")
+_PACKET_ALL_ENTRIES_VOLATILE = ("## Landed Since The Handoff Was Written",)
+_PACKET_VOLATILE_WARNING_RE = re.compile(
+    r"day\(s\) old|\d+ days? old|commit\(s\) behind|in \d+ days|not changed in \d+ days"
+    r"|HEAD is detached|branch mismatch|timestamped in the future|written on other branches"
+)
+
+
 def _strip_packet_volatile(md: str) -> str:
-    """Drop the lines that differ between machines rather than between contents.
+    """Drop what differs between machines, moments and commits, not contents.
 
     `generated_at:` so a pure-timestamp delta is not read as staleness, and the
     project line so a packet still carrying an absolute host path (written by an
     older version) does not read as stale on every other checkout.
+
+    Also everything derived from HEAD, the clock or the dirty-file list (0.6.0):
+    a committed packet describes the store as of its `generated_at`, and
+    publication keeps it until the inputs change. Comparing those parts made
+    `doctor` call the packet stale after every commit — including the commit
+    of the packet itself.
     """
-    return "\n".join(
-        ln
-        for ln in md.splitlines()
-        if "generated_at:" not in ln and not _PACKET_PROJECT_LINE_RE.match(ln)
-    )
+    kept: list[str] = []
+    volatile = every = False
+    for ln in md.splitlines():
+        if ln.startswith("## "):
+            volatile = ln.strip() in _PACKET_VOLATILE_SECTIONS
+            every = ln.strip() in _PACKET_ALL_ENTRIES_VOLATILE
+            if volatile:
+                continue  # the heading comes and goes with its entries
+        # Inside such a section only its volatile entries and notes go;
+        # anything else a renderer puts there is still compared.
+        if volatile and (not ln.strip() or ln.startswith("_(")):
+            continue
+        if volatile and ln.startswith("- ") and (every or _PACKET_VOLATILE_WARNING_RE.search(ln)):
+            continue
+        if volatile and ln.strip() == "_(no computed staleness or risk signals)_":
+            continue
+        if (
+            "generated_at:" in ln
+            or _PACKET_PROJECT_LINE_RE.match(ln)
+            or _PACKET_HEAD_LINE_RE.match(ln)
+            or _PACKET_VIEW_LINE_RE.match(ln)
+        ):
+            continue
+        kept.append(_PACKET_JOT_AGE_RE.sub(r"\1", ln))
+    return "\n".join(kept)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -14215,10 +14371,26 @@ def _record_session_start(memory_dir: Path, root: Path, payload: dict) -> None:
 
         head = _git_out(root, "rev-parse", "HEAD") if is_git_repo(root) else None
         if head:
+            key = hooks_common.session_id_of(payload)
             hooks_common.set_session_baseline(
-                memory_dir, hooks_common.session_id_of(payload), head, keep_existing=True
+                memory_dir,
+                key,
+                head,
+                keep_existing=True,
+                # A payload with no session id and no transcript cannot say
+                # which session it is, so each start is a new one: keeping the
+                # first-ever start counted every commit since as this session's.
+                restart=key == hooks_common.UNKNOWN_SESSION,
             )
     except Exception:  # pragma: no cover - a SessionStart hook must never fail
+        pass
+    # Machine-local jots past their expiry: nothing else deletes them, and every
+    # Stop firing loads the whole inbox (0.6.0). Never touches a committed jot.
+    try:
+        from breadcrumbs import inbox as _inbox
+
+        _inbox.prune_private_jots(memory_dir)
+    except Exception:  # pragma: no cover - best-effort
         pass
     # A `git pull` or checkout since the last crumb write leaves the guard
     # pre-filter unverified, and then every tool call pays a full guard run
@@ -14519,14 +14691,34 @@ def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
     recorded = rec.meta.get("dirty_files")
     if not isinstance(recorded, list):
         return False
-    if not _same_commit(rec.meta.get("commit") or "", git_commit(root)):
-        return False
+    head = git_commit(root)
+    if not _same_commit(rec.meta.get("commit") or "", head):
+        # HEAD moved — but a commit that touches only the memory store (the
+        # agent committing the previous snapshot, or its own capture) is not
+        # work. Re-snapshotting on it rewrote the record with the sha of the
+        # commit that committed it, which left the store dirty again, which
+        # the agent committed again: the tree could never settle (0.6.0).
+        if _work_commits_between(root, rec.meta.get("commit") or "", head):
+            return False
     # The record holds the capped list (`derive_fields`), so compare with the
     # live list capped the same way: comparing a capped list with an uncapped
     # one made every firing with more than DIRTY_FILES_MAX dirty files look
     # like new work, and re-snapshot every turn (field report 2026-10-01, N5).
     live = _cap_dirty_files(git_dirty_files(root, include_memory=False))
     return _work_dirty_files(recorded) == _work_dirty_files(live)
+
+
+def _work_commits_between(root: Path, base: str, head: str) -> bool:
+    """True when `base..head` holds a commit touching anything outside the
+    memory store — the same filter `_session_commits` applies. A base this
+    clone cannot resolve (rebase, shallow fetch) counts as work: there is no
+    honest way to say nothing moved."""
+    if not base or not head or NO_GIT_COMMIT in (base, head):
+        return True
+    out = _git_out(
+        root, "log", "--format=%H", f"{base}..{head}", "--", ".", f":(exclude){MEMORY_DIRNAME}"
+    )
+    return out is None or bool(out.strip())
 
 
 def _same_commit(a: str, b: str) -> bool:
@@ -14570,8 +14762,13 @@ def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]
 
     - No baseline yet (SessionStart not installed, or a session that predates
       it): this firing records one and asks nothing.
-    - HEAD is not a descendant of the baseline (a checkout, a reset, a
-      rebase): re-baseline silently; there is no honest range to list.
+    - HEAD is not a descendant of the baseline (an amend, a rebase, a
+      `pull --rebase`): count from where the two histories meet, keeping only
+      commits authored after the last ask (an amend or a rebase keeps the
+      author time, so a rewritten copy of a commit already asked about is not
+      asked about again). Before 0.6.0 this re-baselined silently, and the
+      rewritten work was never asked about. No common history at all (a
+      checkout of an unrelated branch, a reset to a gone commit): re-baseline.
     - Commits that touch only the memory store, and commits authored before
       the session started (pulled history), are not the session's work.
 
@@ -14592,9 +14789,15 @@ def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]
         return []
     if base == head:
         return []
+    asked = None  # set only when history was rewritten under the baseline
+    rewritten = False
     if _git_out(root, "merge-base", "--is-ancestor", base, head) is None:
-        hooks_common.set_session_baseline(memory_dir, session_id, head)
-        return []
+        fork = (_git_out(root, "merge-base", base, head) or "").strip()
+        if not fork:
+            hooks_common.set_session_baseline(memory_dir, session_id, head)
+            return []
+        base, rewritten = fork, True
+        asked = _epoch(entry.get("asked_at"))
     out = _git_out(
         root,
         "log",
@@ -14616,9 +14819,16 @@ def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]
         if started is not None and stamp.isdigit():
             if int(stamp) < started - EXTRACTION_AUTHOR_MARGIN_SECONDS:
                 continue
+        # Local commits on a local clock: no skew margin. A commit authored at
+        # or before the ask is one the ask already covered.
+        if asked is not None and stamp.isdigit() and int(stamp) <= asked:
+            continue
         if made_here is not None and full not in made_here:
             continue
         lines.append(rest)
+    if not lines and rewritten:
+        # Nothing new on the rewritten history: count from it from now on.
+        hooks_common.set_session_baseline(memory_dir, session_id, head)
     return lines
 
 
@@ -14841,6 +15051,61 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
     if not memory_dir.is_dir():
         print(json.dumps({}))
         return 0
+    return _hook_capture_inner(memory_dir, root, payload)
+
+
+def _answered_since_ask(memory_dir: Path, session_key: str) -> bool:
+    """Did the agent write its own session capture after this session's ask?
+
+    The extraction turn ends with `crumb capture session --next …`; that record
+    is authored (a real Next Action), created after `asked_at`, and carries no
+    other session's id. Only while the ask is open: the continuation right
+    after it closes it (`hooks_common.close_ask`).
+    """
+    from breadcrumbs import hooks_common
+
+    entry = hooks_common.session_baseline(memory_dir, session_key)
+    asked = _epoch(entry.get("asked_at"))
+    if asked is None or not entry.get("ask_pending"):
+        return False
+    for rec in load_records(memory_dir, types=("session",)):
+        if rec.error or _is_machine_snapshot(rec):
+            continue
+        owner = rec.meta.get("host_session")
+        if owner and str(owner) != session_key:
+            continue
+        made = _epoch(rec.meta.get("created_at"))
+        if made is not None and made >= asked:
+            return True
+    return False
+
+
+def _live_work_dirty(root: Path) -> list[str]:
+    return _work_dirty_files(_cap_dirty_files(git_dirty_files(root, include_memory=False)))
+
+
+def _same_as_settled(memory_dir: Path, root: Path, session_key: str) -> bool:
+    """Is the tree still the one the agent's answer to the ask left?
+
+    Its capture recorded the tree *before* it committed (code it had not
+    committed at the ask, committed with the records), so to the session-record
+    comparison that commit looked like new work, and the next Stop stacked a
+    machine snapshot beside the agent's record (0.6.0).
+    """
+    from breadcrumbs import hooks_common
+
+    settled = hooks_common.session_baseline(memory_dir, session_key).get("settled")
+    if not isinstance(settled, dict) or not settled.get("head"):
+        return False
+    head = (_git_out(root, "rev-parse", "HEAD") or "").strip()
+    if not head:
+        return False
+    if head != settled["head"] and _work_commits_between(root, settled["head"], head):
+        return False
+    return _work_dirty_files(settled.get("dirty") or []) == _live_work_dirty(root)
+
+
+def _hook_capture_inner(memory_dir: Path, root: Path, payload: dict) -> int:
     from breadcrumbs import hooks_common
     from breadcrumbs import transcript as _transcript
 
@@ -14863,38 +15128,64 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
         redundant = _hook_capture_is_redundant(memory_dir, root)
     except Exception:  # pragma: no cover - a dedupe failure must not block Stop
         redundant = False
+    # The key snapshots coalesce on: the harness id, or the transcript-derived
+    # stand-in; never the shared id-less bucket, which would fold sessions.
+    host_session = session_key if session_key != hooks_common.UNKNOWN_SESSION else None
     # A Stop firing that is itself the continuation of a blocked Stop already
-    # had its extraction chance — never block twice (that is the loop). If the
-    # agent captured, the fresh session record reads as redundant and we stay
-    # silent; if it ignored the instruction, fall back to the machine snapshot
-    # so the floor is never below plain snapshot behavior.
-    host_session = str(payload.get("session_id") or "") or None
+    # had its extraction chance — never block twice (that is the loop).
     if payload.get("stop_hook_active"):
-        if not redundant:
+        if _answered_since_ask(memory_dir, session_key):
+            # The agent captured. Whatever it committed in that turn — code it
+            # had not committed before the ask, committed with its records — is
+            # what its capture describes: count from here, and no machine
+            # snapshot beside the record it wrote (0.6.0).
+            head = _git_out(root, "rev-parse", "HEAD") if is_git_repo(root) else None
+            if head:
+                hooks_common.set_session_baseline(memory_dir, session_key, head.strip())
+                hooks_common.set_settled(
+                    memory_dir, session_key, head.strip(), _live_work_dirty(root)
+                )
+            _hooklog.note(answered=True)
+        elif not redundant:
+            # It ignored the instruction (or another hook blocked this Stop):
+            # the machine snapshot is the floor.
             _note_snapshot(_hook_capture_snapshot(root, host_session))
+            hooks_common.set_settled(memory_dir, session_key, None, None)
+        hooks_common.close_ask(memory_dir, session_key)
         print(json.dumps({}))
         return 0
-    try:
-        # Always computed, so the first firing of a session records where it
-        # started even when this firing is otherwise silent.
-        commits = _session_commits(memory_dir, root, session_key)
-    except Exception:  # pragma: no cover - the prompt degrades to jots-only
-        commits = []
+    if not redundant:
+        try:
+            redundant = _same_as_settled(memory_dir, root, session_key)
+        except Exception:  # pragma: no cover - a dedupe failure must not block Stop
+            redundant = False
     if redundant:
+        # Nothing moved, so there is nothing to count or ask: no git log, no
+        # reflog scan (0.6.0). Only make sure the session has a start.
+        hooks_common.ensure_session_baseline(memory_dir, session_key, root)
         _hooklog.note(redundant=True)
         print(json.dumps({}))
         return 0
+    try:
+        commits = _session_commits(memory_dir, root, session_key)
+    except Exception:  # pragma: no cover - the prompt degrades to jots-only
+        commits = []
     if _extraction_enabled(memory_dir):
         # Candidates this session produced that have not already been offered.
         # Re-offering a jot the agent declined, every turn until it expires, is
         # exactly the fatigue that makes an agent start ignoring the prompt.
         asked = hooks_common.extraction_asked(memory_dir, session_key)
         jots = [j for j in _session_jot_rows(memory_dir, session_key) if j["id"] not in asked]
-        attempts = [j for j in jots if "attempt" in (j.get("tags") or [])]
+        # A subagent's findings are listed when the turn is asked about, but
+        # never earn the ask on their own: one "attempt" line from a search
+        # subagent blocked the parent's Stop with "this session produced
+        # findings" (0.6.0).
+        own = [j for j in jots if "subagent" not in (j.get("tags") or [])]
+        attempts = [j for j in own if "attempt" in (j.get("tags") or [])]
         earned = (
             bool(commits)
             or len(attempts) >= EXTRACTION_MIN_ATTEMPT_JOTS
-            or len(jots) >= EXTRACTION_MIN_SESSION_JOTS
+            or len(own) >= EXTRACTION_MIN_SESSION_JOTS
         )
         if earned:
             hooks_common.record_extraction_asked(
@@ -14903,13 +15194,16 @@ def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
             # Asked once: these commits are never asked about again, whether
             # or not the agent's capture (or the continuation's snapshot)
             # then lands. Without this a failed snapshot re-asked every turn.
+            # `asked_at` dates the ask (see `set_session_baseline`).
             head = _git_out(root, "rev-parse", "HEAD")
             if head:
-                hooks_common.set_session_baseline(memory_dir, session_key, head)
+                hooks_common.set_session_baseline(memory_dir, session_key, head.strip(), asked=True)
             _hooklog.note(offered=len(jots[:EXTRACTION_MAX_JOTS_SHOWN]), commits=len(commits))
             print(json.dumps({"decision": "block", "reason": _extraction_reason(commits, jots)}))
             return 0
     _note_snapshot(_hook_capture_snapshot(root, host_session))
+    # The tree moved past the answer; the snapshot describes it from now on.
+    hooks_common.set_settled(memory_dir, session_key, None, None)
     print(json.dumps({}))
     return 0
 

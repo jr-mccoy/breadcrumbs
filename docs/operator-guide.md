@@ -83,7 +83,7 @@ Run `crumb doctor` first. Each line names its fix.
 
 | `doctor` says | What happened | Do this |
 |---|---|---|
-| `[resume_packet] stale vs HEAD` | records changed since the packet was built | `crumb resume` (or `crumb reindex`) |
+| `[resume_packet] renders differently now` | records or the renderer changed since the packet was built (HEAD, the clock and uncommitted files are ignored) | `crumb reindex` |
 | `[search_index] stale` / `unreadable` | the index is behind or damaged; search already falls back to a full scan | `crumb reindex` (`--search-index` to rebuild only it) |
 | `[operations] N unfinished operation(s)` | a multi-record write was interrupted | `crumb recover` to see them, `crumb recover --apply` to roll each back to its before-image |
 | `[projections] the last projection rebuild failed` | a reindex raised midway | fix what it names, then `crumb reindex` |
