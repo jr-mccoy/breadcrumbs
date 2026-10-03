@@ -50,6 +50,11 @@ def make_repo(tmp: str) -> Path:
     git(root, "init", "-q")
     git(root, "config", "user.email", "t@t")
     git(root, "config", "user.name", "t")
+    # Git 2.47+ runs its post-commit auto-maintenance detached; a lock file it
+    # left in `.git` failed this file's temp-directory cleanup on CI
+    # ("Directory not empty: '.git'"). These repositories never need it.
+    git(root, "config", "maintenance.auto", "false")
+    git(root, "config", "gc.auto", "0")
     (root / "f.txt").write_text("a\n")
     git(root, "add", "f.txt")
     git(root, "commit", "-qm", "init")
