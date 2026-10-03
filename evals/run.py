@@ -70,6 +70,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from breadcrumbs import cli, hooks_prompt  # noqa: E402
 from breadcrumbs import packet as _packet  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 TOP_K = 5
 TOLERANCE = 0.05
@@ -95,7 +96,7 @@ COUNT_METRICS = ("reject_hits",)
 # Reported, never gated: cost moves with any content change.
 DIAGNOSTIC_METRICS = ("tokens_mean", "tokens_max")
 TASK_KEYS = {"task", "expect", "reject", "verdict", "files", "note"}
-VERDICTS = set(cli.GUARD_VERDICT_EXIT_CODES)
+VERDICTS = set(_scoring.GUARD_VERDICT_EXIT_CODES)
 # `split: holdout` in a suite's tasks.yml: a fixed scenario set, reported under
 # its own scope and left out of `overall`, whose tasks are not edited to suit
 # the tool (evals/README.md).
@@ -144,7 +145,7 @@ METRIC_DEFINITIONS = {
         },
     },
     "guard": {
-        "_system": "cli.guard(task, files): the verdict the library computes",
+        "_system": "scoring.guard(task, files): the verdict the library computes",
         "guard_accuracy": {
             "definition": "share of tasks whose verdict is one of those listed",
             "denominator": "tasks that set `verdict`",
@@ -440,7 +441,7 @@ def delivered_ids(text: str) -> list[str]:
         match = _ENTRY_RE.match(line) or _TRAP_ENTRY_RE.match(line)
         rid = match.group(1) if match else None
         if rid is None and section.startswith("Open Questions") and line.startswith("- "):
-            rid = cli.question_item_id(line[2:])
+            rid = _scoring.question_item_id(line[2:])
         if rid and rid not in ids:
             ids.append(rid)
     return ids
@@ -553,9 +554,9 @@ CRITICAL_KEYS = {
     "note",
 }
 CRITICAL_CHECKS = {
-    "guard_not": "cli.guard(task) must not return any of `verdict_not`",
-    "guard_cites_none": "cli.guard(task) must cite none of `forbid` among its matches",
-    "guard_no_blocking": "cli.guard(task) must show no match as blocking (`[objects]`)",
+    "guard_not": "scoring.guard(task) must not return any of `verdict_not`",
+    "guard_cites_none": "scoring.guard(task) must cite none of `forbid` among its matches",
+    "guard_no_blocking": "scoring.guard(task) must show no match as blocking (`[objects]`)",
     "hook_guard_warns": "`crumb hook guard` on the task must deliver a warning",
     "never_delivered": "no `forbid` id is delivered as an entry (`via`: prompt, packet)",
     "delivered": "every `require` id is delivered as an entry (`via`: prompt, packet)",
@@ -678,7 +679,9 @@ def run_suite(suite_dir: Path, critical: list[dict] | None = None) -> dict:
         project = Path(tmp) / suite_dir.name
         memory_dir = build_store(suite_dir, project)
         with mock.patch.object(cli, "_now", return_value=now):
-            known = {item["id"] for item in cli._candidate_items(memory_dir, include_ideas=True)}
+            known = {
+                item["id"] for item in _scoring._candidate_items(memory_dir, include_ideas=True)
+            }
             for i, task in enumerate(spec["tasks"], 1):
                 unknown = sorted((set(task["expect"]) | set(task["reject"])) - known)
                 if unknown:
@@ -706,9 +709,9 @@ def run_suite(suite_dir: Path, critical: list[dict] | None = None) -> dict:
                     deliver_packet(project, text), task
                 )
                 if task["verdict"]:
-                    verdict = cli.guard(memory_dir, project, text, files=task["files"] or None)[
-                        "verdict"
-                    ]
+                    verdict = _scoring.guard(
+                        memory_dir, project, text, files=task["files"] or None
+                    )["verdict"]
                     hook = deliver_guard_hook(
                         project, text, task["files"], f"eval-guard-{suite_dir.name}-{i}"
                     )
@@ -741,13 +744,13 @@ def run_critical(case: dict, memory_dir: Path, project: Path, rows: list[dict], 
     session = f"eval-critical-{case['id']}-{n}"
     detail = ""
     if check == "guard_not":
-        verdict = cli.guard(memory_dir, project, case["task"], files=case["files"] or None)[
+        verdict = _scoring.guard(memory_dir, project, case["task"], files=case["files"] or None)[
             "verdict"
         ]
         ok = verdict not in case["verdict_not"]
         detail = f"guard said {verdict}"
     elif check in ("guard_cites_none", "guard_no_blocking"):
-        matches = cli.guard(memory_dir, project, case["task"], files=case["files"] or None)[
+        matches = _scoring.guard(memory_dir, project, case["task"], files=case["files"] or None)[
             "matches"
         ]
         if check == "guard_cites_none":

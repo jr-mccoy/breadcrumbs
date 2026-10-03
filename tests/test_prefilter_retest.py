@@ -28,6 +28,7 @@ import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import projections  # noqa: E402
 from breadcrumbs import hooks_guard  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 AWS_SHAPED = "AKIAZ7QW4ERTY8UIOP3A"
 RANDOM_SHAPED = "Xk9fQ2mZ7pL4vR8tW3nB6yH1cJ5sD0gA"
@@ -93,10 +94,10 @@ class MachineLocalPrefilterTests(StoreCase):
         words = ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot")
         for w in words:
             self.decision(f"Decision on the {w} module caching", tags=f"{w},shared")
-        items = _cli._candidate_items(self.mem, include_ideas=False)
+        items = _scoring._candidate_items(self.mem, include_ideas=False)
         self.assertGreaterEqual(len(items), 6)
         forward = _cli._build_guard_prefilter(self.mem)
-        with mock.patch.object(_cli, "_candidate_items", return_value=list(reversed(items))):
+        with mock.patch.object(_scoring, "_candidate_items", return_value=list(reversed(items))):
             backward = _cli._build_guard_prefilter(self.mem)
         self.assertEqual(
             json.dumps(forward, separators=(",", ":"), sort_keys=True),

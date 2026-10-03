@@ -21,6 +21,8 @@ from pathlib import Path
 
 from breadcrumbs import cli
 from breadcrumbs import git as _git
+from breadcrumbs import textmatch as _textmatch
+from breadcrumbs import scoring as _scoring
 
 
 # Hard token ceiling for the packet (§12: "3,000 to 5,000 tokens"). Since audit
@@ -29,10 +31,8 @@ from breadcrumbs import git as _git
 # `approx_tokens` measures (see TOKEN_ESTIMATOR).
 TOKEN_BUDGET_MAX = 5000
 
-
 # The `--fast` view's own ceiling: a reorientation glance, not a briefing.
 FAST_TOKEN_BUDGET = 1500
-
 
 # The smallest budget each view can honour: its own framing (headings, the
 # source header, one omission note per section) with every field reduced to a
@@ -69,7 +69,6 @@ SECTION_CAPS = {
     "warnings": 20,
 }
 
-
 # Order in which sections give up items when the packet is over budget
 # (first listed = trimmed first = least load-bearing). Project / Current Focus /
 # Next Action are never trimmed; warnings are trimmed only after every
@@ -91,31 +90,19 @@ TRIM_ORDER = [
     "warnings",
 ]
 
-
 # Free-text caps (audit F14). No single field may take the packet over: past its
 # cap a field becomes a marked excerpt with a pointer to the full text. The
 # canonical files are never changed.
 PROTECTED_EXCERPT_CHARS = 2000  # Current Focus, Next Action
-
-
 TASK_EXCERPT_CHARS = 500  # Requested Task
-
-
 ITEM_EXCERPT_CHARS = 300  # one entry of any list section, one warning
-
-
 NAME_EXCERPT_CHARS = 120  # project name, branch, handoff path
-
-
 # Still over budget once every list is empty: the protected fields shrink
 # through these caps, down to a bare pointer.
 _PROTECTED_SHRINK = (1000, 500, 250, 120, 0)
 
-
 # How `approx_tokens` counts, named wherever a budget is reported (audit F14).
 TOKEN_ESTIMATOR = "approx-tokens/2"
-
-
 TOKEN_ESTIMATOR_RULE = (
     "ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer"
 )
@@ -283,6 +270,8 @@ def compute_staleness(
     return warnings
 
 
+# ---- packet assembly ------------------------------------------------------- #
+
 # How many commit subjects the packet lists between the handoff's commit and
 # HEAD (P1-5). Enough to falsify a stale work-list; small enough not to crowd
 # the packet.
@@ -323,7 +312,6 @@ def _commits_since(root: Path, ref: str | None, limit: int) -> list[str]:
 # section with drift guesses.
 PACKET_DRIFT_CONFLICTS_MAX = 3
 
-
 # Share of a fixed verification's subject stems the focus text must contain
 # before the drift line fires (floor: two shared stems, or the whole subject
 # when it is shorter). The first cut fired on *any* two shared stems, and on
@@ -336,7 +324,7 @@ PACKET_DRIFT_SUBJECT_COVERAGE = 2 / 3
 
 def _claim_stems(text: str) -> set[str]:
     """`_specific` minus digit-only stems: a version fragment is not a claim."""
-    return {s for s in cli._specific(text) if not s.isdigit()}
+    return {s for s in _textmatch._specific(text) if not s.isdigit()}
 
 
 def _focus_verification_conflicts(
@@ -821,7 +809,6 @@ def _build_resume_packet_once(
 # afford to miss, whatever they are about to work on.
 RECENCY_FLOOR = 3
 
-
 # The packet's list sections and how to get a search id out of each entry. Two
 # of them hold strings rather than dicts: a trap is rendered as its heading
 # (`trap_<slug>: summary`) and a question as its text.
@@ -830,7 +817,7 @@ _RELEVANCE_SECTIONS: dict[str, "object"] = {
     "failed_attempts": lambda e: e["id"],
     "verifications": lambda e: e["id"],
     "known_traps": lambda e: str(e).split(":", 1)[0].strip(),
-    "open_questions": lambda e: cli.question_item_id(str(e)),
+    "open_questions": lambda e: _scoring.question_item_id(str(e)),
 }
 
 
@@ -843,7 +830,7 @@ def task_relevance_scores(
     hides. The relevance evals (`evals/run.py`) rank the packet by this too, so
     the packet and its measurement cannot drift apart.
     """
-    matches, _ = cli.search(
+    matches, _ = _scoring.search(
         memory_dir, root, task, include_ideas=False, min_keyword=1, stale_days=stale_days
     )
     return {m["id"]: float(m.get("score") or 0) for m in matches}
@@ -903,7 +890,9 @@ def _task_scoped_files(
     boots the next session, and a file path is only "likely" because someone did
     work there — not because someone proposed it.
     """
-    matches, by_id = cli.search(memory_dir, root, task, stale_days=stale_days, include_ideas=False)
+    matches, by_id = _scoring.search(
+        memory_dir, root, task, stale_days=stale_days, include_ideas=False
+    )
     files: list[str] = []
     for m in matches:
         files.extend(m.get("matched_files") or [])
@@ -953,7 +942,7 @@ def _entry_source(section: str, entry) -> str | None:
     if section == "known_traps":
         return f"crumb show {str(entry).split(':', 1)[0].strip()}"
     if section == "open_questions":
-        return f"crumb show {cli.question_item_id(str(entry))}"
+        return f"crumb show {_scoring.question_item_id(str(entry))}"
     return None
 
 
@@ -1137,6 +1126,9 @@ def _bound_packet(
     used = measure()
     packet["budget"]["used"] = used
     packet["budget"]["within"] = used <= limit
+
+
+# ---- rendering ------------------------------------------------------------- #
 
 
 def _standing_label(rule: dict) -> str:

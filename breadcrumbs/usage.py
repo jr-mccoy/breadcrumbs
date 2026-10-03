@@ -54,6 +54,7 @@ from typing import Iterable
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import scoring as _scoring
 
 USAGE_FILENAME = "usage.json"
 
@@ -424,7 +425,7 @@ def never_surfaced(memory_dir: Path, *, types: tuple[str, ...] | None = None) ->
     """
     seen = set(load_usage(memory_dir)["records"])
     out: list[dict] = []
-    wanted = types or cli.JUDGING_ITEM_TYPES
+    wanted = types or _scoring.JUDGING_ITEM_TYPES
     for rec in cli.load_records(memory_dir, types=wanted):
         if rec.error or (rec.meta.get("status") or "active") != "active":
             continue

@@ -19,6 +19,8 @@ from pathlib import Path
 from breadcrumbs import cli
 from breadcrumbs import shellcmd as _shellcmd
 from breadcrumbs.adapters import claude as _claude
+from breadcrumbs import textmatch as _textmatch
+from breadcrumbs import scoring as _scoring
 
 
 def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) -> bool:
@@ -39,7 +41,7 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     from breadcrumbs import hooklog as _hooklog
     from breadcrumbs import projections as _projections
 
-    cli.activate_store_aliases(memory_dir)
+    _textmatch.activate_store_aliases(memory_dir)
     raw = _projections.verified(memory_dir, Path(memory_dir).parent, cli.GUARD_PREFILTER_FILENAME)
     try:
         idx = json.loads(raw.decode("utf-8")) if raw is not None else None
@@ -56,29 +58,31 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     # `_build_guard_prefilter`), so this can only admit more than full guard
     # would surface, never less (audit WP11). Stems are re-stemmed at read time
     # under the store's aliases: `_stem` is idempotent.
-    if cli._names_command(_shellcmd.match_tokens(action), idx.get("commands") or ()):
+    if _scoring._names_command(_shellcmd.match_tokens(action), idx.get("commands") or ()):
         return True
-    q_specific = cli._specific(action)
+    q_specific = _textmatch._specific(action)
     sets = idx.get("token_sets")
     if isinstance(sets, list):
         for words in sets:
             if (
-                len(q_specific & {cli._stem(str(t)) for t in words})
-                >= cli.GUARD_MIN_KEYWORD_OVERLAP
+                len(q_specific & {_textmatch._stem(str(t)) for t in words})
+                >= _scoring.GUARD_MIN_KEYWORD_OVERLAP
             ):
                 return True
     else:
-        idx_tokens = {cli._stem(str(t)) for t in (idx.get("tokens") or ())}
-        if len(q_specific & idx_tokens) >= cli.GUARD_MIN_KEYWORD_OVERLAP:
+        idx_tokens = {_textmatch._stem(str(t)) for t in (idx.get("tokens") or ())}
+        if len(q_specific & idx_tokens) >= _scoring.GUARD_MIN_KEYWORD_OVERLAP:
             return True
     if len(q_specific) == 1 and q_specific <= {
-        cli._stem(str(t)) for t in (idx.get("titles") or ())
+        _textmatch._stem(str(t)) for t in (idx.get("titles") or ())
     }:
         return True
-    if q_specific & {cli._stem(str(t)) for t in (idx.get("tags") or ())}:
+    if q_specific & {_textmatch._stem(str(t)) for t in (idx.get("tags") or ())}:
         return True
-    action_paths = cli._norm_files(cli._paths_from_text(action)) | cli._norm_files(files or [])
-    index_paths = cli._norm_files(idx.get("paths") or ())
+    action_paths = _textmatch._norm_files(
+        _textmatch._paths_from_text(action)
+    ) | _textmatch._norm_files(files or [])
+    index_paths = _textmatch._norm_files(idx.get("paths") or ())
     return bool(action_paths & index_paths)
 
 
@@ -94,10 +98,12 @@ def _prefilter_exact_hit(memory_dir: Path, action: str, files: list[str] | None)
         idx = None
     if not isinstance(idx, dict) or idx.get("format") != cli.GUARD_PREFILTER_FORMAT:
         return True
-    if cli._names_command(_shellcmd.match_tokens(action), idx.get("commands") or ()):
+    if _scoring._names_command(_shellcmd.match_tokens(action), idx.get("commands") or ()):
         return True
-    action_paths = cli._norm_files(cli._paths_from_text(action)) | cli._norm_files(files or [])
-    if action_paths & cli._norm_files(idx.get("paths") or ()):
+    action_paths = _textmatch._norm_files(
+        _textmatch._paths_from_text(action)
+    ) | _textmatch._norm_files(files or [])
+    if action_paths & _textmatch._norm_files(idx.get("paths") or ()):
         return True
     # A path or command the pre-filter left out as opaque (item 9).
     return cli._prefilter_opaque_action_token(action)
@@ -107,11 +113,7 @@ def _prefilter_exact_hit(memory_dir: Path, action: str, files: list[str] | None)
 # the guard; and which tools launch a subagent. The Claude Code adapter owns
 # these (audit WP17); the names stay here as the compatibility surface.
 _HOOK_CONTENT_SNIPPET_CHARS = _claude.CONTENT_SNIPPET_CHARS
-
-
 SUBAGENT_TOOLS = _claude.SUBAGENT_TOOLS
-
-
 _HOOK_SUBAGENT_PROMPT_CHARS = _claude.SUBAGENT_PROMPT_CHARS
 
 
@@ -123,7 +125,7 @@ def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] 
     bounded snippet of the *new* content (P0-3). An unknown tool yields no
     action.
     """
-    action = _claude.normalize_tool(tool, tool_input, paths_from_text=cli._paths_from_text)
+    action = _claude.normalize_tool(tool, tool_input, paths_from_text=_textmatch._paths_from_text)
     return action.text, action.files or None
 
 
@@ -137,11 +139,7 @@ def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] 
 # (WM-10). These names stay as the compatibility surface — they are what the
 # existing tests and any external reader know this state by.
 _HOOK_SEEN_FILENAME = "hook-guard-seen.json"
-
-
 _HOOK_SEEN_MAX_SESSIONS = 8
-
-
 _HOOK_SEEN_MAX_KEYS = 200
 
 
@@ -167,7 +165,7 @@ def _hook_damp_repeats(memory_dir: Path, session_id: str, result: dict) -> dict:
     def keep(m: dict) -> bool:
         if m["id"] not in seen:
             return True
-        if (m.get("stance") or cli._match_stance(m.get("signals"))) == "blocking":
+        if (m.get("stance") or _scoring._match_stance(m.get("signals"))) == "blocking":
             return True
         return bool({"file", "writes-file", "command"} & set(m.get("signals") or ()))
 
@@ -175,11 +173,11 @@ def _hook_damp_repeats(memory_dir: Path, session_id: str, result: dict) -> dict:
     kept = [m for m in matches if keep(m)]
     if len(kept) == len(matches):
         return result
-    verdict = cli._decide_verdict(
+    verdict = _scoring._decide_verdict(
         kept, result.get("action_classes") or [], result.get("action", "")
     )
     # Never louder than guard said: its caps (read-only, a memory edit) hold.
-    verdict = cli._min_verdict(verdict, result["verdict"])
+    verdict = _scoring._min_verdict(verdict, result["verdict"])
     if result.get("high_impact"):
         verdict = "ASK_HUMAN"
     return {
@@ -218,7 +216,6 @@ def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bo
 # because the default was wrong.
 _HOOK_NONPROMPTING_MODES = frozenset({"bypassPermissions", "dontAsk"})
 
-
 # Escape hatch for anyone who wants the advisory shape unconditionally, so the
 # answer is an env var rather than a wrapper that rewrites our output.
 _GUARD_ADVISORY_ENV = "CRUMB_GUARD_ADVISORY"
@@ -256,7 +253,7 @@ def _hook_surfacing_matches(result: dict) -> list[dict]:
     return [
         m
         for m in result.get("matches", [])
-        if cli.GUARD_SURFACING_SIGNALS & set(m.get("signals", ()))
+        if _scoring.GUARD_SURFACING_SIGNALS & set(m.get("signals", ()))
     ]
 
 
@@ -329,18 +326,20 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     # path, plus one read of the reindex-time trap-token index so
     # trap-shaped routine commands escalate too. Only a plausibly-risky action
     # escalates to full guard scoring.
-    _primary, classes = cli.classify_action(action)
+    _primary, classes = _scoring.classify_action(action)
     # A read-only command (every segment) is guarded only for memory about
     # *it*: a trap naming the exact command, or a record about a path it
     # touches. Shared vocabulary alone cannot raise it past READ_FIRST, and
     # was the bulk of the field's "a warning on every command" (issue 7).
-    if cli._is_read_only_action(action) and not _prefilter_exact_hit(memory_dir, action, files):
+    if _scoring._is_read_only_action(action) and not _prefilter_exact_hit(
+        memory_dir, action, files
+    ):
         _hooklog.note(skipped="read-only")
         print(json.dumps({}))
         return 0
     risky = (
         classes != ["routine_edit"]
-        or bool(cli._HOOK_RISK_RE.search(action))
+        or bool(_scoring._HOOK_RISK_RE.search(action))
         or bool(_shellcmd.high_impact(action))
         or _prefilter_trap_hit(
             memory_dir,
@@ -364,7 +363,7 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
         "PROCEED",
         "READ_FIRST",
     ):
-        verdict = cli.GUARD_READ_ONLY_CEILING
+        verdict = _scoring.GUARD_READ_ONLY_CEILING
         result = {**result, "verdict": verdict}
     session_id = str(payload.get("session_id") or "unknown")
     # Session damping (DoWhat retest of 0.5.0, item 5): an advisory record the

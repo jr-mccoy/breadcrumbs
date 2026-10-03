@@ -40,6 +40,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli, hooklog, projections, searchindex, snapshots  # noqa: E402
 from breadcrumbs import packet as _packet  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -243,9 +244,9 @@ class IndexTests(SnapshotCase):
         os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
         self.assertEqual(path.stat().st_size, st.st_size)
         self.assertEqual(searchindex.index_status(self.mem, self.root)["state"], "stale")
-        indexed, _ = cli.search(self.mem, self.root, "nebula", include_ideas=False)
+        indexed, _ = _scoring.search(self.mem, self.root, "nebula", include_ideas=False)
         with mock.patch.object(searchindex, "candidate_items", return_value=None):
-            full, _ = cli.search(self.mem, self.root, "nebula", include_ideas=False)
+            full, _ = _scoring.search(self.mem, self.root, "nebula", include_ideas=False)
         self.assertEqual([m["id"] for m in indexed], [m["id"] for m in full])
         self.assertTrue(full)
 

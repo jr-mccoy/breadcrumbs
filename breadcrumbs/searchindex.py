@@ -45,6 +45,8 @@ import tempfile
 from pathlib import Path
 
 from breadcrumbs import cli, path_policy
+from breadcrumbs import textmatch as _textmatch
+from breadcrumbs import scoring as _scoring
 
 try:  # sqlite3 is stdlib, but some minimal builds ship without it
     import sqlite3
@@ -115,7 +117,7 @@ def _stat_fingerprint(memory_dir: Path, project_root: Path) -> str:
 
     memory_dir = Path(memory_dir)
     named = [(f, memory_dir / f) for f in cli.CORE_FILES]
-    named += [(n, memory_dir / n) for n in ("manifest.yml", cli.ALIASES_FILENAME)]
+    named += [(n, memory_dir / n) for n in ("manifest.yml", _textmatch.ALIASES_FILENAME)]
     named.append(("<root>/.gitignore", Path(project_root) / ".gitignore"))
     for dirname in cli.DIR_TYPES:
         named.extend(
@@ -193,7 +195,7 @@ def build_index(
     if own_snapshot:
         inputs_hash = cli._inputs_hash(memory_dir, project_root)
     try:
-        cli.activate_store_aliases(memory_dir)
+        _textmatch.activate_store_aliases(memory_dir)
         dirs = _indexable_dirs(memory_dir, project_root)
         rows = []
         for dirname in dirs:
@@ -202,7 +204,7 @@ def build_index(
                 rec = cli.Record.from_file(path, rtype)
                 if rec.error:
                     continue
-                rows.append((path, rtype, cli._item_from_record(rec)))
+                rows.append((path, rtype, _scoring._item_from_record(rec)))
         if len(rows) < INDEX_MIN_CORPUS and not force:
             # Small store: remove any index left from when it was bigger, so a
             # stale file can never be mistaken for a live one.
@@ -232,7 +234,7 @@ def build_index(
                 CREATE TABLE postings(field TEXT, token TEXT, rid INTEGER);
                 """
             )
-            speculative = set(cli.SPECULATIVE_ITEM_TYPES)
+            speculative = set(_scoring.SPECULATIVE_ITEM_TYPES)
             for rid, (rpath, rtype, item) in enumerate(rows):
                 conn.execute(
                     "INSERT INTO records VALUES (?, ?, ?, ?)",
@@ -401,7 +403,7 @@ def candidate_items(
         conn.close()
 
     # Parse only the records the index says could match.
-    cli.activate_store_aliases(memory_dir)
+    _textmatch.activate_store_aliases(memory_dir)
     items: list[dict] = []
     rtype_by_dir = _CORPUS_DIRS
     # One directory walk per directory, not per hit, under the path policy.
@@ -411,28 +413,28 @@ def candidate_items(
         rtype = rtype_by_dir.get(Path(rel).parts[0], "decision")
         rec = cli.Record.from_bytes(p, rtype, blobs[p])
         if not rec.error:
-            items.append(cli._item_from_record(rec))
+            items.append(_scoring._item_from_record(rec))
 
     # Everything the index does not cover is parsed directly, and counted toward
     # the corpus exactly as the full scan would count it.
     direct: list[dict] = []
-    wanted = set(cli.JUDGING_ITEM_TYPES) | (
-        set(cli.SPECULATIVE_ITEM_TYPES) if include_ideas else set()
+    wanted = set(_scoring.JUDGING_ITEM_TYPES) | (
+        set(_scoring.SPECULATIVE_ITEM_TYPES) if include_ideas else set()
     )
     for dirname, rtype in _CORPUS_DIRS.items():
         if dirname in indexed_dirs or rtype not in wanted:
             continue
         for rec in cli.records_in(memory_dir / dirname, rtype):
             if not rec.error:
-                direct.append(cli._item_from_record(rec))
+                direct.append(_scoring._item_from_record(rec))
     for local_dir, rtype in cli.LOCAL_DIR_TYPES.items():
         if rtype not in wanted:
             continue
         for rec in cli.records_in(memory_dir / local_dir, rtype):
             if not rec.error:
-                direct.append(cli._item_from_record(rec))
-    direct += [cli._item_from_trap(t) for t in cli.load_traps(memory_dir)]
-    direct += [cli._item_from_question(q) for q in cli.load_open_questions(memory_dir)]
+                direct.append(_scoring._item_from_record(rec))
+    direct += [_scoring._item_from_trap(t) for t in cli.load_traps(memory_dir)]
+    direct += [_scoring._item_from_question(q) for q in cli.load_open_questions(memory_dir)]
 
     # Ubiquity, for the only stems scoring will ask about: the query's own.
     n = n_indexed + len(direct)
@@ -441,8 +443,8 @@ def candidate_items(
         for stem in stems
     }
     ubiquitous: set[str] = set()
-    if n >= cli.GUARD_DF_MIN_CORPUS:
-        cutoff = n * cli.GUARD_DF_UBIQUITY
+    if n >= _scoring.GUARD_DF_MIN_CORPUS:
+        cutoff = n * _scoring.GUARD_DF_UBIQUITY
         ubiquitous = {stem for stem, df in words.items() if df > cutoff}
     if df_out is not None:
         df_out["n"] = n
@@ -453,4 +455,4 @@ def candidate_items(
             for stem in stems
         }
 
-    return cli._disambiguate_item_ids(items + direct), frozenset(ubiquitous)
+    return _scoring._disambiguate_item_ids(items + direct), frozenset(ubiquitous)

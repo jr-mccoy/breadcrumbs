@@ -39,6 +39,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli  # noqa: E402
 from breadcrumbs import hooks_guard  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 RUN_PY = REPO_ROOT / "evals" / "run.py"
 MODES = (None, "default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "unknownMode")
@@ -125,7 +126,9 @@ class KnownCommandTests(StoreCase):
         variants = ("npm test", "npm test --watch", "cd web && npm test", "npm test 2>&1 | tail -5")
         for command in variants:
             with self.subTest(command=command):
-                self.assertNotEqual(cli.guard(self.mem, self.root, command)["verdict"], "PROCEED")
+                self.assertNotEqual(
+                    _scoring.guard(self.mem, self.root, command)["verdict"], "PROCEED"
+                )
         for i, mode in enumerate(MODES):
             for j, command in enumerate(variants):
                 with self.subTest(mode=mode, command=command):
@@ -153,7 +156,7 @@ class AgreementTests(unittest.TestCase):
             out.append(("Bash", {"command": task["task"]}))
             for f in task["files"]:
                 out.append(("Edit", {"file_path": f, "new_string": task["task"]}))
-        for item in cli._candidate_items(mem, include_ideas=False):
+        for item in _scoring._candidate_items(mem, include_ideas=False):
             if not cli._may_drive_verdict(item):
                 continue
             title = str(item.get("title") or "").split(":", 1)[-1].strip()
@@ -184,18 +187,18 @@ class AgreementTests(unittest.TestCase):
                         if not action:
                             continue
                         checked += 1
-                        verdict = cli.guard(mem, project, action, files=files)["verdict"]
+                        verdict = _scoring.guard(mem, project, action, files=files)["verdict"]
                         if verdict == "PROCEED":
                             continue
                         surfaced += 1
                         with self.subTest(suite=suite.name, action=action[:80], verdict=verdict):
                             # The pre-filter admits it (or the action is risky
                             # enough to bypass it), and the real hook speaks.
-                            _p, classes = cli.classify_action(action)
+                            _p, classes = _scoring.classify_action(action)
                             self.assertTrue(
                                 hooks_guard._prefilter_trap_hit(mem, action, files)
                                 or classes != ["routine_edit"]
-                                or bool(cli._HOOK_RISK_RE.search(action))
+                                or bool(_scoring._HOOK_RISK_RE.search(action))
                             )
                             out = hook_guard(project, tool, tool_input, f"agree-{i}")
                             self.assertTrue(spoke(out), (verdict, out))
@@ -221,7 +224,9 @@ class AgreementTests(unittest.TestCase):
             cli.reindex_projections(mem, root)
             edit = {"file_path": "src/auth/session_parser.py", "new_string": "x = 1"}
             action, files = hooks_guard._hook_action_from_tool("Edit", edit)
-            self.assertEqual(cli.guard(mem, root, action, files=files)["verdict"], "READ_FIRST")
+            self.assertEqual(
+                _scoring.guard(mem, root, action, files=files)["verdict"], "READ_FIRST"
+            )
             self.assertTrue(hooks_guard._prefilter_trap_hit(mem, action, files))
             self.assertTrue(spoke(hook_guard(root, "Edit", edit, "s")))
 
@@ -232,11 +237,11 @@ class BoundaryTests(StoreCase):
             ("npm run test:unit", "npm install", "git status", "ls -la", "make", "pytest -q")
         ):
             with self.subTest(command=command):
-                self.assertEqual(cli.guard(self.mem, self.root, command)["verdict"], "PROCEED")
+                self.assertEqual(_scoring.guard(self.mem, self.root, command)["verdict"], "PROCEED")
                 self.assertEqual(self.bash(command, f"c{i}"), {})
         # A read-only command a trap names is told, never blocked: READ_FIRST
         # is its ceiling, and READ_FIRST never takes a permission decision.
-        result = cli.guard(self.mem, self.root, "git log --all")
+        result = _scoring.guard(self.mem, self.root, "git log --all")
         self.assertEqual(result["verdict"], "READ_FIRST")
         out = self.bash("git log --all", "ro")
         self.assertTrue(spoke(out))
@@ -244,7 +249,9 @@ class BoundaryTests(StoreCase):
         # A blocking attempt keeps its stance: an edit of its file still PAUSEs.
         edit = {"file_path": "src/billing.py", "new_string": "rewrite everything"}
         action, files = hooks_guard._hook_action_from_tool("Edit", edit)
-        self.assertEqual(cli.guard(self.mem, self.root, action, files=files)["verdict"], "PAUSE")
+        self.assertEqual(
+            _scoring.guard(self.mem, self.root, action, files=files)["verdict"], "PAUSE"
+        )
 
     def test_permission_mode_never_gains_auto_allow(self):
         cases = {
@@ -256,7 +263,7 @@ class BoundaryTests(StoreCase):
         for verdict, (tool, tool_input) in cases.items():
             action, files = hooks_guard._hook_action_from_tool(tool, tool_input)
             self.assertEqual(
-                cli.guard(self.mem, self.root, action, files=files)["verdict"], verdict
+                _scoring.guard(self.mem, self.root, action, files=files)["verdict"], verdict
             )
             for i, mode in enumerate(MODES):
                 for advisory in ("", "1"):

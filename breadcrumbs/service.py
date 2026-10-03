@@ -34,6 +34,8 @@ from typing import Callable
 
 from breadcrumbs import admission, cli
 from breadcrumbs import packet as _packet
+from breadcrumbs import textmatch as _textmatch
+from breadcrumbs import scoring as _scoring
 
 RECORD_TYPES = ("decision", "attempt")
 
@@ -88,7 +90,7 @@ def active(ctx: Context):
     with (
         admission.channel(ctx.channel),
         cli.clock(ctx.clock),
-        cli.store_aliases(ctx.memory_dir),
+        _textmatch.store_aliases(ctx.memory_dir),
         cli.operation(),
     ):
         yield ctx
@@ -287,10 +289,10 @@ def search(
     include_ideas: bool = True,
     **kwargs,
 ) -> tuple[list[dict], dict]:
-    """`cli.search` in this context: `(matches, by_id)`."""
+    """`scoring.search` in this context: `(matches, by_id)`."""
     with active(ctx):
         _require_store(ctx)
-        return cli.search(
+        return _scoring.search(
             ctx.memory_dir,
             ctx.root,
             query,
@@ -302,14 +304,14 @@ def search(
 
 
 def guard(ctx: Context, action: str, *, files: list[str] | None = None, **kwargs) -> dict:
-    """`cli.guard` in this context: the verdict and what drove it."""
+    """`scoring.guard` in this context: the verdict and what drove it."""
     with active(ctx):
         _require_store(ctx)
-        return cli.guard(ctx.memory_dir, ctx.root, action, files=files, **kwargs)
+        return _scoring.guard(ctx.memory_dir, ctx.root, action, files=files, **kwargs)
 
 
 def resume_packet(ctx: Context, **kwargs) -> dict:
-    """`_packet.build_resume_packet` in this context."""
+    """`packet.build_resume_packet` in this context."""
     with active(ctx):
         _require_store(ctx)
         return _packet.build_resume_packet(ctx.memory_dir, ctx.root, **kwargs)

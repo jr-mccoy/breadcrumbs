@@ -30,6 +30,7 @@ from breadcrumbs import cli as _cli  # noqa: E402  (patch target: `_hook_guard` 
 from breadcrumbs import git as _git  # noqa: E402
 from breadcrumbs import hooks_stop  # noqa: E402
 from breadcrumbs import hooks_guard  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -178,7 +179,7 @@ class HookGuardTests(unittest.TestCase):
             "PAUSE": ("ask", "permissionDecisionReason"),
             "ASK_HUMAN": ("ask", "permissionDecisionReason"),
         }
-        self.assertEqual(set(expected), set(_cli._VERDICTS))
+        self.assertEqual(set(expected), set(_scoring._VERDICTS))
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             init_store(root)
@@ -187,7 +188,7 @@ class HookGuardTests(unittest.TestCase):
                 "tool_name": "Bash",
                 "tool_input": {"command": "git push --force origin main"},
             }
-            real_guard = _cli.guard
+            real_guard = _scoring.guard
             for verdict, (decision, reason_key) in expected.items():
                 with self.subTest(verdict=verdict):
 
@@ -196,11 +197,11 @@ class HookGuardTests(unittest.TestCase):
                         result["verdict"] = _v
                         return result
 
-                    _cli.guard = fake_guard
+                    _scoring.guard = fake_guard
                     try:
                         out = run_hook("guard", payload)
                     finally:
-                        _cli.guard = real_guard
+                        _scoring.guard = real_guard
                     if decision is None and reason_key is None:
                         self.assertEqual(out, {})
                         continue

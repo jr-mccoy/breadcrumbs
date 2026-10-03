@@ -19,7 +19,7 @@ is what they share, which does not depend on who is looking:
     tag in common             4
     specific stem in common   1   (stems in over a third of the corpus excluded)
 
-A pair relates when it scores at least `cli.GUARD_NOISE_FLOOR`, the same bar the
+A pair relates when it scores at least `scoring.GUARD_NOISE_FLOOR`, the same bar the
 guard uses for "this counts at all". Each item keeps its top three.
 
 The file is stamped with `inputs_hash`, so `validate` and `audit` detect it
@@ -33,6 +33,7 @@ from pathlib import Path
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import scoring as _scoring
 
 RELATED_FILENAME = "related.json"
 
@@ -51,9 +52,9 @@ RELATED_MAX_CORPUS = 2000
 # projection says which, in `degraded`. Nothing is dropped silently.
 RELATED_PAIR_BUDGET = 3_000_000
 
-W_FILE = cli.GUARD_W_FILE
-W_TAG = cli.GUARD_W_TAG
-W_STEM = cli.GUARD_W_KEYWORD
+W_FILE = _scoring.GUARD_W_FILE
+W_TAG = _scoring.GUARD_W_TAG
+W_STEM = _scoring.GUARD_W_KEYWORD
 
 
 def _live(item: dict) -> bool:
@@ -101,9 +102,11 @@ def compute_related(memory_dir: Path) -> dict:
     `RELATED_PAIR_BUDGET` candidate pairs, the most widely shared features
     stop generating pairs, and `degraded` names how many and why.
     """
-    assert cli.GUARD_NOISE_FLOOR > 0, "a zero-score pair would have to be kept"
-    items = [it for it in cli._candidate_items(Path(memory_dir), include_ideas=False) if _live(it)]
-    ubiquitous = cli._ubiquitous_stems(items)
+    assert _scoring.GUARD_NOISE_FLOOR > 0, "a zero-score pair would have to be kept"
+    items = [
+        it for it in _scoring._candidate_items(Path(memory_dir), include_ideas=False) if _live(it)
+    ]
+    ubiquitous = _scoring._ubiquitous_stems(items)
     postings: dict[tuple[str, str], list[int]] = {}
     for i, it in enumerate(items):
         for feat in _features(it, ubiquitous):
@@ -145,7 +148,7 @@ def compute_related(memory_dir: Path) -> dict:
         for j in near:
             fb, tb, sb = prepared[j]
             score = len(fa & fb) * W_FILE + len(ta & tb) * W_TAG + len(sa & sb) * W_STEM
-            if score < cli.GUARD_NOISE_FLOOR:
+            if score < _scoring.GUARD_NOISE_FLOOR:
                 continue
             _offer(best[items[i]["id"]], (-score, items[j]["id"]))
             _offer(best[items[j]["id"]], (-score, items[i]["id"]))
@@ -165,18 +168,20 @@ def _compute_related_full(memory_dir: Path) -> dict:
     """The pairwise reference implementation of `compute_related` (below a
     corpus of `RELATED_MAX_CORPUS`), kept as the oracle for
     `tests/test_incremental_equivalence.py`."""
-    items = [it for it in cli._candidate_items(Path(memory_dir), include_ideas=False) if _live(it)]
+    items = [
+        it for it in _scoring._candidate_items(Path(memory_dir), include_ideas=False) if _live(it)
+    ]
     if len(items) > RELATED_MAX_CORPUS:
         return {
             "related": {},
             "skipped": f"corpus of {len(items)} items exceeds {RELATED_MAX_CORPUS}",
         }
-    ubiquitous = cli._ubiquitous_stems(items)
+    ubiquitous = _scoring._ubiquitous_stems(items)
     scores: dict[str, list[tuple[int, str]]] = {it["id"]: [] for it in items}
     for i, a in enumerate(items):
         for b in items[i + 1 :]:
             score = pair_score(a, b, ubiquitous)
-            if score < cli.GUARD_NOISE_FLOOR:
+            if score < _scoring.GUARD_NOISE_FLOOR:
                 continue
             scores[a["id"]].append((score, b["id"]))
             scores[b["id"]].append((score, a["id"]))

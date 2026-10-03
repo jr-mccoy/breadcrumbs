@@ -245,7 +245,7 @@ class CriticalTests(unittest.TestCase):
     def test_baseline_cannot_approve_critical_false_safe(self):
         # A guard that says PROCEED to a recorded hazard, whatever guard does
         # today: the gate must not depend on the verdict F10 happens to give.
-        real_guard = run.cli.guard
+        real_guard = run._scoring.guard
 
         def false_safe(*a, **k):
             return {**real_guard(*a, **k), "verdict": "PROCEED"}
@@ -254,7 +254,7 @@ class CriticalTests(unittest.TestCase):
             suite = self.hazard_suite(tmp)
             args = self.args(tmp, suite, CRITICAL_FALSE_SAFE)
             baseline = Path(tmp) / "baseline.json"
-            with mock.patch.object(run.cli, "guard", side_effect=false_safe):
+            with mock.patch.object(run._scoring, "guard", side_effect=false_safe):
                 # 1. The baseline cannot be written over the failure.
                 code, _o, err = quiet(run.main, [*args, "--write-baseline", "--reason", "x"])
                 self.assertEqual(code, 1)

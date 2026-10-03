@@ -23,7 +23,6 @@ from breadcrumbs import packet as _packet
 # still in the inbox; `crumb inbox` is one command away.
 _COMPACT_PREAMBLE_MAX_JOTS = 10
 
-
 # Headroom the preamble may add on top of the packet's own budget. A compaction
 # has just freed the entire context window, so this is the cheapest context in
 # the session and the most valuable — but it is still bounded.

@@ -4,9 +4,9 @@
 # own. An aggregate equal to the baseline does not excuse a failing case, and
 # `--write-baseline` refuses to run while one fails. Checks:
 #
-#   guard_not          cli.guard(task, files) must not return any `verdict_not`
-#   guard_cites_none   cli.guard(task, files) must cite none of the `forbid` ids
-#   guard_no_blocking  cli.guard(task, files) must show no match as blocking
+#   guard_not          scoring.guard(task, files) must not return any `verdict_not`
+#   guard_cites_none   scoring.guard(task, files) must cite none of the `forbid` ids
+#   guard_no_blocking  scoring.guard(task, files) must show no match as blocking
 #   hook_guard_warns   `crumb hook guard` on the task must deliver a warning
 #   never_delivered    no `forbid` id is delivered as an entry (`via`: prompt, packet)
 #   delivered          every `require` id is delivered (`via`, default prompt)

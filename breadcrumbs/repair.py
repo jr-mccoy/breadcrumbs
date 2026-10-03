@@ -34,6 +34,7 @@ from pathlib import Path
 
 from breadcrumbs import cli, git, path_policy
 from breadcrumbs import validation as _validation
+from breadcrumbs import textmatch as _textmatch
 
 # Status words people use for "this no longer applies"; the same reading as the
 # migration's block mapping (blockfiles._legacy_fixes).
@@ -230,7 +231,7 @@ def plan_record(rec: "cli.Record", memory_dir: Path, root: Path, sets: dict) -> 
     ):
         meta["confidence"] = "low"
         changes.append("confidence: low (no evidence recorded)")
-        found = citable_paths(root, cli._paths_from_text(rec.body or ""))[:3]
+        found = citable_paths(root, _textmatch._paths_from_text(rec.body or ""))[:3]
         if found:
             proposals.append(
                 f"{rid}: evidence it could cite: "

@@ -18,7 +18,7 @@ Replacements:
 - **Acknowledgements are a vocabulary.** `is_acknowledgment` accepts a prompt
   made only of words like "ok", "yes please", "go on" or "thanks", or of
   nothing but punctuation and emoji. Anything else is looked up, however short.
-- **No pre-count.** `prompt_lookup` asks `cli.search` directly. It narrows
+- **No pre-count.** `prompt_lookup` asks `scoring.search` directly. It narrows
   through the search index when the index is current. When it is not, it scans
   the store in full, up to `PROMPT_FULL_SCAN_MAX` records.
 - **Past that bound it does not guess.** It reports `mode: "skipped"`, and the
@@ -40,8 +40,9 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import textmatch as _textmatch
+from breadcrumbs import scoring as _scoring
 
 # ---- acknowledgements (F10) ------------------------------------------------ #
 
@@ -168,7 +169,7 @@ class Lookup:
 def _lone_tag(match: dict) -> bool:
     """A match whose only evidence is one shared tag: a topic, not an answer."""
     signals = set(match.get("signals") or ()) - {"do-not-retry", "keyword"}
-    tags = {cli._stem(str(t).lower()) for t in match.get("matched_tags") or ()}
+    tags = {_textmatch._stem(str(t).lower()) for t in match.get("matched_tags") or ()}
     words = set(match.get("keyword_overlap") or ()) - tags
     return signals == {"tag"} and len(tags) == 1 and not words
 
@@ -182,7 +183,7 @@ def prompt_lookup(memory_dir: Path, root: Path, prompt: str, *, limit: int = 5) 
     info: dict = {}
     from breadcrumbs import shellcmd as _shellcmd
 
-    matches, _ = cli.search(
+    matches, _ = _scoring.search(
         memory_dir,
         root,
         # A prompt that is a crumb command (`crumb migrate --dry-run`) is read
@@ -190,8 +191,8 @@ def prompt_lookup(memory_dir: Path, root: Path, prompt: str, *, limit: int = 5) 
         # not the project's (DoWhat retest of 0.5.0, item 5). Prose is unchanged.
         _shellcmd.without_crumb(prompt),
         command_text=prompt,
-        min_keyword=cli.GUARD_MIN_KEYWORD_OVERLAP,
-        noise_floor=cli.GUARD_NOISE_FLOOR,
+        min_keyword=_scoring.GUARD_MIN_KEYWORD_OVERLAP,
+        noise_floor=_scoring.GUARD_NOISE_FLOOR,
         include_ideas=False,
         allow_full_scan=records <= PROMPT_FULL_SCAN_MAX,
         info=info,
@@ -207,8 +208,8 @@ def prompt_lookup(memory_dir: Path, root: Path, prompt: str, *, limit: int = 5) 
     kept = [
         m
         for m in matches
-        if (cli.GUARD_SURFACING_SIGNALS & set(m.get("signals", ())))
-        or m.get("score", 0) >= cli.GUARD_READ_FIRST_SCORE
+        if (_scoring.GUARD_SURFACING_SIGNALS & set(m.get("signals", ())))
+        or m.get("score", 0) >= _scoring.GUARD_READ_FIRST_SCORE
     ]
     kept = [m for m in kept if eligible(m, "prompt")]
     # A lone shared tag is dropped only beside a match with real evidence: on

@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli, mcp_core, mcp_server  # noqa: E402
 from breadcrumbs import packet as _packet  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 FIXTURES = REPO_ROOT / "fixtures"
 
@@ -112,7 +113,7 @@ class GuardParityTests(unittest.TestCase):
             action = self.ACTIONS.get(name, "refactor the resume packet builder")
             root = root_of(name)
             with self.subTest(fixture=name):
-                cli_result = cli.guard(mem_of(name), root, action)
+                cli_result = _scoring.guard(mem_of(name), root, action)
                 tool_result = mcp_core.tool_guard_before_action(action, root=root)
                 self.assertEqual(tool_result["verdict"], cli_result["verdict"])
                 self.assertEqual(
@@ -130,7 +131,7 @@ class ToolParityTests(unittest.TestCase):
         root = root_of(name)
         # `memory_search` is the lookup surface, so it uses the same wider corpus
         # `crumb search` does — ideas in, sessions out.
-        matches, _ = cli.search(mem_of(name), root, "sqlite", include_ideas=True)
+        matches, _ = _scoring.search(mem_of(name), root, "sqlite", include_ideas=True)
         tool = mcp_core.tool_search("sqlite", root=root)
         self.assertEqual(tool["count"], len(matches))
         self.assertEqual([m["id"] for m in tool["matches"]], [m["id"] for m in matches])

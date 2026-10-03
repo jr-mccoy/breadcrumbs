@@ -526,7 +526,7 @@ def tool_search(
     files: list[str] | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_search` — wraps `cli.search` (deterministic; same input→same output).
+    """`memory_search` — wraps `scoring.search` (deterministic; same input→same output).
 
     Lookup, so it uses the wider corpus that includes `ideas/`, matching
     `crumb search` exactly. `memory_guard_before_action` keeps the narrower one —
@@ -556,7 +556,7 @@ def tool_guard_before_action(
     files: list[str] | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_guard_before_action` — wraps `cli.guard` (identical verdict logic)."""
+    """`memory_guard_before_action` — wraps `scoring.guard` (identical verdict logic)."""
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
@@ -570,7 +570,7 @@ def tool_build_resume_packet(
     task: str | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_build_resume_packet` — wraps `_packet.build_resume_packet`.
+    """`memory_build_resume_packet` — wraps `packet.build_resume_packet`.
 
     Returns the structured packet (the same object the CLI renders to MD/JSON).
     `task` is passed through to the engine, so the F4/F6 task

@@ -12,6 +12,7 @@ import argparse
 
 from breadcrumbs import cli
 from breadcrumbs import packet as _packet
+from breadcrumbs import textmatch as _textmatch
 
 
 def _add_duplicate_flags(parser: argparse.ArgumentParser, *, supersede: bool = True) -> None:
@@ -760,7 +761,7 @@ def _add_search(sub, global_parser: argparse.ArgumentParser) -> None:
     p_search.add_argument(
         "--explain",
         action="store_true",
-        help=f"print the stems the query became (and whether {cli.ALIASES_FILENAME} is active)",
+        help=f"print the stems the query became (and whether {_textmatch.ALIASES_FILENAME} is active)",
     )
     p_search.add_argument(
         "--status",

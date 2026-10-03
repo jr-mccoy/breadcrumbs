@@ -173,8 +173,6 @@ def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]
 # moves HEAD (`pull: Fast-forward`, `merge`, `reset`, `checkout`, `clone`)
 # brings in commits someone else made.
 _LOCAL_COMMIT_ACTIONS = ("commit", "cherry-pick", "revert", "rebase", "am")
-
-
 _REFLOG_SCAN = 2000
 
 
@@ -215,13 +213,10 @@ def _epoch(stamp) -> int | None:
 # becomes a backlog.
 EXTRACTION_MAX_JOTS_SHOWN = 6
 
-
 # Mined candidates that, on their own, earn an extraction turn even with no
 # commits. One failed-then-fixed command is a real finding; three notes of any
 # kind means the session produced enough to be worth a minute.
 EXTRACTION_MIN_ATTEMPT_JOTS = 1
-
-
 EXTRACTION_MIN_SESSION_JOTS = 3
 
 

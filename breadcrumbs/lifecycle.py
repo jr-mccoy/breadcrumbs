@@ -36,6 +36,8 @@ from breadcrumbs import checks as _checks
 from breadcrumbs import cli
 from breadcrumbs import git, path_policy
 from breadcrumbs import validation as _validation
+from breadcrumbs import textmatch as _textmatch
+from breadcrumbs import scoring as _scoring
 
 # --------------------------------------------------------------------------- #
 # WM-30: time-to-live
@@ -516,8 +518,8 @@ def _candidate(rid: str, kind: str, title: str, text: str, files, tags) -> dict:
         "id": rid,
         "kind": kind,
         "title": title,
-        "specific": cli._specific(f"{title}\n{text}\n{' '.join(sorted(tags))}"),
-        "files": cli._norm_files(set(files or ())),
+        "specific": _textmatch._specific(f"{title}\n{text}\n{' '.join(sorted(tags))}"),
+        "files": _textmatch._norm_files(set(files or ())),
         "tags": tags,
     }
 
@@ -554,7 +556,7 @@ def live_candidates(memory_dir: Path, rtype: str) -> list[dict]:
                 "trap",
                 t.get("summary") or t["heading"],
                 t.get("content") or "",
-                cli._item_from_trap(t)["files"],
+                _scoring._item_from_trap(t)["files"],
                 (),
             )
             for t in cli.active_traps(memory_dir)
@@ -1052,7 +1054,7 @@ def find_contradictions(memory_dir: Path) -> list[dict]:
     attempts = [
         r
         for r in cli.active_records(memory_dir, "attempt")
-        if not cli.record_expired(r.meta) and cli._attempt_has_do_not_retry(r)
+        if not cli.record_expired(r.meta) and _scoring._attempt_has_do_not_retry(r)
     ]
     key = ("contradictions", str(memory_dir), cli.content_key(decisions + attempts))
     return cli.op_memo(key, lambda: _contradictions(decisions, attempts))
@@ -1207,7 +1209,7 @@ def _find_contradictions_full(memory_dir: Path) -> list[dict]:
     attempts = [
         r
         for r in cli.active_records(memory_dir, "attempt")
-        if not cli.record_expired(r.meta) and cli._attempt_has_do_not_retry(r)
+        if not cli.record_expired(r.meta) and _scoring._attempt_has_do_not_retry(r)
     ]
     out: list[dict] = []
 

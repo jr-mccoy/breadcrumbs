@@ -35,6 +35,7 @@ from breadcrumbs import mcp_core, promote  # noqa: E402
 from breadcrumbs.adapters import claude  # noqa: E402
 from breadcrumbs import hooks_guard  # noqa: E402
 from breadcrumbs import packet as _packet  # noqa: E402
+from breadcrumbs import textmatch as _textmatch  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 AGENT_MARKERS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
@@ -80,7 +81,7 @@ class ClaudeAdapterTests(unittest.TestCase):
             tool, expect = case["tool_name"], case["expect"]
             with self.subTest(tool=tool, input=case["tool_input"]):
                 action = claude.normalize_tool(
-                    tool, case["tool_input"], paths_from_text=_cli._paths_from_text
+                    tool, case["tool_input"], paths_from_text=_textmatch._paths_from_text
                 )
                 self.assertEqual(action.kind, expect["kind"])
                 self.assertEqual(action.text, expect["text"])

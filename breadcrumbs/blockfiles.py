@@ -34,6 +34,7 @@ from pathlib import Path
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import scoring as _scoring
 
 FILES_SCHEMA = 3
 TRAP_DIR = "traps"
@@ -288,7 +289,7 @@ def trap_stem(slug: str) -> str:
 
 def question_stem(qid: str) -> str:
     """A question file's stem from its `q_<slug>` id."""
-    qid = cli.normalize_question_id(qid).lower()
+    qid = _scoring.normalize_question_id(qid).lower()
     prefix = cli.UNDATED_ID_PREFIX["question"]
     return qid[len(prefix) :] if qid.startswith(prefix) else qid
 
@@ -370,7 +371,7 @@ def write_question(
         memory_dir,
         project_root,
         "question",
-        question_stem(cli.question_item_id(text)),
+        question_stem(_scoring.question_item_id(text)),
         text,
         sections,
         status=status or "open",
@@ -766,7 +767,7 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
 
     question_raw = _raw_blocks(
         memory_dir / "open-questions.md",
-        lambda h: cli.question_item_id(h[2:].strip()) if h.lower().startswith("q:") else None,
+        lambda h: _scoring.question_item_id(h[2:].strip()) if h.lower().startswith("q:") else None,
     )
     question_lines = _block_lines(memory_dir / "open-questions.md")
     question_raw_by_heading = _raw_blocks(memory_dir / "open-questions.md", lambda h: h.strip())
