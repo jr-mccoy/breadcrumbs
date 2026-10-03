@@ -85,7 +85,10 @@ functions, one primitive") with whichever module gets `_inputs_hash`.
 
 **Size.** Large in total; each seam is medium.
 
-### 2.2 Duplicated helpers, where the field bugs came from
+### ~~2.2 Duplicated helpers, where the field bugs came from~~
+
+**Done** on branch `ccr-4e962709-tubaoe` (2026-10-03), one commit per
+concern; each bullet says where it went.
 
 **Found.**
 
@@ -100,15 +103,30 @@ functions, one primitive") with whichever module gets `_inputs_hash`.
   field keeps git's short form (`git.short_head`), compared with
   `git.same_commit`. Storing full shas in records was left out: it changes a
   stored format and needs its own decision.
-- **Timestamps are parsed by two near-identical functions:**
-  `cli._parse_iso` and `validation.parse_timestamp`.
-- **Text is read by three helpers:** `cli.read_text_lenient`,
-  `path_policy.read_text`, `handoffs.read_text`.
-- **POSIX path conversion** is open-coded about 23 times in `cli.py` and in
+- ~~**Timestamps are parsed by two near-identical functions:**
+  `cli._parse_iso` and `validation.parse_timestamp`.~~ **Done:** `_parse_iso`
+  is gone and every reader uses `validation.parse_timestamp`. They were not
+  identical: `_parse_iso` took whatever the interpreter's `fromisoformat`
+  accepts, so on 3.11 readers acted on stamps `validate` rejects.
+- ~~**Text is read by three helpers:** `cli.read_text_lenient`,
+  `path_policy.read_text`, `handoffs.read_text`.~~ **Not duplicates:** they
+  are layers (strict primitive; lenient reader built on it; "find this
+  branch's handoff, then read leniently"). The real gap was a read that
+  bypassed all three: the fresh-projection check read the committed file
+  with a plain `read_bytes`, so a link passed as fresh. It now goes through
+  `path_policy` (`tests/test_path_containment.py`).
+- ~~**POSIX path conversion** is open-coded about 23 times in `cli.py` and in
   11 other modules, although `path_policy` exists and a decision says
-  store-relative paths are POSIX.
-- **Shell commands are tokenized twice:** `cli._command_tokens` and
-  `shellcmd.segments`/`words`; guard uses both.
+  store-relative paths are POSIX.~~ **Done:** `path_policy.posix_rel` and
+  `path_policy.to_posix` replace 45 open-coded conversions (34
+  `relative_to(…).as_posix()`, 11 `replace("\\", "/")`) in 12 modules; an
+  AST test in `tests/test_platform_portability.py` refuses new ones.
+- ~~**Shell commands are tokenized twice:** `cli._command_tokens` and
+  `shellcmd.segments`/`words`; guard uses both.~~ **Kept as two tokenizers,
+  one owner:** `words` is exact argv (what a command does); the other is
+  loose, because guard matches it against prose trap titles, and merging them
+  would change verdicts. It moved to `shellcmd.match_tokens`, with
+  `normalize_command` from `transcript`.
 
 **Direction.** One owner per concern: a `git` module (public functions, full
 shas everywhere, short only for display), one timestamp parser, one lenient
