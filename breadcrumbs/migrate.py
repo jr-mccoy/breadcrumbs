@@ -303,7 +303,10 @@ def maintenance(memory_dir: Path, *, dry_run: bool) -> dict:
                 f"{rel}: replaced with the current template (it was an unedited older one)"
             )
             if not dry_run:
-                cli.write_text_atomic(target, new.decode("utf-8"))
+                # Line endings as every store write has them: LF, written with the
+                # platform's separator. A template checked out with CRLF (a
+                # source checkout on Windows) became \r\r\n otherwise.
+                cli.write_text_atomic(target, new.decode("utf-8").replace("\r\n", "\n"))
         else:
             warnings.append(
                 f"{rel}: kept as it is: it was edited, so it may describe the store as it used "

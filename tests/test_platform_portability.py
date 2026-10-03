@@ -243,13 +243,19 @@ class RelativePathRenderingTests(unittest.TestCase):
         self.assertEqual(offenders, [], "use path_policy.posix_rel() / path_policy.to_posix()")
 
 
+class _ConsoleBytes(io.BytesIO):
+    def isatty(self) -> bool:
+        return True
+
+
 class ConsoleMarkerTests(unittest.TestCase):
     def test_a_second_configuration_keeps_ascii_markers_on_cp1252(self):
         saved = (_cli.MARK_PASS, _cli.MARK_FAIL)
         self.addCleanup(lambda: setattr(_cli, "MARK_PASS", saved[0]))
         self.addCleanup(lambda: setattr(_cli, "MARK_FAIL", saved[1]))
         for _ in range(2):
-            stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            # A console: on Windows any other stream is switched to UTF-8.
+            stream = io.TextIOWrapper(_ConsoleBytes(), encoding="cp1252")
             _cli.configure_output(stream)
             self.assertEqual((_cli.MARK_PASS, _cli.MARK_FAIL), ("[ok]", "[x]"))
             stream.detach()
