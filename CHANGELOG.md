@@ -6,6 +6,76 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
+## [Unreleased]
+
+**The 0.6.0 retest.** Fixes what the DoWhat project's retest of 0.6.0 on
+Windows found: `docs/reviews/2026-10-03-dowhat-0.6.0-retest-plan.md` has each
+item, the corrections to the report, and each item's test. Proposed as
+**0.6.1**: `schema_version` (4), `requires` and every compatibility surface are
+unchanged; guard says less, and nothing to set up or migrate.
+
+### Changed
+
+- **The guard hook starts no `git` process at a stable HEAD** (item 1). The
+  hook computed handoff staleness that it never shows: the handoff's commit
+  distance (2 processes), and, for a handoff written on another branch,
+  whether `handoff.md` had reached HEAD (3 more). It no longer does;
+  `crumb guard` still reports staleness. "Has this store file reached HEAD?"
+  (asked for matched records written on a cloud session's branch) reads the
+  store's part of HEAD's tree from `index/head-tree.txt`, cached per HEAD,
+  and compares blob ids (CRLF folded). After HEAD moves, the first full
+  firing starts at most 2 (`rev-list`, `ls-tree`), neither needing a blob or
+  the network: a shallow, blob-filtered clone is fine.
+- **The guard hook loads less** (item 2). No `dataclasses`, `inspect`, `ast`,
+  `typing`, `subprocess` or `tempfile` on a firing that needs none:
+  `import breadcrumbs.cli` ~86 → ~56 ms and a full firing ~121 → ~90 ms on
+  Linux.
+- **An objection needs evidence about the action** (item 5). An attempt's
+  *Do Not Retry Unless* line makes it block only when the record shares a
+  file the action names or writes, its exact command, or two rare words of
+  its title beyond its tags. A tag plus a few words from its body still finds
+  the attempt (the prompt hook ranks it as before), but it is advisory:
+  READ_FIRST at most. Two tooling attempts no longer PAUSE `uv tool install`
+  or a timing loop, and "add fallbackToDestructiveMigration() to the Room
+  database builder" shows no blocking record.
+- **Deleting a scratch file is cleanup, not a deletion** (item 6): anything
+  under the system temp directory (`$TEMP`, `$TMP`, `$TMPDIR`, `%TEMP%`,
+  `/tmp`, `/var/tmp`, `AppData/Local/Temp`) or a file an earlier part of the
+  same command created. `rm -rf` outside build, cache and temp directories
+  stays high-impact.
+- **A heredoc fed to `while read`, `cat`, `tee` or `python -` is data** for
+  the destructive check too (item 7). One fed to a shell, `ssh` or a
+  database client is code and still counts.
+- **`--force` on a package install** (`uv tool install --force`, `npm
+  install --force`) is not destructive (found while checking item 5).
+
+### Fixed
+
+- **crumb's generated indexes are memory, not a subject** (item 3). A record
+  citing `known-traps.md`, `open-questions.md`, or the store's `generated/` or
+  `index/` was paired with `crumb migrate`, which rewrites them. A trap's own
+  area still counts.
+- **The exact do-not-retry attempt objects again** (item 4).
+  `app/build/test-results/` and `app/build/test-results` are one path, and a
+  path the action names and the record cites makes it topical whatever the
+  word rarity.
+- **A crumb command behind a shell keyword is a crumb command** (item 5):
+  `do crumb guard "$a"`, `time crumb --version`, `then crumb reindex`. Their
+  words no longer match `crumb`-tagged records, and `do git push --force
+  origin main` is a force-push.
+
+### Added
+
+- **Stop-hook timings** (item 8): the hook log records `mine_ms` and
+  `snapshot_ms`, and `crumb doctor --hook-log` prints each hook's slowest
+  firing with its phases. A snapshot rebuilds every projection, which is
+  seconds on a 400-record store on Windows.
+- **README:** `--refresh-package crumb-kit` for uv installs and upgrades
+  (item 9). uv's cached index can predate a same-day release.
+- **Evals:** the android suite holds the report's records and nine new
+  critical cases; a `guard_objects` check; `\n` and `\"` in double-quoted
+  values.
+
 ## [0.6.0] — 2026-10-02
 
 **The retest release.** Fixes what the DoWhat
