@@ -95,7 +95,9 @@ class RenameTests(Case):
         self.assertFalse(old_path.exists())
         self.assertTrue((self.mem / "decisions" / "2026-05-01-short-name.md").exists())
         self.assertTrue(any("decisions/" in u for u in doc["updated"]))
-        newer = [p for p in (self.mem / "decisions").glob("*newer*.md")][0].read_text()
+        newer = [p for p in (self.mem / "decisions").glob("*newer*.md")][0].read_text(
+            encoding="utf-8"
+        )
         self.assertIn("dec_20260501_short-name", newer)
         self.assertNotIn(old_id, newer)
         self.assertEqual(crumb.find_record_by_id(self.mem, old_id).meta["id"], doc["to"])
@@ -119,15 +121,17 @@ class TrimTests(Case):
         self.assertEqual(code, 0, out)
         doc = json.loads(out)
         self.assertEqual((doc["kept"], doc["moved"]), (2, 3))
-        sec = crumb.split_md_sections((self.mem / "handoff.md").read_text())["Next Action"]
+        sec = crumb.split_md_sections((self.mem / "handoff.md").read_text(encoding="utf-8"))[
+            "Next Action"
+        ]
         self.assertEqual(crumb.split_next_entries(sec), ["step 4", "step 3"])
-        hist = (self.mem / "handoff-history.md").read_text()
+        hist = (self.mem / "handoff-history.md").read_text(encoding="utf-8")
         for i in range(3):
             self.assertIn(f"step {i}", hist)
         self.assertLess(hist.index("step 2"), hist.index("step 0"))
         run(["capture", "session", "--project", str(self.root), "--next", "step 5"])
         run(["handoff", "trim", "--keep", "2", "--project", str(self.root)])
-        hist = (self.mem / "handoff-history.md").read_text()
+        hist = (self.mem / "handoff-history.md").read_text(encoding="utf-8")
         self.assertLess(hist.index("step 3"), hist.index("step 2"))
         self.assertEqual(
             [
@@ -177,7 +181,9 @@ class HandKeptLogTests(Case):
         self.assertEqual(code, 0, out)
         doc = json.loads(out)
         self.assertEqual((doc["kept"], doc["moved"]), (3, 10))
-        sec = crumb.split_md_sections((self.mem / "handoff.md").read_text())["Next Action"]
+        sec = crumb.split_md_sections((self.mem / "handoff.md").read_text(encoding="utf-8"))[
+            "Next Action"
+        ]
         self.assertIn("headline 1**", sec)
         self.assertNotIn("headline 2**", sec)
         hist = (self.mem / "handoff-history.md").read_text(encoding="utf-8")
@@ -193,10 +199,12 @@ class HandKeptLogTests(Case):
             ["handoff", "trim", "--before", "2026-09-25", "--project", str(self.root), "--json"]
         )
         self.assertEqual(code, 0, out)
-        sec = crumb.split_md_sections((self.mem / "handoff.md").read_text())["Next Action"]
+        sec = crumb.split_md_sections((self.mem / "handoff.md").read_text(encoding="utf-8"))[
+            "Next Action"
+        ]
         self.assertIn("2026-09-25", sec)
         self.assertNotIn("2026-09-24", sec)
-        self.assertIn("2026-09-24", (self.mem / "handoff-history.md").read_text())
+        self.assertIn("2026-09-24", (self.mem / "handoff-history.md").read_text(encoding="utf-8"))
 
     def test_split_on_another_lead_in(self):
         run(["capture", "session", "--project", str(self.root), "--next", "seed"])

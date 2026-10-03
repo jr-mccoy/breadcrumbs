@@ -73,6 +73,12 @@ class Case(unittest.TestCase):
         return code
 
 
+def _lf(data: bytes) -> bytes:
+    """A store file's text with line endings folded: stores write the platform's
+    separator, and a Windows checkout holds the template with CRLF."""
+    return data.replace(b"\r\n", b"\n")
+
+
 class TemplateRefreshTests(Case):
     """Item 12."""
 
@@ -81,10 +87,32 @@ class TemplateRefreshTests(Case):
         code, out = run(["migrate", "--project", str(self.root)])
         self.assertEqual(code, 0, out)
         self.assertEqual(
-            (self.mem / "README.md").read_bytes(),
-            (_cli.TEMPLATE_DIR / "README.md").read_bytes(),
+            _lf((self.mem / "README.md").read_bytes()),
+            _lf((_cli.TEMPLATE_DIR / "README.md").read_bytes()),
         )
         self.assertIn("README.md: replaced", out)
+
+    def test_a_crlf_template_on_windows_is_not_doubled(self):
+        # A source checkout on Windows holds the template with CRLF, and every
+        # store write uses the platform's separator: the README came out with
+        # \r\r\n (the native-full Windows job, after the 0.6.1 merge).
+        import os
+        import shutil
+
+        templates = Path(self._tmp.name) / "templates"
+        shutil.copytree(_cli.TEMPLATE_DIR, templates)
+        readme = templates / "README.md"
+        readme.write_bytes(_lf(readme.read_bytes()).replace(b"\n", b"\r\n"))
+        (self.mem / "README.md").write_bytes(OLD_README.read_bytes())
+        with (
+            mock.patch.object(_cli, "TEMPLATE_DIR", templates),
+            mock.patch.object(os, "linesep", "\r\n"),
+        ):
+            code, out = run(["migrate", "--project", str(self.root)])
+        self.assertEqual(code, 0, out)
+        data = (self.mem / "README.md").read_bytes()
+        self.assertNotIn(b"\r\r\n", data)
+        self.assertEqual(_lf(data), _lf(readme.read_bytes()))
 
     def test_an_edited_readme_is_kept_with_a_warning(self):
         edited = OLD_README.read_text(encoding="utf-8") + "\nOur own note about the store.\n"
@@ -126,8 +154,8 @@ class TemplateRefreshTests(Case):
         res = mig.migrate(self.mem, self.root)
         self.assertTrue(res["ok"], res)
         self.assertEqual(
-            (self.mem / "README.md").read_bytes(),
-            (_cli.TEMPLATE_DIR / "README.md").read_bytes(),
+            _lf((self.mem / "README.md").read_bytes()),
+            _lf((_cli.TEMPLATE_DIR / "README.md").read_bytes()),
         )
 
 

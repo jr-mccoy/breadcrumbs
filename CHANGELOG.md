@@ -6,6 +6,25 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
+## [Unreleased]
+
+### Fixed
+
+- **`crumb migrate` doubled carriage returns in a refreshed README on Windows**
+  when the bundled template had CRLF line endings (a source checkout with
+  `core.autocrlf`): the store README came out with `\r\r\n`. A pip or uv
+  install ships LF templates and was not affected.
+- **Windows: a store write no longer imports `tempfile`** (with `random`,
+  `shutil`, `bz2` and `lzma`). Every write on Windows takes the plain atomic
+  path, which now names its temporary file the way the POSIX path does. The
+  guard hook writes on most firings, so this is start-up time (item 2 of the
+  0.6.0 retest).
+- **The native-full Windows CI job is green.** Besides the two fixes above:
+  the cp1252 console tests model a console (on Windows crumb writes UTF-8 to
+  anything else, since 0.5.0), `test_rename` reads its files as UTF-8, and two
+  0.6.1 tests no longer delete a git repository (Windows refuses git's
+  read-only objects) or double CRLF in their fixture.
+
 ## [0.6.1] — 2026-10-03
 
 **The 0.6.0 retest.** Fixes what the DoWhat project's retest of 0.6.0 on

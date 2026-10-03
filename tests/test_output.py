@@ -28,9 +28,18 @@ from breadcrumbs import cli as _cli  # noqa: E402
 FIXTURES = REPO_ROOT / "fixtures"
 
 
+class ConsoleBytes(io.BytesIO):
+    """A byte sink that says it is a terminal. On Windows crumb writes UTF-8 to
+    anything that is not a console (field report 2026-10-01, issue 13), so a
+    cp1252 stream only stays cp1252 there when it is one."""
+
+    def isatty(self) -> bool:
+        return True
+
+
 def run_on_console(argv: list[str], encoding: str) -> tuple[int, str]:
     """Run `argv` with stdout as a real encoding-enforcing stream, like a console."""
-    raw = io.BytesIO()
+    raw = ConsoleBytes()
     stream = io.TextIOWrapper(raw, encoding=encoding, newline="")
     saved_out, saved_marks = sys.stdout, (_cli.MARK_PASS, _cli.MARK_FAIL)
     sys.stdout = stream

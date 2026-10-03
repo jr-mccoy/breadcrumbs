@@ -13,7 +13,6 @@ import io
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -175,9 +174,8 @@ class NoGitOnTheGuardHookTests(unittest.TestCase):
         # Cloud sessions write records on claude/… branches that are merged
         # later; scoring asks whether each matched one has reached HEAD.
         rec = next((self.root / ".project-memory" / "attempts").glob("*.md"))
-        rec.write_text(
-            re.sub(r"(?m)^branch: .*$", "branch: claude/cloud-session-x1", rec.read_text("utf-8")),
-            encoding="utf-8",
+        rec.write_bytes(
+            re.sub(rb"(?m)^branch: .*$", b"branch: claude/cloud-session-x1", rec.read_bytes())
         )
         quiet(["reindex", "--project", str(self.root)])
         commit_all(self.root, "record from a cloud branch")
@@ -190,9 +188,8 @@ class NoGitOnTheGuardHookTests(unittest.TestCase):
         from breadcrumbs import scoring
 
         rec = next((self.root / ".project-memory" / "attempts").glob("*.md"))
-        rec.write_text(
-            re.sub(r"(?m)^branch: .*$", "branch: claude/cloud-session-x1", rec.read_text("utf-8")),
-            encoding="utf-8",
+        rec.write_bytes(
+            re.sub(rb"(?m)^branch: .*$", b"branch: claude/cloud-session-x1", rec.read_bytes())
         )
         quiet(["reindex", "--project", str(self.root)])
         commit_all(self.root, "record from a cloud branch")
@@ -205,7 +202,8 @@ class NoGitOnTheGuardHookTests(unittest.TestCase):
         self.assertFalse(mismatch())  # committed and clean: it reached HEAD
         # CRLF in the work tree is how a Windows checkout (`core.autocrlf`)
         # holds the same text: it has reached HEAD all the same.
-        rec.write_bytes(rec.read_bytes().replace(b"\n", b"\r\n"))
+        lf = rec.read_bytes().replace(b"\r\n", b"\n")
+        rec.write_bytes(lf.replace(b"\n", b"\r\n"))
         self.assertFalse(mismatch())
         rec.write_bytes(rec.read_bytes().replace(b"\r\n", b"\n") + b"\nedited\n")
         self.assertTrue(mismatch())  # modified: not what HEAD has
@@ -237,7 +235,9 @@ class NoGitOnTheGuardHookTests(unittest.TestCase):
         (clone / ".git" / "REBASE_HEAD").write_text(head + "\n")
         (clone / ".git" / "ORIG_HEAD").write_text(head + "\n")
         self.assertTrue((clone / ".git" / "shallow").is_file())
-        shutil.rmtree(self.root)
+        # An origin that is not there (not deleted: Windows refuses to
+        # delete git's read-only object files).
+        git(clone, "remote", "set-url", "origin", (Path(self._tmp.name) / "gone").as_uri())
         quiet(["reindex", "--project", str(clone)])
         fire_guard(clone, "Bash", RM)
         out, calls = fire_guard(clone, "Bash", RM)
@@ -314,6 +314,31 @@ class HookImportTests(unittest.TestCase):
                 )
             )
             self.assertEqual(sorted((loaded - stdlib) & set(HOOK_UNNEEDED)), [])
+
+
+class WindowsWritePathTests(unittest.TestCase):
+    """Item 2, Windows: an atomic write without descriptor-relative opens
+    (every write on Windows) loads no `tempfile`, and still replaces atomically."""
+
+    def test_the_plain_write_path_needs_no_tempfile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "state.json"
+            code = (
+                "import sys, json\n"
+                f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
+                "from breadcrumbs import path_policy\n"
+                "path_policy.FD_RELATIVE = False\n"
+                "before = set(sys.modules)\n"
+                f"path_policy.write_atomic({str(target)!r}, b'one')\n"
+                f"path_policy.write_atomic({str(target)!r}, b'two')\n"
+                "print(json.dumps(sorted(set(sys.modules) - before)))\n"
+            )
+            out = subprocess.run(
+                [sys.executable, "-c", code], capture_output=True, text=True, check=True
+            ).stdout
+            self.assertNotIn("tempfile", json.loads(out.splitlines()[-1]))
+            self.assertEqual(target.read_bytes(), b"two")
+            self.assertEqual(sorted(p.name for p in Path(tmp).iterdir()), ["state.json"])
 
 
 # --------------------------------------------------------------------------- #
