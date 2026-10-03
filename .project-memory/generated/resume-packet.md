@@ -1,18 +1,22 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 25bf611 | inputs_hash: 2afe87f5b89a | generated_at: 2026-10-03T17:53:41+00:00 -->
-<!-- view: markdown | budget: 2955/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 11ae6d6 | inputs_hash: 3aa084c81e82 | generated_at: 2026-10-03T18:05:34+00:00 -->
+<!-- view: markdown | budget: 3012/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/charming-sagan-9o911q` · commit `25bf611` · 8 uncommitted file(s) · handoff: handoffs/claude-charming-sagan-9o911q-612e24.md
+branch `claude/charming-sagan-9o911q` · commit `11ae6d6` · 4 uncommitted file(s) · handoff: handoffs/claude-charming-sagan-9o911q-612e24.md
 
 ## Current Focus
 0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
 
 ## Next Action
 DoWhat 0.6.0 retest fixes are on claude/charming-sagan-9o911q (plan: docs/reviews/2026-10-03-dowhat-0.6.0-retest-plan.md, CHANGELOG [Unreleased], proposed 0.6.1). Waiting on the operator: the launcher DECIDE (item 2) and the go to release. To release: bump __version__ to 0.6.1, move [Unreleased] to [0.6.1] with the date, add the docs/compatibility.md section 3 row, merge to main, run release.yml dry-run then publish. Then remeasure the hook on Windows with doctor --hook-log.
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- 11ae6d6 Memory: decisions and session capture for the 0.6.0 retest; plan note that the objection rule is guard's
 
 ## Active Decisions
 - `dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached` — At a stable HEAD a full firing now starts 0 processes, including on a shallow blob-filtered clone; after HEAD moves at most 2 (rev-list, ls-tree), neither needing a blob.
@@ -110,5 +114,5 @@ _(… 11 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 49 days — did this ever get resolved?

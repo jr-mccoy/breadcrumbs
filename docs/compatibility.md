@@ -81,6 +81,7 @@ content that must be converted or must not be misread.
 | 0.4.0 | 4 | the audit remediation (WP00–WP22); `requires: review-profiles`; OS write lock |
 | 0.5.0 | 4 | the DoWhat field-report fixes; `--next` appends; guard reworked |
 | 0.6.0 | 4 | the DoWhat retest fixes; guard pre-filter machine-local; `min_crumb_version`; Stop hook and packet settle (reads keep a fresh packet) |
+| 0.6.1 | 4 | the DoWhat retest of 0.6.0: no git processes on the guard hook, objections need evidence about the action, scratch cleanup and heredoc data not destructive |
 <!-- compat:releases:end -->
 
 The rows are the CHANGELOG's released sections. Checked against PyPI on

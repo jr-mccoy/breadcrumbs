@@ -6,13 +6,15 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
-## [Unreleased]
+## [0.6.1] — 2026-10-03
 
 **The 0.6.0 retest.** Fixes what the DoWhat project's retest of 0.6.0 on
 Windows found: `docs/reviews/2026-10-03-dowhat-0.6.0-retest-plan.md` has each
-item, the corrections to the report, and each item's test. Proposed as
-**0.6.1**: `schema_version` (4), `requires` and every compatibility surface are
-unchanged; guard says less, and nothing to set up or migrate.
+item, the corrections to the report, and each item's test.
+
+**Upgrading.** A patch release: `schema_version` (4), `requires` and every
+compatibility surface are unchanged. Guard says less, and there is nothing to
+set up or migrate.
 
 ### Changed
 
