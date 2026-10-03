@@ -829,8 +829,13 @@ def _score_item(
     reached: "cli.HeadTree | None" = None,
     common: frozenset[str] = frozenset(),
     common_tags: frozenset[str] = frozenset(),
+    strict_objections: bool = False,
 ) -> dict | None:
     """Score one item against the query. None if it does not clear the candidate gate.
+
+    `strict_objections` is guard's: a do-not-retry line becomes the blocking
+    signal only with evidence about the action (see below). Lookups keep
+    labelling every topical failed attempt with it.
 
     `common` / `common_tags` are the query's stems that too many records carry
     as a word / as a tag to say much (`GUARD_DF_COMMON`): they score half and
@@ -977,10 +982,10 @@ def _score_item(
     # is an objection too (`_with_command_signal`).
     objects = bool(matched_files or matched_mentions or matched_writes or len(rare_title) >= 2)
     if item["do_not_retry"] and do_not_retry_boost and topical:
-        # Still ranked as the failed attempt it is (the prompt hook finds it
-        # by this), but only an objection carries the signal that blocks.
+        # Still ranked as the failed attempt it is, but for guard only an
+        # objection carries the signal that blocks.
         score += GUARD_W_DO_NOT_RETRY
-        if objects:
+        if objects or not strict_objections:
             signals.append("do-not-retry")
     if item["kind"] == "question" and item["status"] == "open":
         score += GUARD_W_OPEN_BLOCKER
@@ -1119,6 +1124,7 @@ def search(
     writes: list[str] | None = None,
     do_not_retry_boost: bool = True,
     command_text: str | None = None,
+    strict_objections: bool = False,
 ) -> tuple[list[dict], dict[str, dict]]:
     """Deterministic search over the canonical records (§20.10).
 
@@ -1225,6 +1231,7 @@ def search(
             reached=reached,
             common=common,
             common_tags=common_tags,
+            strict_objections=strict_objections,
         )
         if it.get("command_heads") and _names_command(q_command, it["command_heads"]):
             m = _with_command_signal(m, it, do_not_retry_boost=do_not_retry_boost)
@@ -1592,6 +1599,7 @@ def guard(
         keyword_cap=GUARD_KEYWORD_CAP,
         writes=_shellcmd.crumb_writes(action, cli.MEMORY_DIRNAME) if not edit else None,
         command_text=_shellcmd.matching_text(action) if not edit else path_text,
+        strict_objections=True,
     )
 
     active, history = [], []

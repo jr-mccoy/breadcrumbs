@@ -301,8 +301,21 @@ class HookImportTests(unittest.TestCase):
 # `migration` are common words, as they are in the 402-record DoWhat store.
 # --------------------------------------------------------------------------- #
 
-sys.path.insert(0, str(REPO_ROOT / "evals"))
-import run as _evals  # noqa: E402
+
+def _load_evals():
+    # Under its own name: `run` alone would shadow evals/task_replays' module.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "crumb_evals_run_retest_060", REPO_ROOT / "evals" / "run.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_evals = _load_evals()
 
 from breadcrumbs import scoring  # noqa: E402
 from breadcrumbs import shellcmd  # noqa: E402

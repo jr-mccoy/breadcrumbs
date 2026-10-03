@@ -130,6 +130,12 @@ def is_repo(root: Path) -> bool:
     return answer
 
 
+def work_tree(root: Path) -> Path | None:
+    """The top of the work tree holding `root`, read from `.git` without a
+    process; None when only git can say (see `gitrefs.work_tree`)."""
+    return gitrefs.work_tree(Path(root))
+
+
 def branch(root: Path) -> str:
     """The checked-out branch, `HEAD` when detached, or `NO_BRANCH`."""
     if not is_repo(root):

@@ -43,7 +43,6 @@ from breadcrumbs import path_policy
 
 # Every git question goes through `breadcrumbs.git`. Stdlib-only too.
 from breadcrumbs import git as _git
-from breadcrumbs import gitrefs as _gitrefs
 from breadcrumbs.adapters import claude as _claude
 
 # Not `from typing import TYPE_CHECKING`: importing `typing` costs the guard
@@ -6437,7 +6436,7 @@ class HeadTree:
             return self._store
         self._store_loaded = True
         head = _git.head(self._root, spawn=False)
-        top = _gitrefs.work_tree(self._root)
+        top = _git.work_tree(self._root)
         memory = self._root / MEMORY_DIRNAME
         if not head or top is None or not memory.is_dir():
             return None
