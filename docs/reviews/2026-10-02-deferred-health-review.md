@@ -54,7 +54,36 @@ is parked. An open question nobody owns is itself audit noise.
 
 ## 2. Code structure
 
-### 2.1 `breadcrumbs/cli.py` holds half the package
+### ~~2.1 `breadcrumbs/cli.py` holds half the package~~
+
+**Done** on branch `ccr-4e962709-tubaoe` (2026-10-03), all four seams, one
+commit each, by a mechanical AST move (each node's source kept, comments
+included) behind the parity fixture, the evals and the full suite:
+
+| Seam | Modules |
+|---|---|
+| 1. hooks | `hooks_stop`, `hooks_guard`, `hooks_session` |
+| 2. resume packet | `packet` |
+| 3. guard scoring | `textmatch` (shared tokens, stems, aliases), `scoring` (search, guard, verdicts) |
+| 4. validate and audit | `validate`, `audit`, `secretscan` |
+
+| Measure | Before | After |
+|---|---|---|
+| `cli.py` lines | 15,651 | 9,694 |
+| Functions in `cli.py` | 424 | 260 |
+| Functions over 150 lines in `cli.py` | 13 | 5 (largest: `doctor_report`, 285) |
+| Modules that import `cli` back | 18 | 28 |
+
+The last row went up, and that is expected: each extracted module calls
+back into the record I/O and helpers that stayed in `cli.py`. What remains
+there is that shared core (frontmatter, record loading, capture,
+publication and freshness, doctor, integrations, jots, hook dispatch); moving
+it below the extracted modules is the next structural step, not part of this
+item. The freshness comment block stays in `cli.py` with `_inputs_hash`, as
+asked. The contract every extraction keeps is pinned by
+`tests/test_extracted_modules.py`; `docs/architecture.md` §6 has the map.
+
+The original finding, for the record:
 
 **Found.**
 

@@ -194,14 +194,14 @@ clock, runs each task through the prompt hook's retrieval, the task-ordered
 resume packet and `guard`, and compares precision@5, recall@5, rejected-record
 hits, quiet on control tasks and guard verdict accuracy with
 `evals/baseline.json`. CI fails on a regression. The packet and the evals rank
-by one function, `cli.task_relevance_scores`, so the two cannot drift apart.
+by one function, `all.task_relevance_scores`, so the two cannot drift apart.
 The first run found two retrieval bugs. The prompt hook injected superseded,
 stale, expired and answered records, and its line names kind and title but not
 status, so a retired decision read as current guidance; it now injects current
 records only (`hooks_prompt._is_current`). And a short action such as `npm
 test` could never reach `guard`'s two-keyword floor, because "test" is a
 generic word; a record whose title holds every word of such a query now passes
-the gate (`cli._score_item`). *Decay from use*: `crumb usage --decay` lists
+the gate (`scoring._score_item`). *Decay from use*: `crumb usage --decay` lists
 active decisions, attempts and traps that are old and that nothing has
 surfaced for the whole window (180 days by default), each with the
 `mark-status … stale` command. It needs that much local usage history
@@ -278,17 +278,32 @@ transports. What they do to a store goes through `service.py`, the
 application layer. Each operation runs in an explicit `service.Context` that
 carries the root, the channel, the clock and the agent. Argument parsing,
 prompts, wording, exit codes and host payload mapping stay in the
-transports. The domain functions still live mostly in `cli.py`, but the
-argument parser does not: `service.py` and the domain modules import without
-it (`tests/test_application_parity.py` checks this). A golden of every
-transport's serialized output, captured before the extraction, holds ids,
-scores and wire contracts in place.
+transports. The argument parser lives apart from `cli.py`: `service.py` and
+the domain modules import without it (`tests/test_application_parity.py`
+checks this). A golden of every transport's serialized output, captured
+before the extraction, holds ids, scores and wire contracts in place.
+
+**Extracted modules (health review 2.1).** The resume packet, search and
+guard scoring, validate, audit, the secret scan and the Stop, guard and
+SessionStart hooks moved out of `cli.py`, one seam at a time behind that
+golden. Each imports `cli` for the record I/O and helpers that stay there;
+`cli` imports them last (`cli.EXTRACTED_MODULES`), so the cycle is harmless
+whichever side loads first. The package names the module a function lives
+in; `cli.__getattr__` still resolves a moved name for code outside the
+package, and the `crumb.py` shim re-exports them
+(`tests/test_extracted_modules.py`).
 
 | Module | Holds |
 |---|---|
 | `service.py` | The application layer (audit WP16): `Context` (root, store, channel, clock, agent) and `active(ctx)`, which makes those current for one operation (the admission channel, the clock, the store's search aliases per thread, one parse cache). `record` is the one decision/attempt write both `crumb remember` and `memory_record` use. `mark_status`, `search`, `guard`, `resume_packet`, `prompt_lookup` and `admit` complete it. Failures are a `ServiceError` with a `kind` the adapter words. It never prints and does not import the parser. |
 | `cli_parser.py` | The `crumb` argument parser (moved out of `cli.py`, audit WP16). `cli.main` builds it lazily, and `cli.build_parser` and the other moved names are forwarded. |
-| `cli.py` | The CLI commands and most domain functions: record I/O, validate, the resume packet, search/guard scoring, audit, doctor, the integrations and the hook translators. The other modules call back into it. Since audit WP15 every command runs inside `operation()`: a parse cache keyed by each file's path, type and content digest (so it can never serve stale content), and `op_memo` for derived results keyed by the exact records they read. |
+| `cli.py` | The CLI commands and the core they share: record I/O and the frontmatter parser, capture and `remember`, the record loaders, projection publication and freshness (`_inputs_hash`, `detect_packet_drift`), doctor, the integrations, jots and `crumb hook` dispatch. The other modules call back into it. Since audit WP15 every command runs inside `operation()`: a parse cache keyed by each file's path, type and content digest (so it can never serve stale content), and `op_memo` for derived results keyed by the exact records they read. |
+| `packet.py` | The resume packet: assembly (sections, task relevance, commits since the handoff, computed staleness warnings), bounding to the token budget in the final serialized view, and Markdown/JSON rendering. |
+| `textmatch.py` | The shared matching vocabulary: tokenizer, stemmer and stop words, store aliases (per thread, scoped by `store_aliases`), path tokens. Search, guard, packet relevance, the pre-filter and the search index all fold text through it. |
+| `scoring.py` | Search and guard: candidate items, `_score_item`, `search`, the action classifier and blast radius, and guard's verdicts. |
+| `validate.py` | `run_validate`, the deterministic gate every writer runs. (`validation.py` is the per-record contract it uses.) |
+| `audit.py`, `secretscan.py` | `run_audit`, the advisory health view; credential-shaped and instruction-like text in committed memory, `.crumbignore`. |
+| `git.py` | The one owner of git state (health review 2.2): every `git` process and every `.git` read (through `gitrefs.py`), full shas for HEAD identity, short ones only for display and a record's `commit` field (`tests/test_git.py`). |
 | `blockfiles.py` | Traps and questions as one file each (schema 3): reading them in the dict shape the block readers return, writing them, rebuilding `known-traps.md` / `open-questions.md` as indexes, adopting hand-written blocks, and migration step 3. |
 | `related.py` | `generated/related.json`: "see also" by pure overlap, written at reindex. Since audit WP15 only pairs sharing a feature are scored (the same result as all pairs, kept as the `_compute_related_full` oracle), with no corpus cutoff; past a pair budget it records `degraded`, which `audit` reports. |
 | `searchindex.py` | `index/search.sqlite`: build, freshness check, and the narrowed candidate set `search` uses when the index is fresh. |
@@ -309,6 +324,7 @@ scores and wire contracts in place.
 | `lock.py` | The store write lock: `store_lock(memory_dir, timeout)`, an OS lock (`flock` / `msvcrt.locking`) on the permanent file `private/.store.lock`, which carries the holder's pid, time and host for messages only. Also an in-process lock per store for threads, re-entrant within a thread; the CLI, hook and MCP timeouts; waiting on a live 0.3.0-era `.write-lock`; `LockUnsupported` when the filesystem refuses. Which CLI invocations take it is `cli._needs_lock`; projection publication takes it in `cli.try_reindex_projections`. `side_lock(path, timeout)` (audit WP12) is the same OS lock on an auxiliary file, for machine-local state that is not the store (hook state, usage folds, hook-log rotation); it yields `held`, `busy` or `unsupported` and never raises. |
 | `transcript.py` | Deterministic transcript mining into jot candidates. `ingest()` (audit WP09) reads each session's transcript incrementally: a byte cursor with file identity, Bash/edit calls carried between firings so late results join, a durable candidate backlog saved before any jot is written, and a cross-session ledger of acknowledged events, all under the store lock. |
 | `hooks_common.py`, `hooks_prompt.py`, `hooks_compact.py` | Hook state (each session's entry updated under a side lock, `update_state`; the latest task kept apart from the latest lookup, audit WP12), the `UserPromptSubmit` hook (retrieval keeps current records only; counts only the ids it prints), the `PreCompact` / `SubagentStop` hooks. |
+| `hooks_stop.py`, `hooks_guard.py`, `hooks_session.py` | The `Stop` hook (snapshot, extraction ask, this session's commits), the `PreToolUse` guard hook and its pre-filter checks, the `SessionStart` hook and the post-compaction preamble. `cli.cmd_hook` dispatches to them. |
 | `hooklog.py` | The hook log (WM-62): `run_logged` wraps every `crumb hook` firing, passes its output through unchanged and appends one line to `private/hook-log.jsonl` (event, time, ms, outcome, the handler's `note()` detail; never content), bounded at about 5000 lines by a locked rotation into `hook-log.1.jsonl` that never drops a parallel hook's line (audit WP12); `summarize` for `crumb doctor --hook-log`. |
 | `usage.py` | Local surfacing counts: one event file per emission in `private/usage-events/`, folded exactly once into `private/usage.json` (with `started_at` and `accounting`) under `.usage.lock` (audit WP12). Counts only emitted ids, never retrieved or trimmed ones. The `--sessions` ordering, and decay candidates for `usage --decay` and audit's `decay-candidate`. |
 | `mcp_core.py`, `mcp_server.py` | The MCP adapter: tools and resources over the application layer (`service.py`), with the MCP envelope and wording; and its SDK binding. |

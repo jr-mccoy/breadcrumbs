@@ -24,7 +24,7 @@ or the sdist.
 | system   | what runs                                        | ranked by                                   |
 |----------|--------------------------------------------------|---------------------------------------------|
 | `prompt` | `hooks_prompt.retrieve(prompt=task)`             | its own output order (at most 5)            |
-| `packet` | `build_resume_packet(task=…)`                    | `cli.task_relevance_scores`, over the records the bounded packet kept, zero-score entries dropped |
+| `packet` | `build_resume_packet(task=…)`                    | `all.task_relevance_scores`, over the records the bounded packet kept, zero-score entries dropped |
 | `guard`  | `guard(task)`, only for tasks that set `verdict` | the verdict must be one of those listed     |
 
 These say whether the *ranking* is right. They do not say what a reader sees:
