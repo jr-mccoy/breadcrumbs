@@ -9477,22 +9477,6 @@ _BACKTICK_SPAN_RE = re.compile(r"`([^`\n]{2,160})`")
 _COMMAND_MIN_TOKENS = 2
 
 
-def _command_tokens(text: str) -> list[str]:
-    """A command as lowercase tokens: `cd x &&` prefixes, pipes and quotes folded."""
-    from breadcrumbs import transcript as _transcript
-
-    flat = _transcript.normalize_command(str(text or ""))
-    out = []
-    for t in flat.split():
-        # `./gradlew` is `gradlew`: stripping the dot alone left `/gradlew`, so a
-        # trap titled "gradlew --stop …" never matched `./gradlew --stop`.
-        t = t[2:] if t.startswith("./") else t
-        t = t.strip("\"'`.,;:").lower()
-        if t:
-            out.append(t)
-    return out
-
-
 # A head is `[kind, *tokens]`. A `title` head is the leading words of a trap's
 # summary, so the action need only match its start; a `span` head is a whole
 # backticked command, so the action must contain all of it. The kind travels
@@ -9509,14 +9493,14 @@ def _trap_command_heads(heading: str, body: str) -> list[list[str]]:
     summary = heading
     if heading.startswith("trap_") and ":" in heading:
         summary = heading.split(":", 1)[1]
-    tokens = _command_tokens(summary)
+    tokens = _shellcmd.match_tokens(summary)
     heads = [[_HEAD_TITLE, *tokens]]
     if tokens and tokens[0] in _RUN_VERBS:
         heads.append([_HEAD_TITLE, *tokens[1:]])
     # The hazard half only: a backticked command in the remedy ("use
     # `npm run test:unit`") is what to run instead, never the hazard.
     for span in _BACKTICK_SPAN_RE.findall(heading + "\n" + _trap_hazard_text(body or "")):
-        tokens = _command_tokens(span)
+        tokens = _shellcmd.match_tokens(span)
         if len(tokens) >= _COMMAND_MIN_TOKENS:
             heads.append([_HEAD_SPAN, *tokens])
     return heads
@@ -10056,7 +10040,7 @@ def search(
         _paths_from_text(query if path_text is None else path_text) | set(files or [])
     )
     q_writes = _norm_files(writes or []) - q_files
-    q_command = _command_tokens(query if command_text is None else command_text)
+    q_command = _shellcmd.match_tokens(query if command_text is None else command_text)
     # The search index narrows the corpus to records that could possibly match
     # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
     # the full scan below is then exactly what it always was.
@@ -13882,7 +13866,7 @@ def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) 
     # `_build_guard_prefilter`), so this can only admit more than full guard
     # would surface, never less (audit WP11). Stems are re-stemmed at read time
     # under the store's aliases: `_stem` is idempotent.
-    if _names_command(_command_tokens(action), idx.get("commands") or ()):
+    if _names_command(_shellcmd.match_tokens(action), idx.get("commands") or ()):
         return True
     q_specific = _specific(action)
     sets = idx.get("token_sets")
@@ -13915,7 +13899,7 @@ def _prefilter_exact_hit(memory_dir: Path, action: str, files: list[str] | None)
         idx = None
     if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
         return True
-    if _names_command(_command_tokens(action), idx.get("commands") or ()):
+    if _names_command(_shellcmd.match_tokens(action), idx.get("commands") or ()):
         return True
     action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
     if action_paths & _norm_files(idx.get("paths") or ()):

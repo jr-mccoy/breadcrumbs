@@ -175,6 +175,27 @@ class ClassificationTests(unittest.TestCase):
         )
 
 
+class MatchTokensTests(unittest.TestCase):
+    """`shellcmd.match_tokens`: the loose tokens guard matches a trap's prose
+    title and an action with, folded the same way on both sides."""
+
+    def test_an_action_and_a_prose_title_fold_alike(self):
+        self.assertEqual(
+            shellcmd.match_tokens("cd app && ./gradlew --stop 2>&1 | head -5"),
+            ["gradlew", "--stop"],
+        )
+        self.assertEqual(
+            shellcmd.match_tokens("Gradlew --stop kills the daemon."),
+            ["gradlew", "--stop", "kills", "the", "daemon"],
+        )
+
+    def test_it_is_not_the_exact_parser(self):
+        # `words` keeps a quoted argument whole; matching splits it.
+        cmd = 'git commit -m "Fix: the build"'
+        self.assertEqual(shellcmd.words(cmd), ["git", "commit", "-m", "Fix: the build"])
+        self.assertEqual(shellcmd.match_tokens(cmd), ["git", "commit", "-m", "fix", "the", "build"])
+
+
 class StoreCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()

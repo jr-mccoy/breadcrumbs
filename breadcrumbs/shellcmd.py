@@ -12,6 +12,11 @@ in the field (DoWhat field report, 2026-10-01, issues 7, 10 and 11):
 - crumb's own commands were judged like any other: `crumb migrate --dry-run`
   and `crumb reindex` were "migrations".
 
+This module owns reading command text: `segments`/`words` parse a command
+exactly, to decide what it does; `normalize_command` is a command's identity
+across retries; `match_tokens` is the loose tokenizing guard retrieval matches
+records with.
+
 Everything here is stdlib string work with no store access, so the hook can
 call it before it reads anything. It is conservative where it must be: a
 command it cannot read (command substitution, a parse it does not understand)
@@ -737,3 +742,58 @@ def high_impact(command: str) -> str | None:
         if crumb is not None and crumb_effect(crumb) == "migration":
             return "crumb migrate rewrites the memory store"
     return None
+
+
+# --------------------------------------------------------------------------- #
+# Command identity and matching tokens
+# --------------------------------------------------------------------------- #
+
+_CD_PREFIX_RE = re.compile(r"^\s*cd\s+[^\s;&|]+\s*&&\s*")
+_REDIRECT_TAIL_RE = re.compile(r"\s*2>&1\s*$")
+_PAGER_TAIL_RE = re.compile(r"\s*\|\s*(head|tail)\b[^|]*$")
+
+COMMAND_MAX_CHARS = 200
+
+
+def normalize_command(command: str) -> str:
+    """The identity of a command across retries.
+
+    An agent that reruns a failing test rarely retypes it identically: it adds a
+    `cd`, pipes through `head`, drops `2>&1`. Without folding those away, "the
+    same command passed later" never matches and rule 1 never fires.
+    """
+    text = " ".join(str(command or "").split())
+    for _ in range(3):  # a couple of `cd x && cd y &&` layers
+        stripped = _CD_PREFIX_RE.sub("", text)
+        if stripped == text:
+            break
+        text = stripped
+    prev = None
+    while prev != text:
+        prev = text
+        text = _PAGER_TAIL_RE.sub("", text)
+        text = _REDIRECT_TAIL_RE.sub("", text)
+        text = text.strip()
+    return text[:COMMAND_MAX_CHARS]
+
+
+def match_tokens(text: str) -> list[str]:
+    """A command as lowercase tokens for *matching*: `cd x &&` prefixes, pager
+    tails and quotes folded, punctuation stripped.
+
+    Not `words()`. `words()` is one segment's exact argv, for deciding what a
+    command does; this is loose on purpose, because the other side of the
+    match is often prose — a trap titled "gradlew --stop kills the daemon" —
+    and both sides must fold the same way. Guard retrieval and the guard
+    pre-filter match a trap's command heads against an action with it.
+    """
+    flat = normalize_command(str(text or ""))
+    out = []
+    for t in flat.split():
+        # `./gradlew` is `gradlew`: stripping the dot alone left `/gradlew`, so a
+        # trap titled "gradlew --stop …" never matched `./gradlew --stop`.
+        t = t[2:] if t.startswith("./") else t
+        t = t.strip("\"'`.,;:").lower()
+        if t:
+            out.append(t)
+    return out
