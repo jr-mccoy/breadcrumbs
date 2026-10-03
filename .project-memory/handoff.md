@@ -1,6 +1,6 @@
 # Project Handoff
 
-_Last updated: 2026-10-03T18:00:00+00:00_
+_Last updated: 2026-10-03T21:00:00+00:00_
 _Branch: claude/charming-sagan-9o911q_
 _Commit: 11ae6d6_
 
@@ -8,6 +8,9 @@ _Commit: 11ae6d6_
 crumb-kit 0.6.0 is on PyPI. 0.6.1 (the DoWhat retest of 0.6.0: no git processes on the guard hook, lighter hook imports, objections need evidence about the action, generated indexes are memory, scratch cleanup and heredoc data not destructive, Stop-hook timings) is version-bumped on branch claude/charming-sagan-9o911q and being released. docs/reviews/2026-10-03-dowhat-0.6.0-retest-plan.md is the record; do not redo it.
 
 ## Next Action
+### 2026-10-03 · `f20be72`
+Release 0.6.2 (Windows fixes from the native-full job: no tempfile on the write path, migrate CRLF). Then the operator remeasures the guard hook on Windows with crumb doctor --hook-log and decides on a lighter launcher and on moving the Stop snapshot's rebuild off the hook path.
+
 ### 2026-10-03 · `11ae6d6`
 Release 0.6.1: merge claude/charming-sagan-9o911q to main (fast-forward), run release.yml on main in dry-run mode, then publish. Then the operator remeasures the guard hook on Windows (crumb doctor --hook-log now prints import, git, mine and snapshot timings and each hook's slowest firing) and decides on a lighter launcher (python -m breadcrumbs hook guard, or a shell pre-check) and whether the Stop snapshot's projection rebuild moves off the hook path.
 

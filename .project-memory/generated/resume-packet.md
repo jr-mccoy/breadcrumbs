@@ -1,12 +1,12 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 11ae6d6 | inputs_hash: 3aa084c81e82 | generated_at: 2026-10-03T18:05:34+00:00 -->
-<!-- view: markdown | budget: 3012/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: f20be72 | inputs_hash: 5b9a82fdc8be | generated_at: 2026-10-03T21:29:17+00:00 -->
+<!-- view: markdown | budget: 3090/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/charming-sagan-9o911q` · commit `11ae6d6` · 4 uncommitted file(s) · handoff: handoffs/claude-charming-sagan-9o911q-612e24.md
+branch `claude/charming-sagan-9o911q` · commit `f20be72` · 4 uncommitted file(s) · handoff: handoffs/claude-charming-sagan-9o911q-612e24.md
 
 ## Current Focus
 0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
@@ -16,6 +16,9 @@ DoWhat 0.6.0 retest fixes are on claude/charming-sagan-9o911q (plan: docs/review
 
 ## Landed Since The Handoff Was Written
 _(check Current Focus / Next Action against these before redoing work)_
+- 5b9e3c4 Windows: native-full green; migrate no longer doubles CRLF; no tempfile on the write path
+- ace0ae6 test_retest_060: allow what Python's own argparse loads (3.14 imports dataclasses through _colorize)
+- 59108fa Release 0.6.1: bump __version__, date the CHANGELOG, compatibility row, reconcile handoff.md
 - 11ae6d6 Memory: decisions and session capture for the 0.6.0 retest; plan note that the objection rule is guard's
 
 ## Active Decisions
@@ -114,5 +117,5 @@ _(… 11 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 6 commit(s) behind current HEAD.
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 49 days — did this ever get resolved?

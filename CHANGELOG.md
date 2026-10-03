@@ -6,7 +6,11 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
-## [Unreleased]
+## [0.6.2] — 2026-10-03
+
+Windows fixes found by the full Windows CI job after 0.6.1. A patch release:
+`schema_version` (4), `requires` and every compatibility surface are
+unchanged.
 
 ### Fixed
 
