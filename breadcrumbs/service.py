@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Callable
 
 from breadcrumbs import admission, cli
+from breadcrumbs import packet as _packet
 
 RECORD_TYPES = ("decision", "attempt")
 
@@ -308,10 +309,10 @@ def guard(ctx: Context, action: str, *, files: list[str] | None = None, **kwargs
 
 
 def resume_packet(ctx: Context, **kwargs) -> dict:
-    """`cli.build_resume_packet` in this context."""
+    """`_packet.build_resume_packet` in this context."""
     with active(ctx):
         _require_store(ctx)
-        return cli.build_resume_packet(ctx.memory_dir, ctx.root, **kwargs)
+        return _packet.build_resume_packet(ctx.memory_dir, ctx.root, **kwargs)
 
 
 def prompt_lookup(ctx: Context, prompt: str, *, limit: int):

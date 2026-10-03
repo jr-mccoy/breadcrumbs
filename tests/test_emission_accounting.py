@@ -31,6 +31,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import hooklog, hooks_common, hooks_prompt, usage  # noqa: E402
+from breadcrumbs import packet as _packet  # noqa: E402
 from _jsonl import FIXED_TRANSCRIPT, write_transcript  # noqa: E402
 
 
@@ -169,7 +170,7 @@ class LatestIntentTests(unittest.TestCase):
             # The rebuilt packet after the compaction is ordered for the latest
             # task, not the last task that happened to match memory.
             with mock.patch.object(
-                _cli, "build_resume_packet", wraps=_cli.build_resume_packet
+                _packet, "build_resume_packet", wraps=_packet.build_resume_packet
             ) as b:
                 run_hook("session", {"cwd": str(root), "session_id": "s1", "source": "compact"})
             self.assertEqual(b.call_args.kwargs["task"], "ruff")

@@ -28,6 +28,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli  # noqa: E402  (the real module — `crumb` is a flat re-export)
+from breadcrumbs import packet as _packet  # noqa: E402
 
 FIXTURES = REPO_ROOT / "fixtures"
 
@@ -603,7 +604,7 @@ class NextActionDisambiguationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
             guard_keys = set(cli.guard(mem, root, "delete the accounts table"))
-            packet_keys = set(cli.build_resume_packet(mem, root))
+            packet_keys = set(_packet.build_resume_packet(mem, root))
             self.assertEqual(guard_keys & {"next_action"}, set())
             self.assertEqual(packet_keys & {"recommended_action"}, set())
             self.assertIn("next_action", packet_keys)
@@ -618,7 +619,7 @@ class NextActionDisambiguationTests(unittest.TestCase):
                 "# Handoff\n\n## Current Focus\n\n_(none)_\n\n## Next Action\n\n_(none)_\n",
                 encoding="utf-8",
             )
-            self.assertEqual(cli.build_resume_packet(mem, root)["next_action"], "")
+            self.assertEqual(_packet.build_resume_packet(mem, root)["next_action"], "")
             self.assertTrue(cli.guard(mem, root, "anything at all")["recommended_action"])
 
     def test_human_render_still_labels_the_recommendation(self):
@@ -1079,12 +1080,12 @@ class GuardStalenessScopeTests(unittest.TestCase):
                 ]
             )
             mem = root / crumb.MEMORY_DIRNAME
-            full = cli.compute_staleness(root, {}, cli.active_decisions(mem), [], [], 30)
+            full = _packet.compute_staleness(root, {}, cli.active_decisions(mem), [], [], 30)
             self.assertTrue(
                 any("low-confidence" in w for w in full),
                 f"resume/audit view must keep the low-confidence warning: {full}",
             )
-            risks = cli.compute_staleness(
+            risks = _packet.compute_staleness(
                 root, {}, cli.active_decisions(mem), [], [], 30, risks_only=True
             )
             self.assertEqual(risks, [])

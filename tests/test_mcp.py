@@ -25,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli, mcp_core, mcp_server  # noqa: E402
+from breadcrumbs import packet as _packet  # noqa: E402
 
 FIXTURES = REPO_ROOT / "fixtures"
 
@@ -68,8 +69,8 @@ class ResourceParityTests(unittest.TestCase):
         # two builds can straddle a second boundary and disagree only on the
         # timestamp line — a spurious failure.
         with mock.patch.object(cli, "now_iso", return_value="2026-01-01T00:00:00+00:00"):
-            packet = cli.build_resume_packet(mem_of(name), root)
-            expected = cli.render_packet_markdown(packet)
+            packet = _packet.build_resume_packet(mem_of(name), root)
+            expected = _packet.render_packet_markdown(packet)
             self.assertEqual(mcp_core.resource_resume_packet(root), expected)
 
     def test_decisions_index_lists_active_ids(self):

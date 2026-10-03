@@ -16,6 +16,7 @@ from pathlib import Path
 from breadcrumbs import cli
 from breadcrumbs import git as _git
 from breadcrumbs import hooks_stop as _hooks_stop
+from breadcrumbs import packet as _packet
 
 
 # Lines of mined candidates the post-compaction preamble may list. The rest are
@@ -99,7 +100,9 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
     # Trim the mined list first: the last prompt is the cheapest, most useful
     # line here, and dropping it to keep candidates would be backwards.
     while (
-        cli.approx_tokens(text) > _COMPACT_PREAMBLE_TOKENS and lines and lines[-1].startswith("- ")
+        _packet.approx_tokens(text) > _COMPACT_PREAMBLE_TOKENS
+        and lines
+        and lines[-1].startswith("- ")
     ):
         lines.pop()
         text = "\n".join(lines)
@@ -177,14 +180,14 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
             # (audit F13); everything else stays, rule text included.
             from breadcrumbs import promote as _promote
 
-            packet = cli.build_resume_packet(
+            packet = _packet.build_resume_packet(
                 memory_dir,
                 root,
                 task=task or None,
                 loaded_rules=_promote.loaded_rules(root, ("CLAUDE.md",)),
                 loaded_rules_from=("CLAUDE.md",),
             )
-            context = cli.render_packet_markdown(packet)
+            context = _packet.render_packet_markdown(packet)
             if compacted:
                 context = _compaction_preamble(memory_dir, session_id) + context
             out = {
@@ -197,7 +200,7 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
             # single most load-bearing surfacing the tool performs. The ids are
             # read off the packet after its budget trimming, and the promoted
             # records left out for CLAUDE.md are not in it.
-            cli._record_packet_surfacings(
+            _packet._record_packet_surfacings(
                 memory_dir, packet, session_id=str(payload.get("session_id") or "") or None
             )
         except Exception:  # pragma: no cover - never fail a session start on memory

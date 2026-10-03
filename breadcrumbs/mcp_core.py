@@ -25,6 +25,7 @@ from pathlib import Path
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import packet as _packet
 
 MEMORY_DIRNAME = cli.MEMORY_DIRNAME
 
@@ -229,8 +230,8 @@ def resource_resume_packet(root: str | Path | None = None) -> str:
     """`memory://resume-packet` — the rendered packet (same as `crumb resume`)."""
     project_root, mem = resolve(root)
     _require_memory(mem)
-    packet = cli.build_resume_packet(mem, project_root)
-    return cli.render_packet_markdown(packet)
+    packet = _packet.build_resume_packet(mem, project_root)
+    return _packet.render_packet_markdown(packet)
 
 
 @_data_view
@@ -569,7 +570,7 @@ def tool_build_resume_packet(
     task: str | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_build_resume_packet` — wraps `cli.build_resume_packet`.
+    """`memory_build_resume_packet` — wraps `_packet.build_resume_packet`.
 
     Returns the structured packet (the same object the CLI renders to MD/JSON).
     `task` is passed through to the engine, so the F4/F6 task
@@ -588,7 +589,7 @@ def tool_build_resume_packet(
         _context(root),
         task=task or None,
         view="json",
-        render=lambda p: cli.packet_json_text({"ok": True, **p}),
+        render=lambda p: _packet.packet_json_text({"ok": True, **p}),
     )
     return {"ok": True, **packet}
 

@@ -36,6 +36,7 @@ from pathlib import Path
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import packet as _packet
 
 PROMOTED_BEGIN = (
     "<!-- >>> breadcrumbs promoted rules (managed by `crumb promote`) "
@@ -99,7 +100,7 @@ def _item_texts(item: dict) -> tuple[str, str]:
         return rule, why
     rec = cli.Record.from_file(Path(item["path"]), kind)
     if kind == "decision":
-        return (title or rec.stem), cli._decision_rationale(rec)
+        return (title or rec.stem), _packet._decision_rationale(rec)
     # attempt
     unless = cli._first_line(rec.sections.get("Do Not Retry Unless", ""))
     rule = f"Do not retry: {title or rec.stem}" + (f" — unless {unless}" if unless else "")

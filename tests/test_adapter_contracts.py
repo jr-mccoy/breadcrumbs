@@ -34,6 +34,7 @@ from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import mcp_core, promote  # noqa: E402
 from breadcrumbs.adapters import claude  # noqa: E402
 from breadcrumbs import hooks_guard  # noqa: E402
+from breadcrumbs import packet as _packet  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 AGENT_MARKERS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
@@ -324,7 +325,7 @@ class CrossHarnessTests(unittest.TestCase):
 
             # Harness 1: Claude Code's SessionStart packet, CLAUDE.md loaded.
             loaded = promote.loaded_rules(root)
-            claude_packet = _cli.build_resume_packet(
+            claude_packet = _packet.build_resume_packet(
                 mem, root, loaded_rules=loaded, loaded_rules_from=("CLAUDE.md",)
             )
             claude_ids = {d["id"] for d in claude_packet["active_decisions"]} | set(loaded)

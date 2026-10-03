@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 
 from breadcrumbs import cli
+from breadcrumbs import packet as _packet
 
 
 def _add_duplicate_flags(parser: argparse.ArgumentParser, *, supersede: bool = True) -> None:
@@ -733,8 +734,8 @@ def _add_resume(sub, global_parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         metavar="TOKENS",
-        help=f"bound the printed view to TOKENS approx tokens ({cli.TOKEN_ESTIMATOR}; "
-        f"default {cli.TOKEN_BUDGET_MAX}, {cli.FAST_TOKEN_BUDGET} with --fast); affects what you "
+        help=f"bound the printed view to TOKENS approx tokens ({_packet.TOKEN_ESTIMATOR}; "
+        f"default {_packet.TOKEN_BUDGET_MAX}, {_packet.FAST_TOKEN_BUDGET} with --fast); affects what you "
         "see, never the committed packet",
     )
     p_resume.set_defaults(func=cli.cmd_resume)

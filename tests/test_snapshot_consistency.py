@@ -39,6 +39,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli, hooklog, projections, searchindex, snapshots  # noqa: E402
+from breadcrumbs import packet as _packet  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -85,7 +86,7 @@ class SnapshotCase(unittest.TestCase):
 
     def inject_during_build(self, *, every_time: bool):
         """Write a new decision after the packet has read its decisions."""
-        real = cli.compute_staleness
+        real = _packet.compute_staleness
         written: list[str] = []
 
         def compute_staleness(*args, **kwargs):
@@ -93,7 +94,9 @@ class SnapshotCase(unittest.TestCase):
                 written.append(self.decision(f"Injected cerulean policy number {len(written)}"))
             return real(*args, **kwargs)
 
-        return mock.patch.object(cli, "compute_staleness", side_effect=compute_staleness), written
+        return mock.patch.object(
+            _packet, "compute_staleness", side_effect=compute_staleness
+        ), written
 
 
 class StampTests(SnapshotCase):
@@ -101,7 +104,7 @@ class StampTests(SnapshotCase):
         self.decision("Existing amber policy")
         patch, written = self.inject_during_build(every_time=False)
         with patch:
-            packet = cli.build_resume_packet(self.mem, self.root)
+            packet = _packet.build_resume_packet(self.mem, self.root)
         current = cli._inputs_hash(self.mem, self.root)
         ids = [d["id"] for d in packet["active_decisions"]]
         # Either the stamp is current and the record is in, or the stamp is not current.
@@ -114,7 +117,7 @@ class StampTests(SnapshotCase):
     def test_a_store_that_keeps_changing_is_stamped_unstable(self):
         patch, _written = self.inject_during_build(every_time=True)
         with patch:
-            packet = cli.build_resume_packet(self.mem, self.root)
+            packet = _packet.build_resume_packet(self.mem, self.root)
         self.assertEqual(packet["source"]["inputs_hash"], snapshots.UNSTABLE)
         self.assertIn(snapshots.UNSTABLE_WARNING, packet["warnings"])
 

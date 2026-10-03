@@ -69,6 +69,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from breadcrumbs import cli, hooks_prompt  # noqa: E402
+from breadcrumbs import packet as _packet  # noqa: E402
 
 TOP_K = 5
 TOLERANCE = 0.05
@@ -490,7 +491,7 @@ def deliver_prompt(project: Path, text: str, session: str) -> dict:
         "ids": delivered_ids(injected),
         "spoke": bool(injected),
         "repeat_spoke": bool(_hook_text(second)),
-        "tokens": cli.approx_tokens(injected) if injected else 0,
+        "tokens": _packet.approx_tokens(injected) if injected else 0,
         "malformed": "_malformed" in first or "_malformed" in second,
     }
 
@@ -501,7 +502,7 @@ def deliver_packet(project: Path, text: str) -> dict:
     out = out.rstrip("\n")
     match = _BUDGET_RE.search(out)
     limit = int(match.group(2)) if match else None
-    tokens = cli.approx_tokens(out)
+    tokens = _packet.approx_tokens(out)
     return {
         "ids": delivered_ids(out),
         "tokens": tokens,
@@ -612,10 +613,10 @@ def _critical_status(case: dict, ok: bool) -> str:
 
 
 def _packet_ranking(memory_dir: Path, root: Path, task: str) -> list[str]:
-    packet = cli.build_resume_packet(memory_dir, root, task=task)
-    scores = cli.task_relevance_scores(memory_dir, root, task)
+    packet = _packet.build_resume_packet(memory_dir, root, task=task)
+    scores = _packet.task_relevance_scores(memory_dir, root, task)
     seen: list[str] = []
-    for key, id_of in cli._RELEVANCE_SECTIONS.items():
+    for key, id_of in _packet._RELEVANCE_SECTIONS.items():
         for entry in packet.get(key) or []:
             rid = id_of(entry)
             if rid and rid not in seen and scores.get(rid, 0) > 0:
