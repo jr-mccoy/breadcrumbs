@@ -28,6 +28,8 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402  (patch target: `_hook_guard` resolves `guard` here)
 from breadcrumbs import git as _git  # noqa: E402
+from breadcrumbs import hooks_stop  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -569,7 +571,7 @@ class PrefilterEvidencePathTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertTrue(
-                _cli._prefilter_trap_hit(mem, "batching the reconciliation writes", None)
+                hooks_guard._prefilter_trap_hit(mem, "batching the reconciliation writes", None)
             )
 
 
@@ -580,26 +582,28 @@ class HookEditContentTests(unittest.TestCase):
 
     def test_edit_action_carries_bounded_snippet(self):
         long_new = "val req = PeriodicWorkRequest(flexTimeInterval = 5)\n" * 50
-        action, files = _cli._hook_action_from_tool(
+        action, files = hooks_guard._hook_action_from_tool(
             "Edit", {"file_path": "a/b.kt", "new_string": long_new}
         )
         self.assertTrue(action.startswith("edit a/b.kt: val req = PeriodicWorkRequest"))
-        self.assertLessEqual(len(action), len("edit a/b.kt: ") + _cli._HOOK_CONTENT_SNIPPET_CHARS)
+        self.assertLessEqual(
+            len(action), len("edit a/b.kt: ") + hooks_guard._HOOK_CONTENT_SNIPPET_CHARS
+        )
         self.assertEqual(files, ["a/b.kt"])
 
     def test_edit_without_content_keeps_the_old_shape(self):
-        action, files = _cli._hook_action_from_tool("Edit", {"file_path": "a/b.kt"})
+        action, files = hooks_guard._hook_action_from_tool("Edit", {"file_path": "a/b.kt"})
         self.assertEqual(action, "edit a/b.kt")
         self.assertEqual(files, ["a/b.kt"])
 
     def test_multiedit_and_write_content_is_seen(self):
-        action, _ = _cli._hook_action_from_tool(
+        action, _ = hooks_guard._hook_action_from_tool(
             "MultiEdit",
             {"file_path": "x.py", "edits": [{"new_string": "alpha"}, {"new_string": "beta"}]},
         )
         self.assertIn("alpha", action)
         self.assertIn("beta", action)
-        action, _ = _cli._hook_action_from_tool(
+        action, _ = hooks_guard._hook_action_from_tool(
             "Write", {"file_path": "x.py", "content": "gamma delta"}
         )
         self.assertIn("gamma delta", action)
@@ -687,7 +691,7 @@ class HookAdvisoryDedupeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._store_with_file_trap(tmp)
             run_hook("guard", self._edit_payload(root, "s1"))
-            state = root / crumb.MEMORY_DIRNAME / "private" / _cli._HOOK_SEEN_FILENAME
+            state = root / crumb.MEMORY_DIRNAME / "private" / hooks_guard._HOOK_SEEN_FILENAME
             self.assertTrue(state.is_file(), "advisory state must be machine-local")
 
 
@@ -1036,7 +1040,7 @@ class SessionCursorTests(unittest.TestCase):
             for i in range(40):
                 (root / f"d{i}.txt").write_text("x\n")
             run_hook("capture", {"cwd": str(root), "session_id": "S"})
-            self.assertTrue(_cli._hook_capture_is_redundant(mem, root))
+            self.assertTrue(hooks_stop._hook_capture_is_redundant(mem, root))
 
     def test_session_start_records_the_head_once(self):
         from breadcrumbs import hooks_common
@@ -1145,7 +1149,7 @@ class StopLifecycleTests(unittest.TestCase):
             mem = init_store(root)
             sid = {"cwd": str(root), "session_id": "s1"}
             run_hook("capture", sid)  # first firing: the snapshot
-            with mock.patch.object(_cli, "_session_commits", side_effect=AssertionError):
+            with mock.patch.object(hooks_stop, "_session_commits", side_effect=AssertionError):
                 self.assertEqual(run_hook("capture", sid), {})
             # No SessionStart ran, so the redundant firing gave the session a start.
             from breadcrumbs import hooks_common
@@ -1333,7 +1337,7 @@ class StopReviewFindingsTests(unittest.TestCase):
 
             def snapshot(sid: str) -> None:
                 with mock.patch.object(_cli, "now_iso", return_value=next(stamps)):
-                    self.assertEqual(_cli._hook_capture_snapshot(root, sid), "ok")
+                    self.assertEqual(hooks_stop._hook_capture_snapshot(root, sid), "ok")
 
             commit("a0")
             snapshot("A")

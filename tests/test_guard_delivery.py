@@ -38,6 +38,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
 
 RUN_PY = REPO_ROOT / "evals" / "run.py"
 MODES = (None, "default", "acceptEdits", "plan", "bypassPermissions", "dontAsk", "unknownMode")
@@ -179,7 +180,7 @@ class AgreementTests(unittest.TestCase):
                     for i, (tool, tool_input) in enumerate(
                         self.actions(mem, project, spec["tasks"])
                     ):
-                        action, files = cli._hook_action_from_tool(tool, tool_input)
+                        action, files = hooks_guard._hook_action_from_tool(tool, tool_input)
                         if not action:
                             continue
                         checked += 1
@@ -192,7 +193,7 @@ class AgreementTests(unittest.TestCase):
                             # enough to bypass it), and the real hook speaks.
                             _p, classes = cli.classify_action(action)
                             self.assertTrue(
-                                cli._prefilter_trap_hit(mem, action, files)
+                                hooks_guard._prefilter_trap_hit(mem, action, files)
                                 or classes != ["routine_edit"]
                                 or bool(cli._HOOK_RISK_RE.search(action))
                             )
@@ -219,9 +220,9 @@ class AgreementTests(unittest.TestCase):
             )
             cli.reindex_projections(mem, root)
             edit = {"file_path": "src/auth/session_parser.py", "new_string": "x = 1"}
-            action, files = cli._hook_action_from_tool("Edit", edit)
+            action, files = hooks_guard._hook_action_from_tool("Edit", edit)
             self.assertEqual(cli.guard(mem, root, action, files=files)["verdict"], "READ_FIRST")
-            self.assertTrue(cli._prefilter_trap_hit(mem, action, files))
+            self.assertTrue(hooks_guard._prefilter_trap_hit(mem, action, files))
             self.assertTrue(spoke(hook_guard(root, "Edit", edit, "s")))
 
 
@@ -242,7 +243,7 @@ class BoundaryTests(StoreCase):
         self.assertNotIn("permissionDecision", out["hookSpecificOutput"])
         # A blocking attempt keeps its stance: an edit of its file still PAUSEs.
         edit = {"file_path": "src/billing.py", "new_string": "rewrite everything"}
-        action, files = cli._hook_action_from_tool("Edit", edit)
+        action, files = hooks_guard._hook_action_from_tool("Edit", edit)
         self.assertEqual(cli.guard(self.mem, self.root, action, files=files)["verdict"], "PAUSE")
 
     def test_permission_mode_never_gains_auto_allow(self):
@@ -253,7 +254,7 @@ class BoundaryTests(StoreCase):
             "ASK_HUMAN": ("Bash", {"command": "rm -rf src/billing.py"}),
         }
         for verdict, (tool, tool_input) in cases.items():
-            action, files = cli._hook_action_from_tool(tool, tool_input)
+            action, files = hooks_guard._hook_action_from_tool(tool, tool_input)
             self.assertEqual(
                 cli.guard(self.mem, self.root, action, files=files)["verdict"], verdict
             )

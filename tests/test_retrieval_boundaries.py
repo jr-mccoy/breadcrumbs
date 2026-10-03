@@ -32,6 +32,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli, hooklog, hooks_prompt, retrieval, searchindex  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -279,7 +280,7 @@ class CommandHazardTests(StoreCase):
         for i, command in enumerate(warns):
             with self.subTest(command=command):
                 self.assertEqual(cli.guard(self.mem, self.root, command)["verdict"], "READ_FIRST")
-                self.assertTrue(cli._prefilter_trap_hit(self.mem, command, None))
+                self.assertTrue(hooks_guard._prefilter_trap_hit(self.mem, command, None))
                 out = self.bash(command, f"w{i}")
                 self.assertIn("READ_FIRST", context(out))
                 # Advisory: the reader is told; the permission flow is untouched.
@@ -299,7 +300,7 @@ class CommandHazardTests(StoreCase):
         doc = json.loads(path.read_text("utf-8"))
         del doc["format"]
         path.write_text(json.dumps(doc), encoding="utf-8")
-        self.assertTrue(cli._prefilter_trap_hit(self.mem, "echo hello", None))
+        self.assertTrue(hooks_guard._prefilter_trap_hit(self.mem, "echo hello", None))
 
 
 if __name__ == "__main__":

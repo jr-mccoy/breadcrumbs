@@ -33,6 +33,7 @@ import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import mcp_core, promote  # noqa: E402
 from breadcrumbs.adapters import claude  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 AGENT_MARKERS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
@@ -85,7 +86,7 @@ class ClaudeAdapterTests(unittest.TestCase):
                 self.assertEqual(action.files, expect["files"])
                 self.assertEqual(action.supported, expect.get("supported", True))
                 # The CLI's hook translation is the adapter's.
-                text, files = _cli._hook_action_from_tool(tool, case["tool_input"])
+                text, files = hooks_guard._hook_action_from_tool(tool, case["tool_input"])
                 self.assertEqual((text, files or []), (expect["text"], expect["files"]))
                 seen.add(tool)
         # Every tool the adapter declares is covered by a fixture.

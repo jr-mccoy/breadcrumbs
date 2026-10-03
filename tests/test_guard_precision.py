@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from breadcrumbs import cli as _cli  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
 
 # Every one of these was harvested as a "path" by the lexical extractor, in a
 # real store, at review time.
@@ -230,21 +231,21 @@ class HookSurfacingTests(unittest.TestCase):
                 self._match("dec_vocabulary", ["keyword"]),
             ],
         }
-        shown = _cli._hook_surfacing_matches(result)
+        shown = hooks_guard._hook_surfacing_matches(result)
         self.assertEqual([m["id"] for m in shown], ["dec_specific"])
-        self.assertNotIn("dec_vocabulary", _cli._hook_guard_reason(result, shown))
+        self.assertNotIn("dec_vocabulary", hooks_guard._hook_guard_reason(result, shown))
 
     def test_tags_titles_and_mentions_all_qualify(self):
         for signal in ("file", "tag", "title", "mention", "do-not-retry", "open-blocker"):
             result = {"verdict": "READ_FIRST", "matches": [self._match("m", [signal, "keyword"])]}
-            self.assertEqual(len(_cli._hook_surfacing_matches(result)), 1, signal)
+            self.assertEqual(len(hooks_guard._hook_surfacing_matches(result)), 1, signal)
 
     def test_an_all_keyword_result_is_still_shown(self):
         """A strong keyword-only match escalating through the score band is a
         deliberate behaviour of this tool; the hook does not silence it."""
         result = {"verdict": "READ_FIRST", "matches": [self._match("trap_x", ["keyword"])]}
-        self.assertEqual(_cli._hook_surfacing_matches(result), [])
-        self.assertIn("trap_x", _cli._hook_guard_reason(result, result["matches"]))
+        self.assertEqual(hooks_guard._hook_surfacing_matches(result), [])
+        self.assertIn("trap_x", hooks_guard._hook_guard_reason(result, result["matches"]))
 
 
 if __name__ == "__main__":

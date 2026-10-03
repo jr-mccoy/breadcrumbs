@@ -27,6 +27,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import projections  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
 
 AWS_SHAPED = "AKIAZ7QW4ERTY8UIOP3A"
 RANDOM_SHAPED = "Xk9fQ2mZ7pL4vR8tW3nB6yH1cJ5sD0gA"
@@ -105,9 +106,9 @@ class MachineLocalPrefilterTests(StoreCase):
     def test_the_hook_still_trusts_it(self):
         self.decision("Gradle builds use the configuration cache", tags="gradle")
         # Verified, and nothing in it matches: the hook may stay silent.
-        self.assertFalse(_cli._prefilter_trap_hit(self.mem, "ls -la docs", None))
+        self.assertFalse(hooks_guard._prefilter_trap_hit(self.mem, "ls -la docs", None))
         self.assertTrue(
-            _cli._prefilter_trap_hit(self.mem, "./gradlew build --configuration-cache", None)
+            hooks_guard._prefilter_trap_hit(self.mem, "./gradlew build --configuration-cache", None)
         )
 
 
@@ -142,7 +143,7 @@ class NoSecretsInThePrefilterTests(StoreCase):
 
     def test_an_action_holding_one_still_runs_full_guard(self):
         self._write_secret_record()
-        self.assertTrue(_cli._prefilter_trap_hit(self.mem, f"echo {RANDOM_SHAPED}", None))
+        self.assertTrue(hooks_guard._prefilter_trap_hit(self.mem, f"echo {RANDOM_SHAPED}", None))
 
     def test_scan_secrets_covers_generated(self):
         packet = self.mem / "generated" / "resume-packet.md"

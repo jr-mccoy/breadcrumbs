@@ -31,6 +31,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import hooks_prompt, lock, mcp_core, migrate, path_policy, safetext  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
 
 EXTERNAL = "SYNTHETIC-OUTSIDE-STORE-CONTENT"
 
@@ -518,7 +519,7 @@ class RenderingTests(unittest.TestCase):
                 self.assertFalse(
                     any(ln.startswith("breadcrumbs guard") for ln in text.splitlines())
                 )
-                reason = _cli._hook_guard_reason(
+                reason = hooks_guard._hook_guard_reason(
                     {"verdict": "READ_FIRST", "matches": []},
                     [{"title": title, "reason": br + "why"}],
                 )

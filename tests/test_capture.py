@@ -21,6 +21,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli  # noqa: E402  (`crumb` is a flat re-export; patching needs the module)
+from breadcrumbs import hooks_stop  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -454,7 +455,7 @@ class NextActionLogTests(unittest.TestCase):
             )
             before = crumb.split_md_sections(cur.read_text())["Recently Changed"]
             commit(root, "g.txt", "new work")
-            cli._hook_capture_snapshot(root)
+            hooks_stop._hook_capture_snapshot(root)
             commit(root, "h.txt", "more work")
             run(["capture", "session", "--project", tmp, "--next", "n"])
             after = crumb.split_md_sections(cur.read_text())["Recently Changed"]

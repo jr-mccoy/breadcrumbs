@@ -37,6 +37,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli, mcp_core, promote  # noqa: E402
+from breadcrumbs import hooks_session  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -211,13 +212,15 @@ class BoundTests(PacketCase):
     def test_the_hook_adds_only_its_declared_preamble(self):
         self.set_focus("Reconcile every ledger shard. " * 2000)
         packet_budget = cli.TOKEN_BUDGET_MAX
-        with mock.patch.object(cli, "_compaction_preamble", return_value="x" * 3000 + "\n\n"):
+        with mock.patch.object(
+            hooks_session, "_compaction_preamble", return_value="x" * 3000 + "\n\n"
+        ):
             code, text, _err = run(
                 ["hook", "session"], stdin=json.dumps({"cwd": self.p, "source": "compact"})
             )
         context = json.loads(text)["hookSpecificOutput"]["additionalContext"]
         self.assertLessEqual(
-            cli.approx_tokens(context), packet_budget + cli._COMPACT_PREAMBLE_TOKENS
+            cli.approx_tokens(context), packet_budget + hooks_session._COMPACT_PREAMBLE_TOKENS
         )
 
 
