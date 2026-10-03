@@ -42,8 +42,12 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Callable
+
 from breadcrumbs import path_policy
+
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # annotations only; `typing` costs the hook ~4 ms
+    from typing import Callable
 
 HOOK_LOG_FILENAME = "hook-log.jsonl"
 HOOK_LOG_ROTATED_FILENAME = "hook-log.1.jsonl"

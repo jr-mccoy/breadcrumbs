@@ -56,7 +56,7 @@ import contextlib
 import hashlib
 import json
 import threading
-from dataclasses import dataclass
+from collections import namedtuple
 from pathlib import Path
 
 SOLO = "solo"
@@ -102,20 +102,18 @@ class Refused(ValueError):
     """An action the store's policy does not admit from this channel."""
 
 
-@dataclass(frozen=True)
-class Policy:
-    profile: str = SOLO
-    mcp_mode: str = MCP_WRITE
+# A `namedtuple`, not a frozen dataclass: `dataclasses` imports `inspect`,
+# `ast` and `tokenize`, about 10 ms on the guard hook's path (DoWhat retest of
+# 0.6.0, item 2). Same fields, defaults, equality and immutability.
+class Policy(namedtuple("Policy", "profile mcp_mode", defaults=(SOLO, MCP_WRITE))):
+    __slots__ = ()
 
 
-@dataclass(frozen=True)
-class Context:
-    channel: str
-    policy: Policy
-    # Running inside an agent harness (MCP and hooks always are; the CLI is
-    # when the environment names one). Detection is a claim the environment
-    # makes, so it can only add caution, never grant authority.
-    in_agent: bool
+# `in_agent`: running inside an agent harness (MCP and hooks always are; the
+# CLI is when the environment names one). Detection is a claim the environment
+# makes, so it can only add caution, never grant authority.
+class Context(namedtuple("Context", "channel policy in_agent")):
+    __slots__ = ()
 
 
 def policy(memory_dir: Path) -> Policy:

@@ -23,7 +23,6 @@ any module can use it without an import cycle through `cli`.
 
 from __future__ import annotations
 
-import subprocess
 import time
 from pathlib import Path
 
@@ -44,6 +43,8 @@ MS = [0.0]
 
 def run(root: Path, *args: str) -> str | None:
     """`git <args>`'s stdout in `root`, trailing newline trimmed; None on failure."""
+    import subprocess  # here, not at the top: most guard firings start no git (item 2)
+
     CALLS[0] += 1
     started = time.perf_counter()
     try:
@@ -74,6 +75,8 @@ def check_ignore(root: Path, rels: list[str]) -> list[tuple[str, str, str]] | No
     Every rule git knows counts here, machine-local excludes included; the
     caller filters by `source`. None when git cannot answer.
     """
+    import subprocess
+
     CALLS[0] += 1
     started = time.perf_counter()
     # `-z`: NUL-separated bytes both ways. Text-mode stdin sent each path with

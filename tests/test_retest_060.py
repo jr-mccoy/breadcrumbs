@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -246,3 +247,49 @@ class NoGitOnTheGuardHookTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------- #
+# Item 2: start-up cost on the hook path
+# --------------------------------------------------------------------------- #
+
+# Each is a module tree the guard hook does not use on a firing that starts
+# no git process. `dataclasses` alone pulls in inspect, ast, dis and tokenize
+# (about 10 ms on Linux, several times that on Windows). `shutil` is not here:
+# argparse imports it to read the terminal width.
+HOOK_UNNEEDED = ("dataclasses", "inspect", "ast", "typing", "subprocess", "tempfile")
+
+
+class HookImportTests(unittest.TestCase):
+    def test_the_guard_hook_loads_only_what_it_uses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(Path(tmp) / "repo")
+            quiet(["init", "--project", str(root)])
+            quiet([*ATTEMPT, "--project", str(root)])
+            commit_all(root, "store")
+            fire_guard(root, "Bash", RM)  # builds the per-HEAD caches
+            payload = json.dumps(
+                {"cwd": str(root), "session_id": "S", "tool_name": "Bash", "tool_input": RM}
+            )
+            # A fresh interpreter, entered the way the console script enters.
+            code = (
+                "import sys, io, json, contextlib\n"
+                f"sys.path.insert(0, {str(REPO_ROOT)!r})\n"
+                "before = set(sys.modules)\n"
+                "from breadcrumbs.cli import main\n"
+                "sys.stdin = io.StringIO(sys.argv[1])\n"
+                "with contextlib.redirect_stdout(io.StringIO()):\n"
+                "    main(['hook', 'guard'])\n"
+                "print(json.dumps(sorted(set(sys.modules) - before)))\n"
+            )
+            env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+            out = subprocess.run(
+                [sys.executable, "-c", code, payload],
+                capture_output=True,
+                text=True,
+                check=True,
+                env=env,
+                cwd=str(root),
+            ).stdout
+            loaded = set(json.loads(out.splitlines()[-1]))
+            self.assertEqual(sorted(loaded & set(HOOK_UNNEEDED)), [])

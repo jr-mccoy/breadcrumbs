@@ -26,18 +26,12 @@ import json
 import os
 import re
 import shlex
-import shutil
-import subprocess
 import sys
 import threading
 import time
 import types
 from datetime import date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:  # annotations only; the parser lives in `cli_parser`
-    import argparse
 
 # The record contract. Stdlib-only and import-free, so importing it here costs
 # the hook pre-filter nothing (see StartupCostTests).
@@ -51,6 +45,12 @@ from breadcrumbs import path_policy
 from breadcrumbs import git as _git
 from breadcrumbs import gitrefs as _gitrefs
 from breadcrumbs.adapters import claude as _claude
+
+# Not `from typing import TYPE_CHECKING`: importing `typing` costs the guard
+# hook ~4 ms for a constant (DoWhat retest of 0.6.0, item 2).
+TYPE_CHECKING = False
+if TYPE_CHECKING:  # annotations only; the parser lives in `cli_parser`
+    import argparse
 
 # --------------------------------------------------------------------------- #
 # Constants
@@ -658,6 +658,8 @@ def _replace_store_contents(memory_dir: Path, staging: Path) -> None:
     # A link is removed as a link, never followed (audit F17).
     def remove(entry: Path) -> None:
         if entry.is_dir() and not entry.is_symlink():
+            import shutil
+
             shutil.rmtree(entry)
         else:
             entry.unlink()
@@ -686,6 +688,8 @@ def copy_template_tree(dest: Path) -> None:
         raise FileNotFoundError(
             f"template tree not found at {TEMPLATE_DIR}; is the package intact?"
         )
+    import shutil
+
     shutil.copytree(TEMPLATE_DIR, dest, dirs_exist_ok=True)
 
 
@@ -835,6 +839,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     if staging.is_symlink():
         staging.unlink()  # a leftover link is removed, never followed (audit F17)
     elif staging.exists():
+        import shutil
+
         shutil.rmtree(staging)
     try:
         copy_template_tree(staging)
@@ -844,6 +850,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
     except Exception:
         if staging.exists():
+            import shutil
+
             shutil.rmtree(staging)
         raise
     if memory_dir.exists():
@@ -7349,10 +7357,14 @@ def local_mcp_command(root: Path) -> list[str]:
 def register_mcp_local(root: Path) -> dict:
     """Run `local_mcp_command`; `{ok, command, error}`. Never raises."""
     cmd = local_mcp_command(root)
+    import shutil
+
     exe = shutil.which("claude")
     if exe is None:
         return {"ok": False, "command": cmd, "error": "the `claude` CLI is not on PATH"}
     try:
+        import subprocess
+
         r = subprocess.run(
             [exe, *cmd[1:]], cwd=str(root), capture_output=True, text=True, timeout=60
         )

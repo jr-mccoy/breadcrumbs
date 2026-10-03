@@ -721,11 +721,11 @@ class CommitDistanceIndexTests(unittest.TestCase):
                     calls[0] += 1
                     return real(*a, **k)
 
-                cli.subprocess.run = counting
+                subprocess.run = counting
                 try:
                     crumb.guard(mem, root, action)
                 finally:
-                    cli.subprocess.run = real
+                    subprocess.run = real
                 return calls[0]
 
             def add(n: int, start: int) -> None:
