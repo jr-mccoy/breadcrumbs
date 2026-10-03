@@ -1,22 +1,24 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: aedc62a | inputs_hash: 3639cbfd3cf7 | generated_at: 2026-10-03T13:37:11+00:00 -->
-<!-- view: markdown | budget: 3618/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 78f6691 | inputs_hash: b40f1406c774 | generated_at: 2026-10-03T14:55:14+00:00 -->
+<!-- view: markdown | budget: 3045/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-4e962709-tubaoe` · commit `aedc62a` · 6 uncommitted file(s) · handoff: handoffs/ccr-4e962709-tubaoe.md
+branch `ccr-4e962709-tubaoe` · commit `78f6691` · 8 uncommitted file(s) · handoff: handoffs/ccr-4e962709-tubaoe.md
 
 ## Current Focus
 0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
 
 ## Next Action
-Item 2.2 of docs/reviews/2026-10-02-deferred-health-review.md is done on branch ccr-4e962709-tubaoe (git module, timestamps, reads, POSIX paths, command text; full suite 1519 OK, evals at baseline). Next: open a PR for the branch; then 2.1 seam 1 (extract the Stop hook into hooks_stop behind tests/fixtures/application_parity.json). 0.6.0 is still unpublished: check the native-full Windows job on main, then run the release workflow (dry-run, then publish).
+Health review items 2.2, 2.1 and 1.1 are done on branch ccr-4e962709-tubaoe (PR #59): breadcrumbs.git; the cli.py extraction (hooks_*, packet, textmatch, scoring, validate, audit, secretscan); audit decision staleness keyed on evidence. Next: get PR #59 reviewed and merged; then 1.2 (close or schedule the PreCompact question), 3.2 (coverage job), and 3.3 (WP tracker triage, needs the operator). 0.6.0 is still unpublished: check the native-full Windows job on main, then run the release workflow; the next CHANGELOG entry must cover the audit change (age line gone from packet and audit; new decision-evidence-* and decision-aged checks).
 
-_(1 earlier entry in handoffs/ccr-4e962709-tubaoe.md)_
+_(2 earlier entries in handoffs/ccr-4e962709-tubaoe.md)_
 
 ## Active Decisions
+- `dec_20261003_code-moves-out-of-cli-py-by-mechanical-ast-move-into` — A mechanical move behind the parity fixture, the evals and the full suite cannot change behaviour. A patch on cli no longer reaches a moved function's callers, so tests patch the owning module; tests/test_extracted_modules.py enforces the contract.
+- `dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence` — Measured on this store: 6 warnings on main where the age rule gave 17 and 'touched since' gave 48, each a real candidate. Two git processes for the whole store. The staleness eval suite (split: checks) asserts every true staleness kind is questioned and an old untouched decision is not.
 - `dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps` — A reader that accepts more than validate acts on stamps validate rejects, and differently per interpreter. One spelling for POSIX paths keeps the store-relative POSIX rule in one place. Exact and loose tokenizing serve different jobs; merging them would change guard verdicts and the eval baseline.
 - `dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas` — One implementation per question removes the class of drift that produced N8, and moving HEAD reads to the disk reader removes git spawns from the Stop hook path on Windows. Storing full shas in records would change a stored format, so it was kept out.
 - `dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction` — The ask's instruction ends with the capture, so a capture after the ask is the answer, whatever else the turn committed. Amend and rebase preserve author time, which is what tells an already-asked commit from new work.
@@ -30,9 +32,7 @@ _(1 earlier entry in handoffs/ccr-4e962709-tubaoe.md)_
 - `dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand` — Keeps per-push cost low while main and a weekly run still see platform regressions; run it by hand on a branch before merging platform-sensitive changes.
 - `dec_20260928_store-relative-paths-are-posix-and-line-endings` — A store is shared across machines and platforms; a value that differs by OS makes stamps stale everywhere and made rollback and the write gate silently wrong on Windows.
 - `dec_20260927_transports-reach-the-store-through-breadcrumbs-service` — CLI, MCP and hooks call service functions (record, mark_status, search, guard, resume_packet, prompt_lookup, admit) inside service.active(ctx); wording, exit codes and envelopes stay in the adapters. Parser lives in cli_parser.py. Aliases and clock are per-thread scoped state. Any further move out o… [excerpt: 300 of 379 chars; full text: crumb show dec_20260927_transports-reach-the-store-through-breadcrumbs-service]
-- `dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering` — related, conflicts and the near-duplicate sweep score only pairs that can reach their thresholds; pairwise versions stay as test oracles. Past RELATED_PAIR_BUDGET the related map reports degraded (audit: related-degraded) instead of skipping. Parses are shared per operation via cli.operation() keyed… [excerpt: 300 of 332 chars; full text: crumb show dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering]
-- `dec_20260927_review-profiles-solo-by-default-team-makes-agent-written` — Proportional: ordinary capture never waits for a person; only the writes that make memory authoritative are gated. Opt-in semantics use requires: instead of a store-wide schema bump.
-_(… 43 more omitted to stay within the per-section cap)_
+_(… 45 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -58,6 +58,11 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (10d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
+- tests/test_extracted_modules.py
+- docs/architecture.md
+- breadcrumbs/audit.py
+- tests/test_decision_staleness.py
+- evals/suites/staleness/store.crumb
 - breadcrumbs/shellcmd.py
 - breadcrumbs/path_policy.py
 - breadcrumbs/validation.py
@@ -73,12 +78,7 @@ _(candidates, not findings — promote with `crumb inbox promote <id> <type>` or
 - .github/workflows/ci.yml
 - tests/test_platform_portability.py
 - breadcrumbs/service.py
-- tests/test_application_parity.py
-- breadcrumbs/related.py
-- breadcrumbs/lifecycle.py
-- breadcrumbs/admission.py
-- tests/test_admission_policy.py
-_(… 44 more omitted to stay within the per-section cap)_
+_(… 49 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -113,21 +113,4 @@ _(… 11 more omitted to stay within the per-section cap)_
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
-- active decision dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns is 28 days old with no update — is this still true?
-- active decision dec_20260905_path-extraction-is-structural-and-a-mined-path is 28 days old with no update — is this still true?
-- active decision dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call is 28 days old with no update — is this still true?
-- active decision dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head is 30 days old with no update — is this still true?
-- active decision dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned is 45 days old with no update — is this still true?
-- active decision dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode is 46 days old with no update — is this still true?
-- active decision dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap is 46 days old with no update — is this still true?
-- active decision dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval is 47 days old with no update — is this still true?
-- active decision dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one is 48 days old with no update — is this still true?
-- active decision dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them is 48 days old with no update — is this still true?
-- active decision dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20 is 48 days old with no update — is this still true?
-- active decision dec_20260815_guard-verdict-floors-require-file-tag-specificity-keyword is 48 days old with no update — is this still true?
-- active decision dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo is 49 days old with no update — is this still true?
-- active decision dec_20260815_cut-0-1-10-as-the-agent-authorship-release is 49 days old with no update — is this still true?
-- active decision dec_20260815_the-tool-s-own-repo-commits-its-own-memory-store is 49 days old with no update — is this still true?
-- active decision dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author is 49 days old with no update — is this still true?
-- active decision dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint is 49 days old with no update — is this still true?
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 49 days — did this ever get resolved?

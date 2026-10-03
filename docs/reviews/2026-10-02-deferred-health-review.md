@@ -21,7 +21,26 @@ measured on this repo at the commit above unless marked otherwise.
 
 ## 1. Signal quality
 
-### 1.1 `crumb audit` is mostly age noise
+### ~~1.1 `crumb audit` is mostly age noise~~
+
+**Done** on branch `ccr-4e962709-tubaoe` (2026-10-03), commit "audit: decision
+staleness keyed on evidence, not age". The age line is gone from the packet and
+from audit. Audit asks whether a decision's evidence moved:
+`decision-evidence-rewritten` (WARN: a cited file churned by half its size
+since the decision, its own landing commit and hub files excluded),
+`decision-evidence-changed` (one INFO line for smaller changes), and
+`decision-aged` (INFO, 8x the cutoff, only when nothing else questions it);
+contradictions, near-duplicates and vanished evidence still count.
+
+One correction to the direction below: keying on "the evidence files changed
+after the decision" alone flagged 48 of 56 decisions on `main`, because cited
+code changes in a project under work. Measuring how much changed, with hubs
+and the decision's own landing left out, flags 6, each worth a look. On this
+store the audit goes from 21 warnings (17 of them age) to 10. The eval is the
+`staleness` suite with `audit_flags` / `audit_quiet` critical cases; the
+decision record is in project memory.
+
+The original finding, for the record:
 
 **Found.** On this store, 17 of the 21 audit warnings were of one kind: an
 active decision "is N days old with no update — is this still true?". A

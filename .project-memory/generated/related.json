@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "3639cbfd3cf7",
+ "inputs_hash": "b40f1406c774",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -223,9 +223,9 @@
    "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction"
   ],
   "dec_20260927_transports-reach-the-store-through-breadcrumbs-service": [
+   "dec_20261003_code-moves-out-of-cli-py-by-mechanical-ast-move-into",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
-   "dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas"
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
   ],
   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest": [
    "dec_20260922_usage-telemetry-counts-surfacings-at-the-call-sites",
@@ -282,10 +282,20 @@
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author"
   ],
+  "dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence": [
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+  ],
+  "dec_20261003_code-moves-out-of-cli-py-by-mechanical-ast-move-into": [
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas",
+   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
+  ],
   "dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas": [
    "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+   "dec_20261003_code-moves-out-of-cli-py-by-mechanical-ast-move-into"
   ],
   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps": [
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
@@ -300,7 +310,7 @@
   "q_which-items-in-docs-reviews-2026-10-02-deferred-0751cc": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input",
-   "dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas"
+   "dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence"
   ],
   "trap_a-bare-n-in-a-commit-message-links-an-issue-but-never": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
