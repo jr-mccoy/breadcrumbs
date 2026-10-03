@@ -360,6 +360,125 @@ class _StoreCase(unittest.TestCase):
         return {m["id"] for m in result["matches"]}
 
 
+class GeneratedFilesAreMemoryTests(_StoreCase):
+    """Item 3: a record citing a generated index points at memory."""
+
+    def test_crumb_commands_do_not_pair_with_their_generated_files(self):
+        for action in ("crumb migrate", "crumb reindex", "crumb note trap 'x' --slug y"):
+            with self.subTest(action=action):
+                self.assertNotIn(ID_429, self.cited(self.guard(action)))
+
+    def test_the_429_attempt_is_still_found_when_the_action_is_about_it(self):
+        result = self.guard("re-run ./gradlew assembleDebug against Maven Central after HTTP 429")
+        self.assertIn(ID_429, self.cited(result))
+
+    def test_a_trap_whose_area_is_a_generated_file_still_matches_its_edit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(Path(tmp) / "repo")
+            quiet(["init", "--project", str(root)])
+            quiet(
+                [
+                    "note",
+                    "trap",
+                    "known-traps.md is generated; a hand edit is lost on the next reindex",
+                    "--slug",
+                    "hand-edited-known-traps",
+                    "--area",
+                    ".project-memory/known-traps.md",
+                    "--project",
+                    str(root),
+                ]
+            )
+            result = scoring.guard(
+                root / ".project-memory",
+                root,
+                "edit .project-memory/known-traps.md: tidy",
+                files=[".project-memory/known-traps.md"],
+            )
+            self.assertIn("trap_hand-edited-known-traps", {m["id"] for m in result["matches"]})
+
+
+class NamedPathObjectsTests(_StoreCase):
+    """Item 4: a path the action names and the record cites makes it topical."""
+
+    padded = True
+
+    def test_the_from_cache_attempt_objects_to_deleting_its_directory(self):
+        result = self.guard("rm -rf app/build/test-results")
+        self.assertEqual(self.stance(result, ID_FROM_CACHE), "blocking")
+
+    def test_a_trailing_slash_is_the_same_path(self):
+        from breadcrumbs import textmatch
+
+        self.assertTrue(
+            textmatch._norm_files(["app/build/test-results/"])
+            & textmatch._norm_files(["app/build/test-results"])
+        )
+
+    def test_a_path_cited_only_in_prose_counts_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(Path(tmp) / "repo")
+            quiet(["init", "--project", str(root)])
+            quiet(
+                [
+                    "remember",
+                    "attempt",
+                    "--title",
+                    "Second full-suite run came back FROM-CACHE",
+                    "--set",
+                    "Tried",
+                    "rm -rf app/build/test-results/ and ran the suite again",
+                    "--set",
+                    "Do Not Retry Unless",
+                    "you also pass --rerun-tasks",
+                    "--tags",
+                    "gradle",
+                    "--confidence",
+                    "low",
+                    "--project",
+                    str(root),
+                ]
+            )
+            result = scoring.guard(root / ".project-memory", root, "rm -rf app/build/test-results")
+            self.assertEqual([m["stance"] for m in result["matches"]], ["blocking"])
+
+
+class ObjectionsNeedTheActionTests(_StoreCase):
+    """Item 5: a tag plus a few shared words is a match, not an objection."""
+
+    TIMING = (
+        "for i in 1 2 3; do time ~/.local/share/uv/tools/crumb-kit/Scripts/python.exe -c pass; "
+        "time crumb --version; time bash -c 'exit 0'; done"
+    )
+    UV = 'uv tool install --force --refresh-package crumb-kit --python 3.13 "crumb-kit[mcp]>=0.6.0"'
+
+    def test_the_tooling_attempts_do_not_object_to_unrelated_commands(self):
+        for action in (self.TIMING, self.UV):
+            with self.subTest(action=action[:30]):
+                result = self.guard(action)
+                for rid in (ID_EOL, ID_REMOTE):
+                    self.assertNotEqual(self.stance(result, rid), "blocking")
+                self.assertNotIn(result["verdict"], ("PAUSE", "ASK_HUMAN"))
+
+    def test_a_room_builder_edit_shows_no_blocking_record(self):
+        result = self.guard("add fallbackToDestructiveMigration() to the Room database builder")
+        self.assertEqual([m["id"] for m in result["matches"] if m["stance"] == "blocking"], [])
+
+    def test_objections_about_the_action_still_object(self):
+        cases = {
+            "./gradlew --stop": "att_20260720_ran-gradlew-stop-on-a-stoprequested-daemon-that-was-a-live",
+            "rm -rf app/build/test-results": "att_20260709_deleted-app-build-test-results-to-clear-stale-reports",
+            "retry the Gradle download from Maven Central on a cold web container": ID_429,
+        }
+        for action, rid in cases.items():
+            with self.subTest(action=action):
+                self.assertEqual(self.stance(self.guard(action), rid), "blocking")
+
+
+class PaddedObjectionsTests(ObjectionsNeedTheActionTests):
+    padded = True
+
+
 class PackageInstallForceTests(unittest.TestCase):
     """N1: `--force` on a package install reinstalls; it destroys nothing."""
 

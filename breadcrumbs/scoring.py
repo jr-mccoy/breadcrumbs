@@ -457,6 +457,30 @@ def _attempt_has_do_not_retry(rec: cli.Record) -> bool:
 _MD_HEADING_LINE_RE = re.compile(r"(?m)^#{1,6}\s.*$")
 
 
+# crumb's generated files inside the store: rebuilt from the records, so a
+# record citing one is citing memory. Store-relative.
+GENERATED_STORE_FILES = ("known-traps.md", "open-questions.md")
+GENERATED_STORE_DIRS = ("generated/", "index/")
+
+
+def _is_generated(path: str) -> bool:
+    """Is `path` (as a record cites it) one of crumb's generated store files?
+
+    `known-traps.md` and `open-questions.md` count bare too: those names are
+    crumb's. `generated/` and `index/` count only inside the store, because a
+    project has its own (`app/build/generated/`).
+    """
+    p = path_policy.to_posix(str(path or "").strip().strip("`"))
+    while p.startswith("./"):
+        p = p[2:]
+    store = cli.MEMORY_DIRNAME + "/"
+    inside = p.startswith(store) or f"/{store}" in p
+    rel = p.split(store, 1)[1] if inside else p
+    if rel in GENERATED_STORE_FILES:
+        return True
+    return inside and rel.startswith(GENERATED_STORE_DIRS)
+
+
 def _item_from_record(rec: cli.Record) -> dict:
     # Body-mined paths minus the ones that are really *commands*. A record whose
     # evidence is `--evidence command "./gradlew test"` or `--evidence test
@@ -466,7 +490,7 @@ def _item_from_record(rec: cli.Record) -> dict:
     # command. Curated `--evidence file/path` refs are unaffected; this only
     # removes paths that the record itself already labelled as a command.
     cmd_paths = _textmatch._paths_from_text(" ".join(cli._evidence_refs(rec, ("command", "test"))))
-    mined = _textmatch._paths_from_text(rec.body) - cmd_paths
+    mined = {p for p in _textmatch._paths_from_text(rec.body) - cmd_paths if not _is_generated(p)}
     # Two tiers, not one (G1). `--evidence file …` is the author *declaring*
     # which files this record is about; a path mined out of its prose is a
     # mention, and the two were scored, displayed and reasoned about
@@ -474,7 +498,13 @@ def _item_from_record(rec: cli.Record) -> dict:
     # get a weaker one and say so, so an agent reading `same file(s)` can still
     # trust it. A trap author knows which files their trap concerns — asking
     # beats any extractor.
-    files = _textmatch._norm_files(set(cli._evidence_refs(rec, ("file", "path"))))
+    # A record citing crumb's generated indexes (`known-traps.md`, …) points at
+    # memory, where it was written up, not at a subject (DoWhat retest of 0.6.0,
+    # item 3): `crumb migrate` rewrites known-traps.md and was paired with a
+    # Gradle attempt that cited it. A trap's declared area is not affected.
+    files = _textmatch._norm_files(
+        {p for p in cli._evidence_refs(rec, ("file", "path")) if not _is_generated(p)}
+    )
     mentioned = _textmatch._norm_files(mined) - files
     tags = {str(t).lower() for t in (rec.meta.get("tags") or [])}
     # Section headings are the template, not the record: "## Why It Failed /
@@ -924,18 +954,34 @@ def _score_item(
     # plus one common word is what a store says about everything. In a store
     # too small to have common words, these are the rules they always were.
     kw_beyond_tags = len(rare_kw - matched_tag_stems)
+    rare_title = title_overlap - matched_tag_stems - common
+    # A path the action names and the record cites, in its evidence or its
+    # prose, is about this action whatever the words around it (DoWhat retest
+    # of 0.6.0, item 4).
     topical = bool(
         matched_files
-        or (title_overlap - matched_tag_stems - common)
+        or matched_mentions
+        or rare_title
         or matched_writes
         or (rare_tag_stems and kw_beyond_tags >= 1)
         or (len(matched_tag_stems) >= 2 and rare_tag_stems)
         or (matched_tag_stems and kw_beyond_tags >= 2)
         or kw_beyond_tags >= GUARD_TOPICAL_KEYWORDS
     )
+    # An objection needs more than being on topic (item 5): a file the action
+    # names or writes, or two rare words of the record's *title* (what was
+    # attempted) beyond its tags. A tag plus a few words from the body, or one
+    # title word, is a match that may be read first, never a "do not retry"
+    # for this action: two tooling attempts PAUSEd `uv tool install` and a
+    # timing loop on `tool`, `python` and `script`. Naming the exact command
+    # is an objection too (`_with_command_signal`).
+    objects = bool(matched_files or matched_mentions or matched_writes or len(rare_title) >= 2)
     if item["do_not_retry"] and do_not_retry_boost and topical:
+        # Still ranked as the failed attempt it is (the prompt hook finds it
+        # by this), but only an objection carries the signal that blocks.
         score += GUARD_W_DO_NOT_RETRY
-        signals.append("do-not-retry")
+        if objects:
+            signals.append("do-not-retry")
     if item["kind"] == "question" and item["status"] == "open":
         score += GUARD_W_OPEN_BLOCKER
         signals.append("open-blocker")

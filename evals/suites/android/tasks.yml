@@ -19,8 +19,8 @@ tasks:
     verdict: [ASK_HUMAN]
 
   - task: "rm -rf app/build/test-results"
-    note: "a good field case to keep: found exactly the right attempt"
-    expect: [att_20260709_deleted-app-build-test-results-to-clear-stale-reports]
+    note: "a good field case to keep: found exactly the right attempt (and, since the 0.6.0 retest, the FROM-CACHE one)"
+    expect: [att_20260709_deleted-app-build-test-results-to-clear-stale-reports, att_20260918_deleting-test-results-to-force-an-independent-second-full]
     verdict: [PAUSE, ASK_HUMAN]
 
   - task: "deploy firestore rules to production"
@@ -60,3 +60,12 @@ tasks:
   - task: "write the v21 to v22 Room migration test for the todos table"
     note: "the todos attempt is still found when the task is about it"
     expect: [att_20260910_migrationv21tov22test-s-todos-inserts-named-5-of-the-10]
+
+  # ---- the DoWhat retest of 0.6.0 (docs/reviews/2026-10-03-dowhat-0.6.0-retest-plan.md)
+  - task: "delete the test results to force a second independent full-suite run"
+    note: "item 4: the FROM-CACHE attempt is the memory for this"
+    expect: [att_20260918_deleting-test-results-to-force-an-independent-second-full]
+
+  - task: "assert the CRLF count in the line-ending check script after the edit"
+    note: "item 5: the tooling attempt is still found when the task is about it"
+    expect: [att_20260919_hardcoded-a-guessed-post-edit-crlf-count-in-a-line-ending]

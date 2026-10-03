@@ -7,6 +7,7 @@
 #   guard_not          scoring.guard(task, files) must not return any `verdict_not`
 #   guard_cites_none   scoring.guard(task, files) must cite none of the `forbid` ids
 #   guard_no_blocking  scoring.guard(task, files) must show no match as blocking
+#   guard_objects      scoring.guard(task, files) must cite every `require` id as blocking
 #   hook_guard_warns   `crumb hook guard` on the task must deliver a warning
 #   never_delivered    no `forbid` id is delivered as an entry (`via`: prompt, packet)
 #   delivered          every `require` id is delivered (`via`, default prompt)
@@ -288,6 +289,66 @@ cases:
     task: "cd app && grep -r Foo . 2>/dev/null | head"
     verdict_not: [READ_FIRST, PAUSE, ASK_HUMAN]
     note: "protect list"
+
+  # ---- the DoWhat retest of 0.6.0 (docs/reviews/2026-10-03-dowhat-0.6.0-retest-plan.md)
+  - id: android-migrate-skips-a-record-citing-known-traps
+    suite: android
+    check: guard_cites_none
+    task: "crumb migrate"
+    forbid: [att_20260912_retrying-gradle-against-maven-central-on-a-cold-web]
+    note: "item 3: the 429 attempt cites known-traps.md, where it was written up; migrate rewrites that index"
+
+  - id: android-reindex-skips-a-record-citing-known-traps
+    suite: android
+    check: guard_cites_none
+    task: "crumb reindex"
+    forbid: [att_20260912_retrying-gradle-against-maven-central-on-a-cold-web]
+
+  - id: android-from-cache-attempt-objects-to-its-rm
+    suite: android
+    check: guard_objects
+    task: "rm -rf app/build/test-results"
+    require: [att_20260918_deleting-test-results-to-force-an-independent-second-full, att_20260709_deleted-app-build-test-results-to-clear-stale-reports]
+    note: "item 4: the record cites app/build/test-results/ (trailing slash) and has a do-not-retry line"
+
+  - id: android-gradlew-stop-attempt-objects
+    suite: android
+    check: guard_objects
+    task: "./gradlew --stop"
+    require: [att_20260720_ran-gradlew-stop-on-a-stoprequested-daemon-that-was-a-live]
+    note: "protect list"
+
+  - id: android-uv-install-is-not-paused-by-tooling-attempts
+    suite: android
+    check: guard_no_blocking
+    task: "uv tool install --force --refresh-package crumb-kit --python 3.13 \"crumb-kit[mcp]>=0.6.0\""
+    note: "item 5: two tooling attempts objected on the tag `tooling` (from `uv tool`) and two body words"
+
+  - id: android-timing-loop-is-not-paused-by-tooling-attempts
+    suite: android
+    check: guard_no_blocking
+    task: "for i in 1 2 3; do time ~/.local/share/uv/tools/crumb-kit/Scripts/python.exe -c pass; time crumb --version; time bash -c 'exit 0'; done"
+    note: "item 5: PAUSE on a command that only timed the interpreter, crumb and bash"
+
+  - id: android-room-builder-edit-shows-nothing-blocking
+    suite: android
+    check: guard_no_blocking
+    task: "add fallbackToDestructiveMigration() to the Room database builder"
+    note: "protect list: READ_FIRST with no blocking record (the Room migration-test attempt shares only Room and database)"
+
+  - id: android-temp-cleanup-does-not-ask
+    suite: android
+    check: guard_not
+    task: "cp .project-memory/handoff.md \"$TEMP/handoff.before\" && crumb capture session --next \"retest done\" && diff \"$TEMP/handoff.before\" .project-memory/handoff.md; rm -f \"$TEMP/handoff.before\""
+    verdict_not: [ASK_HUMAN]
+    note: "item 6: deleting the scratch copy the same command made is cleanup"
+
+  - id: android-heredoc-loop-does-not-ask
+    suite: android
+    check: guard_not
+    task: "while read a; do crumb guard \"$a\" --json | head -3; done <<'EOS'\ncrumb migrate\ngit push --force origin main\n.project-memory/known-traps.md\nEOS"
+    verdict_not: [PAUSE, ASK_HUMAN]
+    note: "item 7: the heredoc's `git push --force` line made the loop destructive"
 
   # ---- decision staleness: keyed on evidence, not age (health review 1.1) ----
   - id: audit-questions-a-rewritten-evidence-file

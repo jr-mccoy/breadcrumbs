@@ -54,8 +54,9 @@ These are pass/fail assertions, each run against a suite's store:
 
 - a recorded hazard does not get `PROCEED` (`guard_not`), and the guard hook
   warns (`hook_guard_warns`);
-- guard cites none of a list of unrelated records (`guard_cites_none`), or
-  shows nothing as blocking (`guard_no_blocking`);
+- guard cites none of a list of unrelated records (`guard_cites_none`),
+  shows nothing as blocking (`guard_no_blocking`), or shows every record
+  that should object to the action as blocking (`guard_objects`);
 - a superseded, retired or speculative record is never delivered
   (`never_delivered`);
 - a relevant record is delivered (`delivered`);
@@ -130,7 +131,9 @@ Each directory under `suites/` is one store:
   `split: holdout` or `split: checks`, and `tasks`. A `checks` suite has no
   tasks: it backs critical cases only and is left out of every scope. Each task has `task`, and optionally `expect`,
   `reject`, `verdict`, `files` and `note`. The file is a strict YAML subset:
-  one-line values and one-line `[a, b]` lists.
+  one-line values and one-line `[a, b]` lists. A double-quoted value takes
+  three escapes, `\n`, `\"` and `\\`, so a task can be a multi-line command
+  (a here-document); a single-quoted one is taken as written.
 
 Stores are built in a temporary directory on every run.
 
@@ -139,6 +142,7 @@ Stores are built in a temporary directory on every run.
 | `webapp`      | dev     | TypeScript app, Playwright, npm         | the 0.2.0 field-review cases (screenshot trap vs a `json.load` script; `git status` vs `npm test`), a superseded decision, an expired verification |
 | `service`     | dev     | Python backend: auth, Postgres, Celery  | store aliases (`pg` → `database`), stale and superseded decisions, an answered question, the fixture 2/3 guard pair |
 | `library`     | dev     | pure-Python CLI on PyPI                 | one-word actions (`upgrade ruff`), release records that disagree on one area, an idea that must never surface |
+| `android`     | dev     | Kotlin app, Gradle, Room, Robolectric   | the DoWhat field report and its 0.5.0 and 0.6.0 retests: do-not-retry attempts sharing one tag, crumb's own commands, heredocs, scratch-file cleanup |
 | `holdout-ops` | holdout | Terraform, Kubernetes, a deploy workflow | destructive infra commands, a superseded secrets decision, an idea, controls |
 | `staleness`   | checks  | a small app with a git history          | decision staleness in `audit`: evidence rewritten, changed, deleted; a decision against a do-not-retry attempt; a very old decision; an old untouched one and a decision's own landing, which stay quiet |
 
