@@ -293,3 +293,177 @@ class HookImportTests(unittest.TestCase):
             ).stdout
             loaded = set(json.loads(out.splitlines()[-1]))
             self.assertEqual(sorted(loaded & set(HOOK_UNNEEDED)), [])
+
+
+# --------------------------------------------------------------------------- #
+# Items 3-7: guard precision, on the android eval store (which holds the
+# report's records) and on a copy padded until `results`, `tooling` and
+# `migration` are common words, as they are in the 402-record DoWhat store.
+# --------------------------------------------------------------------------- #
+
+sys.path.insert(0, str(REPO_ROOT / "evals"))
+import run as _evals  # noqa: E402
+
+from breadcrumbs import scoring  # noqa: E402
+from breadcrumbs import shellcmd  # noqa: E402
+
+ANDROID = REPO_ROOT / "evals" / "suites" / "android"
+ID_429 = "att_20260912_retrying-gradle-against-maven-central-on-a-cold-web"
+ID_FROM_CACHE = "att_20260918_deleting-test-results-to-force-an-independent-second-full"
+ID_EOL = "att_20260919_hardcoded-a-guessed-post-edit-crlf-count-in-a-line-ending"
+ID_REMOTE = "att_20260920_firebase-remoteconfig-get-output-writes-a-file-named"
+ID_TODOS = "att_20260910_migrationv21tov22test-s-todos-inserts-named-5-of-the-10"
+ID_ROOM_TEST = "att_20260705_ran-the-room-migration-test-against-an-in-memory-database"
+
+PADDING_WORDS = "results tooling migration version install python script output check".split()
+
+
+def _padding(n: int = 40) -> str:
+    out = []
+    for i in range(n):
+        a, b = PADDING_WORDS[i % 9], PADDING_WORDS[(i + 3) % 9]
+        tag = ("tooling", "migration", "ci")[i % 3]
+        out.append(
+            f'@2026-08-{1 + i % 28:02d} remember decision --title "Module{i} {a} and {b} stay local"\n'
+            f'  --set Decision "Module{i} keeps its {a} and {b} results beside the module."\n'
+            f"  --evidence file mod{i}/Thing{i}.kt --tags {tag},mod{i} --allow-duplicate\n"
+        )
+    return "\n".join(out)
+
+
+class _StoreCase(unittest.TestCase):
+    padded = False
+
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        suite = Path(cls._tmp.name) / "suite"
+        suite.mkdir()
+        text = (ANDROID / "store.crumb").read_text("utf-8")
+        if cls.padded:
+            text += "\n" + _padding()
+        (suite / "store.crumb").write_text(text, "utf-8")
+        cls.root = Path(cls._tmp.name) / "project"
+        cls.memory = _evals.build_store(suite, cls.root)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def guard(self, action: str, files: list[str] | None = None) -> dict:
+        return scoring.guard(self.memory, self.root, action, files=files)
+
+    def stance(self, result: dict, rid: str) -> str | None:
+        return next((m["stance"] for m in result["matches"] if m["id"] == rid), None)
+
+    def cited(self, result: dict) -> set[str]:
+        return {m["id"] for m in result["matches"]}
+
+
+class PackageInstallForceTests(unittest.TestCase):
+    """N1: `--force` on a package install reinstalls; it destroys nothing."""
+
+    def test_a_forced_install_is_not_destructive(self):
+        for command in (
+            'uv tool install --force --refresh-package crumb-kit "crumb-kit[mcp]>=0.6.0"',
+            "pip install --force-reinstall crumb-kit",
+            "npm install --force",
+        ):
+            with self.subTest(command=command):
+                self.assertFalse(scoring._is_destructive(command, []))
+
+    def test_force_elsewhere_still_is(self):
+        for command in (
+            "git push --force origin feature",
+            "uv tool install x && git push --force origin feature",
+            "git clean -fdx",
+        ):
+            with self.subTest(command=command):
+                self.assertTrue(scoring._is_destructive(command, []))
+
+
+class CrumbBehindAShellKeywordTests(unittest.TestCase):
+    """Item 5b: `do crumb …`, `time crumb …` are crumb commands."""
+
+    def test_keyword_and_prefix_forms_are_recognised(self):
+        for command in (
+            'while read a; do crumb guard "$a"; done',
+            "time crumb --version",
+            "if true; then crumb reindex; fi",
+            "! crumb validate",
+        ):
+            with self.subTest(command=command):
+                self.assertNotIn("crumb", shellcmd.without_crumb(command).split())
+
+    def test_a_loop_body_is_still_read(self):
+        self.assertEqual(
+            shellcmd.high_impact("for b in x; do git push --force origin main; done"),
+            "force-push to main",
+        )
+
+
+class TempFileDeletionTests(_StoreCase):
+    """Item 6: deleting a scratch file is not a deletion."""
+
+    REPORT = (
+        'cp .project-memory/handoff.md "$TEMP/handoff.before" && crumb capture session '
+        '--next "retest done" && diff "$TEMP/handoff.before" .project-memory/handoff.md; '
+        'rm -f "$TEMP/handoff.before"'
+    )
+
+    def test_the_report_command_does_not_ask(self):
+        self.assertNotEqual(self.guard(self.REPORT)["verdict"], "ASK_HUMAN")
+
+    def test_scratch_deletions_are_routine(self):
+        for command in (
+            'rm -f "$TEMP/handoff.before"',
+            "rm -f /tmp/out.json",
+            'rm -f "${TMPDIR:-/tmp}/x"',
+            'rm -f "%TEMP%\\x.txt"',
+            "rm -rf $TMPDIR/scratch",
+            "rm -f /c/Users/me/AppData/Local/Temp/x.txt",
+            "cp a.txt backup.txt && diff a.txt backup.txt; rm -f backup.txt",
+            "git diff > patch.txt; rm patch.txt",
+        ):
+            with self.subTest(command=command):
+                self.assertNotIn("deletion", scoring.classify_action(command)[1])
+                self.assertFalse(
+                    scoring._is_destructive(command, scoring.classify_action(command)[1])
+                )
+
+    def test_real_deletions_still_count(self):
+        for command in ("rm -f src/main.kt", "rm -rf src", "rm -f backup.txt", "rm -rf ~/tmp-not"):
+            with self.subTest(command=command):
+                self.assertIn("deletion", scoring.classify_action(command)[1])
+        self.assertEqual(shellcmd.high_impact("rm -rf app/src"), "rm -rf app/src")
+
+
+class HeredocDataTests(_StoreCase):
+    """Item 7: a heredoc fed to `while read`, `cat >` or `python -` is data."""
+
+    LOOP = (
+        "while read a; do crumb guard \"$a\" --json | head -3; done <<'EOS'\n"
+        "crumb migrate\ngit push --force origin main\n.project-memory/known-traps.md\nEOS"
+    )
+
+    def test_the_report_loop_does_not_ask(self):
+        result = self.guard(self.LOOP)
+        self.assertNotEqual(result["verdict"], "ASK_HUMAN")
+        self.assertFalse(result["destructive"])
+
+    def test_data_heredocs_are_not_destructive(self):
+        for command in (
+            "cat > notes.md <<'EOF'\nnever git push --force origin main\nEOF",
+            "python - <<'PY'\nprint('rm -rf build')\nPY",
+        ):
+            with self.subTest(command=command[:20]):
+                self.assertFalse(scoring._is_destructive(command, []))
+
+    def test_a_heredoc_fed_to_a_shell_is_code(self):
+        for command in (
+            "bash <<'EOF'\ngit push --force origin main\nEOF",
+            "ssh host <<EOF\nrm -rf /srv/app\nEOF",
+            "psql prod <<'SQL'\nDROP TABLE users;\nSQL",
+        ):
+            with self.subTest(command=command[:20]):
+                self.assertTrue(scoring._is_destructive(command, []))

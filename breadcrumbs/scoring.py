@@ -194,7 +194,11 @@ def _is_destructive(action: str, classes: list[str]) -> bool:
     action, and making it depend on how much of the repo the store cites is the
     conflation this exists to undo.
     """
-    return bool(_DESTRUCTIVE_OP_RE.search(action or "")) or bool(
+    # Not the raw text (DoWhat retest of 0.6.0, items 6-7): a heredoc fed to
+    # `while read` held `git push --force origin main` as a line of data, and
+    # made a loop of `crumb guard` calls ASK_HUMAN. Data heredoc bodies and
+    # scratch-file deletions are left out; quoted text and code heredocs stay.
+    return bool(_DESTRUCTIVE_OP_RE.search(_shellcmd.destructive_text(action or ""))) or bool(
         GUARD_HIGH_IMPACT_CLASSES & set(classes or ())
     )
 
@@ -415,7 +419,12 @@ def classify_action(action: str) -> tuple[str, list[str]]:
             text = _shellcmd.classification_text(action or "")
         else:
             other: list[str] = []
-            for seg in segs:
+            # Deleting a scratch file is cleanup, not a deletion (DoWhat retest
+            # of 0.6.0, item 6): `rm -f "$TEMP/handoff.before"` asked a human.
+            scratch = _shellcmd.scratch_deletions(segs)
+            for seg, cleanup in zip(segs, scratch):
+                if cleanup:
+                    continue
                 args = _shellcmd.crumb_invocation(_shellcmd.words(seg))
                 if args is not None:
                     effect = _shellcmd.crumb_effect(args)
