@@ -26,8 +26,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
-from breadcrumbs import cli as _cli  # noqa: E402
+from breadcrumbs import git as _git  # noqa: E402
 from breadcrumbs import shellcmd  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -132,11 +133,11 @@ class ReadOnlyTests(unittest.TestCase):
     ]
 
     def test_read_only(self):
-        wrong = [c for c in self.READ_ONLY if not _cli._is_read_only_action(c)]
+        wrong = [c for c in self.READ_ONLY if not _scoring._is_read_only_action(c)]
         self.assertEqual(wrong, [])
 
     def test_not_read_only(self):
-        wrong = [c for c in self.NOT_READ_ONLY if _cli._is_read_only_action(c)]
+        wrong = [c for c in self.NOT_READ_ONLY if _scoring._is_read_only_action(c)]
         self.assertEqual(wrong, [])
 
     def test_a_piped_destructive_command_is_high_impact(self):
@@ -151,7 +152,7 @@ class ClassificationTests(unittest.TestCase):
 
     def test_quoted_text_is_not_what_a_command_does(self):
         self.assertEqual(
-            _cli.classify_action('git commit -m "deploy the release to production"')[0],
+            _scoring.classify_action('git commit -m "deploy the release to production"')[0],
             "routine_edit",
         )
 
@@ -164,14 +165,37 @@ class ClassificationTests(unittest.TestCase):
             "python crumb.py --version",
         ):
             with self.subTest(cmd):
-                self.assertEqual(_cli.classify_action(cmd), ("routine_edit", ["routine_edit"]))
-        self.assertEqual(_cli.classify_action("crumb migrate")[0], "migration")
+                self.assertEqual(_scoring.classify_action(cmd), ("routine_edit", ["routine_edit"]))
+        self.assertEqual(_scoring.classify_action("crumb migrate")[0], "migration")
 
     def test_an_edit_is_classified_by_its_path_not_its_content(self):
         self.assertEqual(
-            _cli.classify_action("edit notes/todo.md: bump the schema version before release")[0],
+            _scoring.classify_action("edit notes/todo.md: bump the schema version before release")[
+                0
+            ],
             "routine_edit",
         )
+
+
+class MatchTokensTests(unittest.TestCase):
+    """`shellcmd.match_tokens`: the loose tokens guard matches a trap's prose
+    title and an action with, folded the same way on both sides."""
+
+    def test_an_action_and_a_prose_title_fold_alike(self):
+        self.assertEqual(
+            shellcmd.match_tokens("cd app && ./gradlew --stop 2>&1 | head -5"),
+            ["gradlew", "--stop"],
+        )
+        self.assertEqual(
+            shellcmd.match_tokens("Gradlew --stop kills the daemon."),
+            ["gradlew", "--stop", "kills", "the", "daemon"],
+        )
+
+    def test_it_is_not_the_exact_parser(self):
+        # `words` keeps a quoted argument whole; matching splits it.
+        cmd = 'git commit -m "Fix: the build"'
+        self.assertEqual(shellcmd.words(cmd), ["git", "commit", "-m", "Fix: the build"])
+        self.assertEqual(shellcmd.match_tokens(cmd), ["git", "commit", "-m", "fix", "the", "build"])
 
 
 class StoreCase(unittest.TestCase):
@@ -252,7 +276,7 @@ class RankingTests(StoreCase):
         s = {m["id"]: m["score"] for m in short["matches"]}
         lg = {m["id"]: m["score"] for m in long["matches"]}
         for rid, score in lg.items():
-            self.assertLessEqual(score, s.get(rid, 0) + _cli.GUARD_KEYWORD_CAP)
+            self.assertLessEqual(score, s.get(rid, 0) + _scoring.GUARD_KEYWORD_CAP)
 
     def test_high_impact_with_no_memory_asks_and_cites_nothing(self):
         res = self.guard("git push --force origin main")
@@ -452,7 +476,7 @@ class SpeedTests(unittest.TestCase):
             (root / f"s{i}.txt").write_text("x\n")
             git(root, "add", f"s{i}.txt")
             git(root, "commit", "-qm", f"side {i}")
-            shas.append(crumb.git_commit(root))
+            shas.append(_git.short_head(root))
         git(root, "checkout", "-q", base)
         for i, sha in enumerate(shas):
             run(
@@ -475,7 +499,7 @@ class SpeedTests(unittest.TestCase):
             )
             rec = sorted((mem / "decisions").glob("*.md"))[-1]
             text = rec.read_text()
-            rec.write_text(text.replace(f"commit: {crumb.git_commit(root)}", f"commit: {sha}"))
+            rec.write_text(text.replace(f"commit: {_git.short_head(root)}", f"commit: {sha}"))
         return root, mem
 
     def test_git_spawns_do_not_grow_with_unmerged_record_commits(self):

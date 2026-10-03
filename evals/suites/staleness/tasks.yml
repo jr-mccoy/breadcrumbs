@@ -1,0 +1,4 @@
+# No scored tasks: this suite exists for its critical cases (`split: checks`).
+as_of: 2026-02-05
+split: checks
+tasks:

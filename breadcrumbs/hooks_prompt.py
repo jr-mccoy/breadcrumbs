@@ -26,6 +26,7 @@ import re
 from pathlib import Path
 
 from breadcrumbs import cli, hooklog, hooks_common
+from breadcrumbs import packet as _packet
 
 # Before audit WP10, any prompt under this many characters was treated as an
 # acknowledgement, so `npm test` or `quasar` was never answered. Acknowledgement
@@ -133,7 +134,7 @@ def render_emitted(matches: list[dict]) -> tuple[str, list[str]]:
             for m in kept
         ]
         text = "\n".join([_HEADER, *lines, "", _FOOTER])
-        if cli.approx_tokens(text) <= PROMPT_HOOK_TOKEN_BUDGET:
+        if _packet.approx_tokens(text) <= PROMPT_HOOK_TOKEN_BUDGET:
             return text, [m["id"] for m in kept]
         kept.pop()
     return "", []

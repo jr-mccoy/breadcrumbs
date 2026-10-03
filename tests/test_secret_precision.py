@@ -31,6 +31,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import mcp_core  # noqa: E402
+from breadcrumbs import secretscan as _secretscan  # noqa: E402
 
 FIXTURES = REPO_ROOT / "fixtures"
 
@@ -62,13 +63,13 @@ class PushIdTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             write_trap(mem, PUSH_ID_LINE)
-            self.assertEqual(_cli.scan_secrets(mem), [])
+            self.assertEqual(_secretscan.scan_secrets(mem), [])
 
     def test_a_real_random_blob_is_still_caught(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             write_trap(mem, REAL_BLOB_LINE)
-            patterns = {h["pattern"] for h in _cli.scan_secrets(mem)}
+            patterns = {h["pattern"] for h in _secretscan.scan_secrets(mem)}
             self.assertIn("high-entropy-string", patterns)
 
     def test_the_canonical_leak_fixture_still_fails(self):
@@ -119,25 +120,25 @@ class CrumbignoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
             write_trap(mem, REAL_BLOB_LINE)
-            self.assertTrue(_cli.scan_secrets(mem))
-            (mem / _cli.CRUMBIGNORE_FILENAME).write_text(
+            self.assertTrue(_secretscan.scan_secrets(mem))
+            (mem / _secretscan.CRUMBIGNORE_FILENAME).write_text(
                 "# base64 in this trap is a fixture, not a credential\nleaked dGhpc2lz\n",
                 encoding="utf-8",
             )
-            self.assertEqual(_cli.scan_secrets(mem), [])
+            self.assertEqual(_secretscan.scan_secrets(mem), [])
 
     def test_an_uncompilable_pattern_is_taken_literally(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            (mem / _cli.CRUMBIGNORE_FILENAME).write_text("a[b\n", encoding="utf-8")
-            patterns = _cli.load_crumbignore(mem)
+            (mem / _secretscan.CRUMBIGNORE_FILENAME).write_text("a[b\n", encoding="utf-8")
+            patterns = _secretscan.load_crumbignore(mem)
             self.assertEqual(len(patterns), 1)
             self.assertTrue(patterns[0].search("xxa[bxx"))
 
     def test_no_crumbignore_is_not_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem = init_store(tmp)
-            self.assertEqual(_cli.load_crumbignore(mem), [])
+            self.assertEqual(_secretscan.load_crumbignore(mem), [])
 
 
 class DirtyFilesTests(unittest.TestCase):

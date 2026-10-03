@@ -4,15 +4,17 @@
 # own. An aggregate equal to the baseline does not excuse a failing case, and
 # `--write-baseline` refuses to run while one fails. Checks:
 #
-#   guard_not          cli.guard(task, files) must not return any `verdict_not`
-#   guard_cites_none   cli.guard(task, files) must cite none of the `forbid` ids
-#   guard_no_blocking  cli.guard(task, files) must show no match as blocking
+#   guard_not          scoring.guard(task, files) must not return any `verdict_not`
+#   guard_cites_none   scoring.guard(task, files) must cite none of the `forbid` ids
+#   guard_no_blocking  scoring.guard(task, files) must show no match as blocking
 #   hook_guard_warns   `crumb hook guard` on the task must deliver a warning
 #   never_delivered    no `forbid` id is delivered as an entry (`via`: prompt, packet)
 #   delivered          every `require` id is delivered (`via`, default prompt)
 #   quiet              the prompt hook prints nothing for the task
 #   delivery_bounded   every delivered packet and injection in the suite is
 #                      within its declared budget, and every hook prints JSON
+#   audit_flags        `crumb audit` questions every `require` decision
+#   audit_quiet        `crumb audit` questions none of the `forbid` decisions
 #
 # `known: <finding>` marks a failure the repair program already tracks. It is
 # reported on every run, and fails `--release`. When the case passes, the
@@ -286,3 +288,46 @@ cases:
     task: "cd app && grep -r Foo . 2>/dev/null | head"
     verdict_not: [READ_FIRST, PAUSE, ASK_HUMAN]
     note: "protect list"
+
+  # ---- decision staleness: keyed on evidence, not age (health review 1.1) ----
+  - id: audit-questions-a-rewritten-evidence-file
+    suite: staleness
+    check: audit_flags
+    require: [dec_20260106_payment-amounts-round-half-even]
+    note: "src/payments.py rewritten after the decision (decision-evidence-rewritten)"
+
+  - id: audit-questions-a-changed-evidence-file
+    suite: staleness
+    check: audit_flags
+    require: [dec_20260106_exchange-rates-load-once-from-rates-toml-at-startup]
+    note: "one line added to src/rates.toml (decision-evidence-changed)"
+
+  - id: audit-questions-a-vanished-evidence-file
+    suite: staleness
+    check: audit_flags
+    require: [dec_20260106_the-legacy-export-job-keeps-its-own-module]
+    note: "src/legacy_export.py deleted (evidence-missing-file)"
+
+  - id: audit-questions-a-contradicted-decision
+    suite: staleness
+    check: audit_flags
+    require: [dec_20260125_retry-failed-webhook-deliveries-immediately-with-no-backoff]
+    note: "made after an attempt that says not to retry exactly this (possible-contradiction)"
+
+  - id: audit-questions-a-very-old-decision
+    suite: staleness
+    check: audit_flags
+    require: [dec_20250501_all-timestamps-are-stored-in-utc]
+    note: "280 days old with no file evidence and nothing else said (decision-aged)"
+
+  - id: audit-is-quiet-about-an-old-untouched-decision
+    suite: staleness
+    check: audit_quiet
+    forbid: [dec_20251201_application-logs-are-json-lines]
+    note: "66 days old, evidence untouched: the age noise this replaces"
+
+  - id: audit-is-quiet-about-a-decisions-own-landing
+    suite: staleness
+    check: audit_quiet
+    forbid: [dec_20260110_cache-entries-expire-after-one-hour]
+    note: "src/cache.py was uncommitted when the decision was written; its commit landed it"

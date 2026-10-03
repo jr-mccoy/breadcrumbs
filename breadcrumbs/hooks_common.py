@@ -581,8 +581,8 @@ def ensure_session_baseline(memory_dir: Path, session_id: str, root: Path) -> No
     from here."""
     if session_baseline(memory_dir, session_id):
         return
-    from breadcrumbs import gitrefs
+    from breadcrumbs import git
 
-    head = gitrefs.head_sha(root)
+    head = git.head(root, spawn=False)
     if head:
         set_session_baseline(memory_dir, session_id, head)

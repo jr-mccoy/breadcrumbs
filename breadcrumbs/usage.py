@@ -54,6 +54,8 @@ from typing import Iterable
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import scoring as _scoring
+from breadcrumbs import audit as _audit
 
 USAGE_FILENAME = "usage.json"
 
@@ -424,7 +426,7 @@ def never_surfaced(memory_dir: Path, *, types: tuple[str, ...] | None = None) ->
     """
     seen = set(load_usage(memory_dir)["records"])
     out: list[dict] = []
-    wanted = types or cli.JUDGING_ITEM_TYPES
+    wanted = types or _scoring.JUDGING_ITEM_TYPES
     for rec in cli.load_records(memory_dir, types=wanted):
         if rec.error or (rec.meta.get("status") or "active") != "active":
             continue
@@ -473,7 +475,7 @@ def has_usage_data(memory_dir: Path) -> bool:
 
 # A record with no surfacing in this many days of usage history, and at least
 # this old itself, is a decay candidate.
-DECAY_DAYS = cli.DECAY_DAYS_DEFAULT
+DECAY_DAYS = _audit.DECAY_DAYS_DEFAULT
 # What decays. Verifications and questions already have TTLs (WM-30); an idea or
 # a jot is not meant to be reached.
 DECAY_TYPES = ("decision", "attempt", "trap")

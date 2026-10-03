@@ -28,6 +28,9 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli  # noqa: E402  (the real module — `crumb` is a flat re-export)
+from breadcrumbs import packet as _packet  # noqa: E402
+from breadcrumbs import textmatch as _textmatch  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 FIXTURES = REPO_ROOT / "fixtures"
 
@@ -43,7 +46,7 @@ def guard_json(argv: list[str]) -> dict:
     code, out = run(argv + ["--json"])
     data = json.loads(out)
     # `crumb guard` exits with the verdict-mapped code (P0-1), never anything else.
-    assert code == cli.GUARD_VERDICT_EXIT_CODES[data["verdict"]], (code, out)
+    assert code == _scoring.GUARD_VERDICT_EXIT_CODES[data["verdict"]], (code, out)
     return data
 
 
@@ -419,17 +422,17 @@ class SpeculativeIdeaTests(unittest.TestCase):
             root = copy_fixture("fixture-12-speculative-idea", tmp)
             mem = root / crumb.MEMORY_DIRNAME
             seen = {}
-            real = cli.search
+            real = _scoring.search
 
             def spy(*a, **kw):
                 seen["include_ideas"] = kw.get("include_ideas", False)
                 return real(*a, **kw)
 
-            cli.search = spy
+            _scoring.search = spy
             try:
-                cli.guard(mem, root, self.ACTION, files=["src/auth/middleware.ts"])
+                _scoring.guard(mem, root, self.ACTION, files=["src/auth/middleware.ts"])
             finally:
-                cli.search = real
+                _scoring.search = real
             self.assertIs(seen["include_ideas"], False)
 
     def test_prefilter_index_carries_no_idea_tokens(self):
@@ -483,7 +486,7 @@ class StaleSuppressionTests(unittest.TestCase):
             mem, path = self._store(tmp)
             # raw 4 (3 keywords + active) x age factor 0.7 = 2.8, under floor 3.
             _age_record(path, days=40)
-            res = cli.guard(mem, Path(tmp), self.QUERY)
+            res = _scoring.guard(mem, Path(tmp), self.QUERY)
             self.assertEqual(res["matches"], [])  # suppressed never drives the verdict
             self.assertEqual(res["verdict"], "PROCEED")
             self.assertEqual(len(res["history"]), 1)
@@ -497,7 +500,7 @@ class StaleSuppressionTests(unittest.TestCase):
     def test_fresh_match_is_unchanged(self):
         with tempfile.TemporaryDirectory() as tmp:
             mem, _path = self._store(tmp)
-            res = cli.guard(mem, Path(tmp), self.QUERY)
+            res = _scoring.guard(mem, Path(tmp), self.QUERY)
             self.assertEqual(len(res["matches"]), 1)
             self.assertFalse(res["matches"][0]["suppressed"])
             self.assertEqual(res["history"], [])
@@ -508,7 +511,7 @@ class StaleSuppressionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             mem, path = self._store(tmp, status="superseded")
             _age_record(path, days=40)
-            res = cli.guard(mem, Path(tmp), "add nested viewpager tabs to the profile screen")
+            res = _scoring.guard(mem, Path(tmp), "add nested viewpager tabs to the profile screen")
             self.assertEqual(res["matches"], [])
             self.assertEqual(res["history"], [])
 
@@ -537,7 +540,7 @@ class TitleWeightTests(unittest.TestCase):
                 "Roles cleanup notes",
                 {"Decision": "The guest sentinel in familyrole stays internal."},
             )
-            matches, _ = cli.search(
+            matches, _ = _scoring.search(
                 mem,
                 root,
                 "remove the GUEST sentinel from FamilyRole",
@@ -568,7 +571,7 @@ class TitleWeightTests(unittest.TestCase):
                 confidence="high",
             )
             _age_record(path, days=38, branch="feature/other-branch")
-            res = cli.guard(mem, root, "remove the GUEST sentinel from FamilyRole")
+            res = _scoring.guard(mem, root, "remove the GUEST sentinel from FamilyRole")
             surfaced = res["matches"] + res["history"]
             self.assertTrue(surfaced, "the aged decision vanished again")
             self.assertIn("title", surfaced[0]["signals"])
@@ -593,7 +596,7 @@ class NextActionDisambiguationTests(unittest.TestCase):
     def test_guard_json_has_recommended_action_and_no_next_action(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
-            res = cli.guard(mem, root, "rewrite the auth middleware")
+            res = _scoring.guard(mem, root, "rewrite the auth middleware")
             self.assertIn("recommended_action", res)
             self.assertNotIn("next_action", res)
             self.assertTrue(res["recommended_action"].strip())
@@ -602,8 +605,8 @@ class NextActionDisambiguationTests(unittest.TestCase):
         """Whatever the store's state, the names stay distinguishable."""
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
-            guard_keys = set(cli.guard(mem, root, "delete the accounts table"))
-            packet_keys = set(cli.build_resume_packet(mem, root))
+            guard_keys = set(_scoring.guard(mem, root, "delete the accounts table"))
+            packet_keys = set(_packet.build_resume_packet(mem, root))
             self.assertEqual(guard_keys & {"next_action"}, set())
             self.assertEqual(packet_keys & {"recommended_action"}, set())
             self.assertIn("next_action", packet_keys)
@@ -618,13 +621,15 @@ class NextActionDisambiguationTests(unittest.TestCase):
                 "# Handoff\n\n## Current Focus\n\n_(none)_\n\n## Next Action\n\n_(none)_\n",
                 encoding="utf-8",
             )
-            self.assertEqual(cli.build_resume_packet(mem, root)["next_action"], "")
-            self.assertTrue(cli.guard(mem, root, "anything at all")["recommended_action"])
+            self.assertEqual(_packet.build_resume_packet(mem, root)["next_action"], "")
+            self.assertTrue(_scoring.guard(mem, root, "anything at all")["recommended_action"])
 
     def test_human_render_still_labels_the_recommendation(self):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._store(tmp)
-            text = crumb.render_guard_human(cli.guard(mem, root, "rewrite the auth middleware"))
+            text = crumb.render_guard_human(
+                _scoring.guard(mem, root, "rewrite the auth middleware")
+            )
             self.assertIn("Recommended next action:", text)
 
 
@@ -700,7 +705,7 @@ class CommitDistanceIndexTests(unittest.TestCase):
 
     def test_git_calls_do_not_grow_with_the_record_count(self):
         with tempfile.TemporaryDirectory() as tmp:
-            # The root the CLI resolves to. `is_git_repo` memoizes per spelling,
+            # The root the CLI resolves to. `git.is_repo` memoizes per spelling,
             # so an unresolved temp path (macOS `/var`, a Windows 8.3 name) would
             # add one probe to the first count only.
             root = self._repo(tmp).resolve()
@@ -783,13 +788,13 @@ class MorphologyMatchingTests(unittest.TestCase):
             ("queries", "query"),
             ("dependencies", "dependence"),
         ):
-            self.assertEqual(cli._stem(a), cli._stem(b), (a, b))
+            self.assertEqual(_textmatch._stem(a), _textmatch._stem(b), (a, b))
 
     def test_stem_is_idempotent(self):
         # Idempotence is load-bearing: `_prefilter_trap_hit` re-stems tokens
         # read from an older on-disk prefilter, so stem(stem(x)) must be stem(x).
         for w in ("reconciliation", "databases", "authentication", "versioning", "middleware"):
-            self.assertEqual(cli._stem(cli._stem(w)), cli._stem(w), w)
+            self.assertEqual(_textmatch._stem(_textmatch._stem(w)), _textmatch._stem(w), w)
 
     def test_aliases_fold_long_forms_to_the_typed_short_form(self):
         for long, short in (
@@ -799,7 +804,7 @@ class MorphologyMatchingTests(unittest.TestCase):
             ("databases", "db"),
             ("repositories", "repo"),
         ):
-            self.assertEqual(cli._stem(long), short, long)
+            self.assertEqual(_textmatch._stem(long), short, long)
 
     def test_paraphrased_do_not_retry_is_no_longer_invisible(self):
         # The recorded attempt says "reconciler"; the new session says
@@ -906,8 +911,8 @@ class VerdictExitCodeTests(unittest.TestCase):
             self.assertEqual(code, 0)
 
     def test_codes_are_spaced_and_never_collide_with_conventions(self):
-        codes = cli.GUARD_VERDICT_EXIT_CODES
-        self.assertEqual(set(codes), set(cli._VERDICTS))
+        codes = _scoring.GUARD_VERDICT_EXIT_CODES
+        self.assertEqual(set(codes), set(_scoring._VERDICTS))
         self.assertEqual(codes["PROCEED"], 0)
         # Never 1 (crash), 2 (usage), or >= 126 (shell/OS territory, incl. 255).
         for verdict, code in codes.items():
@@ -1030,7 +1035,7 @@ class UbiquityTests(unittest.TestCase):
             {"specific": {"gradle", "sandbox"}},
             {"specific": {"gradle"}},
         ]
-        self.assertEqual(cli._ubiquitous_stems(items), frozenset())
+        self.assertEqual(_scoring._ubiquitous_stems(items), frozenset())
 
 
 class GuardStalenessScopeTests(unittest.TestCase):
@@ -1079,12 +1084,12 @@ class GuardStalenessScopeTests(unittest.TestCase):
                 ]
             )
             mem = root / crumb.MEMORY_DIRNAME
-            full = cli.compute_staleness(root, {}, cli.active_decisions(mem), [], [], 30)
+            full = _packet.compute_staleness(root, {}, cli.active_decisions(mem), [], [], 30)
             self.assertTrue(
                 any("low-confidence" in w for w in full),
                 f"resume/audit view must keep the low-confidence warning: {full}",
             )
-            risks = cli.compute_staleness(
+            risks = _packet.compute_staleness(
                 root, {}, cli.active_decisions(mem), [], [], 30, risks_only=True
             )
             self.assertEqual(risks, [])
@@ -1222,7 +1227,9 @@ class StanceTests(unittest.TestCase):
                     str(root),
                 ]
             )
-            self.assertGreater(max(m["score"] for m in res["matches"]), cli.GUARD_PAUSE_SCORE, res)
+            self.assertGreater(
+                max(m["score"] for m in res["matches"]), _scoring.GUARD_PAUSE_SCORE, res
+            )
             self.assertEqual(res["verdict"], "READ_FIRST", res)
 
     def test_an_attempt_with_do_not_retry_still_pauses(self):
@@ -1346,7 +1353,7 @@ class RemedyIsNotBlastRadiusTests(unittest.TestCase):
             root = self._store(tmp)
             traps = cli.load_traps(Path(root) / crumb.MEMORY_DIRNAME)
             self.assertEqual(len(traps), 1)
-            files = cli._item_from_trap(traps[0])["files"]
+            files = _scoring._item_from_trap(traps[0])["files"]
             self.assertIn("app/src/ConversationDao.kt", files)
             for cure in ("./gradlew", "gradlew", "Dispatchers.IO"):
                 self.assertNotIn(cure, files, f"{cure} came from the remedy, not the hazard")
@@ -1397,7 +1404,7 @@ class RemedyIsNotBlastRadiusTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             recs = cli.load_records(Path(root) / crumb.MEMORY_DIRNAME, types=("decision",))
-            files = cli._item_from_record(recs[0])["files"]
+            files = _scoring._item_from_record(recs[0])["files"]
             self.assertIn("src/billing.py", files)
             self.assertNotIn("tests/reconcile", files)
 

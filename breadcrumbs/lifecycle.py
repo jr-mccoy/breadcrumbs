@@ -34,6 +34,11 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from breadcrumbs import checks as _checks
 from breadcrumbs import cli
+from breadcrumbs import git, path_policy
+from breadcrumbs import validation as _validation
+from breadcrumbs import textmatch as _textmatch
+from breadcrumbs import scoring as _scoring
+from breadcrumbs import audit as _audit
 
 # --------------------------------------------------------------------------- #
 # WM-30: time-to-live
@@ -88,7 +93,7 @@ def verification_expiry(memory_dir: Path, outcome: str, created_at: str) -> str 
     """`expires_at` for a new verification: settled outcomes only."""
     if outcome not in SETTLED_VERIFICATION_OUTCOMES:
         return None
-    dt = cli._parse_iso(created_at)
+    dt = _validation.parse_timestamp(created_at)
     if dt is None:  # pragma: no cover - created_at is ours and always parseable
         return None
     days = ttl_days(memory_dir, "verification")
@@ -124,7 +129,7 @@ def expired_items(memory_dir: Path) -> list[dict]:
                 "title": rec.meta.get("title") or rec.stem,
                 "expires_at": rec.meta.get("expires_at"),
                 "days_ago": cli._age_days(rec.meta.get("expires_at")),
-                "path": rec.path.relative_to(memory_dir).as_posix(),
+                "path": path_policy.posix_rel(rec.path, memory_dir),
             }
         )
     out.sort(key=lambda r: (cli._dt_sort_key(r["expires_at"]), r["id"]))
@@ -164,16 +169,16 @@ def _current_md_age(memory_dir: Path, root: Path) -> int | None:
     if not path.is_file():
         return None
     root = Path(root)
-    if cli.is_git_repo(root):
+    if git.is_repo(root):
         try:
             rel = path.resolve().relative_to(root.resolve())
         except ValueError:
             rel = None
         if rel is not None:
-            dirty = cli._git_out(root, "status", "--porcelain", "--", str(rel))
+            dirty = git.run(root, "status", "--porcelain", "--", str(rel))
             if dirty:
                 return 0
-            stamp = cli._git_out(root, "log", "-1", "--format=%cI", "--", str(rel))
+            stamp = git.run(root, "log", "-1", "--format=%cI", "--", str(rel))
             if stamp:
                 return cli._age_days(stamp.strip())
     mtime = datetime.fromtimestamp(path.stat().st_mtime).astimezone()
@@ -514,8 +519,8 @@ def _candidate(rid: str, kind: str, title: str, text: str, files, tags) -> dict:
         "id": rid,
         "kind": kind,
         "title": title,
-        "specific": cli._specific(f"{title}\n{text}\n{' '.join(sorted(tags))}"),
-        "files": cli._norm_files(set(files or ())),
+        "specific": _textmatch._specific(f"{title}\n{text}\n{' '.join(sorted(tags))}"),
+        "files": _textmatch._norm_files(set(files or ())),
         "tags": tags,
     }
 
@@ -552,7 +557,7 @@ def live_candidates(memory_dir: Path, rtype: str) -> list[dict]:
                 "trap",
                 t.get("summary") or t["heading"],
                 t.get("content") or "",
-                cli._item_from_trap(t)["files"],
+                _scoring._item_from_trap(t)["files"],
                 (),
             )
             for t in cli.active_traps(memory_dir)
@@ -754,9 +759,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
     missing = missing_evidence_files(root, live)
     for rid, ref in missing[:AUDIT_EVIDENCE_MISSING_MAX]:
         findings.append(
-            cli._audit_finding(
+            _audit._audit_finding(
                 "evidence-missing-file",
-                cli.AUDIT_WARN,
+                _audit.AUDIT_WARN,
                 None,
                 f"{rid} cites {ref}, which is not in HEAD — verify the record still applies",
                 id=rid,
@@ -766,9 +771,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
     conflicts = find_contradictions(memory_dir)
     for c in conflicts[:AUDIT_CONFLICTS_MAX]:
         findings.append(
-            cli._audit_finding(
+            _audit._audit_finding(
                 "possible-contradiction",
-                cli.AUDIT_WARN,
+                _audit.AUDIT_WARN,
                 None,
                 c["message"],
                 ids=c["ids"],
@@ -781,9 +786,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
     pairs = [p for p in near_duplicate_pairs(memory_dir) if (p["a"], p["b"]) not in raised]
     for pair in pairs[:AUDIT_DUP_PAIRS_MAX]:
         findings.append(
-            cli._audit_finding(
+            _audit._audit_finding(
                 "near-duplicates",
-                cli.AUDIT_WARN,
+                _audit.AUDIT_WARN,
                 None,
                 f"{pair['kind']}s {pair['a']} and {pair['b']} are {pair['similarity']:.2f} "
                 "similar — supersede one (`crumb mark-status <id> superseded --superseded-by "
@@ -797,9 +802,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
     degraded = _related.load_degraded(memory_dir)
     if degraded:
         findings.append(
-            cli._audit_finding(
+            _audit._audit_finding(
                 "related-degraded",
-                cli.AUDIT_WARN,
+                _audit.AUDIT_WARN,
                 None,
                 "generated/related.json is incomplete: "
                 f"{degraded.get('reason', 'over the pair budget')} "
@@ -1050,7 +1055,7 @@ def find_contradictions(memory_dir: Path) -> list[dict]:
     attempts = [
         r
         for r in cli.active_records(memory_dir, "attempt")
-        if not cli.record_expired(r.meta) and cli._attempt_has_do_not_retry(r)
+        if not cli.record_expired(r.meta) and _scoring._attempt_has_do_not_retry(r)
     ]
     key = ("contradictions", str(memory_dir), cli.content_key(decisions + attempts))
     return cli.op_memo(key, lambda: _contradictions(decisions, attempts))
@@ -1205,7 +1210,7 @@ def _find_contradictions_full(memory_dir: Path) -> list[dict]:
     attempts = [
         r
         for r in cli.active_records(memory_dir, "attempt")
-        if not cli.record_expired(r.meta) and cli._attempt_has_do_not_retry(r)
+        if not cli.record_expired(r.meta) and _scoring._attempt_has_do_not_retry(r)
     ]
     out: list[dict] = []
 
@@ -1322,7 +1327,7 @@ def rollup_sessions(
 ) -> dict:
     """Fold old machine snapshots into one session record, then delete them."""
     memory_dir = Path(memory_dir)
-    if cli._parse_iso(before) is None:
+    if _validation.parse_timestamp(before) is None:
         return {"ok": False, "code": 2, "error": f"--before {before!r} is not a YYYY-MM-DD date"}
     recs = rollup_candidates(memory_dir, before)
     ids = [r.meta.get("id", r.stem) for r in recs]

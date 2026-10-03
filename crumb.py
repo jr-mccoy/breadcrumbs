@@ -35,6 +35,16 @@ globals().update(
     }
 )
 
+# Modules extracted from `cli.py` (health review 2.1): their names are
+# re-exported too, without shadowing a name `cli` itself defines.
+import importlib  # noqa: E402
+
+for _name in _cli.EXTRACTED_MODULES:
+    _mod = importlib.import_module(f"breadcrumbs.{_name}")
+    globals().update(
+        {k: v for k, v in vars(_mod).items() if not k.startswith("__") and k not in globals()}
+    )
+
 main = _cli.main
 
 if __name__ == "__main__":

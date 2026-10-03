@@ -22,7 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
-from breadcrumbs import cli as _cli  # noqa: E402  (patch target for module-level lookups)
+from breadcrumbs import packet as _packet  # noqa: E402
+from breadcrumbs import secretscan as _secretscan  # noqa: E402
 
 FIXTURES = REPO_ROOT / "fixtures"
 
@@ -308,16 +309,16 @@ class UndecodableFileTests(unittest.TestCase):
             mem = fresh_store(tmp)
             # Publication builds each packet through `_build_resume_packet_once`,
             # stamped with a verified snapshot (audit WP07).
-            real = _cli._build_resume_packet_once
+            real = _packet._build_resume_packet_once
 
             def boom(*a, **kw):
                 raise RuntimeError("packet exploded")
 
-            _cli._build_resume_packet_once = boom
+            _packet._build_resume_packet_once = boom
             try:
                 code, out = run(["reindex", "--project", tmp])
             finally:
-                _cli._build_resume_packet_once = real
+                _packet._build_resume_packet_once = real
             self.assertEqual(code, 1, out)
             self.assertIn("packet exploded", out)
             self.assertTrue(mem.is_dir())
@@ -379,7 +380,7 @@ class UrlEmbeddedCredentialTests(unittest.TestCase):
         a secret-shaped string. The one exception is this module, which needs real
         positives to test against and is skipped below.
         """
-        pat = dict(_cli.SECRET_PATTERNS)[self.NAME]
+        pat = dict(_secretscan.SECRET_PATTERNS)[self.NAME]
         root = Path(__file__).resolve().parent.parent
         offenders = []
         for path in root.rglob("*"):

@@ -27,6 +27,9 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import projections  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
+from breadcrumbs import secretscan as _secretscan  # noqa: E402
 
 AWS_SHAPED = "AKIAZ7QW4ERTY8UIOP3A"
 RANDOM_SHAPED = "Xk9fQ2mZ7pL4vR8tW3nB6yH1cJ5sD0gA"
@@ -92,10 +95,10 @@ class MachineLocalPrefilterTests(StoreCase):
         words = ("alpha", "bravo", "charlie", "delta", "echo", "foxtrot")
         for w in words:
             self.decision(f"Decision on the {w} module caching", tags=f"{w},shared")
-        items = _cli._candidate_items(self.mem, include_ideas=False)
+        items = _scoring._candidate_items(self.mem, include_ideas=False)
         self.assertGreaterEqual(len(items), 6)
         forward = _cli._build_guard_prefilter(self.mem)
-        with mock.patch.object(_cli, "_candidate_items", return_value=list(reversed(items))):
+        with mock.patch.object(_scoring, "_candidate_items", return_value=list(reversed(items))):
             backward = _cli._build_guard_prefilter(self.mem)
         self.assertEqual(
             json.dumps(forward, separators=(",", ":"), sort_keys=True),
@@ -105,9 +108,9 @@ class MachineLocalPrefilterTests(StoreCase):
     def test_the_hook_still_trusts_it(self):
         self.decision("Gradle builds use the configuration cache", tags="gradle")
         # Verified, and nothing in it matches: the hook may stay silent.
-        self.assertFalse(_cli._prefilter_trap_hit(self.mem, "ls -la docs", None))
+        self.assertFalse(hooks_guard._prefilter_trap_hit(self.mem, "ls -la docs", None))
         self.assertTrue(
-            _cli._prefilter_trap_hit(self.mem, "./gradlew build --configuration-cache", None)
+            hooks_guard._prefilter_trap_hit(self.mem, "./gradlew build --configuration-cache", None)
         )
 
 
@@ -142,14 +145,14 @@ class NoSecretsInThePrefilterTests(StoreCase):
 
     def test_an_action_holding_one_still_runs_full_guard(self):
         self._write_secret_record()
-        self.assertTrue(_cli._prefilter_trap_hit(self.mem, f"echo {RANDOM_SHAPED}", None))
+        self.assertTrue(hooks_guard._prefilter_trap_hit(self.mem, f"echo {RANDOM_SHAPED}", None))
 
     def test_scan_secrets_covers_generated(self):
         packet = self.mem / "generated" / "resume-packet.md"
         packet.write_text(
             packet.read_text(encoding="utf-8") + f"\n{AWS_SHAPED}\n", encoding="utf-8"
         )
-        hits = [h for h in _cli.scan_secrets(self.mem) if h["path"].startswith("generated/")]
+        hits = [h for h in _secretscan.scan_secrets(self.mem) if h["path"].startswith("generated/")]
         self.assertTrue(hits, "a secret in a committed projection went unreported")
 
 

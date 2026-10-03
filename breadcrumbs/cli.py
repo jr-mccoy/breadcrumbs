@@ -21,11 +21,8 @@ Design constraints (see docs/):
 from __future__ import annotations
 
 import contextlib
-import functools
 import hashlib
-import io
 import json
-import math
 import os
 import re
 import shlex
@@ -34,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -48,7 +46,9 @@ from breadcrumbs import validation as _validation
 # What the store may read and write on disk (audit F17). Stdlib-only too.
 import breadcrumbs as _breadcrumbs_pkg
 from breadcrumbs import path_policy
-from breadcrumbs import shellcmd as _shellcmd
+
+# Every git question goes through `breadcrumbs.git`. Stdlib-only too.
+from breadcrumbs import git as _git
 from breadcrumbs.adapters import claude as _claude
 
 # --------------------------------------------------------------------------- #
@@ -82,8 +82,8 @@ TEMPLATE_DIR = Path(__file__).resolve().parent / "templates" / "project-memory"
 
 # Non-git fallback sentinels.
 # Used everywhere git-derived fields cannot be populated.
-NO_GIT_BRANCH = "(no-git)"
-NO_GIT_COMMIT = "(no-git)"
+NO_GIT_BRANCH = _git.NO_BRANCH
+NO_GIT_COMMIT = _git.NO_COMMIT
 
 # --------------------------------------------------------------------------- #
 # Output safety (W1)
@@ -450,45 +450,6 @@ def clock(fn):
 def now_iso() -> str:
     """Local time, ISO-8601, timezone-aware (e.g. 2026-06-25T14:30:00-05:00)."""
     return _now().replace(microsecond=0).isoformat()
-
-
-# Memo for `is_git_repo`, keyed by (path, does `.git` exist there) so the answer is
-# re-probed the moment that changes — `git init` after a negative probe re-keys the
-# entry instead of returning a stale False. Five of one guard call's ten remaining
-# subprocess spawns were this same question asked five times; a stat is
-# ~1000x cheaper than a process, and much more so on Windows.
-_IS_GIT_REPO_CACHE: dict[tuple[str, bool], bool] = {}
-
-
-def is_git_repo(root: Path) -> bool:
-    """True if `root` is inside a git work tree."""
-    key = (str(root), (Path(root) / ".git").exists())
-    cached = _IS_GIT_REPO_CACHE.get(key)
-    if cached is not None:
-        return cached
-    from breadcrumbs import gitrefs
-
-    # A `.git` found by walking up answers without a process (DoWhat retest of
-    # 0.5.0, item 7); anything unusual still asks git.
-    if gitrefs.git_dir(Path(root)) is not None:
-        _IS_GIT_REPO_CACHE[key] = True
-        return True
-    GIT_CALLS[0] += 1
-    started = time.perf_counter()
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--is-inside-work-tree"],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        answer = result.returncode == 0 and result.stdout.strip() == "true"
-    except (FileNotFoundError, OSError):
-        answer = False
-    GIT_MS[0] += (time.perf_counter() - started) * 1000
-    _IS_GIT_REPO_CACHE[key] = answer
-    return answer
 
 
 def derive_project_name(root: Path) -> str:
@@ -861,7 +822,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     commit_generated = not args.no_commit_generated
 
     # Non-git detection (notice only; gitignore is still written for later git init).
-    git_present = is_git_repo(root)
+    git_present = _git.is_repo(root)
 
     # Build the new scaffold in a staging dir and swap it in. An existing store
     # (--force) is destroyed only after the replacement is fully built, so a
@@ -1536,117 +1497,10 @@ def records_in(directory: Path, rtype: str) -> list[Record]:
 # separately.
 
 
-# git processes started by this process, for the hook log's `git` count: on
-# Windows each costs tens of milliseconds, and a count says at once whether a
-# slow firing was git or Python (field report 2026-10-01, issue 6).
-GIT_CALLS = [0]
-# ...and the milliseconds they took, for the hook log's `git_ms` (item 7 of the
-# 0.5.0 retest: the next Windows measurement should say where the time went).
-GIT_MS = [0.0]
-
-
-def _git_out(root: Path, *args: str) -> str | None:
-    GIT_CALLS[0] += 1
-    started = time.perf_counter()
-    try:
-        r = subprocess.run(
-            ["git", *args],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except (FileNotFoundError, OSError):
-        return None
-    finally:
-        GIT_MS[0] += (time.perf_counter() - started) * 1000
-    if r.returncode != 0:
-        return None
-    # Trailing newline only. A whole-output strip() also ate the leading space of
-    # the *first* line, which for `status --porcelain` is a status column — a
-    # worktree-only modification is " M path", so the caller's line[3:] then
-    # chopped three characters off the path. Every other caller
-    # reads single-line output or regex-matches, so both forms suit them.
-    return r.stdout.rstrip("\n")
-
-
 def git_branch(root: Path) -> str:
     # The guard path asked this three times per firing; within one operation
     # the branch cannot change (field report 2026-10-01, issue 6).
-    return op_memo(("git_branch", str(root)), lambda: _git_branch(root))
-
-
-def _git_branch(root: Path) -> str:
-    if not is_git_repo(root):
-        return NO_GIT_BRANCH
-    from breadcrumbs import gitrefs
-
-    fast = gitrefs.branch(root)
-    if fast:
-        return fast
-    out = _git_out(root, "rev-parse", "--abbrev-ref", "HEAD")
-    if out:
-        return out
-    # An unborn HEAD (fresh repo, no commits yet) fails rev-parse but still has
-    # a real branch name — read it so records don't pair `branch: (no-git)` with
-    # populated dirty_files.
-    out = _git_out(root, "symbolic-ref", "--short", "HEAD")
-    return out if out else NO_GIT_BRANCH
-
-
-def git_commit(root: Path) -> str:
-    if not is_git_repo(root):
-        return NO_GIT_COMMIT
-    out = _git_out(root, "rev-parse", "--short", "HEAD")
-    return out if out else NO_GIT_COMMIT
-
-
-# git C-style escapes used in quoted porcelain paths (paths with spaces/quotes/
-# non-ASCII are emitted as "caf\303\251.txt"; octal escapes are raw UTF-8 bytes).
-_GIT_PATH_ESCAPES = {
-    "n": 0x0A,
-    "t": 0x09,
-    "r": 0x0D,
-    '"': 0x22,
-    "\\": 0x5C,
-    "a": 0x07,
-    "b": 0x08,
-    "f": 0x0C,
-    "v": 0x0B,
-}
-
-
-def _unquote_git_path(path: str) -> str:
-    """Decode git's C-style quoted path form back to the real path.
-
-    Unquoted paths pass through unchanged. Storing the quoted form verbatim
-    persisted strings like '"caf\\303\\251.txt"' into frontmatter, which could
-    then trip the R3 round-trip refusal on a later status change.
-    """
-    if not (len(path) >= 2 and path[0] == '"' and path[-1] == '"'):
-        return path
-    body = path[1:-1]
-    out = bytearray()
-    i = 0
-    while i < len(body):
-        ch = body[i]
-        if ch == "\\" and i + 1 < len(body):
-            nxt = body[i + 1]
-            if nxt in _GIT_PATH_ESCAPES:
-                out.append(_GIT_PATH_ESCAPES[nxt])
-                i += 2
-                continue
-            if nxt in "01234567":
-                val, j = 0, 0
-                while j < 3 and i + 1 + j < len(body) and body[i + 1 + j] in "01234567":
-                    val = val * 8 + int(body[i + 1 + j])
-                    j += 1
-                out.append(val)
-                i += 1 + j
-                continue
-        out.extend(ch.encode("utf-8"))
-        i += 1
-    return out.decode("utf-8", errors="replace")
+    return op_memo(("git_branch", str(root)), lambda: _git.branch(root))
 
 
 # A record's `dirty_files` is capped here. In the field store the *shortest*
@@ -1675,21 +1529,7 @@ def git_dirty_files(root: Path, *, include_memory: bool = True) -> list[str]:
     sessions' memory records. Callers that are asking about the *store* (the
     staleness check, the Stop-hook dedupe) keep the default.
     """
-    if not is_git_repo(root):
-        return []
-    out = _git_out(root, "status", "--porcelain")
-    if not out:
-        return []
-    files: list[str] = []
-    for line in out.splitlines():
-        # porcelain: 2 status chars + space + path
-        path = line[3:].strip() if len(line) > 3 else line.strip()
-        if " -> " in path:
-            # rename/copy entries are "R  old -> new"; record the destination.
-            path = path.split(" -> ", 1)[1].strip()
-        path = _unquote_git_path(path)
-        if path:
-            files.append(path)
+    files = _git.status_paths(root)
     if not include_memory:
         files = list(_work_dirty_files(files))
     return files
@@ -1757,7 +1597,7 @@ def derive_fields(
         "agent": agent or detect_agent(),
         "project": derive_project_name(root),
         "branch": git_branch(root),
-        "commit": git_commit(root),
+        "commit": _git.short_head(root),
         "dirty_files": _cap_dirty_files(git_dirty_files(root, include_memory=include_memory)),
     }
 
@@ -1812,530 +1652,8 @@ def load_manifest(memory_dir: Path) -> dict | None:
 
 
 # --------------------------------------------------------------------------- #
-# validate — fully deterministic; NO heuristic content scanning
+# validate — the CLI side (the checks are `breadcrumbs.validate`)
 # --------------------------------------------------------------------------- #
-
-
-def _finding(
-    check: str, status: str, path: str | None, message: str, code: str | None = None
-) -> dict:
-    """One validate result. `code` is the stable identifier (defaults to `check`)."""
-    return {
-        "check": check,
-        "status": status,
-        "path": path,
-        "message": message,
-        "code": code or check,
-    }
-
-
-# The validate `check` each record-contract code reports under.
-_CONTRACT_CHECK = {
-    _validation.CONFIDENCE_INVALID: "confidence",
-    _validation.REVIEW_STATUS_INVALID: "review",
-    _validation.SCOPE_UNSUPPORTED: "scope",
-    _validation.EVIDENCE_MALFORMED: "evidence",
-    _validation.TIMESTAMP_INVALID: "timestamp",
-    _validation.SUPERSEDED_BY_MALFORMED: "superseded",
-    _validation.SUPERSESSION_SELF: "superseded",
-    _validation.SUPERSEDED_BY_MISSING: "superseded",
-    _validation.SUPERSESSION_CYCLE: "superseded",
-}
-
-
-def _contract_finding(rel: str, issue: dict) -> dict:
-    return _finding(
-        _CONTRACT_CHECK.get(issue["code"], "contract"),
-        "fail",
-        rel,
-        issue["message"],
-        code=issue["code"],
-    )
-
-
-CONTRACT_WARNING_EXAMPLES = 3
-
-
-def record_contract_warnings(memory_dir: Path) -> list[str]:
-    """The packet's one-line notice that some records break the record contract.
-
-    Readers tolerate a malformed record — it never takes a hook or the packet
-    down — but tolerating it silently is how a `confidence: certainly` or an
-    `expires_at` nothing can parse goes unnoticed for months. This says so where
-    every session looks. Committed directories only: the packet is a committed
-    projection, and a machine-local jot must not make it differ between checkouts.
-    """
-    memory_dir = Path(memory_dir)
-    records = [
-        rec
-        for dirname, rtype in DIR_TYPES.items()
-        for rec in records_in(memory_dir / dirname, rtype)
-    ]
-    entries = record_contract_entries(records, memory_dir)
-    linked = _validation.store_issues(entries)
-    problems: dict[str, list[str]] = {}
-    hidden = 0
-    for rec, (rel, rid, meta) in zip(records, entries):
-        codes = ["frontmatter-malformed"] if rec.error else []
-        codes += [i["code"] for i in _validation.record_issues(meta, rec.rtype, rid)]
-        codes += [i["code"] for i in linked.get(rel, [])]
-        codes += _reader_visible_problems(rec)
-        if "status-invalid" in codes:
-            hidden += 1
-        if codes:
-            problems[rid or rel] = codes
-    if not problems:
-        return []
-    shown = [
-        f"{rid} ({', '.join(dict.fromkeys(codes))})"
-        for rid, codes in sorted(problems.items())[:CONTRACT_WARNING_EXAMPLES]
-    ]
-    more = len(problems) - len(shown)
-    # Say what the readers actually do with them. "They are still read" was
-    # untrue for an invalid status: such a decision is dropped from every
-    # active list, and guard then PROCEEDs past it (field report 2026-10-01, N3).
-    effect = (
-        f" — {hidden} with an invalid status are left out of resume and guard; "
-        if hidden
-        else " — they are still read; "
-    )
-    return [
-        f"⚠ {len(problems)} record(s) break the record contract: {'; '.join(shown)}"
-        + (f"; +{more} more" if more > 0 else "")
-        + effect
-        + "run `crumb validate`."
-    ]
-
-
-def _reader_visible_problems(rec: "Record") -> list[str]:
-    """Contract breaks that change what readers show, which `record_issues` does
-    not cover: a status outside the vocabulary (readers drop the record), no
-    frontmatter at all (hand-written), a verification with no subject or no
-    valid outcome (shown as outcome `unknown`)."""
-    if rec.error:
-        return []
-    if not rec.meta:
-        codes = ["no-frontmatter"]
-        return codes + (["outcome-missing"] if rec.rtype == "verification" else [])
-    codes: list[str] = []
-    status = rec.meta.get("status")
-    vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
-    if status is not None and str(status) not in vocab and rec.rtype != "jot":
-        codes.append("status-invalid")
-    if rec.rtype == "verification":
-        if rec.meta.get("outcome") not in VALID_VERIFICATION_OUTCOME:
-            codes.append("outcome-missing")
-        if rec.meta.get("subject") in (None, ""):
-            codes.append("subject-missing")
-    return codes
-
-
-def record_contract_entries(records: list["Record"], memory_dir: Path) -> list[tuple]:
-    """`(relative path, derived id, meta)` per record, for `validation.store_issues`.
-
-    A record whose frontmatter did not parse is still a link target: its id comes
-    from its filename, so a replacement pointing at it is not reported missing.
-    """
-    out = []
-    for rec in records:
-        ident = derive_identity(rec.stem, rec.rtype)
-        out.append(
-            (rec.path.relative_to(memory_dir).as_posix(), ident[0] if ident else None, rec.meta)
-        )
-    return out
-
-
-def run_validate(memory_dir: Path) -> list[dict]:
-    """Run the deterministic validation checks; return a list of findings.
-
-    Every finding is {check, status: pass|fail, path, message}. Heuristic content
-    scanning (secrets, instruction-like text) is intentionally absent — that lives
-    in `audit`.
-    """
-    memory_dir = Path(memory_dir)
-    findings: list[dict] = []
-
-    # Containment (audit F17): nothing in the store may be a link. Every reader
-    # already refuses one; this says where they are.
-    for rel in path_policy.find_links(memory_dir):
-        findings.append(
-            _finding(
-                "containment",
-                "fail",
-                rel,
-                "is a symbolic link or junction; memory files and directories must be the "
-                "real thing inside the store (readers refuse it; replace it with the file "
-                "or directory itself)",
-                code="path-link",
-            )
-        )
-
-    # 16.1 — manifest exists + supported schema_version.
-    manifest = load_manifest(memory_dir)
-    if manifest is None:
-        findings.append(_finding("manifest", "fail", "manifest.yml", "manifest.yml is missing"))
-    else:
-        # A version mismatch has two opposite causes and two opposite remedies,
-        # and one message for both sent everyone to the wrong one. An *older*
-        # store needs migrating; a *newer* store means this build is behind and
-        # must not touch it, because writing schema-N records into a schema-N+1
-        # store is how a store gets corrupted by a well-meaning downgrade.
-        sv = manifest.get("schema_version")
-        try:
-            sv_int = int(str(sv).strip())
-        except (TypeError, ValueError):
-            sv_int = None
-        if sv_int is None:
-            findings.append(
-                _finding(
-                    "schema-version",
-                    "fail",
-                    "manifest.yml",
-                    f"unreadable schema_version {sv!r} (this build supports {SCHEMA_VERSION})",
-                )
-            )
-        elif sv_int < SCHEMA_VERSION:
-            findings.append(
-                _finding(
-                    "schema-version",
-                    "fail",
-                    "manifest.yml",
-                    f"store is schema_version {sv_int}, this crumb understands "
-                    f"{SCHEMA_VERSION} — run `crumb migrate`",
-                )
-            )
-        elif sv_int > SCHEMA_VERSION:
-            findings.append(
-                _finding(
-                    "schema-version",
-                    "fail",
-                    "manifest.yml",
-                    f"store is schema_version {sv_int}, this crumb understands "
-                    f"{SCHEMA_VERSION} — upgrade crumb-kit",
-                )
-            )
-        else:
-            findings.append(
-                _finding("schema-version", "pass", "manifest.yml", f"schema_version {sv_int}")
-            )
-        findings.append(_finding("manifest", "pass", "manifest.yml", "manifest.yml present"))
-
-    # 16.2 — required core files exist, and are readable. An undecodable core
-    # file used to pass silently here while aborting `audit` and `resume`
-    # elsewhere — validate is the trust primitive, so it says so.
-    for name in CORE_FILES:
-        if not (memory_dir / name).is_file():
-            findings.append(_finding("core-files", "fail", name, "required core file missing"))
-            continue
-        problem = read_text_lenient(memory_dir / name)[1]
-        if problem:
-            findings.append(_finding("core-files", "fail", name, problem))
-        else:
-            findings.append(_finding("core-files", "pass", name, "present"))
-
-    # Load durable records once for the record-level checks (16.3–10).
-    records = load_records(memory_dir)
-    seen_ids: dict[str, str] = {}
-
-    for rec in records:
-        rel = rec.path.relative_to(memory_dir).as_posix()
-
-        # 16.3 — valid frontmatter (parses + required keys present).
-        if rec.error:
-            findings.append(
-                _finding("frontmatter", "fail", rel, f"malformed frontmatter: {rec.error}")
-            )
-            continue
-        missing = [k for k in REQUIRED_RECORD_KEYS if rec.meta.get(k) in (None, "")]
-        if missing:
-            findings.append(
-                _finding("frontmatter", "fail", rel, f"missing required keys: {', '.join(missing)}")
-            )
-        else:
-            findings.append(_finding("frontmatter", "pass", rel, "frontmatter valid"))
-
-        # 16.4 — identity: filename canonical; id uniqueness + id/slug agreement.
-        ident = derive_identity(rec.stem, rec.rtype)
-        if ident is None:
-            findings.append(
-                _finding(
-                    "identity",
-                    "fail",
-                    rel,
-                    "filename does not match <YYYY-MM-DD>-<slug>.md with a real calendar "
-                    "date and a lowercase [a-z0-9-] slug; id/slug underivable",
-                )
-            )
-        else:
-            rid, slug = ident
-            is_duplicate = rid in seen_ids
-            if is_duplicate:
-                findings.append(
-                    _finding(
-                        "identity", "fail", rel, f"duplicate id {rid!r} (also {seen_ids[rid]})"
-                    )
-                )
-            else:
-                seen_ids[rid] = rel
-            stored_id = rec.meta.get("id")
-            stored_slug = rec.meta.get("slug")
-            disagree = []
-            if stored_id is not None and stored_id != rid:
-                disagree.append(f"id frontmatter {stored_id!r} != derived {rid!r}")
-            if stored_slug is not None and stored_slug != slug:
-                disagree.append(f"slug frontmatter {stored_slug!r} != derived {slug!r}")
-            stored_type = rec.meta.get("type")
-            if stored_type is not None and stored_type != rec.rtype:
-                disagree.append(f"type frontmatter {stored_type!r} != directory {rec.rtype!r}")
-            if disagree:
-                findings.append(_finding("identity", "fail", rel, "; ".join(disagree)))
-            elif not is_duplicate:
-                # A duplicate already produced a fail; don't also emit a redundant
-                # identity pass that would inflate the passed count.
-                findings.append(_finding("identity", "pass", rel, f"id {rid}"))
-
-        # 16.5 — status in vocabulary. A question has its own (open / answered /
-        # closed); everything else, traps included, uses the record lifecycle.
-        status = rec.meta.get("status")
-        vocab = VALID_QUESTION_STATUS if rec.rtype == "question" else VALID_STATUS
-        if status is not None and status not in vocab:
-            findings.append(
-                _finding(
-                    "status",
-                    "fail",
-                    rel,
-                    f"invalid status {status!r} (allowed: {', '.join(vocab)})",
-                )
-            )
-
-        # 16.6 — superseded requires superseded_by.
-        if status == "superseded" and rec.meta.get("superseded_by") in (None, "", []):
-            findings.append(
-                _finding("superseded", "fail", rel, "status superseded but superseded_by is empty")
-            )
-
-        # 16.7 / 16.8 — privacy placement and prohibition.
-        privacy = rec.meta.get("privacy")
-        if privacy is not None and privacy not in VALID_PRIVACY:
-            # A typo'd value (e.g. "secret-prohibitted") must not silently slip
-            # past the exact-match leak gate below — flag the out-of-vocab value.
-            findings.append(
-                _finding(
-                    "privacy",
-                    "fail",
-                    rel,
-                    f"invalid privacy {privacy!r} (allowed: {', '.join(VALID_PRIVACY)})",
-                )
-            )
-        if privacy == "secret-prohibited":
-            findings.append(
-                _finding(
-                    "privacy",
-                    "fail",
-                    rel,
-                    "privacy: secret-prohibited must not be stored in memory",
-                )
-            )
-        elif privacy == "local-private" and not rel.replace("\\", "/").startswith("private/"):
-            # A local-private record has to live where git cannot see it. Most
-            # record directories are committed, so this used to be unconditional
-            # — `private/inbox/` is the first record directory that is not, and
-            # an unconditional fail would reject every machine-local jot.
-            findings.append(
-                _finding(
-                    "privacy",
-                    "fail",
-                    rel,
-                    "privacy: local-private record is under a committed path (must live under private/)",
-                )
-            )
-        elif rel.replace("\\", "/").startswith("private/") and privacy == "repo-safe":
-            findings.append(
-                _finding(
-                    "privacy",
-                    "fail",
-                    rel,
-                    "privacy: repo-safe record is under private/, where nothing is "
-                    "committed — mark it local-private or move it into the store proper",
-                )
-            )
-
-        # 16.8b — the record contract: vocabularies, evidence shape, timestamps,
-        # scope and self-links (breadcrumbs/validation.py; audit F05).
-        for issue in _validation.record_issues(rec.meta, rec.rtype, ident[0] if ident else None):
-            findings.append(_contract_finding(rel, issue))
-
-        # 16.9 — decisions/attempts/verifications need evidence OR confidence: low.
-        # Only a well-formed pointer counts: any non-empty `evidence` used to
-        # satisfy this, so `[{nonsense: x}]` let a claim stand at medium.
-        if rec.rtype in ("decision", "attempt", "verification"):
-            has_evidence = bool(_validation.well_formed_evidence(rec.meta.get("evidence")))
-            if not has_evidence and rec.meta.get("confidence") != "low":
-                findings.append(
-                    _finding(
-                        "evidence",
-                        "fail",
-                        rel,
-                        f"{rec.rtype} has no evidence and confidence is not 'low'",
-                    )
-                )
-
-        # 16.9c — a jot names where it came from. A hook-written candidate and a
-        # note somebody typed are read very differently by whoever triages the
-        # inbox, and without this the two are indistinguishable on disk.
-        if rec.rtype == "jot":
-            src = rec.meta.get("source")
-            if not (isinstance(src, str) and src.strip()):
-                findings.append(
-                    _finding("jot", "fail", rel, "jot has no source (who or what wrote it)")
-                )
-            else:
-                findings.append(_finding("jot", "pass", rel, f"source {src}"))
-
-        # 16.9b — verifications carry a subject and a valid outcome.
-        if rec.rtype == "verification":
-            subj = rec.meta.get("subject")
-            # A non-string subject (e.g. a hand-edited YAML list) is a finding,
-            # not a crash.
-            if not (isinstance(subj, str) and subj.strip()):
-                findings.append(
-                    _finding(
-                        "verification",
-                        "fail",
-                        rel,
-                        "verification has no subject"
-                        if subj in (None, "")
-                        else f"verification subject must be a string, got {type(subj).__name__}",
-                    )
-                )
-            outcome = rec.meta.get("outcome")
-            if outcome not in VALID_VERIFICATION_OUTCOME:
-                findings.append(
-                    _finding(
-                        "verification",
-                        "fail",
-                        rel,
-                        f"invalid outcome {outcome!r} (allowed: {', '.join(VALID_VERIFICATION_OUTCOME)})",
-                    )
-                )
-            method = rec.meta.get("method")
-            if method not in (None, "") and method not in VALID_VERIFICATION_METHOD:
-                findings.append(
-                    _finding(
-                        "verification",
-                        "fail",
-                        rel,
-                        f"invalid method {method!r} (allowed: {', '.join(VALID_VERIFICATION_METHOD)})",
-                    )
-                )
-
-        # 16.10 — session records need a Next Action (or convergence/done marker).
-        if rec.rtype == "session":
-            has_next = any(re.search(r"next action", h, re.I) for h in rec.sections)
-            body_l = rec.body.lower()
-            # Word-boundary match: a raw substring test let
-            # "done" match "abandoned", false-passing the convergence check.
-            has_done = any(
-                re.search(rf"\b{re.escape(mark)}\b", body_l) for mark in SESSION_DONE_MARKERS
-            )
-            if not (has_next or has_done):
-                findings.append(
-                    _finding(
-                        "session",
-                        "fail",
-                        rel,
-                        "session record lacks a '## Next Action' or convergence/done marker",
-                    )
-                )
-
-    # 16.10b — links between records: a `superseded_by` must name a record in
-    # this store, and a replacement chain must not loop back on itself.
-    for rel, issues in _validation.store_issues(
-        record_contract_entries(records, memory_dir)
-    ).items():
-        findings.extend(_contract_finding(rel, issue) for issue in issues)
-
-    # 16.11 — handoff has branch, commit, next action, stale conditions.
-    handoff = memory_dir / "handoff.md"
-    if handoff.is_file():
-        try:
-            htext = path_policy.read_text(handoff)
-        except (OSError, UnicodeDecodeError) as exc:
-            # A finding, not a crash.
-            findings.append(_finding("handoff", "fail", "handoff.md", f"unreadable file: {exc}"))
-            htext = None
-    else:
-        htext = None
-    if htext is not None:
-        required = {
-            "branch": re.search(r"branch\s*:", htext, re.I),
-            "commit": re.search(r"commit\s*:", htext, re.I),
-            "next action": re.search(r"##\s+next action", htext, re.I),
-            "stale conditions": re.search(r"##\s+stale", htext, re.I),
-        }
-        missing_h = [name for name, hit in required.items() if not hit]
-        if missing_h:
-            findings.append(
-                _finding("handoff", "fail", "handoff.md", f"missing: {', '.join(missing_h)}")
-            )
-        else:
-            findings.append(
-                _finding("handoff", "pass", "handoff.md", "branch/commit/next action/stale present")
-            )
-
-    # 16.12 — generated files are not treated as canonical (carry the projection marker).
-    gen_dir = memory_dir / "generated"
-    if gen_dir.is_dir():
-        for p in sorted(gen_dir.glob("*.md")):
-            if p.name == "README.md":
-                continue
-            rel = p.relative_to(memory_dir).as_posix()
-            try:
-                head = "\n".join(path_policy.read_text(p).splitlines()[:5])
-            except (OSError, UnicodeDecodeError) as exc:
-                # A finding, not a crash.
-                findings.append(_finding("generated", "fail", rel, f"unreadable file: {exc}"))
-                continue
-            if GENERATED_MARKER in head:
-                findings.append(
-                    _finding("generated", "pass", rel, "carries generated-projection marker")
-                )
-            else:
-                findings.append(
-                    _finding(
-                        "generated",
-                        "fail",
-                        rel,
-                        f"generated file lacks the '{GENERATED_MARKER}' marker",
-                    )
-                )
-
-    # 16.12b — projection freshness: a generated projection stamped
-    # with an inputs_hash that no longer matches the live canonical records is
-    # stale. `validate` is the trust primitive, so it must not stay green while a
-    # projection silently desyncs — that would *certify* drift. Unstamped/older
-    # projections carry no hash and are skipped (handled by detect_packet_drift).
-    for d in detect_packet_drift(memory_dir):
-        findings.append(
-            _finding(
-                "freshness",
-                "fail",
-                d["path"],
-                f"stale projection (built from inputs_hash {d['stamped']}; "
-                f"live is {d['current']}). Run `crumb reindex`.",
-            )
-        )
-
-    # 16.13 — adapter files are not loaded as canonical records. By construction the
-    # loader walks only decisions/attempts/sessions/ideas, so project-root adapter
-    # files (AGENTS.md/CLAUDE.md/etc.) are never treated as records. Recorded as pass.
-    findings.append(
-        _finding(
-            "adapters", "pass", None, "adapter/signpost files are not loaded as canonical records"
-        )
-    )
-
-    return findings
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -2348,7 +1666,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
         )
         return 2
 
-    findings = run_validate(memory_dir)
+    findings = _validate.run_validate(memory_dir)
     fails = [f for f in findings if f["status"] == "fail"]
     passes = [f for f in findings if f["status"] == "pass"]
 
@@ -3004,10 +2322,14 @@ def _validate_new_file(memory_dir: Path, path: Path, original: str | None = None
     would leave the bad record live. Found by re-checking the original, which is
     only done when the new text fails, so the common path costs nothing extra.
     """
-    rel = Path(path).relative_to(memory_dir).as_posix()
+    rel = path_policy.posix_rel(Path(path), memory_dir)
 
     def fails_here() -> list[dict]:
-        return [f for f in run_validate(memory_dir) if f["status"] == "fail" and f["path"] == rel]
+        return [
+            f
+            for f in _validate.run_validate(memory_dir)
+            if f["status"] == "fail" and f["path"] == rel
+        ]
 
     fails = fails_here()
     if not fails or original is None:
@@ -3062,7 +2384,7 @@ def _record_reachability_hint(path: Path, rtype: str) -> str | None:
     rec = Record.from_file(path, rtype)
     if rec.error:
         return None  # unparseable is validate's finding, not this one's
-    item = _item_from_record(rec)
+    item = _scoring._item_from_record(rec)
     reachable = item["tags"] or item["files"] or item["mentioned_files"]
     return None if reachable else REACHABILITY_HINT
 
@@ -3073,7 +2395,7 @@ def _block_reachability_hint(body: str, kind: str) -> str | None:
     `_item_from_trap` / `_item_from_question` derive files only from paths in the
     block text, so a path reference is the single reachability lever these have.
     """
-    return None if _paths_from_text(body) else BLOCK_REACHABILITY_HINT.format(kind=kind)
+    return None if _textmatch._paths_from_text(body) else BLOCK_REACHABILITY_HINT.format(kind=kind)
 
 
 def find_record_by_id(memory_dir: Path, rid: str) -> "Record | None":
@@ -3113,7 +2435,7 @@ def find_item(memory_dir: Path, rid: str) -> dict | None:
     collide) — naming one of two things silently is worse than naming neither.
     """
     memory_dir = Path(memory_dir)
-    rid = normalize_question_id(rid)
+    rid = _scoring.normalize_question_id(rid)
     if not rid:
         return None
     rec = find_record_by_id(memory_dir, rid)
@@ -3233,7 +2555,7 @@ def _set_record_status(
     # Resolution comes before the status check, because which vocabulary applies
     # depends on what the id names: a question is `open`/`answered`/`closed`,
     # never `superseded`.
-    rid = normalize_question_id(rid)
+    rid = _scoring.normalize_question_id(rid)
     rec = find_record_by_id(memory_dir, rid)
     if rec is None:
         # Through schema 2 traps and open questions were `## ` blocks inside
@@ -3640,7 +2962,7 @@ def find_questions_by_id(memory_dir: Path, rid: str) -> list[dict]:
     address a block by. The caller refuses an ambiguous edit rather than guessing
     which of two questions the user meant.
     """
-    wanted = normalize_question_id(rid).lower()
+    wanted = _scoring.normalize_question_id(rid).lower()
     if not wanted:
         return []
     return [q for q in load_open_questions(Path(memory_dir)) if q["id"].lower() == wanted]
@@ -3700,7 +3022,7 @@ def set_question_status(
             (start, end)
             for start, end, heading in _md_heading_spans(original)
             if heading.lower().startswith("q:")
-            and question_item_id(heading[2:].strip()).lower() == qid.lower()
+            and _scoring.question_item_id(heading[2:].strip()).lower() == qid.lower()
         ),
         None,
     )
@@ -4184,19 +3506,21 @@ _PREFILTER_SPAN_TOKEN_MIN = 12
 def _prefilter_unsafe_stems(text: str) -> set[str]:
     """Stems of `text` the pre-filter must not hold (see above)."""
     out: set[str] = set()
-    spans = [m.group(0) for _name, pat in SECRET_PATTERNS for m in pat.finditer(text or "")]
+    spans = [
+        m.group(0) for _name, pat in _secretscan.SECRET_PATTERNS for m in pat.finditer(text or "")
+    ]
     spans += [
         m.group(0)
-        for m in _HIGH_ENTROPY_TOKEN.finditer(text or "")
-        if _looks_high_entropy(m.group(0))
+        for m in _secretscan._HIGH_ENTROPY_TOKEN.finditer(text or "")
+        if _secretscan._looks_high_entropy(m.group(0))
     ]
     for span in spans:
-        for t in _tokenize(span):
+        for t in _textmatch._tokenize(span):
             if len(t) >= _PREFILTER_SPAN_TOKEN_MIN and any(c.isdigit() for c in t):
-                out.add(_stem(t))
-    for t in _tokenize(text):
+                out.add(_textmatch._stem(t))
+    for t in _textmatch._tokenize(text):
         if _prefilter_opaque_token(t):
-            out.add(_stem(t))
+            out.add(_textmatch._stem(t))
     return out
 
 
@@ -4212,7 +3536,7 @@ def _prefilter_opaque_action_token(action: str) -> bool:
     """Does the action hold a token the pre-filter may have left out?"""
     return any(
         len(t) >= _PREFILTER_SPAN_TOKEN_MIN and any(c.isdigit() for c in t)
-        for t in _tokenize(action)
+        for t in _textmatch._tokenize(action)
     )
 
 
@@ -4243,7 +3567,7 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     `tests/test_guard_delivery.py` checks it against full guard on every eval
     suite.
     """
-    activate_store_aliases(memory_dir)
+    _textmatch.activate_store_aliases(memory_dir)
     tokens: set[str] = set()
     titles: set[str] = set()
     tags: set[str] = set()
@@ -4251,7 +3575,7 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
     commands: list[list[str]] = []
     token_sets: set[tuple[str, ...]] = set()
     unsafe: set[str] = set()
-    for it in _candidate_items(memory_dir, include_ideas=False):
+    for it in _scoring._candidate_items(memory_dir, include_ideas=False):
         if not _may_drive_verdict(it):
             continue
         rec = it.get("record")
@@ -4268,23 +3592,23 @@ def _build_guard_prefilter(memory_dir: Path) -> dict:
         tags |= set(it.get("tag_stems") or {t: t for t in it.get("tags") or ()})
         paths |= set(it.get("files") or ()) | set(it.get("mentioned_files") or ())
         for head in it.get("command_heads") or ():
-            if len(head) > _COMMAND_MIN_TOKENS and head[:9] not in commands:
+            if len(head) > _scoring._COMMAND_MIN_TOKENS and head[:9] not in commands:
                 commands.append(head[:9])  # the kind, then up to 8 tokens
     for trap in active_traps(memory_dir):
         text = trap["heading"] + "\n" + trap["content"]
         unsafe |= _prefilter_unsafe_stems(text)
-        paths |= _paths_from_text(text)
+        paths |= _textmatch._paths_from_text(text)
     for rec in active_attempts(memory_dir):
-        if _attempt_has_do_not_retry(rec):
+        if _scoring._attempt_has_do_not_retry(rec):
             text = (
                 (rec.meta.get("title") or "") + "\n" + rec.sections.get("Do Not Retry Unless", "")
             )
-            paths |= _paths_from_text(text)
+            paths |= _textmatch._paths_from_text(text)
             paths |= set(_evidence_refs(rec, ("file", "path")))
 
     def safe_path(p: str) -> bool:
-        return not ({_stem(t) for t in _tokenize(p)} & unsafe) and not any(
-            _prefilter_opaque_token(t) for t in _tokenize(p)
+        return not ({_textmatch._stem(t) for t in _textmatch._tokenize(p)} & unsafe) and not any(
+            _prefilter_opaque_token(t) for t in _textmatch._tokenize(p)
         )
 
     # Every list sorted, so the same records give the same bytes whatever order
@@ -4389,7 +3713,9 @@ def _keep_committed_projection(target: Path, name: str, digest: str | None) -> b
     if digest is None or name == GUARD_PREFILTER_FILENAME:
         return None  # an unstable build is always written; the pre-filter is local
     try:
-        data = target.read_bytes()
+        # Under the store's link policy like every other store read: a link here
+        # is refused (an OSError) and the projection is simply rewritten.
+        data = path_policy.read_bytes(target)
         text = data.decode("utf-8")
     except (OSError, UnicodeDecodeError):
         return None
@@ -4437,7 +3763,7 @@ def _publish_projections_inner(
 
         def build(digest: str, *, with_index: bool = True):
             unstable = digest == _snapshots.UNSTABLE
-            packet = _build_resume_packet_once(
+            packet = _packet._build_resume_packet_once(
                 memory_dir,
                 project_root,
                 stale_days=STALE_AGE_DAYS,
@@ -4450,7 +3776,7 @@ def _publish_projections_inner(
             # records. Stamped like every other projection.
             prefilter = {**_build_guard_prefilter(memory_dir), "inputs_hash": digest}
             outputs = {
-                "resume-packet.md": render_packet_markdown(packet),
+                "resume-packet.md": _packet.render_packet_markdown(packet),
                 # Compact, one line (item 8 of the 0.5.0 retest).
                 GUARD_PREFILTER_FILENAME: json.dumps(
                     prefilter, separators=(",", ":"), sort_keys=True
@@ -4737,7 +4063,7 @@ def note(
             kind,
             text.strip(),
             body,
-            files=_paths_from_text(str(fields.get("area") or "")),
+            files=_textmatch._paths_from_text(str(fields.get("area") or "")),
             tags=tags or (),
         )
         if dups:
@@ -4843,7 +4169,7 @@ def _note_write(
         result = {
             "ok": True,
             "kind": "question",
-            "id": question_item_id(text),
+            "id": _scoring.question_item_id(text),
             "ref": text,
             "path": str(path),
         }
@@ -5294,7 +4620,7 @@ def trap_report(memory_dir: Path, *, stale_days: int | None = None, status: str 
                 "summary": trap.get("summary") or "",
                 "last_confirmed": confirmed,
                 "age_days": age,
-                "approx_tokens": approx_tokens(trap["heading"] + "\n" + body),
+                "approx_tokens": _packet.approx_tokens(trap["heading"] + "\n" + body),
             }
         )
     # Never-confirmed first (age None sorts highest), then oldest confirmation.
@@ -5620,7 +4946,7 @@ def _coalescible_snapshot(
 
     if (rec.meta.get("branch") or "") != git_branch(root):
         return None
-    stamped = _parse_iso(rec.meta.get("updated_at") or rec.meta.get("created_at"))
+    stamped = _validation.parse_timestamp(rec.meta.get("updated_at") or rec.meta.get("created_at"))
     if stamped is None:
         return None
     # Same naive-timestamp localization `_age_days` uses, so the subtraction is
@@ -5711,7 +5037,7 @@ def _git_prefill(root: Path, since: str | None, *, include_memory: bool = False)
     Either way the prefill states the window it used, so a big number can be read
     for what it is instead of taken as a claim about one sitting.
     """
-    if not is_git_repo(root):
+    if not _git.is_repo(root):
         return {
             "Work Completed": "_(no git history available)_",
             "Files Touched": "_(no git history available)_",
@@ -5719,33 +5045,33 @@ def _git_prefill(root: Path, since: str | None, *, include_memory: bool = False)
         }
     # Validate the since-ref; if bad, fall back to recent history.
     recorded = since
-    if since and _git_out(root, "rev-parse", "--verify", f"{since}^{{commit}}") is None:
+    if since and _git.run(root, "rev-parse", "--verify", f"{since}^{{commit}}") is None:
         since = recorded = None
 
     # Cap the lookback. Dropping `since` here re-uses the bounded
     # recent-history window below rather than inventing a second one.
     ahead = 0
     if since:
-        raw = _git_out(root, "rev-list", "--count", f"{since}..HEAD")
+        raw = _git.run(root, "rev-list", "--count", f"{since}..HEAD")
         ahead = int(raw) if (raw or "").strip().isdigit() else 0
         if ahead > GIT_PREFILL_MAX_COMMITS:
             since = None
 
     if since:
-        log = _git_out(root, "log", "--oneline", "--no-decorate", f"{since}..HEAD")
+        log = _git.run(root, "log", "--oneline", "--no-decorate", f"{since}..HEAD")
         base: str | None = since
     else:
-        log = _git_out(
+        log = _git.run(
             root, "log", "--oneline", "--no-decorate", "-n", str(GIT_PREFILL_MAX_COMMITS)
         )
-        rev_list = _git_out(root, "rev-list", f"--max-count={GIT_PREFILL_MAX_COMMITS}", "HEAD")
+        rev_list = _git.run(root, "rev-list", f"--max-count={GIT_PREFILL_MAX_COMMITS}", "HEAD")
         base = None
         if rev_list:
             oldest = rev_list.splitlines()[-1]
-            parent = _git_out(root, "rev-parse", "--verify", f"{oldest}^")
+            parent = _git.run(root, "rev-parse", "--verify", f"{oldest}^")
             if parent:
                 base = parent
-            elif _git_out(root, "rev-parse", "--is-shallow-repository") == "true":
+            elif _git.run(root, "rev-parse", "--is-shallow-repository") == "true":
                 # In a shallow clone the oldest visible commit is the shallow
                 # boundary, not the root — diffing from the empty tree would
                 # record the entire repo as "Files Touched".
@@ -5756,7 +5082,7 @@ def _git_prefill(root: Path, since: str | None, *, include_memory: bool = False)
             else:
                 base = _GIT_EMPTY_TREE
 
-    shortstat = _git_out(root, "diff", "--shortstat", base, "HEAD") if base else None
+    shortstat = _git.run(root, "diff", "--shortstat", base, "HEAD") if base else None
 
     work = "\n".join(f"- {line}" for line in log.splitlines()) if log else "_(no new commits)_"
 
@@ -5933,7 +5259,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         hp = _handoffs.write_path(memory_dir, root, git_branch(root))
         old_next = split_md_sections(_handoffs.seed_text(memory_dir, hp)).get("Next Action", "")
         if not _is_placeholder(old_next) and old_next.strip() != (next_action or "").strip():
-            replaced[f"Next Action ({hp.relative_to(memory_dir).as_posix()})"] = old_next.strip()
+            replaced[f"Next Action ({path_policy.posix_rel(hp, memory_dir)})"] = old_next.strip()
         if recent:
             cur_path = memory_dir / "current.md"
             old_recent = (
@@ -6038,7 +5364,7 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
     else:
         print(f"{'Updated' if coalesce is not None else 'Captured'} session: {meta['id']}")
         print(f"  file:    {path}")
-        print(f"  handoff: {handoff_path.relative_to(memory_dir).as_posix()} (updated)")
+        print(f"  handoff: {path_policy.posix_rel(handoff_path, memory_dir)} (updated)")
         print("  current: updated")
         if tracking == "distillate":
             print("  note: session_tracking=distillate — sessions/ stays local (gitignored);")
@@ -6450,29 +5776,6 @@ def update_current(
 # load_open_questions / parse_handoff_meta) are the reusable surface `guard`
 # ranks against — keep them deterministic and side-effect-free.
 
-# Hard token ceiling for the packet (§12: "3,000 to 5,000 tokens"). Since audit
-# WP08 it bounds the *final serialized view* — every heading, warning, protected
-# section and wrapper of the Markdown or JSON a consumer receives — in the unit
-# `approx_tokens` measures (see TOKEN_ESTIMATOR).
-TOKEN_BUDGET_MAX = 5000
-
-# The `--fast` view's own ceiling: a reorientation glance, not a briefing.
-FAST_TOKEN_BUDGET = 1500
-
-# The smallest budget each view can honour: its own framing (headings, the
-# source header, one omission note per section) with every field reduced to a
-# pointer. A smaller request is raised to this and the packet says so
-# (`budget.requested`); `crumb resume --budget` refuses it outright. Each is
-# at least 30% above the floor measured for a worst-case store (non-ASCII names,
-# task and fields, every section overfull, every field reduced to its pointer):
-# markdown 375, markdown-fast 282, json 528, json-fast 504.
-# tests/test_packet_delivery.py holds every view to its limit.
-PACKET_MIN_BUDGET = {
-    "markdown": 500,
-    "markdown-fast": 400,
-    "json": 700,
-    "json-fast": 700,
-}
 
 # Default aged-unresolved threshold in days (§12; configurable via --stale-days).
 STALE_AGE_DAYS = 21
@@ -6486,90 +5789,6 @@ STALE_DAYS_HELP = (
     f"age cutoff in days — a record older than this counts as aged (default: {STALE_AGE_DAYS})"
 )
 
-# Per-section item caps applied before budget trimming (keeps 100s of records bounded).
-SECTION_CAPS = {
-    "active_decisions": 15,
-    "failed_attempts": 15,
-    "known_traps": 12,
-    "open_questions": 12,
-    "likely_files": 20,
-    "verification": 12,
-    "verifications": 12,
-    # Lower than the durable sections on purpose: the inbox is a triage queue,
-    # and a packet that spends more context on unsorted notes than on decisions
-    # has inverted what it is for.
-    "inbox": 10,
-    # Warnings are capped too: every aged decision/question emits
-    # a warning, so a neglected store could blow the token bound through the one
-    # section the trimmer never touched.
-    "warnings": 20,
-}
-
-# Order in which sections give up items when the packet is over budget
-# (first listed = trimmed first = least load-bearing). Project / Current Focus /
-# Next Action are never trimmed; warnings are trimmed only after every
-# substantive section is empty, so the hard token bound holds.
-TRIM_ORDER = [
-    "verification",
-    # Trimmed early: an unpromoted jot is the least load-bearing thing in the
-    # packet by construction — it is a candidate nobody has confirmed.
-    "inbox",
-    "likely_files",
-    "open_questions",
-    "verifications",
-    "known_traps",
-    "failed_attempts",
-    "active_decisions",
-    # What landed since the handoff makes the focus falsifiable; it goes after
-    # every record section, and before the warnings.
-    "commits_since_handoff",
-    "warnings",
-]
-
-# Free-text caps (audit F14). No single field may take the packet over: past its
-# cap a field becomes a marked excerpt with a pointer to the full text. The
-# canonical files are never changed.
-PROTECTED_EXCERPT_CHARS = 2000  # Current Focus, Next Action
-TASK_EXCERPT_CHARS = 500  # Requested Task
-ITEM_EXCERPT_CHARS = 300  # one entry of any list section, one warning
-NAME_EXCERPT_CHARS = 120  # project name, branch, handoff path
-# Still over budget once every list is empty: the protected fields shrink
-# through these caps, down to a bare pointer.
-_PROTECTED_SHRINK = (1000, 500, 250, 120, 0)
-
-# How `approx_tokens` counts, named wherever a budget is reported (audit F14).
-TOKEN_ESTIMATOR = "approx-tokens/2"
-TOKEN_ESTIMATOR_RULE = (
-    "ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer"
-)
-
-
-def approx_tokens(text: str) -> int:
-    """Cheap token estimate: ASCII chars/4 (rounded up), plus one per other char.
-
-    Plain chars/4 badly undercounts text outside ASCII: a CJK character or an
-    emoji is usually one or more tokens by itself, not a quarter of one. This
-    is still a heuristic, not any model's tokenizer; budgets reported in this
-    unit say so (TOKEN_ESTIMATOR). For ASCII text it equals the old chars/4.
-    """
-    ascii_chars = len(text.encode("ascii", "ignore"))
-    return (ascii_chars + 3) // 4 + (len(text) - ascii_chars)
-
-
-def _parse_iso(value: str | None) -> datetime | None:
-    """Parse an ISO-8601 date or datetime; None if unparseable."""
-    if not value:
-        return None
-    try:
-        text = value.strip()
-        # `fromisoformat` learned `Z` only in 3.11. The record contract accepts
-        # it, so every supported interpreter must read it the same way.
-        if text.endswith("Z"):
-            text = text[:-1] + "+00:00"
-        return datetime.fromisoformat(text)
-    except (ValueError, TypeError):
-        return None
-
 
 def _age_days(value: str | None) -> int | None:
     """Whole days between `value` (ISO date/datetime) and now; None if unparseable.
@@ -6577,7 +5796,7 @@ def _age_days(value: str | None) -> int | None:
     Positive means in the past. Naive timestamps are localized so the subtraction
     is always tz-aware.
     """
-    dt = _parse_iso(value)
+    dt = _validation.parse_timestamp(value)
     if dt is None:
         return None
     now = _now()
@@ -6627,7 +5846,7 @@ def _dt_sort_key(value: str | None) -> float:
     sort after '2026-07-01T00:30+00:00' despite being earlier). Unparseable or
     missing timestamps sort oldest.
     """
-    dt = _parse_iso(value)
+    dt = _validation.parse_timestamp(value)
     if dt is None:
         return float("-inf")
     if dt.tzinfo is None:
@@ -6641,11 +5860,11 @@ def git_commit_distance(root: Path, commit: str | None) -> int | None:
     None when there is no git, no recorded commit, or the commit is unknown to
     this checkout (e.g. a since-rebased sha) — callers degrade gracefully.
     """
-    if not is_git_repo(root) or commit in (None, "", NO_GIT_COMMIT):
+    if not _git.is_repo(root) or commit in (None, "", NO_GIT_COMMIT):
         return None
-    if _git_out(root, "rev-parse", "--verify", f"{commit}^{{commit}}") is None:
+    if _git.run(root, "rev-parse", "--verify", f"{commit}^{{commit}}") is None:
         return None
-    out = _git_out(root, "rev-list", "--count", f"{commit}..HEAD")
+    out = _git.run(root, "rev-list", "--count", f"{commit}..HEAD")
     try:
         return int(out) if out is not None else None
     except ValueError:
@@ -6670,13 +5889,11 @@ def _cached_commit_order(root: Path) -> list[str]:
     """HEAD's history, newest first, up to `_REVLIST_INDEX_CAP` shas.
 
     Read from `index/commit-order.txt` when its first line names the current
-    HEAD (read from .git without a process); otherwise asked of git and
+    HEAD (read from .git without a process where it can be); otherwise asked of git and
     written back. A store-less checkout, an unreadable HEAD or a failed write
     simply asks git each time, as before.
     """
-    from breadcrumbs import gitrefs
-
-    head = gitrefs.head_sha(root)
+    head = _git.head(root)
     cache = Path(root) / MEMORY_DIRNAME / Path(*COMMIT_ORDER_RELPATH)
     if head:
         try:
@@ -6686,7 +5903,7 @@ def _cached_commit_order(root: Path) -> list[str]:
         first, _, rest = text.partition("\n")
         if first == f"{head} {_REVLIST_INDEX_CAP}":
             return rest.split()
-    out = _git_out(root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD")
+    out = _git.run(root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD")
     order = (out or "").split()
     if head and order and order[0] == head and cache.parent.parent.is_dir():
         try:
@@ -6701,7 +5918,7 @@ class CommitDistanceIndex:
     """Commit-distance for a whole scoring pass, in one git call instead of N.
 
     `_score_item` called `git_commit_distance` per scored record, and that is three
-    subprocess spawns each (`is_git_repo`, `rev-parse --verify`, `rev-list --count`).
+    subprocess spawns each (`git.is_repo`, `rev-parse --verify`, `rev-list --count`).
     Guard therefore cost ~3 process spawns per record and got monotonically slower
     as the store grew — while the Stop hook adds a record per qualifying turn, so
     the tool degraded the hot path it had installed. Measured before this: 6.4
@@ -7032,7 +6249,7 @@ def _load_question_blocks(memory_dir: Path) -> list[dict]:
         question = block["heading"][2:].strip()
         out.append(
             {
-                "id": question_item_id(question),
+                "id": _scoring.question_item_id(question),
                 "question": question,
                 "opened": opened,
                 "status": _block_status(block["body"], "open"),
@@ -7087,37 +6304,12 @@ def _first_line(text: str) -> str:
     return ""
 
 
-def _decision_rationale(rec: Record) -> str:
-    secs = rec.sections
-    return (
-        _first_line(secs.get("Rationale", ""))
-        or _first_line(secs.get("Decision", ""))
-        or (rec.meta.get("title") or rec.stem)
-    )
-
-
-def _attempt_do_not_retry(rec: Record) -> str:
-    secs = rec.sections
-    return (
-        _first_line(secs.get("Do Not Retry Unless", ""))
-        or _first_line(secs.get("Why It Failed / Succeeded", ""))
-        or (rec.meta.get("title") or rec.stem)
-    )
-
-
 def _evidence_refs(rec: Record, types: tuple[str, ...]) -> list[str]:
     refs: list[str] = []
     for e in rec.meta.get("evidence") or []:
         if isinstance(e, dict) and e.get("type") in types and e.get("ref"):
             refs.append(str(e["ref"]))
     return refs
-
-
-def _section_lines(handoff_sections: dict, heading: str) -> list[str]:
-    content = handoff_sections.get(heading, "")
-    if _is_placeholder(content):
-        return []
-    return [ln.strip().lstrip("-*").strip() for ln in content.splitlines() if ln.strip()]
 
 
 # ---- staleness ------------------------------------------------------------- #
@@ -7166,21 +6358,21 @@ class HeadTree:
         if self._loaded:
             return
         self._loaded = True
-        if not is_git_repo(self._root):
+        if not _git.is_repo(self._root):
             return
-        prefix = _git_out(self._root, "rev-parse", "--show-prefix")
+        prefix = _git.run(self._root, "rev-parse", "--show-prefix")
         if prefix is None:
             return
-        self._prefix = prefix.strip().replace("\\", "/")
+        self._prefix = path_policy.to_posix(prefix.strip())
         # None on an unborn HEAD (repo with no commits yet): nothing has reached
         # a HEAD that does not exist, so every mismatch stays a mismatch.
-        out = _git_out(
+        out = _git.run(
             self._root, "ls-tree", "-r", "-z", "--full-name", "--name-only", "HEAD", "--", "."
         )
         if out is None:
             return
         self._tracked = frozenset(p for p in out.split("\0") if p)
-        self._dirty = frozenset(p.replace("\\", "/") for p in git_dirty_files(self._root))
+        self._dirty = frozenset(path_policy.to_posix(p) for p in git_dirty_files(self._root))
 
     def contains(self, path: Path | None) -> bool:
         """Is `path` committed at HEAD with no worktree modification? (False when unknowable.)"""
@@ -7190,236 +6382,11 @@ class HeadTree:
         if not self._tracked:
             return False
         try:
-            rel = Path(path).resolve().relative_to(self._root.resolve()).as_posix()
+            rel = path_policy.posix_rel(Path(path).resolve(), self._root.resolve())
         except (ValueError, OSError):
             return False
         full = self._prefix + rel
         return full in self._tracked and full not in self._dirty
-
-
-def compute_staleness(
-    root: Path,
-    handoff_meta: dict,
-    decisions: list[Record],
-    attempts: list[Record],
-    questions: list[dict],
-    stale_days: int,
-    *,
-    risks_only: bool = False,
-    memory_dir: Path | None = None,
-    handoff_path: Path | None = None,
-) -> list[str]:
-    """All computed staleness/risk warnings (§12, §15). Order: primary first.
-
-    `risks_only` is the guard-context view (0.1.10 field test, P0-4): only
-    warnings that flag an *abnormal* state — cold handoff, detached HEAD,
-    handoff branch mismatch — are emitted. The full view additionally reports
-    routine per-store facts (handoff age when fresh, aged records, low
-    confidence, other-branch records); repeating those on every guard call was
-    invariant noise, so they stay in resume/doctor/audit where they are read
-    once per session, not once per edit.
-
-    Branch mismatches are judged against what has *reached HEAD* (see
-    `HeadTree`): a handoff or record whose file is committed at HEAD and clean
-    in the worktree was written on a branch that has since landed here, and is
-    not reported. `memory_dir` locates `handoff.md` for that test; without it
-    the handoff mismatch is reported the old, unconditional way. Records carry
-    their own path, so they never need it.
-    """
-    warnings: list[str] = []
-    cur_branch = git_branch(root)
-    detached = is_git_repo(root) and cur_branch == "HEAD"
-    reached = HeadTree(root)
-    if handoff_path is None and memory_dir is not None:
-        handoff_path = Path(memory_dir) / "handoff.md"
-
-    # (5) Primary signal: handoff age + commit-distance ("train of thought cold").
-    age = _age_days(handoff_meta.get("updated_at"))
-    dist = git_commit_distance(root, handoff_meta.get("commit"))
-    if age is not None or dist is not None:
-        parts = []
-        if age is not None:
-            # A future timestamp (clock skew / edited-ahead date) yields a negative
-            # age — don't render the nonsensical "-1 day(s) old".
-            parts.append(
-                "timestamped in the future (clock skew?)" if age < 0 else f"{age} day(s) old"
-            )
-        if dist is not None:
-            parts.append(f"written {dist} commit(s) behind current HEAD")
-        cold = (age is not None and age > stale_days) or (dist is not None and dist >= 10)
-        if cold or not risks_only:
-            warnings.append(("⚠ " if cold else "") + "handoff is " + ", ".join(parts) + ".")
-    elif handoff_meta.get("updated_at") and not risks_only:
-        warnings.append("handoff timestamp is not parseable; treat handoff age as unknown.")
-
-    # (7) Branch mismatch (§15) — handoff first, then records, capped.
-    if detached:
-        warnings.append(
-            f"git HEAD is detached at {git_commit(root)}; records may be stale "
-            "relative to the current HEAD."
-        )
-    hb = handoff_meta.get("branch")
-    if (
-        hb
-        and hb not in (NO_GIT_BRANCH, None, "")
-        and not detached
-        and cur_branch != NO_GIT_BRANCH
-        and hb != cur_branch
-        and not reached.contains(handoff_path)
-    ):
-        warnings.append(
-            f"branch mismatch: handoff was written on '{hb}' but HEAD is on '{cur_branch}'."
-        )
-    if not detached and cur_branch != NO_GIT_BRANCH and not risks_only:
-        mism = [
-            f"{r.meta.get('id', r.stem)} (on '{r.meta.get('branch')}')"
-            for r in (decisions + attempts)
-            if r.meta.get("branch")
-            and r.meta.get("branch") not in (NO_GIT_BRANCH, None, "")
-            and r.meta.get("branch") != cur_branch
-            and not reached.contains(r.path)
-        ]
-        if mism:
-            shown = ", ".join(mism[:5])
-            extra = f" (+{len(mism) - 5} more)" if len(mism) > 5 else ""
-            warnings.append(
-                f"{len(mism)} record(s) written on other branches than "
-                f"'{cur_branch}': {shown}{extra}."
-            )
-
-    if risks_only:
-        return warnings
-
-    # (6) Aged-unresolved decisions + open questions.
-    for r in decisions:
-        a = _age_days(r.meta.get("updated_at") or r.meta.get("created_at"))
-        if a is not None and a > stale_days:
-            warnings.append(
-                f"active decision {r.meta.get('id', r.stem)} is {a} days old with no "
-                "update — is this still true?"
-            )
-    for q in questions:
-        if (q.get("status") or "open") != "open":
-            continue
-        a = _age_days(q.get("opened"))
-        if a is not None and a > stale_days:
-            warnings.append(
-                f'open question "{q["question"]}" has been open {a} days — '
-                "did this ever get resolved?"
-            )
-
-    # (8) Expired + low-confidence records.
-    for r in decisions + attempts:
-        exp = r.meta.get("expires_at")
-        if exp and record_expired(r.meta):
-            a = _age_days(exp)
-            warnings.append(f"{r.meta.get('id', r.stem)} expired on {exp} ({a} days ago).")
-        if r.meta.get("confidence") == "low":
-            warnings.append(
-                f"{r.meta.get('id', r.stem)} is low-confidence — verify before relying on it."
-            )
-
-    return warnings
-
-
-# ---- packet assembly ------------------------------------------------------- #
-
-# How many commit subjects the packet lists between the handoff's commit and
-# HEAD (P1-5). Enough to falsify a stale work-list; small enough not to crowd
-# the packet.
-PACKET_COMMITS_SINCE_HANDOFF_MAX = 10
-
-
-def _commits_since(root: Path, ref: str | None, limit: int) -> list[str]:
-    """One-line subjects for `ref..HEAD`, newest first. [] when unknowable.
-
-    A rewritten/shallow history (ref unknown to this clone) yields [] — the
-    commit-distance staleness warning already covers that case; inventing a
-    bogus range here would present guesses as history.
-    """
-    if not ref or not is_git_repo(root):
-        return []
-    cur = git_commit(root)
-    if cur == NO_GIT_COMMIT or ref == cur:
-        return []
-    # Commits that touch only the memory store are the handoff and its
-    # projections being committed, not work that landed (0.6.0).
-    out = _git_out(
-        root,
-        "log",
-        "--oneline",
-        "--no-decorate",
-        f"{ref}..HEAD",
-        "--",
-        ".",
-        f":(exclude){MEMORY_DIRNAME}",
-    )
-    if out is None:
-        return []
-    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    return lines[:limit]
-
-
-# Bounded so a store with many fixed verifications cannot flood the warnings
-# section with drift guesses.
-PACKET_DRIFT_CONFLICTS_MAX = 3
-
-# Share of a fixed verification's subject stems the focus text must contain
-# before the drift line fires (floor: two shared stems, or the whole subject
-# when it is shorter). The first cut fired on *any* two shared stems, and on
-# this tool's own store that was 4 of 9 fixed verifications, every one false:
-# "crumb"+"open", "sect"+"sess" (a CHANGELOG *section* and a work *session*),
-# and the bare "11" out of "0.1.11". Two words in common is what any two
-# sentences about the same project share; most of the subject is a claim.
-PACKET_DRIFT_SUBJECT_COVERAGE = 2 / 3
-
-
-def _claim_stems(text: str) -> set[str]:
-    """`_specific` minus digit-only stems: a version fragment is not a claim."""
-    return {s for s in _specific(text) if not s.isdigit()}
-
-
-def _focus_verification_conflicts(
-    next_action: str, current_focus: str, verifications: list[Record]
-) -> list[str]:
-    """Warn when a **fixed** verification names what the focus still claims is owed.
-
-    The P1-5 failure mode: the packet's Current Focus said two work items were
-    outstanding while its own Verifications section recorded one of them as
-    fixed — internally contradictory, and only a human noticed. This is the
-    deterministic cross-check: token overlap between the focus claims and each
-    fixed verification's subject (same stemming as guard/search), warn-only.
-
-    The overlap must cover `PACKET_DRIFT_SUBJECT_COVERAGE` of the subject's
-    stems, not merely reach two: the packet is read cold, so a drift line it
-    prints is either the one contradiction the reader must resolve first, or
-    the line that teaches them to skip the whole section. A missed paraphrase
-    still has *Landed Since The Handoff Was Written* to fall back on.
-    """
-    claims = _claim_stems(f"{next_action} {current_focus}")
-    if not claims:
-        return []
-    out: list[str] = []
-    for r in verifications:
-        if (r.meta.get("outcome") or "open") != "fixed":
-            continue
-        subject = r.meta.get("subject") or r.meta.get("title", "")
-        subj = _claim_stems(subject)
-        if not subj:
-            continue
-        need = max(min(2, len(subj)), math.ceil(len(subj) * PACKET_DRIFT_SUBJECT_COVERAGE))
-        if len(subj & claims) >= need:
-            rid = r.meta.get("id", r.stem)
-            when = r.meta.get("updated_at") or r.meta.get("created_at") or ""
-            when = f" on {when[:10]}" if when else ""
-            out.append(
-                f'possible drift: `{rid}` recorded "{subject}" as **fixed**{when}, '
-                "but Current Focus / Next Action still claims that work — "
-                "re-check before redoing it."
-            )
-            if len(out) >= PACKET_DRIFT_CONFLICTS_MAX:
-                break
-    return out
 
 
 def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
@@ -7436,39 +6403,24 @@ def _tracked_gitignored_dirs(project_root: Path, dirs: list[Path]) -> set[str]:
     the project root, the source of a worktree `.gitignore` is a relative path,
     while both machine-local sources are absolute. That is the whole filter.
     """
-    if not dirs or not is_git_repo(project_root):
+    if not dirs or not _git.is_repo(project_root):
         return set()
     rels = []
     for d in dirs:
         try:
-            rels.append(d.resolve().relative_to(Path(project_root).resolve()).as_posix())
+            rels.append(path_policy.posix_rel(d.resolve(), Path(project_root).resolve()))
         except ValueError:  # pragma: no cover - store outside the project root
             return set()
-    # `-z`: NUL-separated bytes both ways. Text-mode stdin sent each path with
-    # "\r\n" on Windows, git read `ideas\r`, and nothing ever matched there
-    # (audit WP17); `-z` also leaves unusual names unquoted.
-    try:
-        r = subprocess.run(
-            ["git", "check-ignore", "-v", "-z", "--no-index", "--stdin"],
-            cwd=str(project_root),
-            input=b"".join(rel.encode("utf-8") + b"\0" for rel in rels),
-            capture_output=True,
-            check=False,
-        )
-    except (FileNotFoundError, OSError):
+    matches = _git.check_ignore(project_root, rels)
+    if matches is None:
         return set()
-    if r.returncode not in (0, 1):  # 1 = nothing ignored; anything else is an error
-        return set()
-    fields = r.stdout.decode("utf-8", errors="replace").split("\0")
     out: set[str] = set()
-    # Each match is four fields: source, line number, pattern, path.
-    for i in range(0, len(fields) - 3, 4):
-        source, _line, pattern, path = fields[i : i + 4]
+    for source, pattern, path in matches:
         # A negation (`!fixtures/**/…`) is reported as the deciding pattern too,
         # and it means the opposite of ignored.
         if not path or pattern.startswith("!"):
             continue
-        if not source or Path(source).is_absolute() or ".git/" in source.replace("\\", "/"):
+        if not source or Path(source).is_absolute() or ".git/" in path_policy.to_posix(source):
             continue
         out.add(Path(path.strip()).name)
     return out
@@ -7562,7 +6514,7 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     paths.append(memory_dir / "manifest.yml")
     # The alias table changes what every stem means, so it is an input to every
     # projection built from stems (the guard prefilter most of all).
-    paths.append(memory_dir / ALIASES_FILENAME)
+    paths.append(memory_dir / _textmatch.ALIASES_FILENAME)
     # Read once per directory under the path policy (audit F17). A link is
     # hashed as a marker, never through; `validate` reports it.
     refused = b"\0refused-link\0"
@@ -7596,7 +6548,7 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
         # are filename-derived, so a rename changes every id in the packet
         # while leaving a contents-only hash untouched — the freshness gate
         # then certifies a projection full of ids that no longer exist.
-        rel = p.relative_to(memory_dir).as_posix()
+        rel = path_policy.posix_rel(p, memory_dir)
         h.update(rel.encode())
         h.update(b"\0")
         # Line endings are not content: git's autocrlf checks a store out with
@@ -7608,539 +6560,6 @@ def _inputs_hash(memory_dir: Path, project_root: Path | None = None) -> str:
     return h.hexdigest()[:12]
 
 
-# How much of a jot's text the packet spends. A jot is capped at
-# JOT_MAX_CHARS; the packet shows the opening of it and the id to fetch the
-# rest, because ten full jots would outweigh every decision in the section above.
-PACKET_JOT_CHARS = 120
-
-
-def _packet_record_ids(packet: dict) -> list[str]:
-    """Every record id the rendered packet actually names.
-
-    Read from the packet *after* capping and budget trimming, so a record that
-    was computed and then dropped is not counted as surfaced — it was not.
-    """
-    ids: list[str] = []
-    for key in ("active_decisions", "failed_attempts", "verifications", "inbox"):
-        ids += [
-            item["id"] for item in packet.get(key, []) if isinstance(item, dict) and item.get("id")
-        ]
-    # Traps render as their heading (`trap_<slug>: summary`), which is how the
-    # id is spelled in that file; take the id half.
-    ids += [str(t).split(":", 1)[0].strip() for t in packet.get("known_traps", [])]
-    return [i for i in ids if i]
-
-
-def _record_packet_surfacings(
-    memory_dir: Path, packet: dict, source: str = "resume", session_id: str | None = None
-) -> None:
-    """Best-effort usage counts for a packet that was just shown to somebody."""
-    from breadcrumbs import usage as _usage
-
-    _usage.record_surfaced(memory_dir, _packet_record_ids(packet), source, session_id=session_id)
-
-
-def _packet_inbox(memory_dir: Path) -> list[dict]:
-    """Live committed jots for the packet's Inbox section.
-
-    Imported here rather than at module scope: `breadcrumbs.inbox` imports this
-    module, so a top-level import would be a cycle.
-    """
-    from breadcrumbs import inbox as _inbox
-
-    out = []
-    for row in _inbox.packet_jots(memory_dir):
-        text = row["title"]
-        if len(text) > PACKET_JOT_CHARS:
-            text = text[: PACKET_JOT_CHARS - 1].rstrip() + "…"
-        out.append(
-            {
-                "id": row["id"],
-                "text": text,
-                "source": row["source"],
-                "age_days": row["age_days"],
-            }
-        )
-    return out
-
-
-def build_resume_packet(
-    memory_dir: Path,
-    root: Path,
-    *,
-    stale_days: int = STALE_AGE_DAYS,
-    fast: bool = False,
-    task: str | None = None,
-    view: str = "markdown",
-    budget: int | None = None,
-    render=None,
-    loaded_rules: dict[str, str] | None = None,
-    loaded_rules_from: tuple[str, ...] | None = None,
-) -> dict:
-    """Assemble the structured resume packet (the source of both MD and JSON output).
-
-    When `task` is given (the "resume for THIS task" path) the packet
-    is scoped to it: `requested_task` is echoed and `likely_files` is derived from
-    the records that actually match the task instead of the store-global default
-    that misdirects on off-domain work. With no task, behavior is unchanged.
-
-    Its `inputs_hash` stamp is the snapshot it was built from, verified
-    unchanged across the build, or `unstable` with a warning (audit F07; see
-    `breadcrumbs/snapshots.py`).
-
-    Audit WP08. `view` ("markdown" or "json") and `budget` say which serialized
-    view the packet is bounded for; `render` is that view's exact text, when the
-    caller wraps it (default: `render_packet_markdown` / `packet_json_text`).
-    The packet is portable unless `loaded_rules` (`promote.loaded_rules`) says
-    which standing rules its consumer has loaded, from `loaded_rules_from`;
-    only those promoted records are left out.
-    """
-    from breadcrumbs import snapshots as _snapshots
-
-    options = {
-        "stale_days": stale_days,
-        "fast": fast,
-        "task": task,
-        "view": view,
-        "budget": budget,
-        "render": render,
-        "loaded_rules": loaded_rules,
-        "loaded_rules_from": loaded_rules_from,
-    }
-    packet, digest = _snapshots.stable_build(
-        memory_dir,
-        root,
-        lambda h: _build_resume_packet_once(memory_dir, root, inputs_hash=h, **options),
-    )
-    if digest is None:
-        # Built once more, stamped and warned as unstable before it is bounded,
-        # so the warning counts against the budget like any other line.
-        packet = _build_resume_packet_once(
-            memory_dir,
-            root,
-            inputs_hash=_snapshots.UNSTABLE,
-            lead_warnings=[_snapshots.UNSTABLE_WARNING],
-            **options,
-        )
-    return packet
-
-
-def _build_resume_packet_once(
-    memory_dir: Path,
-    root: Path,
-    *,
-    stale_days: int = STALE_AGE_DAYS,
-    fast: bool = False,
-    task: str | None = None,
-    inputs_hash: str,
-    view: str = "markdown",
-    budget: int | None = None,
-    render=None,
-    loaded_rules: dict[str, str] | None = None,
-    loaded_rules_from: tuple[str, ...] | None = None,
-    lead_warnings: list[str] | None = None,
-) -> dict:
-    """One build of the packet, stamped with the digest the caller verifies."""
-    memory_dir = Path(memory_dir)
-    manifest = load_manifest(memory_dir) or {}
-
-    # Lenient reads: one bad byte in handoff.md used to abort the
-    # packet build, which took `resume`, `audit` and every reindex down with it —
-    # projections silently stopped refreshing. The problem is surfaced as a packet
-    # warning instead, naming the file.
-    unreadable: list[str] = []
-    current_text, problem = (
-        read_text_lenient(memory_dir / "current.md")
-        if (memory_dir / "current.md").is_file()
-        else ("", None)
-    )
-    if problem:
-        unreadable.append(f"current.md: {problem}")
-    current_sections = split_md_sections(current_text)
-    # WM-50: this branch's own handoff when it has one, else handoff.md.
-    from breadcrumbs import handoffs as _handoffs
-
-    handoff_path, handoff_label = _handoffs.read_path(memory_dir, root)
-    handoff_text, problem = (
-        read_text_lenient(handoff_path) if handoff_path.is_file() else ("", None)
-    )
-    if problem:
-        unreadable.append(f"{handoff_label}: {problem}")
-    handoff_sections = split_md_sections(handoff_text)
-    handoff_meta = parse_handoff_meta(handoff_text)
-
-    decisions = active_decisions(memory_dir)
-    attempts = active_attempts(memory_dir)
-    traps = active_traps(memory_dir)
-    questions = load_open_questions(memory_dir)
-    verifications = active_verifications(memory_dir)
-    # WM-30: a record past its `expires_at` leaves the lists (it is still on
-    # disk, still searchable, and `crumb expired` names it). The staleness
-    # warnings below still see every active record, so "X expired on …" is said.
-    listed_decisions = [r for r in decisions if not record_expired(r.meta)]
-    listed_attempts = [r for r in attempts if not record_expired(r.meta)]
-    listed_verifications = [r for r in verifications if not record_expired(r.meta)]
-    # WM-52: branch-scoped records from another branch leave the lists too.
-    current_branch = git_branch(root)
-    listed_decisions = [
-        r for r in listed_decisions if not branch_scoped_elsewhere(r.meta, current_branch)
-    ]
-    listed_attempts = [
-        r for r in listed_attempts if not branch_scoped_elsewhere(r.meta, current_branch)
-    ]
-    listed_verifications = [
-        r for r in listed_verifications if not branch_scoped_elsewhere(r.meta, current_branch)
-    ]
-    # WM-40 / audit F13: a promoted record is a standing rule in an instruction
-    # file. The packet is portable by default: it keeps the record, and carries
-    # the rule in force, because its reader may not load that file (another
-    # harness, a read-only clone) or the file may no longer hold the rule. Only a
-    # consumer that has verifiably loaded the rule (`loaded_rules`, read from
-    # the files it loads, at the moment it loads them) gets the record elided,
-    # so the same rule is not spent twice in its context. Guard, search and the
-    # warnings see every promoted record either way.
-    from breadcrumbs import promote as _promote
-
-    rule_files = _promote.rules_in_files(root)
-    rules: dict[str, dict] = {}
-
-    def _standing(rid: str, target: str | None) -> dict:
-        if rid not in rules:
-            text, in_file = _promote.effective_rule(memory_dir, rid, target, rule_files)
-            rules[rid] = {"promoted_to": target, "rule": text, "rule_in_file": in_file}
-        return rules[rid]
-
-    def _elided(rid: str, promoted: bool) -> bool:
-        return promoted and loaded_rules is not None and rid in loaded_rules
-
-    promoted_counts = {"active_decisions": 0, "failed_attempts": 0, "known_traps": 0}
-    listed_decisions_all = listed_decisions
-    listed_attempts_all = listed_attempts
-    for key, recs in (("active_decisions", listed_decisions), ("failed_attempts", listed_attempts)):
-        for r in recs:
-            rid = r.meta.get("id", r.stem)
-            if _promote.is_promoted_record(r):
-                _standing(rid, str(r.meta["promoted_to"]))
-                promoted_counts[key] += _elided(rid, True)
-    for t in traps:
-        if _promote.is_promoted_trap(t):
-            _standing(t["id"], _promote.promoted_to(t))
-            promoted_counts["known_traps"] += _elided(t["id"], True)
-    listed_decisions = [
-        r
-        for r in listed_decisions
-        if not _elided(r.meta.get("id", r.stem), _promote.is_promoted_record(r))
-    ]
-    listed_attempts = [
-        r
-        for r in listed_attempts
-        if not _elided(r.meta.get("id", r.stem), _promote.is_promoted_record(r))
-    ]
-    listed_traps = [t for t in traps if not _elided(t["id"], _promote.is_promoted_trap(t))]
-
-    def _trap_line(t: dict) -> str:
-        rule = rules.get(t["id"])
-        if not rule or not rule["rule"]:
-            return t["heading"]
-        return f"{t['id']}: {_standing_label(rule)} {rule['rule']}"
-
-    # Project snapshot (git is the live source; handoff metadata is advisory).
-    dirty = git_dirty_files(root)
-    project = {
-        "name": manifest.get("project") or derive_project_name(root),
-        # Project-relative, never the absolute host path. The packet
-        # is a committed, shared artifact: an absolute path publishes the author's
-        # local directory layout into the repo (the disclosure `mcp_core` already
-        # forbids for error messages, issue #7), makes a byte-identical clone at
-        # another path read as stale, and churns on every reindex when two
-        # developers work at different paths.
-        "path": ".",
-        "branch": git_branch(root),
-        "commit": git_commit(root),
-        "dirty": len(dirty),
-        "dirty_state": (f"{len(dirty)} uncommitted file(s)" if dirty else "clean"),
-        "handoff": handoff_label,
-    }
-
-    def _focus() -> tuple[str, str]:
-        cf = current_sections.get("Current Focus", "")
-        if not _is_placeholder(cf):
-            return cf.strip(), "current.md → Current Focus"
-        hf = handoff_sections.get("Current Focus", "")
-        return ("" if _is_placeholder(hf) else hf.strip()), f"{handoff_label} → Current Focus"
-
-    focus, focus_source = _focus()
-
-    next_action = handoff_sections.get("Next Action", "")
-    next_action = "" if _is_placeholder(next_action) else next_action.strip()
-    # The Next Action is a log, newest first: the packet carries the newest
-    # entry and says how many earlier ones the handoff holds (issue 1).
-    next_entries = split_next_entries(next_action)
-    next_action_earlier = max(len(next_entries) - 1, 0)
-    if next_entries:
-        next_action = next_entries[0]
-
-    packet: dict = {
-        "source": {
-            "commit": git_commit(root),
-            "inputs_hash": inputs_hash,
-            "generated_at": now_iso(),
-        },
-        "fast": bool(fast),
-        # Two different numbers used to be one confusable word:
-        # `stale_after_days` is the *threshold* the caller chose, while
-        # `handoff_age_days`/`handoff_commit_distance` are the measured *age* and
-        # distance the warnings are computed from. The ages used to exist only as
-        # prose inside a warning string ("handoff is 6 day(s) old"), so a consumer
-        # reading the packet had the threshold as data and the fact as English.
-        # Both are None when unknown: an unparseable timestamp, or no git repo.
-        "stale_after_days": stale_days,
-        "handoff_age_days": _age_days(handoff_meta.get("updated_at")),
-        "handoff_commit_distance": git_commit_distance(root, handoff_meta.get("commit")),
-        "project": project,
-        "current_focus": focus,
-        "next_action": next_action,
-        "next_action_earlier": next_action_earlier,
-        "active_decisions": [
-            {
-                "id": r.meta.get("id", r.stem),
-                "title": r.meta.get("title", ""),
-                "rationale": _decision_rationale(r),
-                **rules.get(r.meta.get("id", r.stem), {}),
-            }
-            for r in listed_decisions
-        ],
-        "failed_attempts": [
-            {
-                "id": r.meta.get("id", r.stem),
-                "title": r.meta.get("title", ""),
-                "do_not_retry": _attempt_do_not_retry(r),
-                **rules.get(r.meta.get("id", r.stem), {}),
-            }
-            for r in listed_attempts
-        ],
-        "known_traps": [_trap_line(t) for t in listed_traps],
-        # Standing rules this packet left out because its consumer has loaded
-        # them (only ever non-empty for such a consumer; see `rules`).
-        "promoted": {k: v for k, v in promoted_counts.items() if v},
-        "rules": (
-            {"mode": "portable"}
-            if loaded_rules is None
-            else {
-                "mode": "elided-when-loaded",
-                "loaded_from": list(loaded_rules_from or ()),
-                "elided": sum(promoted_counts.values()),
-            }
-        ),
-        "open_questions": [q["question"] for q in questions if q["status"] == "open"],
-        # Committed jots only. A machine-local jot in this list would make the
-        # committed packet differ between two checkouts of one store while
-        # `_inputs_hash` — which cannot read gitignored input without the same
-        # problem — still called both fresh. See `breadcrumbs/inbox.py`.
-        "inbox": _packet_inbox(memory_dir),
-        "likely_files": [],
-        "verification": [],
-        "verifications": [
-            {
-                "id": r.meta.get("id", r.stem),
-                "subject": (r.meta.get("subject") or r.meta.get("title", "")),
-                # A verification with no outcome is not "open" — nobody said so.
-                # Showing it as open inverted a hand-written "Fixed." (N3).
-                "outcome": (r.meta.get("outcome") or "unknown"),
-                "method": r.meta.get("method"),
-            }
-            for r in listed_verifications
-        ],
-        "commits_since_handoff": _commits_since(
-            root, handoff_meta.get("commit"), PACKET_COMMITS_SINCE_HANDOFF_MAX
-        ),
-        "warnings": (
-            list(lead_warnings or [])
-            + [f"⚠ {u}" for u in unreadable]
-            + record_contract_warnings(memory_dir)
-            + compute_staleness(
-                root,
-                handoff_meta,
-                decisions,
-                attempts,
-                questions,
-                stale_days,
-                memory_dir=memory_dir,
-                handoff_path=handoff_path,
-            )
-        ),
-        "omitted": {},
-        "omitted_reason": {},
-    }
-    # P1-5 cross-check: a fixed verification contradicting the focus claims is
-    # the one staleness the age/distance numbers can never see.
-    packet["warnings"] += _focus_verification_conflicts(
-        packet["next_action"], packet["current_focus"], verifications
-    )
-    from breadcrumbs import lifecycle as _lifecycle
-
-    packet["warnings"] += _lifecycle.lifecycle_warnings(
-        memory_dir, root, verifications=listed_verifications, traps=traps
-    )
-    # WM-31: a record citing a file that is gone may describe code that is gone.
-    # Promoted records too: a standing rule citing a deleted file is exactly the
-    # one that must be rechecked.
-    packet["warnings"] += _lifecycle.missing_evidence_warnings(
-        root, listed_decisions_all + listed_attempts_all + listed_verifications
-    )
-    # WM-34: memory that argues with itself, worded as a question.
-    packet["warnings"] += _lifecycle.conflict_warnings(memory_dir)
-    # Its own field, never trimmed: a store written by a newer crumb-kit is
-    # read, but its records may mean something this build does not know
-    # (audit WP21).
-    from breadcrumbs import compat as _compat
-
-    compat_note = _compat.warning(memory_dir)
-    if compat_note:
-        packet["compatibility"] = compat_note
-
-    # Likely files: handoff section + file-type evidence refs (deduped, order-stable).
-    files = _section_lines(handoff_sections, "Likely Relevant Files")
-    for r in decisions + attempts:
-        files.extend(_evidence_refs(r, ("file", "path")))
-    packet["likely_files"] = _dedup(files)
-
-    # Verification commands: handoff section + command-type evidence refs. (Distinct
-    # from `verifications`, which are recorded *results*; this list is *how to check*.)
-    verify_cmds = _section_lines(handoff_sections, "Verification Commands")
-    for r in decisions + attempts:
-        verify_cmds.extend(_evidence_refs(r, ("command", "test")))
-    packet["verification"] = _dedup(verify_cmds)
-
-    # Task scoping: when a task is named, replace the store-global
-    # likely_files with files drawn from the records that actually match the task,
-    # and label an empty result so the consumer knows the store is cold here rather
-    # than trusting noise.
-    packet["ordering"] = "recency"
-    if task:
-        packet["requested_task"] = task
-        scoped, note = _task_scoped_files(memory_dir, root, task, stale_days=stale_days)
-        packet["likely_files"] = scoped
-        if note:
-            packet["likely_files_note"] = note
-        _order_by_relevance(packet, memory_dir, root, task, stale_days=stale_days)
-
-    _bound_packet(
-        packet,
-        fast=fast,
-        view=view,
-        budget=budget,
-        render=render,
-        sources={
-            "current_focus": focus_source,
-            "next_action": f"{handoff_label} → Next Action",
-            "requested_task": "the task you passed",
-        },
-    )
-    return packet
-
-
-# How many of the newest items in each section keep their place when a packet
-# is ordered by relevance. Without a floor, a record written ten minutes ago that
-# happens to share no words with the task would sink below a year-old one that
-# does — and "what just changed" is the one thing a resuming reader cannot
-# afford to miss, whatever they are about to work on.
-RECENCY_FLOOR = 3
-
-# The packet's list sections and how to get a search id out of each entry. Two
-# of them hold strings rather than dicts: a trap is rendered as its heading
-# (`trap_<slug>: summary`) and a question as its text.
-_RELEVANCE_SECTIONS: dict[str, "object"] = {
-    "active_decisions": lambda e: e["id"],
-    "failed_attempts": lambda e: e["id"],
-    "verifications": lambda e: e["id"],
-    "known_traps": lambda e: str(e).split(":", 1)[0].strip(),
-    "open_questions": lambda e: question_item_id(str(e)),
-}
-
-
-def task_relevance_scores(
-    memory_dir: Path, root: Path, task: str, *, stale_days: int = STALE_AGE_DAYS
-) -> dict[str, float]:
-    """`{record_id: score}` for `task`: what a task-ordered packet sorts by.
-
-    Deliberately loose (one shared word is enough): it only orders, it never
-    hides. The relevance evals (`evals/run.py`) rank the packet by this too, so
-    the packet and its measurement cannot drift apart.
-    """
-    matches, _ = search(
-        memory_dir, root, task, include_ideas=False, min_keyword=1, stale_days=stale_days
-    )
-    return {m["id"]: float(m.get("score") or 0) for m in matches}
-
-
-def _order_by_relevance(
-    packet: dict, memory_dir: Path, root: Path, task: str, *, stale_days: int
-) -> None:
-    """Reorder every list section by relevance to `task`, in place (WM-20).
-
-    Ordering only — nothing is hidden. The newest `RECENCY_FLOOR` entries stay
-    first, then everything the task scores against, best first, then the rest
-    in their original order. Caps and the token budget apply afterwards exactly
-    as before, so what relevance changes is *which* entries survive a trim: the
-    ones about the task instead of whichever happened to be newest.
-
-    One `search` over the whole corpus, reused for every section, so the cost is
-    the same as `--task`'s likely-file scoping already paid.
-    """
-    scores = task_relevance_scores(memory_dir, root, task, stale_days=stale_days)
-    if not scores:
-        return
-    for key, id_of in _RELEVANCE_SECTIONS.items():
-        entries = packet.get(key) or []
-        head, rest = entries[:RECENCY_FLOOR], entries[RECENCY_FLOOR:]
-        scored = [e for e in rest if scores.get(id_of(e), 0) > 0]
-        unscored = [e for e in rest if scores.get(id_of(e), 0) <= 0]
-        # sort() is stable, so equal scores keep their recency order.
-        scored.sort(key=lambda e: -scores[id_of(e)])
-        packet[key] = head + scored + unscored
-    packet["ordering"] = "relevance"
-
-
-def active_verifications(memory_dir: Path) -> list[Record]:
-    """Active verification records, actionable outcome first.
-
-    open/regressed/inconclusive (still need attention) sort ahead of
-    not_applicable/fixed (resolved), each group newest-first via active_records.
-    """
-    order = {
-        o: i for i, o in enumerate(ACTIONABLE_VERIFICATION_OUTCOMES + ("not_applicable", "fixed"))
-    }
-    recs = active_records(memory_dir, "verification")
-    return sorted(recs, key=lambda r: order.get(r.meta.get("outcome") or "open", 99))
-
-
-def _task_scoped_files(
-    memory_dir: Path, root: Path, task: str, *, stale_days: int
-) -> tuple[list[str], str | None]:
-    """Files relevant to `task`, from records that match it.
-
-    Reuses the deterministic `search` scoring rather than inventing a second
-    relevance notion. Returns (files, note); note is set only when nothing matched.
-
-    Ideas are excluded (the default corpus): this list goes into a packet that
-    boots the next session, and a file path is only "likely" because someone did
-    work there — not because someone proposed it.
-    """
-    matches, by_id = search(memory_dir, root, task, stale_days=stale_days, include_ideas=False)
-    files: list[str] = []
-    for m in matches:
-        files.extend(m.get("matched_files") or [])
-        item = by_id.get(m["id"]) or {}
-        rec = item.get("record")
-        if rec is not None:
-            files.extend(_evidence_refs(rec, ("file", "path")))
-    files = _dedup([f for f in files if f])
-    if not files:
-        return [], "no records match this task domain; starting cold"
-    return files, None
-
-
 def _dedup(items: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -8149,458 +6568,6 @@ def _dedup(items: list[str]) -> list[str]:
             seen.add(it)
             out.append(it)
     return out
-
-
-# Sections dropped wholesale by --fast (reduced reorientation view, §12).
-_FAST_DROP = (
-    "active_decisions",
-    "failed_attempts",
-    "known_traps",
-    "open_questions",
-    "likely_files",
-    "verification",
-    "verifications",
-    "inbox",
-)
-
-
-def _excerpt(text: str, limit: int, source: str | None = None) -> tuple[str, bool]:
-    """`(text, excerpted)`: `text` cut to `limit` chars, visibly, with a pointer.
-
-    The mark says how much is shown and where the whole is, so a shortened
-    field can never be mistaken for the full one. At `limit` 0 only the pointer
-    is left.
-    """
-    text = text or ""
-    if len(text) <= limit:
-        return text, False
-    where = f"; full text: {source}" if source else ""
-    shown = text[:limit].rstrip() if limit > 0 else ""
-    if shown:
-        return f"{shown}… [excerpt: {len(shown)} of {len(text)} chars{where}]", True
-    return f"[omitted: {len(text)} chars{where}]", True
-
-
-def _entry_source(section: str, entry) -> str | None:
-    if isinstance(entry, dict) and entry.get("id"):
-        return f"crumb show {entry['id']}"
-    if section == "known_traps":
-        return f"crumb show {str(entry).split(':', 1)[0].strip()}"
-    if section == "open_questions":
-        return f"crumb show {question_item_id(str(entry))}"
-    return None
-
-
-# The text fields of each list section's entries (dict entries) that can grow
-# without limit; string entries are excerpted whole.
-_ENTRY_TEXT_FIELDS = {
-    "active_decisions": ("title", "rationale", "rule"),
-    "failed_attempts": ("title", "do_not_retry", "rule"),
-    "verifications": ("subject",),
-    "inbox": ("text",),
-}
-
-
-def _excerpt_entries(packet: dict) -> None:
-    """Cap every list entry and warning at ITEM_EXCERPT_CHARS (audit F14)."""
-    excerpted = packet.setdefault("excerpted", {})
-    for key in [*SECTION_CAPS, "commits_since_handoff"]:
-        entries = packet.get(key) or []
-        out = []
-        for entry in entries:
-            source = _entry_source(key, entry)
-            hit = False
-            if isinstance(entry, dict):
-                entry = dict(entry)
-                for field in _ENTRY_TEXT_FIELDS.get(key, ()):
-                    if isinstance(entry.get(field), str):
-                        entry[field], cut = _excerpt(entry[field], ITEM_EXCERPT_CHARS, source)
-                        hit = hit or cut
-            elif isinstance(entry, str):
-                entry, hit = _excerpt(entry, ITEM_EXCERPT_CHARS, source)
-            if hit:
-                excerpted[key] = excerpted.get(key, 0) + 1
-            out.append(entry)
-        if key in packet:
-            packet[key] = out
-
-
-# Project names shrink with the protected fields, but never below this.
-_NAME_FLOOR_CHARS = 40
-
-
-def _excerpt_protected(packet: dict, originals: dict, sources: dict, cap: int) -> None:
-    """Set the protected fields from their full text at `cap` chars each."""
-    excerpted = packet.setdefault("excerpted", {})
-    same = originals["current_focus"] and (
-        originals["current_focus"].strip() == originals["next_action"].strip()
-    )
-    proj = packet.get("project") or {}
-    name_cap = min(NAME_EXCERPT_CHARS, max(cap, _NAME_FLOOR_CHARS))
-    for field in ("name", "branch", "handoff"):
-        full = originals.get(f"project.{field}")
-        if isinstance(full, str):
-            proj[field], cut = _excerpt(full, name_cap)
-            if cut:
-                excerpted[f"project.{field}"] = {"shown_chars": name_cap, "total_chars": len(full)}
-    for field, limit in (
-        ("next_action", cap),
-        ("current_focus", cap),
-        ("requested_task", min(cap, TASK_EXCERPT_CHARS)),
-    ):
-        if originals.get(field) is None:
-            continue
-        if field == "current_focus" and same:
-            # Rendered as "same as Next Action": keep the two strings equal.
-            packet[field] = packet["next_action"]
-            continue
-        packet[field], cut = _excerpt(originals[field], limit, sources.get(field))
-        if cut:
-            excerpted[field] = {
-                "shown_chars": min(limit, len(originals[field])),
-                "total_chars": len(originals[field]),
-                "source": sources.get(field),
-            }
-        else:
-            excerpted.pop(field, None)
-
-
-def packet_json_text(packet: dict) -> str:
-    """The JSON view as the MCP tool and library callers serialize it."""
-    return json.dumps(packet, indent=2)
-
-
-def _bound_packet(
-    packet: dict,
-    *,
-    fast: bool,
-    view: str = "markdown",
-    budget: int | None = None,
-    render=None,
-    sources: dict | None = None,
-) -> None:
-    """Fit the packet into its view's budget, measured on the final text (audit F14).
-
-    In order: --fast pruning; per-entry and per-field excerpts; per-section caps;
-    list trimming (TRIM_ORDER); then the protected fields shrink to pointers.
-    Every step removes something, so it terminates. Everything left out or
-    shortened is disclosed (`omitted`, `excerpted`, the inline marks), and
-    `budget` names the view, the unit, the estimator, the limit and what the
-    view actually used.
-    """
-    if view not in ("markdown", "json"):
-        raise ValueError(f"unknown packet view: {view!r}")
-    view_name = f"{view}-fast" if fast else view
-    requested = budget
-    if requested is None:
-        requested = FAST_TOKEN_BUDGET if fast else TOKEN_BUDGET_MAX
-    limit = max(int(requested), PACKET_MIN_BUDGET[view_name])
-    if render is None:
-        render = render_packet_markdown if view == "markdown" else packet_json_text
-
-    def measure() -> int:
-        return approx_tokens(render(packet))
-
-    packet["budget"] = {
-        "view": view_name,
-        "unit": "approx_tokens",
-        "estimator": TOKEN_ESTIMATOR,
-        "estimator_rule": TOKEN_ESTIMATOR_RULE,
-        "limit": limit,
-        # Placeholders at least as wide as the final values, so the text
-        # measured below is never shorter than the text emitted.
-        "used": limit,
-        "within": False,
-    }
-    if limit != requested:
-        packet["budget"]["requested"] = int(requested)
-
-    if fast:
-        for key in _FAST_DROP:
-            packet[key] = []
-        packet["omitted"] = {}
-        packet["omitted_reason"] = {}
-
-    sources = sources or {}
-    originals = {
-        "current_focus": packet.get("current_focus") or "",
-        "next_action": packet.get("next_action") or "",
-        "requested_task": packet.get("requested_task"),
-        **{f"project.{k}": v for k, v in (packet.get("project") or {}).items()},
-    }
-    _excerpt_entries(packet)
-    _excerpt_protected(packet, originals, sources, PROTECTED_EXCERPT_CHARS)
-
-    # Per-section caps (record how many we hid, and why). Applied in --fast mode
-    # too: warnings survive the fast prune and must stay bounded.
-    for key, cap in SECTION_CAPS.items():
-        if fast and key in _FAST_DROP:
-            continue
-        items = packet.get(key, [])
-        if len(items) > cap:
-            packet["omitted"][key] = packet["omitted"].get(key, 0) + (len(items) - cap)
-            packet["omitted_reason"][key] = "the per-section cap"
-            packet[key] = items[:cap]
-
-    # Budget trim, lowest-priority section first, until within the ceiling.
-    while measure() > limit:
-        for key in TRIM_ORDER:
-            if packet.get(key):
-                packet[key].pop()
-                packet["omitted"][key] = packet["omitted"].get(key, 0) + 1
-                # A key already capped is now also budget-trimmed — record both.
-                prior = packet["omitted_reason"].get(key)
-                packet["omitted_reason"][key] = (
-                    "the per-section cap and token budget"
-                    if prior == "the per-section cap"
-                    else "the token budget"
-                )
-                break
-        else:
-            break
-
-    # Every list is empty and it is still over: the protected fields give way,
-    # as marked excerpts and finally bare pointers.
-    for cap in _PROTECTED_SHRINK:
-        if measure() <= limit:
-            break
-        _excerpt_protected(packet, originals, sources, cap)
-
-    if not packet["excerpted"]:
-        packet.pop("excerpted")
-    used = measure()
-    packet["budget"]["used"] = used
-    packet["budget"]["within"] = used <= limit
-
-
-# ---- rendering ------------------------------------------------------------- #
-
-
-def _standing_label(rule: dict) -> str:
-    """How a promoted entry introduces its rule, saying where the rule lives."""
-    target = rule.get("promoted_to") or "the instruction file"
-    if rule.get("rule_in_file"):
-        return f"standing rule in {target}:"
-    return f"standing rule (promoted to {target}, not found there):"
-
-
-def _omitted_note(packet: dict, key: str) -> list[str]:
-    out = []
-    n = packet.get("omitted", {}).get(key, 0)
-    if n:
-        reason = packet.get("omitted_reason", {}).get(key, "the token budget")
-        out.append(f"_(… {n} more omitted to stay within {reason})_")
-    promoted = (packet.get("promoted") or {}).get(key, 0)
-    if promoted:
-        loaded = ", ".join((packet.get("rules") or {}).get("loaded_from") or []) or (
-            "the instruction file"
-        )
-        out.append(
-            f"_({promoted} standing rule(s) left out — already loaded from {loaded} "
-            'this session, under "Project rules promoted from memory")_'
-        )
-    return out
-
-
-def _view_header(packet: dict) -> str | None:
-    """The line that says which view this is, its budget and its rule mode."""
-    budget = packet.get("budget")
-    if not budget:
-        return None
-    rules = packet.get("rules") or {}
-    if rules.get("mode") == "elided-when-loaded":
-        mode = f"rules: elided when loaded from {', '.join(rules.get('loaded_from') or [])}"
-    else:
-        mode = "rules: portable"
-    asked = f", raised from {budget['requested']}" if "requested" in budget else ""
-    return (
-        f"<!-- view: {budget['view']} | budget: {budget['used']}/{budget['limit']} "
-        f"{budget['unit']}{asked} ({budget['estimator']}: {budget['estimator_rule']}) "
-        f"| {mode} -->"
-    )
-
-
-def render_packet_markdown(packet: dict) -> str:
-    """Render the §12 packet. Source header keeps the GENERATED PROJECTION marker."""
-    src = packet["source"]
-    proj = packet["project"]
-    out: list[str] = [
-        f"<!-- {GENERATED_MARKER} — do not edit by hand. Rebuilt by `crumb resume`. -->",
-        f"<!-- source_commit: {src['commit']} | inputs_hash: {src['inputs_hash']} "
-        f"| generated_at: {src['generated_at']} -->",
-    ]
-    header = _view_header(packet)
-    if header:
-        out.append(header)
-    out += [
-        "",
-        "# Resume Packet",
-        "",
-    ]
-    if packet.get("compatibility"):
-        out += [f"> ⚠ {packet['compatibility']}", ""]
-    if packet.get("requested_task"):
-        out += [
-            "## Requested Task",
-            packet["requested_task"],
-            "_(this is the task you asked to resume; the focus/next-action below are "
-            "where the last session left off)_",
-            "",
-        ]
-    # Stores written before 0.1.11 carry a Current Focus that is a verbatim copy
-    # of the Next Action (capture used to default one to the other, P1-6);
-    # collapse the duplicate at render time instead of spending ~1.4k chars
-    # printing the same text twice.
-    cf = packet["current_focus"]
-    if cf and cf.strip() == (packet["next_action"] or "").strip():
-        cf = "_(same as Next Action)_"
-    out += [
-        "## Project",
-        f"**{proj['name']}** — `{proj['path']}`  ",
-        f"branch `{proj['branch']}` · commit `{proj['commit']}` · {proj['dirty_state']}"
-        + (f" · handoff: {proj['handoff']}" if proj.get("handoff") else ""),
-    ]
-    # Say which order the reader is looking at. A relevance-ordered list read as
-    # if it were newest-first would suggest a year-old decision is the latest.
-    # The task itself is printed once, under Requested Task, not again here.
-    if packet.get("ordering") == "relevance" and packet.get("requested_task"):
-        out.append(
-            f"_(sections ordered by relevance to the Requested Task above; "
-            f"the {RECENCY_FLOOR} newest in each stay first)_"
-        )
-    out += [
-        "",
-        "## Current Focus",
-        cf or "_(not recorded — see current.md / handoff.md)_",
-        "",
-        "## Next Action",
-        packet["next_action"] or "_(not recorded — set one with `crumb capture session --next`)_",
-        "",
-    ]
-    if packet.get("next_action_earlier"):
-        n = packet["next_action_earlier"]
-        where = (packet.get("project") or {}).get("handoff") or "the handoff"
-        out[-1:-1] = ["", f"_({n} earlier entr{'y' if n == 1 else 'ies'} in {where})_"]
-
-    # P1-5: the staleness numbers say how *old* the handoff is, never whether its
-    # claims still hold. Listing what actually landed since it was written makes
-    # the Current Focus / Next Action falsifiable by the reader — a fresh session
-    # can check the list before redoing work the packet still says is owed.
-    if packet.get("commits_since_handoff"):
-        out += [
-            "## Landed Since The Handoff Was Written",
-            "_(check Current Focus / Next Action against these before redoing work)_",
-        ]
-        out += [f"- {c}" for c in packet["commits_since_handoff"]]
-        out.append("")
-
-    if not packet["fast"]:
-        # The omitted-count disclosure is emitted in BOTH branches: budget-trimming
-        # can empty a section entirely while still having hidden items, and the
-        # "… N more omitted" note must not vanish when the list renders as none.
-        out += ["## Active Decisions"]
-        if packet["active_decisions"]:
-            for d in packet["active_decisions"]:
-                if d.get("rule"):
-                    out.append(f"- `{d['id']}` — {_standing_label(d)} {d['rule']}")
-                else:
-                    out.append(f"- `{d['id']}` — {d['rationale']}")
-        else:
-            out.append("_(none active)_")
-        out += _omitted_note(packet, "active_decisions")
-        out.append("")
-
-        out += ["## Failed Attempts To Avoid"]
-        if packet["failed_attempts"]:
-            for a in packet["failed_attempts"]:
-                if a.get("rule"):
-                    out.append(f"- `{a['id']}` — {_standing_label(a)} {a['rule']}")
-                else:
-                    out.append(f"- `{a['id']}` — do not retry: {a['do_not_retry']}")
-        else:
-            out.append("_(none recorded)_")
-        out += _omitted_note(packet, "failed_attempts")
-        out.append("")
-
-        out += ["## Known Traps"]
-        if packet["known_traps"]:
-            out += [f"- {t}" for t in packet["known_traps"]]
-        else:
-            out.append("_(none recorded)_")
-        out += _omitted_note(packet, "known_traps")
-        out.append("")
-
-        out += ["## Open Questions / Blockers"]
-        if packet["open_questions"]:
-            out += [f"- {q}" for q in packet["open_questions"]]
-        else:
-            out.append("_(none open)_")
-        out += _omitted_note(packet, "open_questions")
-        out.append("")
-
-        # Only when there is something in it. An empty Inbox heading in every
-        # packet is a line of context spent saying nothing, and most stores will
-        # never use the tier at all.
-        if packet.get("inbox"):
-            out += ["## Inbox (unsorted, expires)"]
-            out.append(
-                "_(candidates, not findings — promote with `crumb inbox promote <id> "
-                "<type>` or drop with `crumb inbox drop <id>`)_"
-            )
-            for j in packet["inbox"]:
-                age = f"{j['age_days']}d" if j["age_days"] is not None else "new"
-                out.append(f"- `{j['id']}` ({age}, {j['source']}) {j['text']}")
-            out += _omitted_note(packet, "inbox")
-            out.append("")
-
-        out += ["## Likely Relevant Files"]
-        if packet["likely_files"]:
-            out += [f"- {f}" for f in packet["likely_files"]]
-        elif packet.get("likely_files_note"):
-            out.append(f"_({packet['likely_files_note']})_")
-        else:
-            out.append("_(none recorded)_")
-        out += _omitted_note(packet, "likely_files")
-        out.append("")
-
-        out += ["## Verifications"]
-        if packet.get("verifications"):
-            for v in packet["verifications"]:
-                method = f" · {v['method']}" if v.get("method") else ""
-                out.append(f"- `{v['id']}` — {v['subject']}: **{v['outcome']}**{method}")
-        else:
-            out.append("_(none recorded)_")
-        out += _omitted_note(packet, "verifications")
-        out.append("")
-
-        out += ["## Verification Commands"]
-        if packet["verification"]:
-            out += [f"- {c}" for c in packet["verification"]]
-        else:
-            out.append("_(none recorded)_")
-        out += _omitted_note(packet, "verification")
-        out.append("")
-
-    out += ["## Stale / Risk Warnings"]
-    # Name the threshold next to the ages it governs: every age below is measured,
-    # this one number is the cutoff they are compared against.
-    if packet.get("stale_after_days") is not None:
-        out.append(
-            f"_(ages below are measured; the cutoff is "
-            f"{packet['stale_after_days']} days — set with `--stale-days`)_"
-        )
-    if packet["warnings"]:
-        out += [f"- {w}" for w in packet["warnings"]]
-    else:
-        out.append("_(no computed staleness or risk signals)_")
-    out += _omitted_note(packet, "warnings")
-    out.append("")
-
-    # Record text rendered as data (audit F17): control and invisible
-    # characters escaped, framing tags neutralized. Clean text is unchanged.
-    from breadcrumbs import safetext
-
-    return safetext.block("\n".join(out).rstrip() + "\n")
 
 
 # The publication reason `resume --json` reports is clipped to this many ASCII
@@ -8628,11 +6595,11 @@ def cmd_resume(args: argparse.Namespace) -> int:
     budget = getattr(args, "budget", None)
     view = "json" if args.json else "markdown"
     view_name = f"{view}-fast" if args.fast else view
-    if budget is not None and budget < PACKET_MIN_BUDGET[view_name]:
+    if budget is not None and budget < _packet.PACKET_MIN_BUDGET[view_name]:
         _emit_error(
             args,
             f"--budget {budget} is below the smallest the {view_name} view can honour "
-            f"({PACKET_MIN_BUDGET[view_name]} {TOKEN_ESTIMATOR} tokens)",
+            f"({_packet.PACKET_MIN_BUDGET[view_name]} {_packet.TOKEN_ESTIMATOR} tokens)",
         )
         return 2
 
@@ -8658,14 +6625,14 @@ def cmd_resume(args: argparse.Namespace) -> int:
         budget=budget,
         render=json_view if args.json else None,
     )
-    md = render_packet_markdown(packet)
+    md = _packet.render_packet_markdown(packet)
     # The size of the view actually emitted, in the budget's unit.
     packet["approx_tokens"] = packet["budget"]["used"]
     # Telemetry goes here, not inside `build_resume_packet`: every write
     # reindexes, and every reindex builds a packet, so counting there would
     # measure how often the store was *written* rather than how often a record
     # was shown to anybody. This is a place a packet is genuinely shown.
-    _record_packet_surfacings(memory_dir, packet)
+    _packet._record_packet_surfacings(memory_dir, packet)
 
     # The full packet is the committed cloud-fallback artifact; --fast is a
     # print-only quick view and must not overwrite that artifact with a reduced one.
@@ -8754,2060 +6721,11 @@ def cmd_reindex(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# search + guard — deterministic "don't repeat the expensive mistake"
+# search + guard — the CLI side
 # --------------------------------------------------------------------------- #
-#
-# This is the capability that separates a continuity engine from a scrapbook
-# (§23): before you act, it warns you if a failed attempt or active decision says
-# don't go that way. Two non-negotiables shape the whole layer:
-#
-#   1. NO EMBEDDINGS (§11). Matching is exact/keyword/tag/file-path/component
-#      overlap over records already loaded in memory — deterministic, dependency
-#      free, same input -> same output. SQLite FTS / vectors are a later,
-#      disposable accelerator. Correct, not fast-at-scale.
-#   2. MATCHED MEMORY IS DATA, NEVER INSTRUCTION (§15, §16 note, Fixture 7).
-#      `guard` reads record text to *rank and cite* it; it never executes phrasing
-#      found in memory. The "next safest action" is synthesized by this code from
-#      match kinds — never lifted as an imperative from a record body. The only
-#      memory text echoed back is structured evidence (e.g. a recorded verification
-#      command) or a clearly-labeled excerpt presented as information.
-#
-# The anti-noise gate (§19b.8 / Fixture 3) lives in two deterministic rules: a
-# stop-word filter strips generic words, and a pure-text match needs at least
-# GUARD_MIN_KEYWORD_OVERLAP *specific* shared tokens (a single shared word never
-# creates a warning unless it is a file-path or tag/component hit).
-
-# ---- tunable thresholds (Task 8 / §22 Q2) ---------------------------------- #
-# Exposed as named constants so guard aggressiveness can be tuned from dogfood
-# feedback without rearchitecting. Chosen values + rationale recorded in
-# phases/PHASE_5_search_and_guard.md ("Decisions resolved this phase").
-
-GUARD_MAX_WARNINGS = 5  # §11.7 hard bound on ranked records shown
-GUARD_NOISE_FLOOR = 3  # min score for a match to count at all (anti-noise)
-GUARD_READ_FIRST_SCORE = 5  # score band: at/above -> at least READ_FIRST
-GUARD_PAUSE_SCORE = 9  # score band: at/above -> at least PAUSE
-GUARD_MIN_KEYWORD_OVERLAP = 2  # specific shared tokens for a pure-text match
-
-# Ubiquity gate (0.1.10 field test, P0-2). In a store whose vocabulary overlaps
-# the codebase, the tokens most records share carry no discriminating signal —
-# package prefixes shed by cited file paths ("com", "kt", "java"), the project's
-# own domain noun — yet two of them used to clear the keyword gate on every
-# edit, so one trap fired on all 13 edits of a session. A stem present in more
-# than GUARD_DF_UBIQUITY of the candidate corpus is ignored for keyword matching
-# (zero weight, no gate credit), but only once the corpus is big enough for
-# frequency to mean anything — below GUARD_DF_MIN_CORPUS items (every fixture,
-# any young store) nothing is ubiquitous. File and tag matches are exempt: both
-# are author-curated, deliberate signal.
-GUARD_DF_UBIQUITY = 1 / 3
-GUARD_DF_MIN_CORPUS = 8
-# Rarity, a softer tier below ubiquity (DoWhat retest of 0.5.0, item 5). In a
-# 400-record store full of migration and memory records, a `migration` tag or
-# the word `memory` says little about *this* action, yet one shared tag plus one
-# shared word made a record topical, and the same two records were cited on
-# `git status`, `cp`, a reindex and a README edit. A tag or word carried by more
-# than GUARD_DF_COMMON of the corpus is *common*: it scores half, and it cannot
-# make a match topical on its own, so it cannot floor a verdict or make a
-# do-not-retry line blocking. Unlike ubiquity this covers tags too: a tag on
-# most records is author-curated, but it still names the whole store's topic.
-# Below GUARD_DF_COMMON_MIN_CORPUS records nothing is common, and a stem must
-# also be on more than GUARD_DF_COMMON_MIN_RECORDS records: in a 40-record
-# store, four records sharing a tag is a topic, not the store's whole subject.
-GUARD_DF_COMMON = 0.08
-GUARD_DF_COMMON_MIN_CORPUS = 25
-GUARD_DF_COMMON_MIN_RECORDS = 10
-
-# scoring weights (§11.4 signals)
-GUARD_W_FILE = 6  # per overlapping file path (strongest specific signal)
-GUARD_W_TAG = 4  # per overlapping tag/component
-# Per overlapping path the record only *mentions* in prose (G1). Below a tag and
-# above a keyword: a prose mention is real evidence of topicality and is not the
-# author saying "this record is about that file". It cannot open the candidate
-# gate and it cannot floor a verdict; it can only add weight to a match that
-# already qualified.
-GUARD_W_MENTION = 2
-GUARD_W_KEYWORD = 1  # per specific shared keyword
-# Bonus per shared keyword that appears in the record's own *title*. A
-# title names what the record is about; a body mention can be incidental. Scoring
-# both at GUARD_W_KEYWORD made a decision whose title literally named the proposed
-# action score like a passing reference — one stale-factor away from the noise
-# floor. Additive: a title hit scores GUARD_W_KEYWORD + GUARD_W_TITLE.
-GUARD_W_TITLE = 1
-GUARD_W_STATUS_ACTIVE = 1
-GUARD_W_CONFIDENCE_HIGH = 1
-GUARD_W_REVIEWED = 1
-GUARD_W_DO_NOT_RETRY = 4  # attempt carries an explicit "Do Not Retry Unless"
-# A file the action writes without naming it (crumb's own commands, issue 11).
-# Below a named file: the command is the sanctioned writer, so a trap about
-# hand-editing that file should be seen, not take over the verdict.
-GUARD_W_WRITES = 3
-# Shared specific words that, on their own, make a do-not-retry attempt topical
-# enough for its line to count ("logout no longer clears the session cookie"
-# against an attempt whose result was "logout stopped clearing cookies").
-GUARD_TOPICAL_KEYWORDS = 3
-# Guard's keyword contribution stops here, so a longer command does not score
-# higher for being longer (issue 7c). Plain search is uncapped.
-GUARD_KEYWORD_CAP = 4
-GUARD_W_OPEN_BLOCKER = 3  # overlaps an unresolved open question
-
-# What a match must have, beyond shared vocabulary, to be surfaced as a warning
-# rather than as history. `mention` is here and `keyword` is not: a prose-mined
-# path is at least a claim about *this file*, where a shared stem is a claim
-# about the language the project speaks. Deliberately not the same set as the
-# specificity that lets a match raise a verdict ({file, tag}) — being worth
-# showing and being worth escalating are different bars.
-GUARD_SURFACING_SIGNALS = frozenset(
-    {"file", "tag", "title", "mention", "do-not-retry", "open-blocker", "command", "writes-file"}
-)
-
-# recency / branch de-weighting (reuses the staleness signals above)
-GUARD_BRANCH_MISMATCH_FACTOR = 0.8  # record written on another branch -> possibly stale
-GUARD_STALE_AGE_FACTOR = 0.7  # record older than stale_days
-GUARD_STALE_DIST_FACTOR = 0.7  # record written >= N commits behind HEAD
-GUARD_STALE_DIST_COMMITS = 10
-
-# Action classes that mean "a human should weigh in" when they collide with
-# memory (§15 high-impact changes). Security/refactor are deliberately NOT here:
-# they raise caution inside the normal bands but do not auto-escalate to ASK_HUMAN
-# (a routine "rewrite auth middleware" should land on PAUSE/READ_FIRST, not ASK).
-GUARD_HIGH_IMPACT_CLASSES = frozenset({"deletion", "migration", "external_side_effect"})
-
-# Stance — does a matched record *oppose* the action, or merely *document* the
-# area it touches? (0.1.11 field audit, F-1/F-2.) Retrieval overlap answers
-# "is this record about the same thing"; it has never answered "does this record
-# object", and the score band spent the difference. A trap that documented a
-# hazard in ConversationDao.kt — including a `Safe approach:` prescribing the
-# fix — scored file + title + 19 keywords and PAUSEd all five edits that
-# implemented that prescribed fix. Documenting a hazard made the tool punish
-# fixing it, which is the exact behavior the store exists to encourage.
-#
-# So relevance sets how loudly a record is surfaced, and stance sets how far it
-# may raise the verdict:
-#   blocking  — the record opposes *doing this*: an attempt carrying an explicit
-#               "Do Not Retry Unless". Someone tried this and recorded why not to
-#               again; that is the one thing the schema already states as opposition.
-#   advisory  — everything else. A trap, decision, verification or open question
-#               is knowledge about the area, not a prohibition on entering it.
-#               It can demand a read; it cannot demand a stop.
-# A high-impact action class still escalates past these ceilings below — that
-# escalation is a property of the *action*'s blast radius, not of any record.
-GUARD_BLOCKING_CEILING = "PAUSE"
-GUARD_ADVISORY_CEILING = "READ_FIRST"
-
-# ---- blast radius: the second axis (0.1.12 field report, issue 1) ---------- #
-# Retrieval overlap and danger are different questions, and guard answered only
-# the first. This regex already existed as `_HOOK_RISK_RE`, a *pre-filter* that
-# decided whether an action was worth scoring and was then discarded — so the
-# one danger signal in the codebase never reached a verdict or a prompt. It is
-# now a first-class output (`guard()["destructive"]`).
-#
-# Deliberately literal: it names irreversible shell shapes, not vibes. Anything
-# fuzzier belongs in the action classes, which are keyword-driven and already
-# feed the ASK_HUMAN escalation.
-_DESTRUCTIVE_OP_RE = re.compile(
-    r"(?i)(--force\b|force-push|push\s+-f\b|reset\s+--hard|rm\s+-rf|git\s+clean|"
-    r"--stop\b|drop\s+table|truncate\b|--no-verify|branch\s+-D\b)"
-)
-
-# Backwards-compatible alias: the pre-filter call site still reads as "is this
-# worth scoring", which is a different question from "is this dangerous" even
-# though one regex answers both today.
-_HOOK_RISK_RE = _DESTRUCTIVE_OP_RE
-
-
-def _is_destructive(action: str, classes: list[str]) -> bool:
-    """Is this action hard to undo, independent of what memory says about it?
-
-    True for a literal irreversible shell shape (`--force`, `rm -rf`, `reset
-    --hard`, …) or a high-impact action class (deletion / migration / external
-    side effect). Never consults the store: blast radius is a property of the
-    action, and making it depend on how much of the repo the store cites is the
-    conflation this exists to undo.
-    """
-    return bool(_DESTRUCTIVE_OP_RE.search(action or "")) or bool(
-        GUARD_HIGH_IMPACT_CLASSES & set(classes or ())
-    )
-
-
-# ---- the other half of blast radius: an action that cannot do damage -------- #
-#
-# Retrieval overlap is symmetric, and that made the verdict scale *invert* in the
-# 0.1.11 field test: `git status` — read-only, zero side effects — was the
-# loudest command measured, at PAUSE with five matched records, while `npm test`,
-# which executes arbitrary code, was silent at PROCEED. The mechanism is corpus
-# frequency read as relevance: `git status` shares vocabulary with the many
-# records that discuss git workflow, and an Android-heavy store shares nothing
-# with `npm test`. No amount of scoring fixes that, because it is not a scoring
-# question — it is that the command cannot do the thing being warned about.
-#
-# So classify the action first. A read-only verb caps at READ_FIRST however
-# strong the overlap: memory is still worth surfacing (a trap about *reading*
-# stale output is real), but it cannot rise to "stop and ask a human". PAUSE and
-# ASK_HUMAN are reserved for actions that write, delete, push, deploy or execute.
-GUARD_READ_ONLY_CEILING = "READ_FIRST"
-
-# The read-only verb tables and the command reader live in `shellcmd` (field
-# report 2026-10-01, issue 7 / N4); the names stay importable from here.
-GUARD_READ_ONLY_COMMANDS = _shellcmd.READ_ONLY_COMMANDS
-GUARD_READ_ONLY_GIT_SUBCOMMANDS = _shellcmd.READ_ONLY_GIT_SUBCOMMANDS
-GUARD_READ_ONLY_DISQUALIFYING_ARGS = _shellcmd.READ_ONLY_DISQUALIFYING_ARGS
-
-
-def _is_read_only_action(action: str) -> bool:
-    """True only when the action provably cannot change anything (G2).
-
-    Every segment of a compound command must be read-only on its own
-    (`cd x && grep …` is; `find … | xargs rm -rf` is not), and output may only
-    be redirected to `/dev/null` or another stream. An edit is never read-only.
-    Conservative by construction: anything this cannot read is treated as
-    capable of side effects, so a missed classification costs an unnecessary
-    PAUSE, never a swallowed one.
-    """
-    text = (action or "").strip()
-    if not text or _EDIT_ACTION_RE.match(text):
-        return False
-    return _shellcmd.is_read_only(text)
-
-
-# What the Claude adapter (and `crumb guard --file`) builds for an edit:
-# `edit <path>` or `edit <path>: <first characters of the new content>`.
-_EDIT_ACTION_RE = re.compile(r"^(edit|delete a cell in) (\S+)(?::\s(.*))?$", re.S)
-
-
-_VERDICTS = ("PROCEED", "READ_FIRST", "PAUSE", "ASK_HUMAN")
-_VERDICT_RANK = {v: i for i, v in enumerate(_VERDICTS)}
-
-# `crumb guard` exit codes, one per verdict (P0-1). Deliberately spaced so a
-# script can threshold (`>= 15` = human involvement) and deliberately clear of
-# 1 (crash), 2 (usage error), and 126+ (shell/OS conventions).
-GUARD_VERDICT_EXIT_CODES = {"PROCEED": 0, "READ_FIRST": 10, "PAUSE": 15, "ASK_HUMAN": 20}
-
-
-# Generic words that carry no domain signal. A shared stop-word never counts
-# toward keyword overlap (the core of the false-positive control, Fixture 3).
-# Action-class verbs that DO carry signal (delete/remove/migrate/deploy/refactor/
-# rewrite/upgrade…) are intentionally absent.
-# English function words: never evidence of anything. Split out of
-# GUARD_STOPWORDS because the short-query title rule (`_score_item`) must keep
-# the generic *development* words ("test" in `npm test`) that the keyword
-# overlap ignores.
-_FUNCTION_WORDS = frozenset(
-    """
-    the a an and or but to of in on for with at by from as is are be this that it
-    its if then else so not no do does did we you i my our your their them they he
-    she was were will would should can could may might must have has had about into
-    over under out up down off than too very just also via per after before when
-    while where which who what how here there all any some more most less few each
-    """.split()
-)
-
-GUARD_STOPWORDS = _FUNCTION_WORDS | frozenset(
-    """
-    add added adding update updated updating change changed changing fix fixed
-    fixing new old make made making run running set get got use used using create
-    created creating build built work working file files code project thing things
-    stuff need needs want wants now today please let lets go going into onto
-    src lib test tests spec specs index main app ts js tsx jsx py md json yml yaml
-    txt cfg ini case feature support handle handling
-    why fail fails failed failing failure error errors broken wrong issue issues
-    problem problems
-    """.split()
-)
-# The last line above (field report 2026-10-01, issue 8): the words a question
-# about *any* failure uses. "why is my robolectric test failing" shared `why`
-# and `fail` with every attempt record, which is what let five unrelated
-# attempts outrank the one trap about the actual error.
-
-_TOKEN_RE = re.compile(r"[a-z0-9_]+")
-# Candidate path tokens in free text. This regex only *finds* things shaped like
-# a path; `_is_path_token` decides whether each one is one. Keeping the two
-# separate is the point — the old code treated the regex's own output as the
-# answer, and a regex reading "contains a dot or a slash" says yes to most of a
-# paragraph of technical prose (G1).
-_FILE_TOKEN_RE = re.compile(
-    r"[A-Za-z0-9_][\w./\-]*\.[A-Za-z0-9]+|[A-Za-z0-9_./\-]+/[A-Za-z0-9_./\-]+"
-)
-
-# Extensions that make a dotted token a filename rather than an attribute access.
-# Not exhaustive and not meant to be: an unknown extension with no slash simply
-# does not qualify, which is the safe direction — an over-broad file signal is
-# the strongest wrong answer guard can give (GUARD_W_FILE is its heaviest
-# weight), and a missed one costs a keyword match instead.
-GUARD_PATH_EXTENSIONS = frozenset(
-    """
-    py pyi pyx ipynb md markdown mdx rst txt adoc
-    json yml yaml toml ini cfg conf properties env lock sum mod
-    js jsx mjs cjs ts tsx vue svelte astro css scss sass less html htm
-    java kt kts gradle groovy scala clj cljs
-    go rs rb php swift m mm c h cc cpp hpp cs fs fsx dart zig nim ex exs erl
-    sh bash zsh fish ps1 bat cmd mk cmake
-    sql graphql gql proto tf tfvars tfstate hcl
-    xml plist pro csv tsv svg png jpg jpeg gif ico webp pdf
-    r jl lua pl pm rake gemspec podspec xcconfig entitlements
-    """.split()
-)
-
-# `0.47`, `8.13.2`, `v0.1.5` — a version, not a path, however many dots it has.
-_VERSION_TOKEN_RE = re.compile(r"^v?\d+(\.\d+)+$")
-
-
-_SYSTEM_PATH_RE = re.compile(r"^(?:\.\./|~)?/?(?:dev|proc|sys)/")
-# Slash-joined words that read as prose, not as a directory and a file.
-_PROSE_SLASH_PAIRS = frozenset(
-    """
-    and/or either/or read/write yes/no input/output stdin/stdout stdout/stderr
-    ci/cd on/off true/false client/server i/o r/w pass/fail before/after he/she
-    his/her s/he am/pm win/loss success/failure open/close start/stop get/set
-    push/pull load/store encode/decode request/response send/receive
-    """.split()
-)
-
-
-def _is_path_token(token: str) -> bool:
-    """Is `token` really a file path, as opposed to prose that looks like one?
-
-    The prefilter of a 310-session field store held 439 "paths", of which 89
-    existed: the rest were version numbers (`8.13.2`), units (`10.dp`, `AM/PM`,
-    `0xDD/255`), CLI flag lists (`--title/--set`) and Python attribute access
-    (`json.load`, `io.open`). That mattered because `same file(s)` is guard's
-    single strongest relevance signal, so a command that merely read a JSON file
-    drew a PAUSE from a screenshot-testing trap on the strength of `json.load`.
-    An agent that learns "same file(s) is noise" has lost the only precise signal
-    guard has, and will miss the true positive when it arrives.
-
-    The test is structural, not lexical: a known file extension, or a real path
-    shape. Deliberately *not* "does it exist on disk" — a record citing a file
-    that was since deleted or renamed is often exactly the trap worth raising,
-    and a store must mean the same thing in every checkout that reads it.
-    """
-    token = (token or "").strip()
-    if len(token) < 2 or token.startswith("-") or _VERSION_TOKEN_RE.match(token):
-        return False
-    # Device files and pseudo-filesystems are not project files: `2>/dev/null`
-    # produced "mentions: null" (field report 2026-10-01, issue 10).
-    if _SYSTEM_PATH_RE.match(token):
-        return False
-    if token.lower() in _PROSE_SLASH_PAIRS:
-        return False  # `and/or`, `read/write`, `ci/cd`
-    if token.startswith("./") and "/" not in token[2:] and "." not in token[2:]:
-        # `./gradlew` is a command being run, not a file the action is about;
-        # as a path it gave every record mentioning `./gradlew assembleDebug`
-        # a mention signal against `./gradlew --stop` (issue 8).
-        return False
-    basename = token.rsplit("/", 1)[-1]
-    extension = basename.rsplit(".", 1)[-1].lower() if "." in basename else ""
-    if extension and extension in GUARD_PATH_EXTENSIONS:
-        return True
-    if "/" not in token:
-        # `json.load`, `f.get`, `tests.test`, `10.dp` — a dot alone proves nothing.
-        return False
-    segments = [seg for seg in token.split("/") if seg not in ("", ".", "..")]
-    if not segments:
-        return False
-    if not any(c.islower() for c in token):
-        return False  # `AM/PM`, `TODO/FIXME`
-    for seg in segments:
-        if seg.isdigit() or _VERSION_TOKEN_RE.match(seg):
-            return False  # `10/15`, `362/LF`, `0xDD/255`, `v0.1.5/v0.1.6`
-    return True
-
-
-def _tokenize(text: str) -> set[str]:
-    """Lowercase word tokens (alnum + underscore), single chars dropped."""
-    return {t for t in _TOKEN_RE.findall((text or "").lower()) if len(t) > 1}
-
-
-# Morphology folding for guard/search matching. Exact-token intersection missed
-# the main case the tool exists for: a *different* session phrases the same
-# intent differently ("reconciliation" vs the recorded "reconciler",
-# "batching" vs "batched"), and the record stayed invisible. This is a small
-# deterministic suffix-stripper, not Porter: every rule is a plain strip (or the
-# ies/ied→y rewrite), applied longest-first to a fixpoint so the whole
-# morphological family lands on one stem. The fixpoint also makes stemming
-# idempotent, which is what lets `_prefilter_trap_hit` re-stem tokens read from
-# an older on-disk prefilter without diverging from freshly-written ones.
-# Matching runs on stems on BOTH sides (query and record), so a miss is always
-# symmetric; `keyword_overlap` in --json output therefore contains stems.
-_STEM_REPLACEMENTS = (("ies", "y"), ("ied", "y"))
-_STEM_SUFFIXES = tuple(
-    sorted(
-        (
-            "ations",
-            "ements",
-            "ments",
-            "ances",
-            "ences",
-            "ities",
-            "ation",
-            "ement",
-            "ating",
-            "ance",
-            "ence",
-            "ancy",
-            "ency",
-            "ings",
-            "ated",
-            "ates",
-            "ment",
-            "ions",
-            "ing",
-            "ate",
-            "ity",
-            "ion",
-            "ers",
-            "ors",
-            "ed",
-            "er",
-            "or",
-            "es",
-            "ly",
-            "s",
-            "e",
-            "i",
-        ),
-        key=len,
-        reverse=True,
-    )
-)
-_STEM_MIN_RESIDUE = 3
-
-# Ubiquitous dev abbreviations the stemmer cannot derive. Keys are stems (post
-# suffix-strip), values are the short form people actually type. Deliberately
-# tiny: every entry here is a curated equivalence, not a synonym engine.
-GUARD_STEM_ALIASES = {
-    "authentic": "auth",
-    "authoriz": "auth",
-    "configur": "config",
-    "repository": "repo",
-    "databas": "db",
-}
-
-
-# ---- store-local aliases (WM-24) ------------------------------------------- #
-#
-# `GUARD_STEM_ALIASES` is five entries, and it is the tool's vocabulary, not the
-# project's. Every codebase has its own: a service nickname, a module and its
-# acronym, the two names a team uses for one thing. `.project-memory/aliases.txt`
-# lets a store add those without a code change — one group per line, words that
-# fold to the first word's stem:
-#
-#     auth authn authz login
-#     billing invoicing ledger
-#
-# It is committed (a teammate's clone must stem the same way, or the same query
-# returns different results on two machines) and folded into `_inputs_hash`
-# (it changes what the guard prefilter contains).
-#
-# `_stem` is a pure function called from everywhere, with no store in scope, so
-# the table is state that the store-scoped entry points *activate*
-# (`_candidate_items`, the prefilter builder and reader). Activation is keyed on
-# the file's path, mtime and size, so it is one `stat` when nothing changed — and
-# a store with no file resets the table.
-#
-# The table is per thread (audit WP16): an MCP server answering two stores from
-# worker threads, or two service contexts, never sees the other's aliases.
-# `store_aliases(memory_dir)` scopes an activation and restores the previous
-# table afterwards.
-ALIASES_FILENAME = "aliases.txt"
-_ALIASES = threading.local()
-
-
-def active_store_aliases() -> dict[str, str]:
-    """The alias table `_stem` applies in this thread (empty when none)."""
-    return getattr(_ALIASES, "table", None) or {}
-
-
-def parse_store_aliases(text: str) -> tuple[dict[str, str], list[dict]]:
-    """Alias groups -> `{member_stem: canonical_stem}`, plus per-line problems.
-
-    Problems are reported, never raised: a malformed alias file must degrade to
-    "fewer aliases", not to a search that crashes. A word already claimed by an
-    earlier group keeps its first meaning — deterministic, and it means adding a
-    line can never silently change what an older line did.
-    """
-    mapping: dict[str, str] = {}
-    problems: list[dict] = []
-    for lineno, raw in enumerate(text.splitlines(), 1):
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
-        words = [w for w in _TOKEN_RE.findall(line.lower()) if len(w) > 1]
-        if len(words) < 2:
-            problems.append({"line": lineno, "problem": "a group needs at least two words"})
-            continue
-        canonical = _base_stem(words[0])
-        mapping.setdefault(canonical, canonical)
-        for word in words[1:]:
-            stem = _base_stem(word)
-            if stem in mapping and mapping[stem] != canonical:
-                problems.append(
-                    {"line": lineno, "problem": f"{word!r} is already in an earlier group"}
-                )
-                continue
-            mapping[stem] = canonical
-    # Resolve chains to a fixpoint so `_stem` stays idempotent: the guard
-    # prefilter re-stems tokens it wrote earlier, and `stem(stem(x)) != stem(x)`
-    # would make a fresh index and a stale one disagree.
-    for key in list(mapping):
-        seen = {key}
-        target = mapping[key]
-        while target in mapping and mapping[target] != target and target not in seen:
-            seen.add(target)
-            target = mapping[target]
-        mapping[key] = target
-    return {k: v for k, v in mapping.items() if k != v}, problems
-
-
-def activate_store_aliases(memory_dir: Path) -> None:
-    """Make `_stem` use this store's aliases in this thread. Cheap when nothing changed."""
-    path = Path(memory_dir) / ALIASES_FILENAME
-    try:
-        st = path.stat()
-        key = (str(path), st.st_mtime_ns, st.st_size)
-    except OSError:
-        key = None
-    if key == getattr(_ALIASES, "key", None) and hasattr(_ALIASES, "table"):
-        return
-    _ALIASES.key = key
-    if key is None:
-        _ALIASES.table = {}
-        return
-    try:
-        _ALIASES.table = parse_store_aliases(read_text_lenient(path)[0])[0]
-    except Exception:  # pragma: no cover - aliases must never break a search
-        _ALIASES.table = {}
-
-
-@contextlib.contextmanager
-def store_aliases(memory_dir: Path):
-    """Activate `memory_dir`'s aliases for the block, then restore the previous table."""
-    saved = (getattr(_ALIASES, "table", None), getattr(_ALIASES, "key", None))
-    activate_store_aliases(memory_dir)
-    try:
-        yield
-    finally:
-        _ALIASES.table, _ALIASES.key = saved
-
-
-def _stem(token: str) -> str:
-    """Fold a token to its stem, then apply the active store's aliases."""
-    stem = _base_stem(token)
-    table = getattr(_ALIASES, "table", None)
-    return table.get(stem, stem) if table else stem
-
-
-@functools.lru_cache(maxsize=65536)
-def _base_stem(token: str) -> str:
-    """Fold a token to its morphological stem (deterministic, idempotent).
-
-    A pure function of the token and module constants, so memoizing it is
-    exact; a 1,000-record publication stemmed the same words 84,000 times
-    (audit WP15). Store aliases are applied after it, in `_stem`.
-    """
-    word = token
-    for _ in range(4):  # fixpoint: families collapse in <=4 strips
-        if word.isdigit():
-            break
-        # Alias keys terminate the loop: they are already canonical family
-        # names, and letting the strip rules keep going would walk past them
-        # ("databas" -> "databa", missing the db alias entirely).
-        if word in GUARD_STEM_ALIASES:
-            break
-        changed = False
-        for suf, repl in _STEM_REPLACEMENTS:
-            if word.endswith(suf) and len(word) - len(suf) >= _STEM_MIN_RESIDUE:
-                word = word[: -len(suf)] + repl
-                changed = True
-                break
-        if not changed:
-            for suf in _STEM_SUFFIXES:
-                if not word.endswith(suf) or len(word) - len(suf) < _STEM_MIN_RESIDUE:
-                    continue
-                # never strip the second s of an "ss" ending (class, address)
-                if suf == "s" and word.endswith("ss"):
-                    continue
-                word = word[: -len(suf)]
-                changed = True
-                break
-        if not changed:
-            break
-    return GUARD_STEM_ALIASES.get(word, word)
-
-
-# Stopwords are filtered on stems so inflections a raw list misses ("changes"
-# when the list has "change changed changing") drop out too.
-_GUARD_STOPWORD_STEMS = frozenset(GUARD_STOPWORDS | {_stem(w) for w in GUARD_STOPWORDS})
-
-
-def _specific(text: str) -> set[str]:
-    """Meaningful stems only: tokenized words, stemmed, minus stop-word stems."""
-    out = set()
-    for t in _tokenize(text):
-        s = _stem(t)
-        if len(s) > 1 and s not in _GUARD_STOPWORD_STEMS and t not in GUARD_STOPWORDS:
-            out.add(s)
-    return out
-
-
-def _paths_from_text(text: str) -> set[str]:
-    """File paths found in free text — candidates that pass `_is_path_token`.
-
-    A token that is part of a URL (`https://host/a`) is not a path: its last
-    segment used to become a file name of its own (issue 10).
-    """
-    text = text or ""
-    out = set()
-    for m in _FILE_TOKEN_RE.finditer(text):
-        token = m.group(0)
-        before = text[max(0, m.start() - 3) : m.start()]
-        if before.endswith(":") or before.endswith(":/") or token.startswith("//"):
-            continue
-        if _is_path_token(token):
-            out.add(token)
-    return out
-
-
-# Bullets in a trap block that hold the *remedy*, not the hazard. Mining file
-# paths out of these is what made a trap fire on its own cure: a trap whose
-# `Verification: ./gradlew test` and `Safe approach: wrap in
-# withContext(Dispatchers.IO)` registered `./gradlew`, `gradlew` and
-# `Dispatchers.IO` as tracked files scored GUARD_W_FILE (6, the strongest
-# signal) against every gradle invocation in the repo — including
-# `./gradlew --status`, a read-only status query. The file signal is exempt from
-# the anti-noise ubiquity gate on the grounds that it is *author-curated*; text
-# scraped out of a prescription is not curated, and it points at the fix rather
-# than the fragile area. `Area / files:` is where a trap names its blast radius.
-_TRAP_REMEDY_BULLET_RE = re.compile(
-    r"(?im)^\s*[-*]\s*(safe\s*approach|verification|verify|fix|workaround)\s*:.*$"
-)
-
-
-# `- Area / files: app/src/Foo.kt, app/src/Bar.kt` — where a trap declares its
-# blast radius. known-traps.md documents this five-field format at the top of the
-# file, so it is a contract, not a convention.
-_TRAP_AREA_BULLET_RE = re.compile(r"(?im)^\s*[-*]\s*area\s*(?:/\s*files)?\s*:(?P<value>.*)$")
-
-
-def _trap_area_text(body: str) -> str:
-    """Just the trap's `Area / files:` bullet(s) — the author's own declaration."""
-    return "\n".join(m.group("value") for m in _TRAP_AREA_BULLET_RE.finditer(body or ""))
-
-
-def _trap_hazard_text(body: str) -> str:
-    """A trap block with its remedy bullets removed, for file-signal mining only.
-
-    Keyword matching still sees the whole block — a remedy mentioning
-    `Dispatchers.IO` is a legitimate weak text signal at GUARD_W_KEYWORD (1).
-    Only the 6-point file signal is restricted to the hazard half.
-    """
-    return _TRAP_REMEDY_BULLET_RE.sub("", body or "")
-
-
-def _norm_files(paths) -> set[str]:
-    """Normalize a set of paths to {full path, basename} for overlap matching."""
-    out: set[str] = set()
-    for p in paths or ():
-        p = str(p).strip().strip("`").strip().rstrip(".,;:")
-        if not p:
-            continue
-        out.add(p)
-        base = p.rsplit("/", 1)[-1]
-        if base:
-            # A trailing-slash directory path ("src/auth/") has an empty
-            # basename; adding "" would make every directory path overlap.
-            out.add(base)
-    return out
-
-
-# ---- action classifier (§11.2) --------------------------------------------- #
-
-# Highest-severity class first; classify() returns that as the primary plus the
-# full matched set. Keyword-driven and deterministic.
-ACTION_CLASS_KEYWORDS: dict[str, frozenset[str]] = {
-    "deletion": frozenset(
-        {"delete", "remove", "drop", "rm", "purge", "teardown", "destroy", "wipe", "truncate"}
-    ),
-    "migration": frozenset(
-        {"migrate", "migration", "backfill", "schema", "reindex", "datamigration"}
-    ),
-    "security_permission": frozenset(
-        {
-            "auth",
-            "authentication",
-            "authorization",
-            "permission",
-            "permissions",
-            "credential",
-            "credentials",
-            "secret",
-            "secrets",
-            "token",
-            "tokens",
-            "oauth",
-            "jwt",
-            "rbac",
-            "acl",
-            "encrypt",
-            "encryption",
-            "scope",
-            "scopes",
-            "login",
-            "session",
-        }
-    ),
-    "external_side_effect": frozenset(
-        {
-            "deploy",
-            "deployment",
-            "publish",
-            "release",
-            "send",
-            "email",
-            "webhook",
-            "production",
-            "prod",
-            "charge",
-            "payment",
-            "notify",
-            "broadcast",
-        }
-    ),
-    "dependency_tool": frozenset(
-        {
-            "dependency",
-            "dependencies",
-            "upgrade",
-            "bump",
-            "package",
-            "npm",
-            "pip",
-            "library",
-            "framework",
-            "vendor",
-            "sdk",
-            "version",
-        }
-    ),
-    "architecture": frozenset(
-        {
-            "architecture",
-            "architectural",
-            "pattern",
-            "restructure",
-            "rearchitect",
-            "contract",
-            "interface",
-            "boundary",
-            "layering",
-            "decouple",
-        }
-    ),
-    "broad_refactor": frozenset(
-        {"refactor", "rewrite", "overhaul", "sweeping", "rename", "reorganize", "reorg", "port"}
-    ),
-}
-
-_CLASS_SEVERITY = [
-    "deletion",
-    "migration",
-    "security_permission",
-    "external_side_effect",
-    "dependency_tool",
-    "architecture",
-    "broad_refactor",
-]
-
-
-def classify_action(action: str) -> tuple[str, list[str]]:
-    """Return (primary_class, sorted matched classes). 'routine_edit' if none hit.
-
-    Reads what the action *does*, not what it *says* (field report 2026-10-01,
-    issue 7 / N11): quoted text and here-document bodies are dropped, so a
-    commit message or a `--next "cut the release"` note is not a release. An
-    edit is classified by its path, not by the content being written. crumb's
-    own commands are classified by the table in `shellcmd`, never by the words
-    in their arguments: reading memory and writing memory are routine, and only
-    a real `crumb migrate` is a migration.
-    """
-    edit = _EDIT_ACTION_RE.match((action or "").strip())
-    effects: set[str] = set()
-    if edit:
-        text = f"{edit.group(1)} {edit.group(2)}"
-    else:
-        # Segment by segment (DoWhat retest of 0.5.0, item 2): a crumb command
-        # counts by its effect, a read-only segment counts for nothing, and only
-        # the rest is read for class words. Judging the whole command at once
-        # made `crumb migrate --dry-run | sed -n '1,22p'` a migration, because
-        # the `| sed` stopped it being "all crumb" and `migrate` was a word.
-        segs = _shellcmd.segments(action or "")
-        if segs is None:
-            text = _shellcmd.classification_text(action or "")
-        else:
-            other: list[str] = []
-            for seg in segs:
-                args = _shellcmd.crumb_invocation(_shellcmd.words(seg))
-                if args is not None:
-                    effect = _shellcmd.crumb_effect(args)
-                    effects.add(effect)
-                    if effect == "other":
-                        other.append(seg)
-                    continue
-                if _shellcmd.is_read_only(seg):
-                    continue
-                other.append(seg)
-            text = _shellcmd.classification_text(" ; ".join(other))
-    toks = _tokenize(text)
-    matched = {cls for cls, kws in ACTION_CLASS_KEYWORDS.items() if toks & kws}
-    if "migration" in effects:
-        matched.add("migration")
-    if not matched:
-        return "routine_edit", ["routine_edit"]
-    primary = next(c for c in _CLASS_SEVERITY if c in matched)
-    return primary, sorted(matched)
-
-
-# ---- searchable corpus ----------------------------------------------------- #
-
-
-def _attempt_has_do_not_retry(rec: Record) -> bool:
-    sec = rec.sections.get("Do Not Retry Unless", "")
-    return bool(_first_line(sec))
-
-
-_MD_HEADING_LINE_RE = re.compile(r"(?m)^#{1,6}\s.*$")
-
-
-def _item_from_record(rec: Record) -> dict:
-    # Body-mined paths minus the ones that are really *commands*. A record whose
-    # evidence is `--evidence command "./gradlew test"` or `--evidence test
-    # "pytest tests/dao"` has that string in its body too, and `_paths_from_text`
-    # cannot tell `pytest tests/dao` from a file reference — so the record scored
-    # a 6-point file hit against every invocation of its own verification
-    # command. Curated `--evidence file/path` refs are unaffected; this only
-    # removes paths that the record itself already labelled as a command.
-    cmd_paths = _paths_from_text(" ".join(_evidence_refs(rec, ("command", "test"))))
-    mined = _paths_from_text(rec.body) - cmd_paths
-    # Two tiers, not one (G1). `--evidence file …` is the author *declaring*
-    # which files this record is about; a path mined out of its prose is a
-    # mention, and the two were scored, displayed and reasoned about
-    # identically. Declared paths keep the strongest signal guard has; mentions
-    # get a weaker one and say so, so an agent reading `same file(s)` can still
-    # trust it. A trap author knows which files their trap concerns — asking
-    # beats any extractor.
-    files = _norm_files(set(_evidence_refs(rec, ("file", "path"))))
-    mentioned = _norm_files(mined) - files
-    tags = {str(t).lower() for t in (rec.meta.get("tags") or [])}
-    # Section headings are the template, not the record: "## Why It Failed /
-    # Succeeded" made every attempt share `why` and `fail` with "why is my test
-    # failing", and push the one relevant trap out (field report 2026-10-01,
-    # issue 8).
-    body_text = _MD_HEADING_LINE_RE.sub(" ", rec.body)
-    text = " ".join([str(rec.meta.get("title") or ""), body_text, " ".join(tags)])
-    # For verifications the interesting "status" is the *outcome* (open/fixed/…),
-    # not the lifecycle status — so `search type:verification status:open` filters
-    # on what the agent actually cares about. The lifecycle value is
-    # kept alongside it: guard's liveness test needs both, and folding them into
-    # one field is what silently excluded every verification from the verdict.
-    lifecycle = str(rec.meta.get("status") or "active")
-    status = (rec.meta.get("outcome") or "unknown") if rec.rtype == "verification" else lifecycle
-    return {
-        "id": rec.meta.get("id", rec.stem),
-        "kind": rec.rtype,
-        "status": status,
-        "lifecycle": lifecycle,
-        "title": rec.meta.get("title", "") or rec.stem,
-        "tags": tags,
-        # Stem -> original tag. Matching runs on stems (a "migrations" tag must
-        # meet a "migration" query); display and `tag:` filters keep the raw tag.
-        "tag_stems": {_stem(t): t for t in tags},
-        "files": files,
-        "mentioned_files": mentioned,
-        "specific": _specific(text),
-        # The title's own tokens, kept separate so `_score_item` can weight a
-        # title hit above a body mention. The stem is the slug — same
-        # words, so a filename hit counts as a title hit.
-        "title_specific": _specific(str(rec.meta.get("title") or rec.stem)),
-        "branch": rec.meta.get("branch"),
-        "record": rec,
-        "do_not_retry": rec.rtype == "attempt" and _attempt_has_do_not_retry(rec),
-        # An attempt titled "Ran gradlew --stop …" names a command just as a
-        # trap's summary does (issue 8): the title head only, never the body.
-        "command_heads": (
-            _trap_command_heads(str(rec.meta.get("title") or ""), "")
-            if rec.rtype == "attempt"
-            else None
-        ),
-        "expired": record_expired(rec.meta),
-        "promoted": bool(rec.meta.get("promoted_to")),
-        "scope": str(rec.meta.get("scope") or "project"),
-    }
-
-
-# ---- exact command hazards (audit F10) ------------------------------------- #
-#
-# A trap that names the very command about to run is the strongest evidence
-# memory can give, and it used to score like one shared word: `npm test`
-# against "npm test truncates the database" matched on the title alone (3 points)
-# and came out PROCEED, while the pre-filter's two-specific-token rule let the
-# hook skip the check entirely. The rule here is deliberately narrow:
-#
-# - a *head* is the command a trap names: the leading words of its summary, or
-#   a backticked span anywhere in it;
-# - the action names it when their longest common token prefix is at least two
-#   tokens and covers the whole action, or stops at a flag (`npm test --watch`);
-# - a match gets the `command` signal and, for a live trap, a READ_FIRST floor
-#   (advisory: the reader is told, the permission flow is untouched).
-#
-# One shared word ("make sure …" against `make`) is never enough, and a hazard's
-# documented remedy (`npm run test:unit`) does not share the prefix.
-
-_BACKTICK_SPAN_RE = re.compile(r"`([^`\n]{2,160})`")
-_COMMAND_MIN_TOKENS = 2
-
-
-def _command_tokens(text: str) -> list[str]:
-    """A command as lowercase tokens: `cd x &&` prefixes, pipes and quotes folded."""
-    from breadcrumbs import transcript as _transcript
-
-    flat = _transcript.normalize_command(str(text or ""))
-    out = []
-    for t in flat.split():
-        # `./gradlew` is `gradlew`: stripping the dot alone left `/gradlew`, so a
-        # trap titled "gradlew --stop …" never matched `./gradlew --stop`.
-        t = t[2:] if t.startswith("./") else t
-        t = t.strip("\"'`.,;:").lower()
-        if t:
-            out.append(t)
-    return out
-
-
-# A head is `[kind, *tokens]`. A `title` head is the leading words of a trap's
-# summary, so the action need only match its start; a `span` head is a whole
-# backticked command, so the action must contain all of it. The kind travels
-# with the head (into the pre-filter too), never inferred from its position.
-_HEAD_TITLE = "title"
-_HEAD_SPAN = "span"
-# A summary that opens with one of these describes running the command after it
-# ("Running npm test truncates …").
-_RUN_VERBS = ("run", "running", "runs", "ran", "calling", "executing")
-
-
-def _trap_command_heads(heading: str, body: str) -> list[list[str]]:
-    """The commands a trap names: its summary's head, then each backticked span."""
-    summary = heading
-    if heading.startswith("trap_") and ":" in heading:
-        summary = heading.split(":", 1)[1]
-    tokens = _command_tokens(summary)
-    heads = [[_HEAD_TITLE, *tokens]]
-    if tokens and tokens[0] in _RUN_VERBS:
-        heads.append([_HEAD_TITLE, *tokens[1:]])
-    # The hazard half only: a backticked command in the remedy ("use
-    # `npm run test:unit`") is what to run instead, never the hazard.
-    for span in _BACKTICK_SPAN_RE.findall(heading + "\n" + _trap_hazard_text(body or "")):
-        tokens = _command_tokens(span)
-        if len(tokens) >= _COMMAND_MIN_TOKENS:
-            heads.append([_HEAD_SPAN, *tokens])
-    return heads
-
-
-def _names_command(action_tokens: list[str], heads) -> bool:
-    """Does the action run a command one of these heads names? See above."""
-    if len(action_tokens) < _COMMAND_MIN_TOKENS:
-        return False
-    for head in heads or ():
-        if not head or head[0] not in (_HEAD_TITLE, _HEAD_SPAN):
-            continue
-        kind, tokens = head[0], head[1:]
-        n = 0
-        for a, b in zip(action_tokens, tokens):
-            if a != b:
-                break
-            n += 1
-        if n < _COMMAND_MIN_TOKENS:
-            continue
-        if kind == _HEAD_SPAN and n < len(tokens):
-            continue  # a backticked command must be named whole
-        if n == len(action_tokens) or action_tokens[n].startswith("-"):
-            return True
-    return False
-
-
-def _item_from_trap(trap: dict) -> dict:
-    heading, body = trap["heading"], trap.get("content", trap.get("body", ""))
-    # Trap files carry tags since the field report's N1; a trap never scored
-    # them, so a trap tagged `robolectric` lost to every attempt sharing it.
-    tags = {str(t).lower() for t in (trap.get("tags") or [])}
-    text = heading + "\n" + body + "\n" + " ".join(sorted(tags))
-    return {
-        "id": trap.get("id") or heading.split(":", 1)[0].strip() or "trap",
-        "kind": "trap",
-        # Was hardcoded "active", which is what made a retired trap keep scoring
-        # in search and keep counting as live in guard's active/history split.
-        "status": trap.get("status") or "active",
-        "title": heading,
-        "tags": tags,
-        "tag_stems": {_stem(t): t for t in tags},
-        "files": _norm_files(_paths_from_text(_trap_area_text(body))),
-        "mentioned_files": (
-            _norm_files(_paths_from_text(_trap_hazard_text(body)))
-            - _norm_files(_paths_from_text(_trap_area_text(body)))
-        ),
-        "specific": _specific(text),
-        "title_specific": _specific(heading),
-        "command_heads": _trap_command_heads(heading, body),
-        "branch": None,
-        "record": None,
-        "do_not_retry": False,
-        "promoted": bool(
-            _BLOCK_PROMOTED_LINE_RE.search(trap.get("body") or "") or trap.get("promoted_to")
-        ),
-    }
-
-
-QUESTION_SLUG_CHARS = 48
-
-
-def question_item_id(question: str) -> str:
-    """Search id for an open question: `q_<slug>`, disambiguated when truncated.
-
-    Truncating the slug at 48 characters made two distinct questions share one id
-    ("… to the new columnar store this quarter" / "… to the new row store next
-    quarter" both slugify past the cut with the same prefix), and `search`'s
-    by_id map kept only the last — which `guard`'s `_recommended_action` resolves
-    through. A short digest of the *full* question restores
-    uniqueness; ids for questions short enough not to be cut are unchanged.
-    """
-    slug = slugify(question)
-    if len(slug) <= QUESTION_SLUG_CHARS:
-        return QUESTION_ID_PREFIX + slug
-    digest = hashlib.sha256(question.encode("utf-8")).hexdigest()[:6]
-    return f"{QUESTION_ID_PREFIX}{slug[:QUESTION_SLUG_CHARS].rstrip('-')}-{digest}"
-
-
-# Question ids were `q:<slug>` through 0.2.x and are `q_<slug>` from Phase 2 on
-# (WM-21/WM-22). The colon was the only id in the store that was not a valid
-# filename or a clean URI path segment, and questions are about to become files
-# and `memory://questions/{id}` resources. The old spelling is still accepted
-# everywhere an id is *read* — it is in commit messages, decision records and
-# people's shell history — and never printed.
-QUESTION_ID_PREFIX = "q_"
-_LEGACY_QUESTION_ID_PREFIX = "q:"
-
-
-def normalize_question_id(rid: str) -> str:
-    """`q:<slug>` -> `q_<slug>`; anything else unchanged."""
-    rid = (rid or "").strip()
-    if rid.lower().startswith(_LEGACY_QUESTION_ID_PREFIX):
-        return QUESTION_ID_PREFIX + rid[len(_LEGACY_QUESTION_ID_PREFIX) :]
-    return rid
-
-
-def _item_from_question(q: dict) -> dict:
-    body = q.get("content", q.get("body", ""))
-    text = q["question"] + "\n" + body
-    return {
-        "id": q.get("id") or question_item_id(q["question"]),
-        "kind": "question",
-        "status": (q.get("status") or "open"),
-        "title": q["question"],
-        "tags": set(),
-        # A question has no author-declared file field; everything it names is a
-        # mention.
-        "files": set(),
-        "mentioned_files": _norm_files(_paths_from_text(body)),
-        "specific": _specific(text),
-        "title_specific": _specific(q["question"]),
-        "branch": None,
-        "record": None,
-        "do_not_retry": False,
-    }
-
-
-# The corpus every ranked lookup draws from. Two corpora, not one — see
-# `_candidate_items`.
-JUDGING_ITEM_TYPES = ("decision", "attempt", "verification")
-# Types a lookup should find but a verdict must never rest on. An idea is a
-# proposal; a jot is an unconfirmed observation with a TTL. Neither has been
-# through the evidence rule, and `_decide_verdict`'s score band is kind-agnostic,
-# so either would otherwise gate a real edit on the strength of nobody having
-# done the work yet.
-SPECULATIVE_ITEM_TYPES = ("idea", "jot")
-
-
-def _candidate_items(memory_dir: Path, *, include_ideas: bool = False) -> list[dict]:
-    """Every searchable item: durable decision/attempt records + trap + question blocks.
-
-    `include_ideas` is the **search-only corpus switch**. `crumb note idea` writes a
-    real, validated record, but for most of this package's life nothing loaded it, so
-    an idea could only be found by opening `ideas/`. The reason it stayed out is
-    that `guard` is built on this same function: an idea is a *proposal*, deliberately
-    exempt from the §16.9 evidence rule, and `_decide_verdict`'s score band is
-    kind-agnostic — so a speculative note that happened to name the files being edited
-    would have raised a real verdict on the strength of nobody having done the work.
-    That is the one thing guard must never do.
-
-    So the corpus forks by *who is asking*, not by record type:
-
-    - **Lookup** (`crumb search`, the `memory_search` MCP tool) passes True. A human
-      or agent asking "what do we know about X" wants the idea.
-    - **Judging** (`guard`, the `PreToolUse` hook path, `resume --task`'s likely-file
-      scoping) leaves it False. These turn matches into advice or into a packet, and
-      speculation is not evidence.
-
-    Jots ride the same switch as ideas, for the same reason: an unconfirmed
-    one-line note that happens to name the file being edited must not raise a
-    verdict. It is findable, and that is all it is.
-
-    Sessions stay out of both: they are narrative, and under
-    `session_tracking: distillate` a clone may not have them at all, so including
-    them would make results depend on which checkout you ran in.
-    """
-    # Store aliases first: `search` stems the query right after this returns,
-    # and both sides of every comparison must fold through the same table.
-    activate_store_aliases(memory_dir)
-    types = JUDGING_ITEM_TYPES + (SPECULATIVE_ITEM_TYPES if include_ideas else ())
-    items: list[dict] = []
-    for rec in load_records(memory_dir, types=types):
-        if rec.error:
-            continue
-        items.append(_item_from_record(rec))
-    items.extend(_item_from_trap(t) for t in load_traps(memory_dir))
-    items.extend(_item_from_question(q) for q in load_open_questions(memory_dir))
-    return _disambiguate_item_ids(items)
-
-
-def _disambiguate_item_ids(items: list[dict]) -> list[dict]:
-    """Make every candidate id unique, appending `-2`, `-3`, … like `_unique_record_path`.
-
-    Records are filename-canonical and validate §16.4 already rejects duplicate ids,
-    but trap and question ids are derived from free text (a trap's id is the heading
-    prefix, a question's a slug), so two blocks can still land on one id. `search`
-    builds a by_id map that keeps only the last of a colliding pair, and guard
-    resolves its next-safest-action through that map — so a collision silently
-    substitutes one item's advice for another's.
-    """
-    seen: dict[str, int] = {}
-    for item in items:
-        base = item["id"]
-        if base not in seen:
-            seen[base] = 1
-            continue
-        seen[base] += 1
-        item["id"] = f"{base}-{seen[base]}"
-    return items
-
-
-# ---- scoring (§11.4) ------------------------------------------------------- #
-
-
-def _ubiquitous_stems(items: list[dict]) -> frozenset[str]:
-    """Stems present in more than GUARD_DF_UBIQUITY of the corpus (see constants).
-
-    Deterministic document frequency over the candidate items' own token bags —
-    no external vocabulary, so the same store always yields the same set.
-    """
-    n = len(items)
-    if n < GUARD_DF_MIN_CORPUS:
-        return frozenset()
-    df: dict[str, int] = {}
-    for it in items:
-        for s in it["specific"]:
-            df[s] = df.get(s, 0) + 1
-    cutoff = n * GUARD_DF_UBIQUITY
-    return frozenset(s for s, c in df.items() if c > cutoff)
-
-
-def _score_item(
-    item: dict,
-    q_specific: set[str],
-    q_files: set[str],
-    root: Path,
-    cur_branch: str,
-    stale_days: int,
-    *,
-    min_keyword: int,
-    distances: CommitDistanceIndex,
-    ubiquitous: frozenset[str] = frozenset(),
-    q_words: frozenset[str] = frozenset(),
-    keyword_cap: int | None = None,
-    q_writes: set[str] = frozenset(),
-    do_not_retry_boost: bool = True,
-    reached: "HeadTree | None" = None,
-    common: frozenset[str] = frozenset(),
-    common_tags: frozenset[str] = frozenset(),
-) -> dict | None:
-    """Score one item against the query. None if it does not clear the candidate gate.
-
-    `common` / `common_tags` are the query's stems that too many records carry
-    as a word / as a tag to say much (`GUARD_DF_COMMON`): they score half and
-    never make a match topical by themselves.
-    """
-
-    # _norm_files stores each file as both its full path and its bare basename,
-    # so the intersection can hold both variants of one physical file. Count each
-    # distinct full path once, plus any bare-basename match not already covered by
-    # a matched full path. Keying on basename alone (the old approach) wrongly
-    # collapsed genuinely-distinct files that share a name (src/a/x.ts, src/b/x.ts)
-    # — undercounting the score and picking a hash-order-dependent survivor.
-    def _overlap(candidate: set[str], against: set[str] = q_files) -> tuple[list[str], int]:
-        raw = candidate & against
-        full_paths = {f for f in raw if "/" in f}
-        covered = {f.rsplit("/", 1)[-1] for f in full_paths}
-        extra_bare = {f for f in raw if "/" not in f and f not in covered}
-        return sorted(full_paths | extra_bare), len(full_paths) + len(extra_bare)
-
-    matched_files, file_count = _overlap(item["files"])
-    # Prose-mined paths, scored separately and never as "same file(s)".
-    matched_mentions, mention_count = _overlap(item.get("mentioned_files", set()) - item["files"])
-    # Files the action writes without naming them (crumb's own commands,
-    # issue 11): weaker than a file the action names, and said differently.
-    matched_writes, writes_count = _overlap(item["files"], q_writes) if q_writes else ([], 0)
-    # Tag overlap is computed on stems; the display set carries the raw tags.
-    tag_stems = item.get("tag_stems") or {t: t for t in item["tags"]}
-    matched_tag_stems = set(tag_stems) & q_specific
-    matched_tags = {tag_stems[s] for s in matched_tag_stems}
-    # Ubiquitous stems (present in most of the corpus) are dropped before either
-    # the gate or the weights see them — a token every record shares proves
-    # nothing about *this* record.
-    kw_overlap = (item["specific"] & q_specific) - ubiquitous
-    kw_count = len(kw_overlap)
-    # Title tokens are a subset of `specific` (the text bag includes the title),
-    # so this can only re-weight an existing keyword hit, never create a match
-    # the candidate gate below would have rejected.
-    title_overlap = (item.get("title_specific", set()) & q_specific) - ubiquitous
-
-    # Candidate gate (anti-noise, Fixture 3): a file or tag hit always qualifies;
-    # a pure-text match needs >= min_keyword specific shared tokens.
-    # A mention still opens the gate — `search --file src/auth/middleware.ts` has
-    # no keywords to fall back on, and a record that names that file in its prose
-    # is exactly what the caller asked for. What a mention no longer does is
-    # claim to be the author's own file declaration: it scores lower, it reads as
-    # `mentions:` rather than `same file(s):`, and it is not the specificity that
-    # lets a match floor a verdict.
-    # A query with fewer specific words than the floor (`npm test` is one:
-    # "test" is generic) could never reach it, so no record could match it on
-    # text at all: the field review's silent `npm test`. When the record's
-    # *title* carries every specific word the query has, that is the same
-    # evidence two shared words would be. Measured by the relevance evals (WM-61).
-    # Every word of the query counts here, generic ones included, or `npm test`
-    # would reduce to `npm` and match every record titled with npm.
-    q_live = q_specific - ubiquitous
-    short_query_title_hit = (
-        bool(q_live)
-        and len(q_live) < min_keyword
-        and q_live <= title_overlap
-        and q_words <= {_stem(t) for t in _tokenize(item.get("title") or "")}
-    )
-    if (
-        not matched_files
-        and not matched_mentions
-        and not matched_tags
-        and not matched_writes
-        and kw_count < min_keyword
-        and not short_query_title_hit
-    ):
-        return None
-
-    signals: list[str] = []
-    score = 0.0
-    rare_tag_stems = matched_tag_stems - common_tags
-    rare_kw = kw_overlap - common
-    if matched_files:
-        score += GUARD_W_FILE * file_count
-        signals.append("file")
-    if matched_mentions:
-        score += GUARD_W_MENTION * mention_count
-        signals.append("mention")
-    if matched_tags:
-        score += GUARD_W_TAG * len(rare_tag_stems)
-        score += GUARD_W_TAG / 2 * (len(matched_tag_stems) - len(rare_tag_stems))
-        # Only a rare tag is a surfacing signal; a tag half the store carries
-        # is a topic, and on its own it is said as such (`common-tag`).
-        signals.append("tag" if rare_tag_stems else "common-tag")
-    if matched_writes:
-        score += GUARD_W_WRITES * writes_count
-        signals.append("writes-file")
-    if kw_count:
-        # Capped for guard: overlap grew with the command's length, so a long
-        # commit message scored 39 against records it had nothing to do with
-        # (issue 7c). Plain search keeps the uncapped count. A common word
-        # counts half (item 5 of the 0.5.0 retest).
-        weighted = len(rare_kw) + (kw_count - len(rare_kw)) / 2
-        score += GUARD_W_KEYWORD * (min(weighted, keyword_cap) if keyword_cap else weighted)
-        if kw_count >= min_keyword:
-            signals.append("keyword")
-    if title_overlap:
-        score += GUARD_W_TITLE * len(title_overlap - common)
-        score += GUARD_W_TITLE / 2 * len(title_overlap & common)
-        if title_overlap - common:
-            signals.append("title")
-
-    rec = item.get("record")
-    if item["status"] == "active":
-        score += GUARD_W_STATUS_ACTIVE
-    if rec is not None:
-        if rec.meta.get("confidence") == "high":
-            score += GUARD_W_CONFIDENCE_HIGH
-        if rec.meta.get("review_status") == "reviewed":
-            score += GUARD_W_REVIEWED
-    # A do-not-retry line opposes *this* action only when the record is about
-    # it: a file, the title, a tag plus a shared word, or a file the action
-    # writes. Applied on any overlap, one shared tag lifted an unrelated
-    # attempt to the PAUSE band and pushed the relevant record out (issue 8).
-    # Words beyond the tags: a tag's own word is in the record's text too, so it
-    # would otherwise count as the "shared word" that makes a tag hit topical.
-    # Only rare evidence counts (item 5 of the 0.5.0 retest): a common tag
-    # plus one common word is what a store says about everything. In a store
-    # too small to have common words, these are the rules they always were.
-    kw_beyond_tags = len(rare_kw - matched_tag_stems)
-    topical = bool(
-        matched_files
-        or (title_overlap - matched_tag_stems - common)
-        or matched_writes
-        or (rare_tag_stems and kw_beyond_tags >= 1)
-        or (len(matched_tag_stems) >= 2 and rare_tag_stems)
-        or (matched_tag_stems and kw_beyond_tags >= 2)
-        or kw_beyond_tags >= GUARD_TOPICAL_KEYWORDS
-    )
-    if item["do_not_retry"] and do_not_retry_boost and topical:
-        score += GUARD_W_DO_NOT_RETRY
-        signals.append("do-not-retry")
-    if item["kind"] == "question" and item["status"] == "open":
-        score += GUARD_W_OPEN_BLOCKER
-        signals.append("open-blocker")
-
-    # Recency + commit-distance de-weighting. The
-    # pre-decay score is kept on the match: `search` needs it to tell "under the
-    # noise floor on raw signal" (noise — drop) from "pushed under it by the
-    # stale factors" (a real match — surface as history).
-    undecayed = score
-    factor = 1.0
-    if rec is not None:
-        age = _age_days(rec.meta.get("updated_at") or rec.meta.get("created_at"))
-        if age is not None and age > stale_days:
-            factor *= GUARD_STALE_AGE_FACTOR
-        # Via the shared index, not a per-record `git_commit_distance`:
-        # same answer, but the git calls stop scaling with the store's size.
-        if distances.distance_reaches(rec.meta.get("commit")):
-            factor *= GUARD_STALE_DIST_FACTOR
-
-    # Branch match: a mismatch is surfaced (§15), not hidden — de-weight + flag.
-    branch_mismatch = False
-    rb = item.get("branch")
-    if (
-        rb
-        and rb not in (NO_GIT_BRANCH, None, "")
-        and cur_branch not in (NO_GIT_BRANCH, "HEAD")
-        and rb != cur_branch
-        # A record whose file has reached HEAD (merged, squashed, rebased) is
-        # history here, not a risk — the same test resume uses (issue 9).
-        and not (reached is not None and rec is not None and reached.contains(rec.path))
-    ):
-        branch_mismatch = True
-        factor *= GUARD_BRANCH_MISMATCH_FACTOR
-        signals.append("branch-mismatch")
-
-    score = round(score * factor, 2)
-    return {
-        "id": item["id"],
-        "kind": item["kind"],
-        "status": item["status"],
-        "lifecycle": item.get("lifecycle", item["status"]),
-        "expired": bool(item.get("expired")),
-        "promoted": bool(item.get("promoted")),
-        "scope": item.get("scope") or "project",
-        "title": item["title"],
-        "score": score,
-        "raw_score": round(undecayed, 2),
-        "suppressed": False,  # set by `search` when decay pushed it under the floor
-        "signals": signals,
-        # Whether this record opposes the action or merely documents its area.
-        # Exported so a caller can tell the two apart without re-deriving it from
-        # `signals` — the 0.1.11 audit's F-2: the output gave a PAUSE-driving
-        # record and a merely-topical one the same shape of evidence.
-        "stance": _match_stance(signals),
-        "matched_files": sorted(matched_files),
-        "matched_mentions": sorted(matched_mentions),
-        "matched_tags": sorted(matched_tags),
-        "keyword_overlap": sorted(kw_overlap),
-        "matched_writes": sorted(matched_writes),
-        # Is there evidence beyond one shared topic? A tag alone (a `git` tag
-        # against `git status`) says the record is about the same component,
-        # not about this action; it no longer floors a verdict by itself.
-        "topical": topical,
-        "branch_mismatch": branch_mismatch,
-        "reason": _match_reason(
-            item["kind"],
-            signals,
-            matched_files,
-            matched_tags,
-            kw_count,
-            matched_mentions,
-            matched_writes,
-        ),
-    }
-
-
-def _match_reason(
-    kind, signals, matched_files, matched_tags, kw_count, matched_mentions=(), matched_writes=()
-) -> str:
-    """Human phrase for why a record matched. Derived facts only — never executed."""
-    parts: list[str] = []
-    if matched_files:
-        shown = ", ".join(sorted(matched_files)[:3])
-        parts.append(f"same file(s): {shown}")
-    if matched_writes:
-        parts.append(f"this command writes: {', '.join(sorted(matched_writes)[:3])}")
-    if matched_mentions:
-        # Deliberately a different phrase. `same file(s)` is a claim the author
-        # made; this is one the extractor made, and telling them apart is what
-        # keeps the first one worth reading.
-        parts.append(f"mentions: {', '.join(sorted(matched_mentions)[:3])}")
-    if matched_tags:
-        parts.append(f"same component/tag: {', '.join(sorted(matched_tags))}")
-    if kw_count and not matched_files and not matched_tags:
-        parts.append(f"{kw_count} shared keyword(s)")
-    elif kw_count:
-        parts.append(f"+{kw_count} shared keyword(s)")
-    if "title" in signals:
-        parts.append("named in the record's title")
-    if "do-not-retry" in signals:
-        parts.append("has an explicit do-not-retry condition")
-    if "open-blocker" in signals:
-        parts.append("an unresolved open question touches this")
-    if "branch-mismatch" in signals:
-        parts.append("written on another branch (possibly stale)")
-    return "; ".join(parts) if parts else "keyword overlap"
-
-
-def _common_stems(df: dict) -> tuple[frozenset[str], frozenset[str]]:
-    """(common words, common tags) among the query's stems (`GUARD_DF_COMMON`)."""
-    n = int(df.get("n") or 0)
-    if n < GUARD_DF_COMMON_MIN_CORPUS:
-        return frozenset(), frozenset()
-    cutoff = max(n * GUARD_DF_COMMON, GUARD_DF_COMMON_MIN_RECORDS)
-    words = frozenset(s for s, c in (df.get("words") or {}).items() if c > cutoff)
-    tags = frozenset(s for s, c in (df.get("tags") or {}).items() if c > cutoff)
-    return words, tags
-
-
-def search(
-    memory_dir: Path,
-    root: Path,
-    query: str,
-    *,
-    files: list[str] | None = None,
-    filters: dict | None = None,
-    stale_days: int = STALE_AGE_DAYS,
-    min_keyword: int = 1,
-    noise_floor: int = 1,
-    include_ideas: bool = False,
-    allow_full_scan: bool = True,
-    info: dict | None = None,
-    path_text: str | None = None,
-    keyword_cap: int | None = None,
-    writes: list[str] | None = None,
-    do_not_retry_boost: bool = True,
-    command_text: str | None = None,
-) -> tuple[list[dict], dict[str, dict]]:
-    """Deterministic search over the canonical records (§20.10).
-
-    Guard's own knobs: `path_text` is where query paths are read from (default
-    the query), `keyword_cap` bounds the keyword contribution so a longer
-    command does not score higher for being long, `writes` are files the
-    action writes without naming them (crumb's own commands, issue 11),
-    `command_text` is the command matched against the commands records name
-    (default the query), and `do_not_retry_boost=False` ranks by relevance
-    alone (the prompt hook).
-
-    Returns (matches sorted best-first, items_by_id). Matching signals: exact/
-    keyword text, tag/component, and file path. No embeddings; same input ->
-    same output. `filters` narrows the corpus by type/status/tag/file first.
-
-    `include_ideas` selects the wider, lookup-only corpus — see `_candidate_items`.
-    It defaults to False so a caller that forgets it gets guard's corpus, which is
-    the safe side of the mistake.
-
-    `info`, when given, is filled with how the lookup ran (audit WP10): `mode`
-    (`indexed`, or `full_scan` with the index's `reason`), and `candidates`, the
-    records scored. With `allow_full_scan=False` a lookup the index cannot
-    serve returns nothing with `mode: "skipped"` instead of scanning, which is
-    a bounded caller's choice; plain search always completes.
-    """
-    # Aliases before the query is stemmed: both sides of every comparison must
-    # fold through the same table (WM-24).
-    activate_store_aliases(memory_dir)
-    filters = filters or {}
-    q_specific = _specific(query)
-    q_words = frozenset(_stem(t) for t in _tokenize(query) if t not in _FUNCTION_WORDS)
-    q_files = _norm_files(
-        _paths_from_text(query if path_text is None else path_text) | set(files or [])
-    )
-    q_writes = _norm_files(writes or []) - q_files
-    q_command = _command_tokens(query if command_text is None else command_text)
-    # The search index narrows the corpus to records that could possibly match
-    # (WM-23). It returns None whenever it cannot be trusted or cannot help, and
-    # the full scan below is then exactly what it always was.
-    from breadcrumbs import searchindex as _searchindex
-
-    explain: dict = {}
-    df: dict = {}
-    narrowed = _searchindex.candidate_items(
-        memory_dir,
-        root,
-        q_specific,
-        q_files | q_writes,
-        include_ideas=include_ideas,
-        explain=explain,
-        df_out=df,
-    )
-    info = info if info is not None else {}
-    if narrowed is not None:
-        items, ubiquitous = narrowed
-        info.update(mode="indexed", reason=None)
-    else:
-        info.update(mode="full_scan", reason=explain.get("reason"))
-        if not allow_full_scan:
-            info.update(mode="skipped", candidates=0)
-            return [], {}
-        items = _candidate_items(memory_dir, include_ideas=include_ideas)
-        ubiquitous = _ubiquitous_stems(items)
-        df = {
-            "n": len(items),
-            "words": {q: sum(1 for it in items if q in it["specific"]) for q in q_specific},
-            "tags": {
-                q: sum(1 for it in items if q in (it.get("tag_stems") or ())) for q in q_specific
-            },
-        }
-    common, common_tags = _common_stems(df)
-    info["candidates"] = len(items)
-    by_id = {it["id"]: it for it in items}
-    cur_branch = git_branch(root)
-    # One commit-distance index for the whole pass — see the class.
-    distances = CommitDistanceIndex(root, GUARD_STALE_DIST_COMMITS)
-    # Which record files have reached HEAD, built once per pass (issue 9): a
-    # record committed here from a since-merged branch is history, not "written
-    # on another branch", whatever its `branch:` field says.
-    reached = _reached_head(root)
-
-    matches: list[dict] = []
-    for it in items:
-        if not _passes_filters(it, filters):
-            continue
-        m = _score_item(
-            it,
-            q_specific,
-            q_files,
-            root,
-            cur_branch,
-            stale_days,
-            min_keyword=min_keyword,
-            distances=distances,
-            ubiquitous=ubiquitous,
-            q_words=q_words,
-            keyword_cap=keyword_cap,
-            q_writes=q_writes,
-            do_not_retry_boost=do_not_retry_boost,
-            reached=reached,
-            common=common,
-            common_tags=common_tags,
-        )
-        if it.get("command_heads") and _names_command(q_command, it["command_heads"]):
-            m = _with_command_signal(m, it, do_not_retry_boost=do_not_retry_boost)
-        if m is None:
-            # Filter-only lookups (no scoring query) still surface the item.
-            if filters and not q_specific and not q_files:
-                m = {
-                    "id": it["id"],
-                    "kind": it["kind"],
-                    "status": it["status"],
-                    "lifecycle": it.get("lifecycle", it["status"]),
-                    "expired": bool(it.get("expired")),
-                    "promoted": bool(it.get("promoted")),
-                    "title": it["title"],
-                    "score": float(noise_floor),
-                    "raw_score": float(noise_floor),
-                    "suppressed": False,
-                    "signals": ["filter"],
-                    "matched_files": [],
-                    "matched_tags": [],
-                    "keyword_overlap": [],
-                    "branch_mismatch": False,
-                    "reason": "matched filter",
-                }
-            else:
-                continue
-        if m["score"] < noise_floor:
-            # De-weighting must never erase (field test 2026-08-04). The
-            # stale/branch factors compound to 0.39, which pushed real matches —
-            # a decision whose title named the proposed action — under the floor
-            # with no trace, so the store went quietest exactly where it was
-            # oldest. A match under the floor on its *raw* signal is genuine
-            # noise and still drops; one pushed under it by decay is kept,
-            # marked, for guard to demote to history (mention-only).
-            if m["raw_score"] < noise_floor:
-                continue
-            m["suppressed"] = True
-            m["signals"].append("stale-suppressed")
-            m["reason"] += "; de-weighted below the noise floor by age/branch"
-        matches.append(m)
-
-    matches.sort(key=lambda m: (-m["score"], m["id"]))
-    return matches, by_id
-
-
-def _with_command_signal(m: dict | None, item: dict, *, do_not_retry_boost: bool = True) -> dict:
-    """Mark a match (or make one) for a record that names the action's command."""
-    if m is None:
-        m = {
-            "id": item["id"],
-            "kind": item["kind"],
-            "status": item["status"],
-            "lifecycle": item.get("lifecycle", item["status"]),
-            "expired": bool(item.get("expired")),
-            "promoted": bool(item.get("promoted")),
-            "title": item["title"],
-            "score": 0.0,
-            "raw_score": 0.0,
-            "suppressed": False,
-            "signals": [],
-            "matched_files": [],
-            "matched_tags": [],
-            "keyword_overlap": [],
-            "branch_mismatch": False,
-            "reason": "",
-        }
-    if "command" not in m["signals"]:
-        m["signals"].append("command")
-        m["reason"] = (m["reason"] + "; " if m["reason"] else "") + "names this exact command"
-    # Naming the exact command is the most topical evidence there is, so an
-    # attempt's do-not-retry line applies (issue 8: "Ran gradlew --stop on a
-    # STOPREQUESTED daemon" was not in `./gradlew --stop`'s top three).
-    if item.get("do_not_retry") and do_not_retry_boost and "do-not-retry" not in m["signals"]:
-        m["signals"].append("do-not-retry")
-        m["score"] = float(m["score"]) + GUARD_W_DO_NOT_RETRY
-        m["raw_score"] = float(m["raw_score"]) + GUARD_W_DO_NOT_RETRY
-        m["stance"] = _match_stance(m["signals"])
-        if "do-not-retry condition" not in m["reason"]:
-            m["reason"] += "; has an explicit do-not-retry condition"
-    # As strong as READ_FIRST evidence: it ranks and surfaces like it.
-    m["score"] = max(float(m["score"]), float(GUARD_READ_FIRST_SCORE))
-    m["raw_score"] = max(float(m["raw_score"]), float(GUARD_READ_FIRST_SCORE))
-    return m
-
-
-def _passes_filters(item: dict, filters: dict) -> bool:
-    t = filters.get("type")
-    if t and item["kind"] != t:
-        return False
-    st = filters.get("status")
-    if st and item["status"] != st:
-        return False
-    tag = filters.get("tag")
-    if tag and tag.lower() not in item["tags"]:
-        return False
-    f = filters.get("file")
-    # Declared *or* mentioned: `--file X` asks "which records concern X", and a
-    # record that names X only in its prose is one of them (G1 splits the two
-    # tiers for scoring and for what a match may claim, not for retrieval).
-    if f and not (_norm_files({f}) & (item["files"] | item.get("mentioned_files", set()))):
-        return False
-    return True
-
-
-# ---- guard verdict (§11.5–11.6) -------------------------------------------- #
-
-
-def _match_stance(signals) -> str:
-    """`blocking` if this match opposes the action, else `advisory` (see §11 stance).
-
-    Derived, never authored: the only structural statement of opposition the
-    schema has is an attempt's "Do Not Retry Unless" section, which
-    `_attempt_has_do_not_retry` already turns into the `do-not-retry` signal. To
-    make a record hard-stop an action, record it as
-    `crumb remember attempt --do-not-retry "…"` — a trap *documents* a hazard,
-    an attempt *forbids* a repeat.
-    """
-    return "blocking" if "do-not-retry" in set(signals or ()) else "advisory"
-
-
-def _score_band(score: float) -> str:
-    """The verdict a score alone argues for, before stance caps it."""
-    if score >= GUARD_PAUSE_SCORE:
-        return "PAUSE"
-    if score >= GUARD_READ_FIRST_SCORE:
-        return "READ_FIRST"
-    return "PROCEED"
-
-
-def _max_verdict(*verdicts: str) -> str:
-    return max(verdicts, key=lambda v: _VERDICT_RANK[v])
-
-
-def _min_verdict(*verdicts: str) -> str:
-    return min(verdicts, key=lambda v: _VERDICT_RANK[v])
-
-
-def _only_common_evidence(m: dict) -> bool:
-    """A match carried only by common tags and words (`GUARD_DF_COMMON`)."""
-    sig = set(m.get("signals") or ())
-    return (
-        "common-tag" in sig
-        and not m.get("topical")
-        and not ({"tag", "file", "mention", "writes-file", "command", "open-blocker"} & sig)
-    )
-
-
-def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "") -> str:
-    """Pick one verdict from the ranked matches + action class. Deterministic.
-
-    Per match: a kind/specificity floor and the score band both argue for a
-    verdict, and the match's *stance* caps how far either may go. The verdict is
-    the highest capped result across matches.
-
-    The band used to be computed once from the single best score in the whole
-    result set and OR-ed into the verdict — so any sufficiently *relevant*
-    record raised the verdict whether or not it objected to anything, and one
-    well-tagged trap on a busy file PAUSEd every edit to that file (F-1).
-    """
-    if not top:
-        return "PROCEED"
-
-    verdicts: list[str] = ["PROCEED"]
-    for m in top:
-        sig = set(m["signals"])
-        # A tag counts as specific only with evidence beyond the tag itself
-        # (`topical`; field report 2026-10-01, issue 7: every git-tagged
-        # decision floored every git command at READ_FIRST). A file, or a file
-        # the action writes, always does.
-        specific = bool({"file", "writes-file"} & sig) or (
-            bool({"tag", "common-tag"} & sig) and m.get("topical", True)
-        )
-        floor = "PROCEED"
-        if "do-not-retry" in sig and specific:
-            floor = "PAUSE"  # a failed attempt on these files/component
-        elif m["kind"] == "decision" and specific:
-            floor = "READ_FIRST"  # an active decision constrains this area
-        elif m["kind"] == "trap" and "command" in sig:
-            # The trap names the exact command (audit F10): advisory, READ_FIRST.
-            floor = "READ_FIRST"
-        elif m["kind"] == "trap" and specific:
-            # Keyword-only trap matches used to floor READ_FIRST here, bypassing
-            # the score bands — in a store whose vocabulary overlaps the codebase
-            # that made one trap fire on every edit of a session (0.1.10 field
-            # test, P0-2: 13 edits, 13 READ_FIRSTs, one relevant). A trap now
-            # needs the same file/tag specificity as a decision to floor the
-            # verdict; a strong keyword-only trap match can still escalate
-            # through the score band like everything else.
-            floor = "READ_FIRST"
-        elif m["kind"] == "verification" and specific:
-            floor = "READ_FIRST"  # an unsettled finding on these files/component
-        elif "open-blocker" in sig:
-            floor = "READ_FIRST"
-
-        stance = m.get("stance") or _match_stance(m.get("signals"))
-        ceiling = GUARD_BLOCKING_CEILING if stance == "blocking" else GUARD_ADVISORY_CEILING
-        band = _score_band(m["score"])
-        if _only_common_evidence(m):
-            # Shared vocabulary the whole store speaks (DoWhat retest of 0.5.0,
-            # item 5): it may be shown, but it cannot raise a verdict.
-            band = "PROCEED"
-        verdicts.append(_min_verdict(_max_verdict(floor, band), ceiling))
-
-    verdict = _max_verdict(*verdicts)
-
-    # ASK_HUMAN escalation: a high-impact *action* colliding with memory is a
-    # human's call (§15). Security/refactor never auto-escalate (keeps Fixture 2
-    # on PAUSE).
-    #
-    # This is the axis retrieval overlap cannot see, and it used to read only the
-    # keyword-derived action classes — which know "delete", "migrate", "deploy"
-    # but not the irreversible shell shapes. `git push --force origin main`
-    # tokenizes to nothing high-impact, so a store that cited two docs escalated
-    # `rm` of them to a prompt while a force-push over shared history stayed
-    # advisory. `_is_destructive` folds in the literal irreversible forms, so
-    # blast radius raises the verdict whatever vocabulary the action happens to
-    # use. Still gated on an existing memory collision: guard reports on the
-    # store, and an action nothing in memory touches is not guard's to judge.
-    if (
-        _is_destructive(action, matched_classes)
-        and _VERDICT_RANK[verdict] >= _VERDICT_RANK["READ_FIRST"]
-    ):
-        verdict = "ASK_HUMAN"
-
-    # Applied last, so nothing above can raise a reporting command past advisory.
-    if _is_read_only_action(action):
-        verdict = _min_verdict(verdict, GUARD_READ_ONLY_CEILING)
-    return verdict
-
-
-def _recommended_action(
-    verdict: str, top: list[dict], by_id: dict, root: Path, *, high_impact: str | None = None
-) -> str:
-    """Synthesize the next safest action from match kinds (§11.6).
-
-    Generated by this code from structure — never copied as an imperative out of a
-    record body. Verification commands come from the structured `evidence` field.
-    """
-    ids = ", ".join(m["id"] for m in top[:3]) if top else ""
-    cmds: list[str] = []
-    for m in top:
-        it = by_id.get(m["id"])
-        rec = it.get("record") if it else None
-        if rec is not None:
-            cmds.extend(_evidence_refs(rec, ("command", "test")))
-    cmds = _dedup(cmds)[:3]
-    verify = f" Run the recorded verification command(s): {'; '.join(cmds)}." if cmds else ""
-
-    if verdict == "ASK_HUMAN" and high_impact and not top:
-        return (
-            f"High-impact action ({high_impact}) and no project memory about it. "
-            "Get a human to confirm before proceeding." + verify
-        )
-    if verdict == "ASK_HUMAN" and high_impact:
-        return (
-            f"High-impact action ({high_impact}). Read {ids}, then get a human to "
-            "confirm before proceeding." + verify
-        )
-    if verdict == "ASK_HUMAN":
-        return (
-            f"This is a high-impact change that collides with recorded memory ({ids}). "
-            "Get a human to review before proceeding." + verify
-        )
-    if verdict == "PAUSE":
-        # Only a `blocking` match can reach PAUSE now, so this names what that
-        # actually is. It used to say "a failed attempt *or active constraint*"
-        # while firing on any topically-relevant record — including a trap whose
-        # own prescribed fix was the action being blocked (F-1).
-        return (
-            f"Stop and read these records before acting: {ids}. They record an attempt "
-            "that already failed here, with an explicit do-not-retry condition — check "
-            "it still applies before repeating it. Prefer the smallest possible change "
-            "over a rewrite." + verify
-        )
-    if verdict == "READ_FIRST":
-        return (
-            f"Read {ids} first — they constrain this area — then make a surgical change." + verify
-        )
-    # PROCEED says only that memory holds no applicable warning (audit F10). It
-    # is not an authorization and not a safety check of the action itself.
-    if top:
-        return (
-            "No applicable memory warning found (PROCEED is not an authorization or a "
-            f"safety check). Weak overlap only; skim {ids} if unsure." + verify
-        )
-    return (
-        "No applicable memory warning found (PROCEED is not an authorization or a "
-        "safety check). Capture a new decision or attempt record if this turns into "
-        "one worth remembering."
-    )
-
-
-def _direct_evidence(m: dict) -> bool:
-    """Is a match about this action itself, not just its vocabulary?"""
-    sig = set(m.get("signals") or ())
-    return bool({"file", "writes-file", "command"} & sig) or (
-        bool(m.get("topical")) and bool({"tag", "title"} & sig)
-    )
-
-
-def _is_memory_path(path: str, root: Path) -> bool:
-    """Is `path` (as an edit names it) inside this project's memory store?"""
-    norm = str(path or "").replace("\\", "/")
-    if norm.startswith(f"{MEMORY_DIRNAME}/") or f"/{MEMORY_DIRNAME}/" in f"/{norm}":
-        try:
-            target = Path(path)
-            if target.is_absolute():
-                return target.resolve().is_relative_to((Path(root) / MEMORY_DIRNAME).resolve())
-        except (OSError, ValueError):
-            return False
-        return True
-    return False
-
-
-def guard(
-    memory_dir: Path,
-    root: Path,
-    action: str,
-    *,
-    files: list[str] | None = None,
-    stale_days: int = STALE_AGE_DAYS,
-) -> dict:
-    """Guard-before-action (§11): classify -> search -> score -> single verdict.
-
-    Active records drive the verdict; superseded/rejected/stale records and
-    resolved questions are demoted to history (mention-only, never 'active').
-    Bounded to GUARD_MAX_WARNINGS ranked records. Matched text is data, not command.
-
-    Ideas are **not** in this corpus (`include_ideas` stays False). An idea is a
-    proposal exempt from the evidence rule; the score band below is kind-agnostic,
-    so including them would let a speculative note that names the right files raise
-    a real verdict. `crumb search` sees them; the verdict never does.
-    """
-    primary, classes = classify_action(action)
-    # Match on the command, not on a here-document's body (issue 7c), and take
-    # paths only from the command and the edited file — never from the content
-    # being written (issue 10: `mentions: CLAUDE.md` came from prose).
-    edit = _EDIT_ACTION_RE.match((action or "").strip())
-    memory_edit = bool(edit) and _is_memory_path(edit.group(2), root)
-    if edit:
-        # An edit is about its file, not the prose it writes (DoWhat retest of
-        # 0.5.0, item 4: a handoff note that said "migrated the schema" was
-        # PAUSEd by a Room migration attempt). Code identifiers in the new
-        # content still count; an edit inside the store is a memory write and
-        # is matched on its path alone.
-        path_text = f"{edit.group(1)} {edit.group(2)}"
-        content = "" if memory_edit else (edit.group(3) or "")
-        query = " ".join([path_text, *_shellcmd.code_identifiers(content)])
-    else:
-        path_text = _shellcmd.without_crumb(action)
-        query = path_text
-    matches, by_id = search(
-        memory_dir,
-        root,
-        query,
-        files=files,
-        stale_days=stale_days,
-        min_keyword=GUARD_MIN_KEYWORD_OVERLAP,
-        noise_floor=GUARD_NOISE_FLOOR,
-        include_ideas=False,
-        path_text=path_text,
-        keyword_cap=GUARD_KEYWORD_CAP,
-        writes=_shellcmd.crumb_writes(action, MEMORY_DIRNAME) if not edit else None,
-        command_text=_shellcmd.matching_text(action) if not edit else path_text,
-    )
-
-    active, history = [], []
-    for m in matches:
-        # A match the stale/branch factors pushed under the noise floor is
-        # mention-only: decay still de-weights the verdict, but the
-        # record is named instead of silently dropped — "38 days old" is a
-        # reason to re-verify a decision, not to forget it exists.
-        if m.get("suppressed"):
-            history.append(m)
-            continue
-        # A record is live when active; an open question is live too — it must be
-        # able to drive the verdict (open-blocker floor). Resolved questions and
-        # superseded/rejected/stale records fall through to history (mention-only).
-        # A verification carries its *outcome* in `status` (never "active"), which
-        # used to drop every one of them into history — a recorded "regressed" on
-        # the exact files being touched could not raise the verdict.
-        # It is live when the record itself is active and the outcome still needs
-        # attention, mirroring `active_verifications`.
-        # A record past its `expires_at` (WM-30) is history too: it aged out,
-        # like a superseded one, and is named rather than allowed to drive.
-        # WM-52: a branch-scoped record written on another branch is about
-        # work that is not checked out here; it is history, not a live constraint.
-        elsewhere = m.get("scope") == "branch" and m.get("branch_mismatch")
-        live = (
-            not m.get("expired")
-            and not elsewhere
-            and (
-                m["status"] == "active"
-                or (m["kind"] == "question" and m["status"] == "open")
-                or (
-                    m["kind"] == "verification"
-                    and m.get("lifecycle", "active") == "active"
-                    and m["status"] in ACTIONABLE_VERIFICATION_OUTCOMES
-                )
-            )
-        )
-        (active if live else history).append(m)
-
-    read_only = _is_read_only_action(action)
-    # Operator decision D3 (2026-10-01): a short, literal list of high-impact
-    # actions asks a human even when no record is about them. Without it, the
-    # only thing that ever made `git push --force origin main` ASK_HUMAN was
-    # unrelated records that happened to share the word "git".
-    high_impact = _shellcmd.high_impact(action) if not edit else None
-    if high_impact:
-        # The verdict is the action's, so a record is cited only with direct
-        # evidence that it is about *this* action: a file it names or writes,
-        # the exact command, or a topical match. A real `crumb migrate` cited a
-        # Gradle rate-limit attempt and a Room migration test (DoWhat retest of
-        # 0.5.0, item 3); the rest is "no project memory about it".
-        demoted = [m for m in active if not _direct_evidence(m)]
-        active = [m for m in active if _direct_evidence(m)]
-        history = history + demoted
-    if read_only or memory_edit:
-        # An action that changes nothing — or a memory write — cannot be what a
-        # record objects to (item 6: `git status` showed a git attempt as
-        # `[objects]`). The verdict was already capped; now the stance agrees.
-        for m in active:
-            m["stance"] = "advisory"
-    top = active[:GUARD_MAX_WARNINGS]
-    verdict = _decide_verdict(top, classes, action)
-    if memory_edit:
-        verdict = _min_verdict(verdict, GUARD_READ_ONLY_CEILING)
-    if high_impact:
-        verdict = "ASK_HUMAN"
-
-    # Staleness is computed so a stale/wrong-branch handoff surfaces
-    # in guard exactly as it does in resume (Fixture 4), regardless of verdict.
-    # Lenient read: guard runs on the PreToolUse path and must not die on a bad
-    # byte.
-    from breadcrumbs import handoffs as _handoffs
-
-    handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
-    # `risks_only`: guard is called once per edit, and the full staleness view
-    # repeated the same store-wide facts verbatim on every call (P0-4). Only
-    # abnormal states — cold handoff, detached HEAD, branch mismatch — belong
-    # on the per-action path; the rest lives in resume/doctor/audit.
-    # The risks-only view reads no records (they feed only the full view), so
-    # none are loaded for it: that re-read every decision on each firing (#6).
-    staleness = compute_staleness(
-        root,
-        parse_handoff_meta(handoff_text),
-        [],
-        [],
-        [],
-        stale_days,
-        risks_only=True,
-        memory_dir=memory_dir,
-        handoff_path=handoff_path,
-    )[:GUARD_MAX_WARNINGS]
-
-    result = {
-        "verdict": verdict,
-        "action": action,
-        "action_class": primary,
-        "action_classes": classes,
-        # Blast radius, scored independently of retrieval. Overlap answers "is a
-        # record about this action"; it has never answered "how much damage does
-        # this action do", and the two were conflated: a verdict driven entirely
-        # by how much of the repo the store happens to cite decided whether the
-        # human got interrupted. They are separate axes and are now reported as
-        # such — `_hook_guard` gates the permission prompt on this one and the
-        # surfaced context on the other.
-        "destructive": _is_destructive(action, classes),
-        # The other end of the same axis: an action that cannot change anything
-        # caps at READ_FIRST however strong the retrieval overlap (G2). Reported
-        # so a caller can see *why* a loud-looking match did not raise a verdict.
-        "read_only": read_only,
-        "matches": top,
-        "history": history[:GUARD_MAX_WARNINGS],
-        "staleness": staleness,
-        # NOT `next_action` — that key is the resume packet's *recorded* Next
-        # Action, and one name for two unrelated things read as one thing.
-        "high_impact": high_impact,
-        "recommended_action": _recommended_action(
-            verdict, top, by_id, root, high_impact=high_impact
-        ),
-        "thresholds": {
-            "noise_floor": GUARD_NOISE_FLOOR,
-            "read_first_score": GUARD_READ_FIRST_SCORE,
-            "pause_score": GUARD_PAUSE_SCORE,
-            "min_keyword_overlap": GUARD_MIN_KEYWORD_OVERLAP,
-            "max_warnings": GUARD_MAX_WARNINGS,
-        },
-    }
-    # A store this build does not fully understand (audit WP21): the verdict
-    # is still given, with the warning that it may misread the records.
-    from breadcrumbs import compat as _compat
-
-    note = _compat.warning(memory_dir)
-    if note:
-        result["compatibility"] = note
-    return result
+# The layer itself (candidate items, scoring, verdicts) is `breadcrumbs.scoring`;
+# the shared tokens and stems are `breadcrumbs.textmatch`. Here: rendering and
+# the `search` / `guard` commands.
 
 
 # ---- rendering ------------------------------------------------------------- #
@@ -10837,7 +6755,7 @@ def _render_guard_human_raw(result: dict) -> str:
             # record that forbids this action and one that merely names the same
             # file read identically (F-2), so the caller could not tell which of
             # the two kinds of PAUSE they were looking at.
-            stance = m.get("stance") or _match_stance(m.get("signals"))
+            stance = m.get("stance") or _scoring._match_stance(m.get("signals"))
             mark = "objects" if stance == "blocking" else "context"
             out.append(f"{i}. [{mark}] {m['id']} — {m['kind']}, {m['reason']}.")
     else:
@@ -10907,7 +6825,11 @@ def cmd_search(args: argparse.Namespace) -> int:
     # query's own specific-token count so a one-word lookup ("libsignal") still
     # works. Search can and should return zero — one generic shared token
     # ("version") is not a match.
-    min_kw = max(1, min(GUARD_MIN_KEYWORD_OVERLAP, len(_specific(query)))) if query else 1
+    min_kw = (
+        max(1, min(_scoring.GUARD_MIN_KEYWORD_OVERLAP, len(_textmatch._specific(query))))
+        if query
+        else 1
+    )
     lookup: dict = {}
     svc, ctx = _service_context(args, root)
     matches, _ = svc.search(
@@ -10925,7 +6847,7 @@ def cmd_search(args: argparse.Namespace) -> int:
         # index could not serve it. `crumb search` is always complete.
         payload = {"query": query, "filters": filters, "matches": matches, "lookup": lookup}
         if getattr(args, "explain", False):
-            payload["query_stems"] = sorted(_specific(query))
+            payload["query_stems"] = sorted(_textmatch._specific(query))
         _print_json(args, payload)
         return 0
     if getattr(args, "explain", False):
@@ -10933,10 +6855,12 @@ def cmd_search(args: argparse.Namespace) -> int:
         # usually did not because the two words stem differently, and without
         # this the only way to find out was reading `_stem`. The fix is a line in
         # aliases.txt; this is how you find out you need one.
-        stems = sorted(_specific(query))
+        stems = sorted(_textmatch._specific(query))
         print(f"query stems: {', '.join(stems) if stems else '(none — every word was a stopword)'}")
-        if active_store_aliases():
-            print(f"store aliases active: {len(active_store_aliases())} ({ALIASES_FILENAME})")
+        if _textmatch.active_store_aliases():
+            print(
+                f"store aliases active: {len(_textmatch.active_store_aliases())} ({_textmatch.ALIASES_FILENAME})"
+            )
         why = f" ({lookup['reason']})" if lookup.get("reason") else ""
         print(f"lookup: {lookup.get('mode')}{why}, {lookup.get('candidates', 0)} record(s) scored")
         print()
@@ -10997,435 +6921,14 @@ def cmd_guard(args: argparse.Namespace) -> int:
     # unchanged.
     if getattr(args, "exit_zero", False):
         return 0
-    return GUARD_VERDICT_EXIT_CODES[result["verdict"]]
+    return _scoring.GUARD_VERDICT_EXIT_CODES[result["verdict"]]
 
 
 # --------------------------------------------------------------------------- #
-# audit + scan-secrets — heuristic safety net
+# audit + scan-secrets — the CLI side, and generated-packet drift
 # --------------------------------------------------------------------------- #
-#
-# Design split: `validate` is deterministic and GATES; `audit`
-# is heuristic and ADVISES. The one hard non-zero in audit is a secret leak — a
-# token-like string in committed memory must block any "commit memory" workflow
-# (§2.6, §15). Everything else — stale handoff, aged/expired/low-confidence
-# records, branch mismatch, instruction-like text, generated-packet drift, bloat,
-# and the validate-failing conditions re-surfaced for the health view — is a WARN
-# (or INFO) and never flips the exit code on its own.
-#
-# Matched memory text is DATA, never instruction (§15, Fixture 7): the
-# instruction-like heuristic only *flags* override phrasing for a human reviewer;
-# audit never acts on it, exactly as `guard` ranks-but-never-executes record text.
-
-# Severity ladder for audit findings.
-AUDIT_FAIL = "fail"  # blocks (non-zero) — secrets only
-AUDIT_WARN = "warn"  # flag for human review — never changes the exit code
-AUDIT_INFO = "info"  # health/context note
-
-# A record has to be old enough that never having been reached is a fact about
-# the record rather than about the week. Bounded, because a neglected store
-# would otherwise report every record it has.
-AUDIT_NEVER_SURFACED_DAYS = 90
-AUDIT_NEVER_SURFACED_MAX = 10
-# WM-60: `crumb usage --decay`'s window, and how many candidates audit names.
-DECAY_DAYS_DEFAULT = 180
-AUDIT_DECAY_MAX = 10
-
-# Directories under .project-memory/ the secret scan skips: private/ is gitignored
-# local context and index/ a gitignored, disposable accelerator. generated/ is
-# scanned (DoWhat retest of 0.5.0, item 9): it is committed, and its projections
-# copy record text, so a secret there would be published like any other.
-_SECRET_SKIP_DIRS = {"private", "index"}
-
-# Common secret SHAPES. Deliberately conservative: better to miss
-# an exotic secret than to flag every git sha. The covered set is this tuple; the
-# three deliberate gaps (bare hex only in a labeled context, path/CamelCase tokens
-# allowlisted, URL credentials floored at 6 characters and placeholder-aware) are
-# written up in `docs/security.md` §2 and pinned by `tests/test_secrets.py`.
-SECRET_PATTERNS: tuple[tuple[str, "_LazyPattern"], ...] = (
-    ("aws-access-key-id", _LazyPattern(r"\bAKIA[0-9A-Z]{16}\b")),
-    ("github-token", _LazyPattern(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
-    ("github-fine-grained-pat", _LazyPattern(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
-    ("slack-token", _LazyPattern(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
-    ("google-api-key", _LazyPattern(r"\bAIza[0-9A-Za-z_\-]{35}\b")),
-    # sk-… covers both the legacy `sk-<base62>` and modern `sk-proj-<base62>`
-    # OpenAI shapes (the hyphen in `proj-` broke the old alnum-only pattern).
-    ("openai-style-key", _LazyPattern(r"\bsk-[A-Za-z0-9_-]{20,}\b")),
-    # Stripe-style secret/restricted/publishable keys: sk_live_…, rk_test_…, etc.
-    ("stripe-style-key", _LazyPattern(r"\b[srp]k_(?:live|test)_[A-Za-z0-9]{16,}\b")),
-    ("jwt", _LazyPattern(r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}\b")),
-    ("pem-private-key", _LazyPattern(r"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")),
-    ("bearer-token", _LazyPattern(r"(?i)\bbearer\s+[A-Za-z0-9._\-]{20,}")),
-    (
-        "secret-assignment",
-        _LazyPattern(
-            r"(?i)\b(?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token|"
-            r"refresh[_-]?token|id[_-]?token|session[_-]?token|private[_-]?key|"
-            r"signing[_-]?key|client[_-]?secret|password|passwd|pwd)\b"
-            # allow a closing quote on the label so JSON keys ("private_key":)
-            # match too — the scan now covers .json files
-            r"['\"]?\s*[:=]\s*"
-            r"['\"]?([A-Za-z0-9/+_\-]{16,})['\"]?"
-        ),
-    ),
-    # A bare lowercase-hex token is shape-identical to the SHA-1/256 digests
-    # (commit refs, evidence refs, inputs_hash) that fill project memory, so the
-    # standalone high-entropy heuristic deliberately can't flag it (see
-    # `_looks_high_entropy`). We close the leak only in a *labeled* credential
-    # context, where a standalone sha is unlikely — covering the labels the
-    # `secret-assignment` keyword list above misses: bare `token:`,
-    # `Authorization:` (no "Bearer", so `bearer-token` skips it), and
-    # `X-…-Key:` / `X-…-Token:` HTTP headers. No label ⇒ still no flag.
-    # Credentials embedded in a connection string — `postgres://app:pw@host/db`,
-    # `mongodb+srv://…`, `redis://:pw@…`, `https://user:token@host/repo.git`. The
-    # keyword list above cannot see these: the password follows a bare `:` inside
-    # a URL, with no `password=` label anywhere. Conservative on purpose:
-    # a username with no password (`https://user@host`) is not a secret and does
-    # not match; `$VAR` / `${VAR}` / `%VAR%` / `<placeholder>` interpolations and
-    # the obvious doc placeholders are excluded; and the 6-character floor drops
-    # well-known defaults like amqp's `guest:guest`.
-    (
-        "url-embedded-credentials",
-        _LazyPattern(
-            r"(?i)\b[a-z][a-z0-9+.\-]*://[^/\s:@]*:"
-            r"(?!(?:password|passwd|pass|secret|token|changeme|placeholder|redacted|"
-            r"example|user|username|test|xxx+|\*+)@)"
-            r"(?![$%<{])"
-            r"[^/\s:@]{6,}@"
-        ),
-    ),
-    (
-        "labeled-hex-secret",
-        _LazyPattern(
-            r"(?i)\b(?:token|authorization|x-[a-z0-9-]*-(?:key|token))\b\s*[:=]\s*"
-            r"['\"]?[0-9a-fA-F]{32,}\b"
-        ),
-    ),
-)
-
-# Standalone high-entropy tokens (base64-ish). The charset excludes `_`/`-`, so
-# record ids like `dec_20260605_markdown-source-of-truth` never form a long run,
-# and the mixed-class + entropy floor below skips lowercase-only ids and hex shas.
-_HIGH_ENTROPY_TOKEN = _LazyPattern(r"\b[A-Za-z0-9+/=]{32,}\b")
-
-# Override-style phrasing audit flags for human review. A *flag*,
-# never a gate — same content-as-data posture as guard (Fixture 7).
-# A short run of qualifiers between the verb and its object, so natural phrasings
-# ("ignore failing tests", "ignore all prior instructions", "skip the flaky
-# suite's checks") are caught, not just the bare determiner forms.
-_IL_QUALIFIERS = r"(?:(?:all|the|any|every|these|those|prior|previous|earlier|existing|above|failing|flaky|broken|remaining|other)\s+){0,3}"
-
-INSTRUCTION_LIKE_PATTERNS: tuple["_LazyPattern", ...] = (
-    _LazyPattern(
-        r"(?i)\bignore\s+"
-        + _IL_QUALIFIERS
-        + r"(?:tests?|instructions?|previous|above|rules?|warnings?|memory|checks?|errors?|failures?)\b"
-    ),
-    _LazyPattern(
-        r"(?i)\bskip\s+"
-        + _IL_QUALIFIERS
-        + r"(?:tests?|validation|verification|checks?|review|ci)\b"
-    ),
-    _LazyPattern(
-        r"(?i)\bdisable\s+"
-        + _IL_QUALIFIERS
-        + r"(?:tests?|checks?|validation|guard|safety|linter?|ci)\b"
-    ),
-    # Imperative "never run X" only: an auxiliary right before it ("has never
-    # run", "was never run") is a factual claim about history, not an
-    # instruction — the field test's audit fired 7 warnings, all on sentences
-    # like "E2E has never run in production" (P2-11). Python lookbehinds are
-    # fixed-width, hence one per auxiliary.
-    _LazyPattern(
-        r"(?i)(?<!\bis\s)(?<!\bare\s)(?<!\bwas\s)(?<!\bhas\s)(?<!\bhad\s)"
-        r"(?<!\bwere\s)(?<!\bbeen\s)(?<!\bhave\s)"
-        r"\b(?:never|always)\s+run\b"
-    ),
-    _LazyPattern(r"(?i)\bdo\s+not\s+run\b"),
-    _LazyPattern(r"(?i)\b(?:always|never)\s+(?:force[- ]?push|skip|disable|ignore|bypass)\b"),
-    _LazyPattern(
-        r"(?i)\bbypass\s+"
-        + _IL_QUALIFIERS
-        + r"(?:tests?|checks?|(?:code\s+)?review|validation|guard|ci)\b"
-    ),
-)
-
-# Bloat thresholds (heuristic).
-ADAPTER_FILENAMES = (
-    "AGENTS.md",
-    "CLAUDE.md",
-    ".cursorrules",
-    ".clinerules",
-    ".windsurfrules",
-    ".github/copilot-instructions.md",
-)
-ADAPTER_BLOAT_CHARS = 4000  # signpost files should be small pointers, not copies
-SESSIONS_GROWTH_NOTE = 50  # session count above which audit suggests promoting + pruning
-# The always-on trap budget. Generous — a store of real traps is worth carrying —
-# but bounded, because nothing else bounds it: the field store reached 167 KB and
-# 77 active traps with no mechanism for anything to leave.
-TRAPS_TOKEN_BUDGET = 8000
-
-
-# ---- secret scan ----------------------------------------------------------- #
-
-
-def _shannon_entropy(s: str) -> float:
-    if not s:
-        return 0.0
-    counts: dict[str, int] = {}
-    for ch in s:
-        counts[ch] = counts.get(ch, 0) + 1
-    n = len(s)
-    return -sum((c / n) * math.log2(c / n) for c in counts.values())
-
-
-# A path/identifier segment: a run of letters and digits with no separators.
-_IDENT_SEGMENT = re.compile(r"^[A-Za-z0-9]+$")
-# A pronounceable "word": a letter followed by 3+ lowercase letters (e.g. the
-# CamelCase subwords Migration/Database/Test). Random base64 yields at most a stray
-# short run, never enough to cover half the segment.
-_WORD_RE = re.compile(r"[A-Za-z][a-z]{3,}")
-
-
-def _segment_is_wordy(seg: str) -> bool:
-    """True if CamelCase words cover most of the segment (identifier, not a blob).
-
-    Requires vowel-bearing words to span ≥half the segment (and ≥6 chars), so a real
-    identifier (Database/Migration/Helper…) qualifies while a random base64 run with
-    an incidental 4-letter sequence does not.
-    """
-    covered = sum(len(w) for w in _WORD_RE.findall(seg) if any(c in "aeiouAEIOU" for c in w))
-    return covered >= 6 and covered * 2 >= len(seg)
-
-
-# A Firebase Realtime Database push id: 20 characters of base64url, timestamp-
-# prefixed and therefore lexicographically sortable — a public, structurally
-# recognizable document key, which is exactly what a real secret is not. Split on
-# `-`, the leading dash goes with the separator, so both lengths are accepted.
-# These are the ids that appear in a record citing a concrete production path,
-# which is to say in the most useful records a store has (R5).
-_PUSH_ID_SEGMENT_RE = _LazyPattern(r"^[A-Za-z0-9]{19,20}$")
-
-
-def _is_push_id_segment(seg: str) -> bool:
-    return bool(_PUSH_ID_SEGMENT_RE.match(seg))
-
-
-def _looks_like_path_or_identifier(tok: str) -> bool:
-    """True for path- or dotted-identifier-shaped tokens that only *look* random.
-
-    Long CamelCase identifiers like ``DatabaseMigrationHelperV2Factory`` and paths
-    like ``app/src/MigrationV14ToV15Test`` clear the mixed-class + entropy bar yet
-    are obviously not secrets. The discriminator is deliberately narrow
-    so it cannot launder a real secret: base64 padding/charset (`+`, `=`) disqualifies
-    outright; every segment must be alphanumeric; and any segment long enough to be a
-    blob (≥12 chars) must read as CamelCase words, with at least one wordy segment
-    overall. A bare random run has no words and stays flagged.
-    """
-    if "+" in tok or "=" in tok:
-        return False  # base64-specific characters never occur in paths/identifiers
-    segments = [s for s in re.split(r"[/._-]", tok) if s]
-    if not segments:
-        return False
-    has_word = False
-    for seg in segments:
-        if not _IDENT_SEGMENT.match(seg):
-            return False
-        if _segment_is_wordy(seg):
-            has_word = True
-        elif len(seg) >= 12 and not _is_push_id_segment(seg):
-            return False  # a long, word-free segment is a blob, not a path component
-    return has_word
-
-
-def _looks_high_entropy(tok: str) -> bool:
-    """True only for mixed-class, genuinely-random-looking tokens.
-
-    Requires lower + upper + digit (so hex shas and lowercase ids never qualify) and
-    a real entropy floor. Conservative by design — misses some secrets, flags ~no ids.
-    Path- and identifier-shaped tokens are allowlisted without lowering
-    the entropy floor, so real secrets are unaffected.
-
-    A bare lowercase-hex token (a 32–64 char hex API key) is intentionally NOT
-    caught here: it is indistinguishable from the git shas / inputs_hash digests
-    that fill memory. Such tokens are flagged only in a labeled credential
-    context by the `labeled-hex-secret` pattern above (issue #5).
-    """
-    if not (
-        any(c.islower() for c in tok)
-        and any(c.isupper() for c in tok)
-        and any(c.isdigit() for c in tok)
-    ):
-        return False
-    if _looks_like_path_or_identifier(tok):
-        return False
-    return _shannon_entropy(tok) >= 3.5
-
-
-# Text-file suffixes the secret scan covers. A `.yaml`/`.json`/`.txt` dropped
-# under memory was previously never scanned.
-_SECRET_SCAN_GLOBS = ("*.md", "*.yml", "*.yaml", "*.json", "*.txt")
-
-
-def _iter_committed_memory_files(memory_dir: Path):
-    """Yield committed-memory text files (skips the private/ and index/ subtrees)."""
-    memory_dir = Path(memory_dir)
-    paths: list[Path] = []
-    for pattern in _SECRET_SCAN_GLOBS:
-        paths.extend(memory_dir.rglob(pattern))
-    for p in sorted(set(paths)):
-        rel_parts = p.relative_to(memory_dir).parts
-        if rel_parts and rel_parts[0] in _SECRET_SKIP_DIRS:
-            continue
-        yield p
-
-
-CRUMBIGNORE_FILENAME = ".crumbignore"
-
-# `high-entropy-string` is a heuristic with no structure behind it, and it gated
-# every commit of the memory store. A project that has decided a given shape is
-# not a secret should be able to say so once, rather than re-deciding it — and
-# hand-overriding a gate on every commit is how a gate stops being read at all.
-SECRET_WARNING_PATTERNS = frozenset({"high-entropy-string"})
-
-
-def load_crumbignore(memory_dir: Path) -> list:
-    """Patterns from `.project-memory/.crumbignore`, newest-wins order irrelevant.
-
-    One pattern per line; `#` starts a comment. Each line is used as a regex, or
-    as a literal substring if it does not compile. A hit whose *line text*
-    matches any pattern is dropped by `scan_secrets` — the project has said, in a
-    file its reviewers can see, that this shape is not a secret here.
-    """
-    path = Path(memory_dir) / CRUMBIGNORE_FILENAME
-    if not path.is_file():
-        return []
-    text, _problem = read_text_lenient(path)
-    patterns = []
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip() if not raw.lstrip().startswith("#") else ""
-        if not line:
-            continue
-        try:
-            patterns.append(re.compile(line))
-        except re.error:
-            patterns.append(re.compile(re.escape(line)))
-    return patterns
-
-
-def _secret_severity(pattern: str) -> str:
-    """`warning` for the heuristics, `blocking` for shapes with real structure."""
-    return AUDIT_WARN if pattern in SECRET_WARNING_PATTERNS else AUDIT_FAIL
-
-
-def secret_pattern_hits(text: str, *, blocking_only: bool = True) -> list[str]:
-    """Names of the secret shapes `text` matches — never the matched value.
-
-    Factored out of `scan_secrets` so a caller that holds a string rather than a
-    file can use the same table. The transcript miner is that caller: everything
-    it reads is tool output and user prose, which is exactly where a credential
-    turns up by accident, and a second private copy of these patterns would
-    drift from this one the first time either moved.
-
-    `blocking_only` (the default) consults only the structured shapes. The
-    high-entropy heuristic is deliberately excluded: `scan-secrets` downgraded it
-    to a warning because it has no structure behind it and punished the records
-    that cite a concrete production path, and a caller using this to decide
-    whether to *drop* content needs the stricter, better-evidenced half.
-    """
-    out = []
-    for name, pat in SECRET_PATTERNS:
-        if blocking_only and _secret_severity(name) != AUDIT_FAIL:
-            continue
-        if pat.search(text or ""):
-            out.append(name)
-    return out
-
-
-def scan_secrets(memory_dir: Path) -> list[dict]:
-    """Scan committed memory for secret-like strings.
-
-    Each hit is {pattern, path, line} — the pattern NAME and location, never the
-    matched value. Skips private/ and index/. This must run before any
-    "commit memory" recommendation (§2.6, §15).
-
-    A file that cannot be read cleanly yields a blocking `unscannable-file` hit
-    rather than being skipped: silently exempting it made the whole "secrets are
-    blocking" posture void for that file. Undecodable bytes are
-    replaced and the readable remainder is still scanned, so a real secret next
-    to a bad byte is still found.
-    """
-    findings: list[dict] = []
-    seen: set[tuple[str, str, int]] = set()
-    ignores = load_crumbignore(memory_dir)
-
-    def record(pattern: str, rel: str, i: int, **extra) -> None:
-        key = (pattern, rel, i)
-        if key in seen:
-            return
-        seen.add(key)
-        findings.append(
-            {
-                "pattern": pattern,
-                "path": rel,
-                "line": i,
-                "severity": _secret_severity(pattern),
-                **extra,
-            }
-        )
-
-    for p in _iter_committed_memory_files(memory_dir):
-        rel = p.relative_to(memory_dir).as_posix()
-        text, problem = read_text_lenient(p)
-        if problem:
-            record("unscannable-file", rel, 0, detail=problem)
-        for i, line in enumerate(text.splitlines(), 1):
-            if any(pat.search(line) for pat in ignores):
-                continue
-            for name, pat in SECRET_PATTERNS:
-                if pat.search(line):
-                    record(name, rel, i)
-            for m in _HIGH_ENTROPY_TOKEN.finditer(line):
-                if _looks_high_entropy(m.group(0)):
-                    record("high-entropy-string", rel, i)
-    return findings
-
-
-# ---- instruction-like heuristic -------------------------------------------- #
-
-
-def scan_instruction_like(memory_dir: Path) -> list[dict]:
-    """Lexical scan of known-traps.md + durable record bodies for override phrasing.
-
-    Flag-only (warn). Never gates `validate` and never instructs `guard` — the same
-    content-as-data posture as Fixture 7.
-    """
-    memory_dir = Path(memory_dir)
-    findings: list[dict] = []
-    targets: list[Path] = []
-    kt = memory_dir / "known-traps.md"
-    if kt.is_file():
-        targets.append(kt)
-    for rec in load_records(memory_dir):
-        if not rec.error:
-            targets.append(rec.path)
-
-    seen: set[Path] = set()
-    for p in targets:
-        if p in seen or not p.is_file():
-            continue
-        seen.add(p)
-        rel = p.relative_to(memory_dir).as_posix()
-        # Lenient: scan_secrets already reports the unreadable
-        # file; this pass just must not abort audit on it.
-        text = _strip_html_comments(read_text_lenient(p)[0])
-        for i, line in enumerate(text.splitlines(), 1):
-            for pat in INSTRUCTION_LIKE_PATTERNS:
-                m = pat.search(line)
-                if m:
-                    findings.append({"path": rel, "line": i, "phrase": m.group(0).strip()})
-                    break
-    return findings
+# The checks are `breadcrumbs.audit` and `breadcrumbs.secretscan`. Freshness
+# function 2 (`detect_packet_drift`) stays here beside `_inputs_hash`.
 
 
 # ---- generated-packet drift ------------------------------------------------ #
@@ -11468,7 +6971,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
         if stamped != current:
             findings.append(
                 {
-                    "path": p.relative_to(memory_dir).as_posix(),
+                    "path": path_policy.posix_rel(p, memory_dir),
                     "stamped": stamped,
                     "current": current,
                 }
@@ -11486,7 +6989,7 @@ def detect_packet_drift(memory_dir: Path) -> list[dict]:
         if isinstance(stamped, str) and stamped != current:
             findings.append(
                 {
-                    "path": p.relative_to(memory_dir).as_posix(),
+                    "path": path_policy.posix_rel(p, memory_dir),
                     "stamped": stamped,
                     "current": current,
                 }
@@ -11504,370 +7007,13 @@ def load_related(memory_dir: Path) -> dict[str, list[str]]:
 # ---- bloat ----------------------------------------------------------------- #
 
 
-def _audit_bloat(memory_dir: Path, root: Path) -> list[dict]:
-    """Bloat heuristics: over-budget packet, adapter duplication,
-    runaway sessions/ growth."""
-    memory_dir = Path(memory_dir)
-    findings: list[dict] = []
-
-    # Packet over budget.
-    pkt = memory_dir / "generated" / "resume-packet.md"
-    if pkt.is_file():
-        # Lenient throughout: audit is the gate command, so an
-        # undecodable file must cost it one heuristic, not every finding it had.
-        toks = approx_tokens(read_text_lenient(pkt)[0])
-        if toks > TOKEN_BUDGET_MAX:
-            findings.append(
-                {
-                    "kind": "packet-over-budget",
-                    "path": "generated/resume-packet.md",
-                    "message": f"resume packet ~{toks} tokens exceeds the {TOKEN_BUDGET_MAX}-token budget",
-                }
-            )
-
-    # Adapter/signpost files duplicating canonical memory rather than pointing to it.
-    canon: list[tuple[str, str]] = []
-    for rec in load_records(memory_dir):
-        if not rec.error and rec.body.strip():
-            canon.append((rec.path.relative_to(memory_dir).as_posix(), rec.body.strip()))
-    for name in ADAPTER_FILENAMES:
-        ap = Path(root) / name
-        if not ap.is_file():
-            continue
-        text = read_text_lenient(ap)[0]
-        # The promoted-rules block (WM-40) mirrors records on purpose; only the
-        # rest of the file is judged for copying memory into it.
-        from breadcrumbs import promote as _promote
-
-        unpromoted = _promote.strip_block(text)
-        dup = next(
-            (src for src, body in canon if len(body) >= 200 and body[:200] in unpromoted), None
-        )
-        if dup:
-            findings.append(
-                {
-                    "kind": "adapter-duplication",
-                    "path": name,
-                    "message": (
-                        f"adapter '{name}' copies memory record {dup} verbatim; "
-                        "signpost files should point into memory, not duplicate it (§16.13)"
-                    ),
-                }
-            )
-            continue
-        # Measure the managed block, not the host file. A repo's own
-        # CLAUDE.md/AGENTS.md is legitimately large and is not ours to judge; what
-        # §16.13 asks is that *our* signpost stay a small pointer. A file with no
-        # managed block is not a signpost at all, so there is nothing to size —
-        # `adapter-duplication` above still catches records copied into it.
-        block = managed_block_text(text)
-        if block is not None and len(block) > ADAPTER_BLOAT_CHARS:
-            findings.append(
-                {
-                    "kind": "adapter-bloat",
-                    "path": name,
-                    "message": (
-                        f"the breadcrumbs managed block in '{name}' is {len(block)} chars; "
-                        "the signpost should be a small pointer into memory, not a large "
-                        "copy (§16.13)"
-                    ),
-                }
-            )
-
-    # known-traps.md growth. Unlike the packet, nothing bounds this file: traps
-    # are appended and never age out, and every session loads all of them. The
-    # check names the report that makes retirement possible — traps are
-    # retired one by one, never rolled up.
-    # From schema 3 the file is a one-line-per-trap index, so measure what the
-    # packet and the hooks actually carry: the active traps' own text.
-    from breadcrumbs import blockfiles as _blockfiles
-
-    traps_path = memory_dir / "known-traps.md"
-    if traps_path.is_file():
-        traps = [t for t in load_traps(memory_dir) if (t.get("status") or "active") == "active"]
-        if _blockfiles.uses_files(memory_dir):
-            toks = sum(approx_tokens(f"## {t['heading']}\n{t['body']}") for t in traps)
-        else:
-            toks = approx_tokens(read_text_lenient(traps_path)[0])
-        if toks > TRAPS_TOKEN_BUDGET:
-            findings.append(
-                {
-                    "kind": "traps-growth",
-                    "path": "known-traps.md",
-                    "message": (
-                        f"{len(traps)} active trap(s), ~{toks} tokens of always-on context "
-                        f"(budget {TRAPS_TOKEN_BUDGET}) — `crumb traps --stale` lists the "
-                        "ones nobody has confirmed lately; retire one with "
-                        "`crumb mark-status <id> stale`"
-                    ),
-                }
-            )
-
-    # sessions/ growth note. The advice is what a human can do today: promote the
-    # durable parts, then fold old machine snapshots into one record with
-    # `crumb rollup sessions` (WM-35) or drop them with `crumb prune sessions`.
-    sess = memory_dir / "sessions"
-    n = len(list(sess.glob("*.md"))) if sess.is_dir() else 0
-    if n > SESSIONS_GROWTH_NOTE:
-        findings.append(
-            {
-                "kind": "sessions-growth",
-                "path": "sessions/",
-                "message": (
-                    f"{n} session records — promote what still matters with `crumb "
-                    "remember`, then `crumb rollup sessions --before YYYY-MM-DD` to fold "
-                    "old machine snapshots into one record (or `crumb prune sessions` to "
-                    "drop them) so the store stays navigable"
-                ),
-            }
-        )
-    return findings
-
-
-# ---- audit core ------------------------------------------------------------ #
-
-# validate-failing checks audit re-surfaces in its health view. These still gate
-# `validate`; audit reports them so one pass shows the whole health picture (§19b.9).
-_AUDIT_HEALTH_CHECKS = {"evidence", "status", "privacy", "superseded", "identity", "frontmatter"}
-
-
-def _audit_finding(check: str, severity: str, path: str | None, message: str, **extra) -> dict:
-    f = {"check": check, "severity": severity, "path": path, "message": message}
-    f.update(extra)
-    return f
-
-
-def run_audit(memory_dir: Path, root: Path, *, stale_days: int = STALE_AGE_DAYS) -> list[dict]:
-    """Heuristic health + safety audit.
-
-    Returns findings tagged with a severity. Only `secret` is fail-severity (blocks);
-    everything else advises. Policy-aware: reads tracking policy via the manifest /
-    loaders rather than guessing (§7).
-    """
-    memory_dir = Path(memory_dir)
-    findings: list[dict] = []
-
-    # B. Secret scan — the only blocking check (§15, §17.6, Fixture 6).
-    for s in scan_secrets(memory_dir):
-        if s["pattern"] == "unscannable-file":
-            # Blocking, like a secret: the scan could not certify this file, and
-            # "we didn't look" must never read as "nothing there".
-            findings.append(
-                _audit_finding(
-                    "secret",
-                    AUDIT_FAIL,
-                    s["path"],
-                    f"{s.get('detail') or 'could not be read'} — the secret scan cannot "
-                    "certify this file; fix it before committing memory",
-                    pattern=s["pattern"],
-                )
-            )
-            continue
-        severity = s.get("severity", AUDIT_FAIL)
-        remedy = (
-            "must not be committed to memory; remove before any commit"
-            if severity == AUDIT_FAIL
-            else f"heuristic, not a structured credential shape — confirm, then add a "
-            f"pattern to {MEMORY_DIRNAME}/{CRUMBIGNORE_FILENAME} if it is not a secret here"
-        )
-        findings.append(
-            _audit_finding(
-                "secret",
-                severity,
-                s["path"],
-                f"possible secret ({s['pattern']}) at line {s['line']} — {remedy}",
-                line=s["line"],
-                pattern=s["pattern"],
-            )
-        )
-
-    # A. Staleness / health (reuse compute_staleness): handoff age +
-    # commit-distance, branch mismatch (incl. detached HEAD), aged-unresolved
-    # questions/decisions, expired + low-confidence records.
-    # Lenient read: audit is the gate command, so an undecodable
-    # handoff must not abort it. scan_secrets above already emits the blocking
-    # `unscannable-file` finding that names the file, so this read stays quiet.
-    from breadcrumbs import handoffs as _handoffs
-
-    handoff_text, _problem, handoff_path = _handoffs.read_text(memory_dir, root)
-    for w in compute_staleness(
-        root,
-        parse_handoff_meta(handoff_text),
-        active_decisions(memory_dir),
-        active_attempts(memory_dir),
-        load_open_questions(memory_dir),
-        stale_days,
-        memory_dir=memory_dir,
-        handoff_path=handoff_path,
-    ):
-        # The handoff age/distance line is emitted unconditionally; it is only a
-        # *warning* when compute_staleness marked it cold (⚠). "handoff is 0
-        # day(s) old, written 0 commit(s) behind" on a seconds-old store is
-        # health context, not a problem.
-        sev = AUDIT_INFO if (w.startswith("handoff is") and not w.startswith("⚠")) else AUDIT_WARN
-        findings.append(
-            _audit_finding("staleness", sev, handoff_path.relative_to(memory_dir).as_posix(), w)
-        )
-
-    # WM-31 / WM-32 / WM-34: evidence that points at a vanished file, live
-    # records that say the same thing, and records that may argue with each
-    # other. All advisory — each is a question for the author, never a fix.
-    from breadcrumbs import lifecycle as _lifecycle
-
-    findings.extend(_lifecycle.audit_findings(memory_dir, root))
-    # WM-40/42/43: the promoted-rules block — its size, rules whose record is
-    # gone or retired, rules that drifted from their record, and records that
-    # have earned a place there.
-    from breadcrumbs import promote as _promote
-
-    findings.extend(_promote.audit_findings(memory_dir, root))
-
-    # A (cont). Re-surface the validate-failing health conditions for the health view
-    # (missing evidence, invalid status, private-path violation, id/frontmatter
-    # disagreement). These still FAIL `validate`; audit only reports them (§19b.9).
-    for vf in run_validate(memory_dir):
-        if vf["status"] == "fail" and vf["check"] in _AUDIT_HEALTH_CHECKS:
-            findings.append(_audit_finding(vf["check"], AUDIT_WARN, vf["path"], vf["message"]))
-
-    # B (cont). A hand-written trap/question block that reindex could not adopt
-    # (WM-22): its id belongs to an existing file with different content. The
-    # file drives every reader; the block is someone's edit waiting to be merged.
-    from breadcrumbs import blockfiles as _blockfiles
-
-    for rid in _blockfiles.unadopted_blocks(memory_dir):
-        findings.append(
-            _audit_finding(
-                "unadopted-block",
-                AUDIT_WARN,
-                "known-traps.md" if rid.startswith("trap") else "open-questions.md",
-                f"{rid} is a hand-written block whose id already has a file with different "
-                "content — merge the block into that file by hand, then delete the block",
-            )
-        )
-
-    # B (cont). A malformed alias line. Audit, not validate: an unusable line is
-    # simply skipped by the parser, so the store still works — but the author
-    # meant something by it, and silently doing nothing is how a synonym
-    # "doesn't work" for a month before anybody reads `_stem`.
-    alias_path = memory_dir / ALIASES_FILENAME
-    if alias_path.is_file():
-        for problem in parse_store_aliases(read_text_lenient(alias_path)[0])[1]:
-            findings.append(
-                _audit_finding(
-                    "aliases",
-                    AUDIT_WARN,
-                    ALIASES_FILENAME,
-                    f"line {problem['line']}: {problem['problem']} — the line is ignored",
-                    line=problem["line"],
-                )
-            )
-
-    # B (cont). Records nothing has ever reached. `audit`'s [unreachable] check
-    # asks whether a record *could* be found; this asks whether it ever *was* —
-    # the one question only observation can answer. Gated on there being any
-    # history at all, because on a fresh clone the answer is "all of them" and
-    # that is a fact about the clone, not about the records.
-    from breadcrumbs import usage as _usage
-
-    if _usage.has_usage_data(memory_dir):
-        # WM-60: old records nothing has surfaced for the whole decay window.
-        # Only once this machine has counted that long (`decay_candidates`
-        # returns none before). The finding carries the command; nothing runs.
-        decaying = _usage.decay_candidates(memory_dir)["candidates"]
-        for row in decaying[:AUDIT_DECAY_MAX]:
-            findings.append(
-                _audit_finding(
-                    "decay-candidate",
-                    AUDIT_INFO,
-                    None,
-                    f"{row['id']} is {row['age_days']} days old and nothing has surfaced it "
-                    f"in {DECAY_DAYS_DEFAULT} days — if it no longer applies: "
-                    f"`{row['command']}`",
-                    id=row["id"],
-                )
-            )
-        decaying_ids = {row["id"] for row in decaying}
-        never = [r for r in _usage.never_surfaced(memory_dir) if r["id"] not in decaying_ids]
-        for row in never[:AUDIT_NEVER_SURFACED_MAX]:
-            if (row["age_days"] or 0) < AUDIT_NEVER_SURFACED_DAYS:
-                continue
-            findings.append(
-                _audit_finding(
-                    "never-surfaced",
-                    AUDIT_INFO,
-                    None,
-                    f"{row['id']} is {row['age_days']} days old and has never been "
-                    "surfaced by a packet or a guard verdict — consider retiring it "
-                    "(`crumb mark-status`) or making it reachable (--tags / --evidence file)",
-                )
-            )
-
-    # C. Instruction-like text (flag only; never a gate — §16 note, Fixture 7).
-    for il in scan_instruction_like(memory_dir):
-        findings.append(
-            _audit_finding(
-                "instruction-like",
-                AUDIT_WARN,
-                il["path"],
-                f'override-style phrasing "{il["phrase"]}" at line {il["line"]} — '
-                "review (treated as data, never executed)",
-                line=il["line"],
-                phrase=il["phrase"],
-            )
-        )
-
-    # D. Generated-packet drift (§15, §17.8, Fixture 8).
-    for d in detect_packet_drift(memory_dir):
-        findings.append(
-            _audit_finding(
-                "packet-drift",
-                AUDIT_WARN,
-                d["path"],
-                f"generated projection is stale (stamped inputs_hash {d['stamped']} != "
-                f"current {d['current']}) — regenerate with `crumb resume`",
-                stamped=d["stamped"],
-                current=d["current"],
-            )
-        )
-
-    # E. Bloat (§16.13, §12).
-    for b in _audit_bloat(memory_dir, root):
-        sev = AUDIT_INFO if b["kind"] == "sessions-growth" else AUDIT_WARN
-        findings.append(_audit_finding("bloat", sev, b["path"], b["message"], kind=b["kind"]))
-
-    # F. Guard reachability (field test 2026-08-04). Guard's strong signals
-    # are file and tag overlap; a record carrying neither can only surface through
-    # generic keyword overlap, which the stale/branch factors readily push under
-    # the noise floor. That is an authoring rule nothing stated: a prose-only
-    # record is quietly on its way to unreachable, so say so while the author is
-    # still around to add tags or file evidence.
-    for rec in load_records(memory_dir, types=JUDGING_ITEM_TYPES):
-        if rec.error or str(rec.meta.get("status") or "active") != "active":
-            continue  # unparseable is its own finding; non-active never drives verdicts
-        item = _item_from_record(rec)
-        if item["tags"] or item["files"] or item["mentioned_files"]:
-            continue
-        findings.append(
-            _audit_finding(
-                "unreachable",
-                AUDIT_WARN,
-                rec.path.relative_to(memory_dir).as_posix(),
-                "no tags and no file references — guard can reach this record "
-                "only through generic keyword overlap; add tags or file/path "
-                "evidence so it can drive a verdict",
-            )
-        )
-
-    return findings
-
-
 # ---- rendering + command entry points -------------------------------------- #
 
 
 def render_audit_human(findings: list[dict]) -> str:
-    fails = [f for f in findings if f["severity"] == AUDIT_FAIL]
-    warns = [f for f in findings if f["severity"] == AUDIT_WARN]
-    infos = [f for f in findings if f["severity"] == AUDIT_INFO]
+    fails = [f for f in findings if f["severity"] == _audit.AUDIT_FAIL]
+    warns = [f for f in findings if f["severity"] == _audit.AUDIT_WARN]
+    infos = [f for f in findings if f["severity"] == _audit.AUDIT_INFO]
     if not findings:
         # No trailing newline: the sole caller prints this, which adds one.
         return "audit: OK — no problems, warnings, or notes."
@@ -11902,10 +7048,10 @@ def cmd_audit(args: argparse.Namespace) -> int:
         return 2
 
     stale_days = args.stale_days if args.stale_days is not None else STALE_AGE_DAYS
-    findings = run_audit(memory_dir, root, stale_days=stale_days)
-    fails = [f for f in findings if f["severity"] == AUDIT_FAIL]
-    warns = [f for f in findings if f["severity"] == AUDIT_WARN]
-    infos = [f for f in findings if f["severity"] == AUDIT_INFO]
+    findings = _audit.run_audit(memory_dir, root, stale_days=stale_days)
+    fails = [f for f in findings if f["severity"] == _audit.AUDIT_FAIL]
+    warns = [f for f in findings if f["severity"] == _audit.AUDIT_WARN]
+    infos = [f for f in findings if f["severity"] == _audit.AUDIT_INFO]
     exit_code = 1 if fails else 0
 
     if args.json:
@@ -11938,14 +7084,14 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
 
-    hits = scan_secrets(memory_dir)
+    hits = _secretscan.scan_secrets(memory_dir)
     # Only a shape with real structure gates a commit (R5). An entropy heuristic
     # with no allowlist punishes exactly the records that are most useful — the
     # ones citing a concrete production path — and a gate that is hand-overridden
     # every time has stopped being a gate. Warnings are still printed, and still
     # counted; they just do not decide the exit code.
-    blocking = [h for h in hits if h.get("severity", AUDIT_FAIL) == AUDIT_FAIL]
-    warnings = [h for h in hits if h.get("severity", AUDIT_FAIL) != AUDIT_FAIL]
+    blocking = [h for h in hits if h.get("severity", _audit.AUDIT_FAIL) == _audit.AUDIT_FAIL]
+    warnings = [h for h in hits if h.get("severity", _audit.AUDIT_FAIL) != _audit.AUDIT_FAIL]
     if args.json:
         _print_json(
             args,
@@ -11975,13 +7121,13 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         for h in hits:
             where = f"{h['path']}:{h['line']}" if h["line"] else h["path"]
             detail = f" — {h['detail']}" if h.get("detail") else ""
-            mark = MARK_FAIL if h.get("severity", AUDIT_FAIL) == AUDIT_FAIL else "!"
+            mark = MARK_FAIL if h.get("severity", _audit.AUDIT_FAIL) == _audit.AUDIT_FAIL else "!"
             print(f"  {mark} [{h['pattern']}] {where}{detail}")
         if warnings:
             print(
                 f"\nnote: {len(warnings)} warning(s) do not block. If a shape is not a "
                 f"secret in this project, add a pattern to {MEMORY_DIRNAME}/"
-                f"{CRUMBIGNORE_FILENAME} instead of overriding this every time."
+                f"{_secretscan.CRUMBIGNORE_FILENAME} instead of overriding this every time."
             )
         return 1 if blocking else 0
 
@@ -12367,7 +7513,7 @@ def adapter_block() -> str:
 
 def present_adapters(root: Path) -> list[str]:
     """Adapter-guidance files that already exist (we never create new ones)."""
-    return [name for name in ADAPTER_FILENAMES if (root / name).is_file()]
+    return [name for name in _audit.ADAPTER_FILENAMES if (root / name).is_file()]
 
 
 def write_adapter_block(root: Path, name: str) -> bool:
@@ -13301,7 +8447,7 @@ def _adapter_request_note(args: argparse.Namespace, adapters: list[str]) -> str 
         return None
     return (
         "the adapter list resolved to no files, so no signpost was written. "
-        f"Name one to create it, e.g. `--with-adapter={ADAPTER_FILENAMES[0]}`."
+        f"Name one to create it, e.g. `--with-adapter={_audit.ADAPTER_FILENAMES[0]}`."
     )
 
 
@@ -13339,7 +8485,7 @@ def validate_integration_flags(args: argparse.Namespace) -> str | None:
     """
     for flag, value, valid in (
         ("--with-hooks", getattr(args, "hooks", None), HOOK_EVENTS),
-        ("--with-adapter", getattr(args, "adapter", None), ADAPTER_FILENAMES),
+        ("--with-adapter", getattr(args, "adapter", None), _audit.ADAPTER_FILENAMES),
     ):
         requested = _resolve_tristate_list(value, list(valid)) or []
         unknown = [name for name in requested if name not in valid]
@@ -13374,7 +8520,7 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
     # cross-agent standard — so a green-field project gets that one file
     # created rather than nothing. Naming files explicitly still wins.
     if getattr(args, "adapter", None) == "*" and not adapters:
-        adapters = [ADAPTER_FILENAMES[0]]
+        adapters = [_audit.ADAPTER_FILENAMES[0]]
     hooks = _resolve_tristate_list(getattr(args, "hooks", None), list(HOOK_EVENTS))
     mcp = getattr(args, "mcp", None)  # True / False / None
 
@@ -13391,9 +8537,9 @@ def resolve_integration_plan(root: Path, args: argparse.Namespace) -> dict:
                 )
             else:
                 adapters = (
-                    [ADAPTER_FILENAMES[0]]
+                    [_audit.ADAPTER_FILENAMES[0]]
                     if _prompt_yes(
-                        f"  No agent-guidance file found. Create {ADAPTER_FILENAMES[0]} "
+                        f"  No agent-guidance file found. Create {_audit.ADAPTER_FILENAMES[0]} "
                         "with the signpost?",
                         True,
                     )
@@ -13462,14 +8608,14 @@ def discover_adapter_blocks(root: Path) -> list[str]:
     """
     names: list[str] = []
     seen: set[str] = set()
-    candidates = [root / name for name in ADAPTER_FILENAMES]
+    candidates = [root / name for name in _audit.ADAPTER_FILENAMES]
     try:
         candidates += sorted(p for p in root.iterdir() if p.is_file())
     except OSError:
         pass
     for path in candidates:
         try:
-            rel = path.relative_to(root).as_posix()
+            rel = path_policy.posix_rel(path, root)
         except ValueError:  # pragma: no cover - candidates are all under root
             continue
         if rel in seen or not path.is_file():
@@ -13537,7 +8683,9 @@ def doctor_report(root: Path) -> dict:
     # correct install fail permanently in any repo whose CLAUDE.md is a real
     # instruction file — the check punished the very thing it asks for.
     bloated = [
-        n for n in blocked if len(managed_block_text(adapter_text[n]) or "") > ADAPTER_BLOAT_CHARS
+        n
+        for n in blocked
+        if len(managed_block_text(adapter_text[n]) or "") > _audit.ADAPTER_BLOAT_CHARS
     ]
     add(
         "adapter",
@@ -13553,7 +8701,7 @@ def doctor_report(root: Path) -> dict:
                 # files, so in a project with none it cannot clear this check.
                 else (
                     "no agent-guidance files detected — create one with "
-                    f"`crumb init --with-adapter={ADAPTER_FILENAMES[0]}`"
+                    f"`crumb init --with-adapter={_audit.ADAPTER_FILENAMES[0]}`"
                 )
             )
         )
@@ -13652,7 +8800,7 @@ def doctor_report(root: Path) -> dict:
             add(
                 "promoted_rules",
                 # Per file, exactly as audit's promoted-bloat judges it.
-                all(v["chars"] <= ADAPTER_BLOAT_CHARS for v in promo["files"].values()),
+                all(v["chars"] <= _audit.ADAPTER_BLOAT_CHARS for v in promo["files"].values()),
                 where,
             )
 
@@ -13713,7 +8861,7 @@ def doctor_report(root: Path) -> dict:
             if compatibility.writable
             else f"{compatibility.message} (reads still work; writes are refused)",
         )
-        failures = [f for f in run_validate(memory_dir) if f.get("status") == "fail"]
+        failures = [f for f in _validate.run_validate(memory_dir) if f.get("status") == "fail"]
         add(
             "records",
             not failures,
@@ -13839,8 +8987,8 @@ def _installed_hook_commands(root: Path) -> list[str]:
 def _packet_is_stale(memory_dir: Path, root: Path) -> bool:
     """Best-effort: True if the committed packet's inputs hash no longer matches."""
     try:
-        packet = build_resume_packet(memory_dir, root)
-        current = render_packet_markdown(packet)
+        packet = _packet.build_resume_packet(memory_dir, root)
+        current = _packet.render_packet_markdown(packet)
         on_disk = path_policy.read_text(memory_dir / "generated" / "resume-packet.md")
         return _strip_packet_volatile(current) != _strip_packet_volatile(on_disk)
     except Exception:  # pragma: no cover - defensive
@@ -13974,7 +9122,7 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
             "writer held the store lock."
         )
     guard_p50 = (summary["events"].get("guard") or {}).get("ms_p50")
-    if isinstance(guard_p50, (int, float)) and guard_p50 > HOOK_GUARD_BUDGET_MS:
+    if isinstance(guard_p50, (int, float)) and guard_p50 > _hooks_guard.HOOK_GUARD_BUDGET_MS:
         phases = (summary["events"].get("guard") or {}).get("phases_p50") or {}
         rest = guard_p50 - (phases.get("git_ms") or 0)
         where = (
@@ -13985,7 +9133,7 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
             else ""
         )
         print(
-            f"\nguard p50 {guard_p50:.0f} ms is over the {HOOK_GUARD_BUDGET_MS} ms budget for a "
+            f"\nguard p50 {guard_p50:.0f} ms is over the {_hooks_guard.HOOK_GUARD_BUDGET_MS} ms budget for a "
             f"hook on every tool call.{where} `prefilter: unverified` above means the "
             "pre-filter was out of date (run `crumb reindex`); otherwise see docs/field-test.md."
         )
@@ -14034,633 +9182,6 @@ def _hook_root(payload: dict) -> Path:
 # generated/ trap-token index below.
 
 
-def _prefilter_trap_hit(memory_dir: Path, action: str, files: list[str] | None) -> bool:
-    """Does the action overlap the reindex-time trap-token index?
-
-    One small generated-file read — no record walk — keeping the pre-filter's
-    "cheap on the common path" promise while closing the near-miss class where a
-    routine-looking command (`pytest -n auto`) matches a recorded trap that the
-    keyword classifier and the destructive-op regex are both blind to.
-
-    The index is used only when the current generation vouches for it
-    (`projections.verified`). A missing, corrupt, replaced or out-of-date one —
-    or one written before the manifest existed — is not evidence that the store
-    holds no hazard (audit F11). Such an index counts as "possibly risky", so the
-    caller runs the full guard against the records and a real trap is still
-    found. Only a verified index can keep the hook quiet.
-    """
-    from breadcrumbs import hooklog as _hooklog
-    from breadcrumbs import projections as _projections
-
-    activate_store_aliases(memory_dir)
-    raw = _projections.verified(memory_dir, Path(memory_dir).parent, GUARD_PREFILTER_FILENAME)
-    try:
-        idx = json.loads(raw.decode("utf-8")) if raw is not None else None
-    except ValueError:
-        idx = None
-    if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
-        _hooklog.note(prefilter="unverified")
-        return True
-    # The pre-filter leaves secret-shaped and opaque tokens out (item 9 of the
-    # 0.5.0 retest), so an action holding one is checked in full.
-    if _prefilter_opaque_action_token(action):
-        return True
-    # Each test mirrors one way `_score_item` lets a match through (see
-    # `_build_guard_prefilter`), so this can only admit more than full guard
-    # would surface, never less (audit WP11). Stems are re-stemmed at read time
-    # under the store's aliases: `_stem` is idempotent.
-    if _names_command(_command_tokens(action), idx.get("commands") or ()):
-        return True
-    q_specific = _specific(action)
-    sets = idx.get("token_sets")
-    if isinstance(sets, list):
-        for words in sets:
-            if len(q_specific & {_stem(str(t)) for t in words}) >= GUARD_MIN_KEYWORD_OVERLAP:
-                return True
-    else:
-        idx_tokens = {_stem(str(t)) for t in (idx.get("tokens") or ())}
-        if len(q_specific & idx_tokens) >= GUARD_MIN_KEYWORD_OVERLAP:
-            return True
-    if len(q_specific) == 1 and q_specific <= {_stem(str(t)) for t in (idx.get("titles") or ())}:
-        return True
-    if q_specific & {_stem(str(t)) for t in (idx.get("tags") or ())}:
-        return True
-    action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
-    index_paths = _norm_files(idx.get("paths") or ())
-    return bool(action_paths & index_paths)
-
-
-def _prefilter_exact_hit(memory_dir: Path, action: str, files: list[str] | None) -> bool:
-    """Does a verified pre-filter say a record names this exact command or a
-    path it touches? True (run full guard) when the pre-filter is unverified."""
-    from breadcrumbs import projections as _projections
-
-    raw = _projections.verified(memory_dir, Path(memory_dir).parent, GUARD_PREFILTER_FILENAME)
-    try:
-        idx = json.loads(raw.decode("utf-8")) if raw is not None else None
-    except ValueError:
-        idx = None
-    if not isinstance(idx, dict) or idx.get("format") != GUARD_PREFILTER_FORMAT:
-        return True
-    if _names_command(_command_tokens(action), idx.get("commands") or ()):
-        return True
-    action_paths = _norm_files(_paths_from_text(action)) | _norm_files(files or [])
-    if action_paths & _norm_files(idx.get("paths") or ()):
-        return True
-    # A path or command the pre-filter left out as opaque (item 9).
-    return _prefilter_opaque_action_token(action)
-
-
-# How much of an edit's new content, and of a subagent's launch prompt, feeds
-# the guard; and which tools launch a subagent. The Claude Code adapter owns
-# these (audit WP17); the names stay here as the compatibility surface.
-_HOOK_CONTENT_SNIPPET_CHARS = _claude.CONTENT_SNIPPET_CHARS
-SUBAGENT_TOOLS = _claude.SUBAGENT_TOOLS
-_HOOK_SUBAGENT_PROMPT_CHARS = _claude.SUBAGENT_PROMPT_CHARS
-
-
-def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] | None]:
-    """Derive a guard action string + affected files from a PreToolUse payload.
-
-    Normalized by the Claude Code adapter (`breadcrumbs.adapters.claude`),
-    which declares every tool it guards. For file edits the action carries a
-    bounded snippet of the *new* content (P0-3). An unknown tool yields no
-    action.
-    """
-    action = _claude.normalize_tool(tool, tool_input, paths_from_text=_paths_from_text)
-    return action.text, action.files or None
-
-
-# Advisory-dedupe state for the PreToolUse guard, keyed by host session. Lives
-# in private/ (machine-local, gitignored) because it is per-checkout runtime
-# state, not memory. Best-effort: a read or write failure must never block the
-# hook, and losing the file only means one repeated advisory.
-#
-# The implementation moved to `breadcrumbs/hooks_common.py` when the
-# `UserPromptSubmit` hook needed the same "have I already said this" question
-# (WM-10). These names stay as the compatibility surface — they are what the
-# existing tests and any external reader know this state by.
-_HOOK_SEEN_FILENAME = "hook-guard-seen.json"
-_HOOK_SEEN_MAX_SESSIONS = 8
-_HOOK_SEEN_MAX_KEYS = 200
-
-
-def _hook_damp_repeats(memory_dir: Path, session_id: str, result: dict) -> dict:
-    """`result` without the advisory matches this session was already shown.
-
-    A match stays when it objects to the action (blocking) or when the action
-    itself names its file, the file a command writes, or its exact command:
-    that is news about *this* action, not a repeat. The verdict is decided
-    again from what is left (a high-impact action keeps ASK_HUMAN), so a
-    firing whose every match was a repeat goes quiet. Never raises: without
-    damping state the firing is left as it was.
-    """
-    try:
-        from breadcrumbs import hooks_common as _hooks_common
-
-        seen = _hooks_common.delivered_records(memory_dir, session_id, filename=_HOOK_SEEN_FILENAME)
-    except Exception:  # pragma: no cover - damping is best-effort
-        return result
-    if not seen:
-        return result
-
-    def keep(m: dict) -> bool:
-        if m["id"] not in seen:
-            return True
-        if (m.get("stance") or _match_stance(m.get("signals"))) == "blocking":
-            return True
-        return bool({"file", "writes-file", "command"} & set(m.get("signals") or ()))
-
-    matches = result.get("matches") or []
-    kept = [m for m in matches if keep(m)]
-    if len(kept) == len(matches):
-        return result
-    verdict = _decide_verdict(kept, result.get("action_classes") or [], result.get("action", ""))
-    # Never louder than guard said: its caps (read-only, a memory edit) hold.
-    verdict = _min_verdict(verdict, result["verdict"])
-    if result.get("high_impact"):
-        verdict = "ASK_HUMAN"
-    return {
-        **result,
-        "verdict": verdict,
-        "matches": kept,
-        "damped": [m["id"] for m in matches if not keep(m)],
-    }
-
-
-def _hook_guard_advisory_seen(memory_dir: Path, session_id: str, key: str) -> bool:
-    """True if this advisory key already fired for this session; records it if not.
-
-    Same records + same file ⇒ say nothing after the first time (P0-2b): a
-    READ_FIRST that repeats verbatim on every edit trains the agent to ignore
-    the one that matters. Only advisories dedupe — PAUSE/ASK_HUMAN always fire.
-    """
-    from breadcrumbs import hooks_common
-
-    return hooks_common.advisory_seen(memory_dir, session_id, key, filename=_HOOK_SEEN_FILENAME)
-
-
-# Permission modes in which the user has already told the harness not to
-# interrupt them. `bypassPermissions` (`--dangerously-skip-permissions`) and
-# `dontAsk` are explicit standing instructions; re-raising a prompt inside them
-# overrides a choice the user made deliberately, and a memory tool has no
-# standing to do that. `acceptEdits` is NOT here: it auto-accepts *edits* only,
-# so a prompt on a destructive Bash command is still the normal flow there.
-#
-# The harness hands every hook the current mode in `permission_mode`, which is
-# exactly what the field makes possible. Nothing read it before, so
-# `crumb hook guard` reinstated approval prompts for whole sessions that had
-# opted out of them — the one report we have of this ended in a `sed` wrapper
-# stripping the decision keys back out of our JSON, deliberately built to
-# survive `pip install -U`. That is a user routing around the tool's default
-# because the default was wrong.
-_HOOK_NONPROMPTING_MODES = frozenset({"bypassPermissions", "dontAsk"})
-
-# Escape hatch for anyone who wants the advisory shape unconditionally, so the
-# answer is an env var rather than a wrapper that rewrites our output.
-_GUARD_ADVISORY_ENV = "CRUMB_GUARD_ADVISORY"
-
-
-def _hook_may_prompt(payload: dict) -> bool:
-    """May this hook escalate to a permission prompt at all?
-
-    Two independent vetoes, both the user's: the session's permission mode, and
-    an explicit `CRUMB_GUARD_ADVISORY=1`. A veto never suppresses the *warning* —
-    the matched records still reach the agent as `additionalContext`. It
-    suppresses only the interruption, which is the part the user opted out of.
-    """
-    if str(os.environ.get(_GUARD_ADVISORY_ENV, "")).strip().lower() in ("1", "true", "yes", "on"):
-        return False
-    mode = payload.get("permission_mode")
-    return not (isinstance(mode, str) and mode in _HOOK_NONPROMPTING_MODES)
-
-
-def _hook_surfacing_matches(result: dict) -> list[dict]:
-    """The matches worth spending the agent's context on (G2).
-
-    A match whose only signal is shared vocabulary — no file, no tag, no title
-    hit, no explicit do-not-retry, no open blocker — is what a store produces for
-    *any* action phrased in its own language. `crumb guard` still returns it as
-    context, because a caller who asked explicitly should see what was
-    considered; the hook fires on every tool call and pays for every word, so
-    there it is dropped whenever anything better is available. An advisory the
-    agent sees on every command is one it learns to skim, and then it skims the
-    one that mattered.
-
-    Empty when *every* match is keyword-only — the caller decides what to do
-    with that; see `_hook_guard`.
-    """
-    return [
-        m for m in result.get("matches", []) if GUARD_SURFACING_SIGNALS & set(m.get("signals", ()))
-    ]
-
-
-# Matches the guard hook's reason names. Only these are emitted, so only these
-# are counted as surfaced (audit F16).
-_HOOK_GUARD_REASON_MATCHES = 3
-
-
-def _hook_guard_reason(result: dict, matches: list[dict] | None = None) -> str:
-    from breadcrumbs import safetext
-
-    lines = [f"breadcrumbs guard: {result['verdict']} for this action."]
-    for m in (result.get("matches", []) if matches is None else matches)[
-        :_HOOK_GUARD_REASON_MATCHES
-    ]:
-        # One line per record, as data: a title cannot start a line of its
-        # own or close the envelope the host wraps this in (audit F17).
-        title = safetext.inline(m.get("title") or m.get("id") or "record", 200)
-        why = safetext.inline(m.get("reason") or "", 200)
-        lines.append(f"- {title}" + (f" ({why})" if why else ""))
-    if result.get("compatibility"):
-        lines.append(f"⚠ {result['compatibility']}")
-    return "\n".join(lines)
-
-
-# Lines of mined candidates the post-compaction preamble may list. The rest are
-# still in the inbox; `crumb inbox` is one command away.
-_COMPACT_PREAMBLE_MAX_JOTS = 10
-
-# Headroom the preamble may add on top of the packet's own budget. A compaction
-# has just freed the entire context window, so this is the cheapest context in
-# the session and the most valuable — but it is still bounded.
-_COMPACT_PREAMBLE_TOKENS = 1000
-
-
-def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
-    """What was in flight when the context was destroyed, for the model that lost it.
-
-    After a compaction the model holds a summary and has no memory of the
-    records it was shown or the task it was on. `PreCompact` cannot tell it
-    anything — that hook's output never reaches the model — so it left the facts
-    in `private/` and this is where they are read back.
-
-    Empty when there is no marker for this session, which is the normal case:
-    every other `source` value means no compaction happened.
-    """
-    from breadcrumbs import hooks_common, safetext
-
-    marker = hooks_common.compaction_marker(memory_dir, session_id)
-    if not marker:
-        return ""
-    lines = [
-        "breadcrumbs: context was compacted. What follows is what was in flight "
-        "before it; the full resume packet comes after.",
-        "",
-    ]
-    state = hooks_common.prompt_state(memory_dir, session_id)
-    # The latest substantive task, whether or not memory matched it (audit
-    # F15): acknowledgements and slash commands do not replace it. What memory
-    # matched is listed only when it was matched for *that* task; an earlier
-    # task's hits are not passed off as this one's.
-    task = state.get("task") if isinstance(state.get("task"), dict) else {}
-    if state.get("last_prompt"):
-        lines.append(
-            "Latest task before compaction (the user's words): "
-            + safetext.inline(state["last_prompt"], hooks_common.SESSION_PROMPT_CHARS + 40)
-        )
-    elif task.get("withheld"):
-        why = (
-            "retain_prompt_text is false"
-            if task["withheld"] == "policy"
-            else "it contained a credential"
-        )
-        lines.append(f"Latest task before compaction: not retained ({why}).")
-    if state.get("matched"):
-        lines.append(
-            "Records memory matched for it: " + ", ".join(f"`{i}`" for i in state["matched"])
-        )
-    elif task and state.get("last_prompt"):
-        lines.append("Memory matched nothing for it.")
-    # Everything this session has waiting, not only what the last firing mined.
-    # A compaction that found nothing new — because the Stop hook already mined
-    # the same range — would otherwise report "nothing salvaged" while the
-    # inbox holds a dozen candidates this very session produced. What the model
-    # needs here is what it can act on, not which firing wrote it.
-    rows = _session_jot_rows(memory_dir, session_id)
-    if rows:
-        shown = rows[:_COMPACT_PREAMBLE_MAX_JOTS]
-        lines += [
-            "",
-            "Mined from this session so far (unconfirmed — promote with "
-            "`crumb inbox promote <id> <type>`, or drop with `crumb inbox drop <id>`):",
-        ]
-        lines += [
-            f"- `{r['id']}` [{r.get('kind', 'note')}] {safetext.inline(r['text'], 300)}"
-            for r in shown
-        ]
-        if len(rows) > len(shown):
-            lines.append(f"- … and {len(rows) - len(shown)} more in `crumb inbox`")
-    else:
-        lines.append("Nothing durable was mined from the transcript before compaction.")
-    text = "\n".join(lines)
-    # Trim the mined list first: the last prompt is the cheapest, most useful
-    # line here, and dropping it to keep candidates would be backwards.
-    while approx_tokens(text) > _COMPACT_PREAMBLE_TOKENS and lines and lines[-1].startswith("- "):
-        lines.pop()
-        text = "\n".join(lines)
-    return text + "\n\n"
-
-
-def _record_session_start(memory_dir: Path, root: Path, payload: dict) -> None:
-    """Remember the HEAD this session starts from — the Stop hook counts this
-    session's commits from it (field report 2026-10-01, issue 2). A resumed or
-    compacted session keeps its original start. Never raises."""
-    try:
-        from breadcrumbs import hooks_common
-
-        head = _git_out(root, "rev-parse", "HEAD") if is_git_repo(root) else None
-        if head:
-            key = hooks_common.session_id_of(payload)
-            hooks_common.set_session_baseline(
-                memory_dir,
-                key,
-                head,
-                keep_existing=True,
-                # A payload with no session id and no transcript cannot say
-                # which session it is, so each start is a new one: keeping the
-                # first-ever start counted every commit since as this session's.
-                restart=key == hooks_common.UNKNOWN_SESSION,
-            )
-    except Exception:  # pragma: no cover - a SessionStart hook must never fail
-        pass
-    # Machine-local jots past their expiry: nothing else deletes them, and every
-    # Stop firing loads the whole inbox (0.6.0). Never touches a committed jot.
-    try:
-        from breadcrumbs import inbox as _inbox
-
-        _inbox.prune_private_jots(memory_dir)
-    except Exception:  # pragma: no cover - best-effort
-        pass
-    # A `git pull` or checkout since the last crumb write leaves the guard
-    # pre-filter unverified, and then every tool call pays a full guard run
-    # until something writes (field report 2026-10-01, issue 6: "prefilter:
-    # unverified" on most firings). Republish once here, where one slow firing
-    # per session is affordable; skip if another writer holds the lock.
-    try:
-        from breadcrumbs import lock as _lock
-        from breadcrumbs import projections as _projections
-
-        if _projections.verified(memory_dir, root, GUARD_PREFILTER_FILENAME) is None:
-            try_reindex_projections(memory_dir, root, lock_timeout=_lock.HOOK_TIMEOUT)
-    except Exception:  # pragma: no cover - best-effort
-        pass
-
-
-def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> int:
-    out: dict = {}
-    payload = payload or {}
-    if memory_dir.is_dir():
-        _record_session_start(memory_dir, root, payload)
-        try:
-            # `source` says why this SessionStart fired. Absent on older harness
-            # versions, which is `startup` for every practical purpose.
-            compacted = str(payload.get("source") or "startup") == "compact"
-            task = None
-            if compacted:
-                from breadcrumbs import hooks_common
-
-                session_id = hooks_common.session_id_of(payload)
-                # The latest substantive task before the compaction is the best
-                # statement of what this session is doing, so the rebuilt packet
-                # is ordered by relevance to it (WM-20) rather than by recency.
-                # It is the latest task whether or not memory matched it (audit
-                # F15), and absent when its text was not retained.
-                task = hooks_common.prompt_state(memory_dir, session_id).get("last_prompt")
-            # This hook is Claude Code's, which loads the project's CLAUDE.md
-            # itself. A promoted record whose rule is in that file right now is
-            # already in the session's context, so only those are left out
-            # (audit F13); everything else stays, rule text included.
-            from breadcrumbs import promote as _promote
-
-            packet = build_resume_packet(
-                memory_dir,
-                root,
-                task=task or None,
-                loaded_rules=_promote.loaded_rules(root, ("CLAUDE.md",)),
-                loaded_rules_from=("CLAUDE.md",),
-            )
-            context = render_packet_markdown(packet)
-            if compacted:
-                context = _compaction_preamble(memory_dir, session_id) + context
-            out = {
-                "hookSpecificOutput": {
-                    "hookEventName": "SessionStart",
-                    "additionalContext": context,
-                }
-            }
-            # The packet is about to be injected into a session: this is the
-            # single most load-bearing surfacing the tool performs. The ids are
-            # read off the packet after its budget trimming, and the promoted
-            # records left out for CLAUDE.md are not in it.
-            _record_packet_surfacings(
-                memory_dir, packet, session_id=str(payload.get("session_id") or "") or None
-            )
-        except Exception:  # pragma: no cover - never fail a session start on memory
-            out = {}
-    print(json.dumps(out))
-    return 0
-
-
-# The guard hook's budget for its p50 on the common path (field report
-# 2026-10-01, issue 6). `doctor --hook-log` says when a machine is over it.
-HOOK_GUARD_BUDGET_MS = 300
-
-
-def _outside_project(path: str, root: Path) -> bool:
-    """Is `path` (as a tool call names it) outside the project root?"""
-    try:
-        p = Path(os.path.expanduser(str(path)))
-        # Relative paths are the project's. An absolute path counts as outside
-        # only when its directory really exists elsewhere — a path-shaped name
-        # that is no directory on this machine (`/api/orders`) is not a claim
-        # about the filesystem, so it is still matched.
-        if not p.is_absolute() or not p.parent.is_dir():
-            return False
-        return not p.resolve().is_relative_to(Path(root).resolve())
-    except (OSError, ValueError):
-        return False
-
-
-def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
-    if not memory_dir.is_dir():
-        print(json.dumps({}))
-        return 0
-    tool_input = payload.get("tool_input")
-    if not isinstance(tool_input, dict):
-        # A truthy non-dict tool_input crashed with a raw traceback where every
-        # other malformed-payload path degrades to {}.
-        tool_input = {}
-    from breadcrumbs import hooklog as _hooklog
-
-    _hooklog.note(tool=str(payload.get("tool_name") or "") or None)
-    action, files = _hook_action_from_tool(payload.get("tool_name") or "", tool_input)
-    if not action:
-        print(json.dumps({}))
-        return 0
-    # An edit to a file outside the project (the agent's own memory folder, a
-    # scratch file) is not this store's business: a project trap about
-    # `handoff.md` fired on ~/.claude/…/memory/handoff.md (issue 7b).
-    if files and all(_outside_project(f, root) for f in files):
-        _hooklog.note(skipped="outside-project")
-        print(json.dumps({}))
-        return 0
-    # Cost-aware pre-filter: pure-string classify + risk regex on the common
-    # path, plus one read of the reindex-time trap-token index so
-    # trap-shaped routine commands escalate too. Only a plausibly-risky action
-    # escalates to full guard scoring.
-    _primary, classes = classify_action(action)
-    # A read-only command (every segment) is guarded only for memory about
-    # *it*: a trap naming the exact command, or a record about a path it
-    # touches. Shared vocabulary alone cannot raise it past READ_FIRST, and
-    # was the bulk of the field's "a warning on every command" (issue 7).
-    if _is_read_only_action(action) and not _prefilter_exact_hit(memory_dir, action, files):
-        _hooklog.note(skipped="read-only")
-        print(json.dumps({}))
-        return 0
-    risky = (
-        classes != ["routine_edit"]
-        or bool(_HOOK_RISK_RE.search(action))
-        or bool(_shellcmd.high_impact(action))
-        or _prefilter_trap_hit(
-            memory_dir, action, list(files or []) + _shellcmd.crumb_writes(action, MEMORY_DIRNAME)
-        )
-    )
-    if not risky:
-        _hooklog.note(skipped="prefilter")
-        print(json.dumps({}))
-        return 0
-    from breadcrumbs import service as _service
-
-    result = _service.guard(_service.Context(root, memory_dir, "hook"), action, files=files)
-    verdict = result["verdict"]
-    # Launching a subagent is not itself irreversible — the subagent's own tool
-    # calls hit this same guard, where the blast radius actually is. So a launch
-    # caps at READ_FIRST: the memory reaches the agent as context and no prompt
-    # is raised. Asking twice for one piece of work is how a gate becomes noise.
-    if (payload.get("tool_name") or "") in SUBAGENT_TOOLS and verdict not in (
-        "PROCEED",
-        "READ_FIRST",
-    ):
-        verdict = GUARD_READ_ONLY_CEILING
-        result = {**result, "verdict": verdict}
-    session_id = str(payload.get("session_id") or "unknown")
-    # Session damping (DoWhat retest of 0.5.0, item 5): an advisory record the
-    # agent was already shown this session is not shown again, unless this
-    # action names its file or command. Two records came back on most firings
-    # of one session — `git status`, `cp`, a reindex, a README edit — with a
-    # different verdict each time, which the per-target repeat filter below
-    # never caught. A blocking record, and a high-impact action, always speak.
-    if verdict != "PROCEED":
-        result = _hook_damp_repeats(memory_dir, session_id, result)
-        verdict = result["verdict"]
-        if result.get("damped"):
-            _hooklog.note(damped=len(result["damped"]))
-    _hooklog.note(verdict=verdict)
-    if verdict == "PROCEED":
-        print(json.dumps({}))
-        return 0
-    # What the agent is actually shown. A keyword-only match rides along for free
-    # today: `git status` drew two advisory lines, one of them a record that
-    # shares nothing with it but the word "status". Where better matches exist,
-    # the weak ones are dropped; where they are all there is, they are still
-    # shown — a strong keyword-only match escalating through the score band is a
-    # deliberate behaviour of this tool, not something to silence from here.
-    shown = _hook_surfacing_matches(result) or result.get("matches", [])
-    reason = _hook_guard_reason(result, shown)
-    # Only what the reason names is emitted (audit F16): it lists the first
-    # `_HOOK_GUARD_REASON_MATCHES`. Counted just before each non-empty output,
-    # keyed by host session so WM-42 can ask "how many *sessions* did this
-    # record reach" rather than "how many times did one session fire the hook".
-    emitted = shown[:_HOOK_GUARD_REASON_MATCHES]
-    _hooklog.note(candidates=len(result.get("matches", [])), matches=len(shown), emitted=0)
-
-    def count_emitted() -> None:
-        _record_guard_surfacings(
-            memory_dir,
-            emitted,
-            "hook-guard",
-            session_id=str(payload.get("session_id") or "") or None,
-        )
-        _hooklog.note(emitted=len(emitted))
-        try:
-            from breadcrumbs import hooks_common as _hooks_common
-
-            _hooks_common.add_delivered_records(
-                memory_dir, session_id, [m["id"] for m in emitted], filename=_HOOK_SEEN_FILENAME
-            )
-        except Exception:  # pragma: no cover - damping state is best-effort
-            pass
-
-    if verdict == "READ_FIRST":
-        # Dedupe within the host session: the same records surfacing for the
-        # same file is information exactly once (P0-2b/P0-3). Keyed on the
-        # matched record ids + the file (or the action when no file), so a new
-        # record or a different file speaks again; scoped to READ_FIRST so a
-        # PAUSE/ASK_HUMAN is never swallowed.
-        target = (files or [None])[0] or result["action"]
-        key = f"{target}|" + ",".join(sorted(m["id"] for m in shown))
-        try:
-            if _hook_guard_advisory_seen(memory_dir, session_id, key):
-                _hooklog.note(deduped=True)
-                print(json.dumps({}))
-                return 0
-        except Exception:  # pragma: no cover - dedupe must never block the hook
-            pass
-        # `permissionDecision: "allow"` is not neutral — it *auto-approves* the
-        # call, skipping the prompt the user would otherwise get, and its reason
-        # is shown only to the user, never to the model. Emitting it on an
-        # advisory verdict removed a safety gate and swallowed the warning: the
-        # exact inverse of "memory informs, never decides". So
-        # READ_FIRST takes no permission decision at all — the normal flow is
-        # left untouched and the matched records reach the agent as context.
-        out = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "additionalContext": reason,
-            }
-        }
-        count_emitted()
-        print(json.dumps(out))
-        return 0
-    # PAUSE / ASK_HUMAN — hand the call to the human with the reason attached,
-    # but only if prompting is ours to do at all.
-    #
-    # Note what is deliberately NOT a second condition here: blast radius.
-    # Gating the prompt on `destructive` as well was tried and reverted, because
-    # by the time a verdict reaches this branch it is already one of exactly two
-    # things — a match whose stance is `blocking` (an attempt someone wrote with
-    # an explicit *Do Not Retry Unless*), or a high-impact action class. The
-    # first is an authored instruction to stop, not an inference from overlap,
-    # and suppressing it would silence the one channel the schema gives an
-    # author for saying "not this again". The second is blast radius already.
-    # Danger belongs on the escalation side (`_decide_verdict`), where it can
-    # *raise* a verdict, rather than here, where it could only ever suppress an
-    # authored one.
-    if _hook_may_prompt(payload):
-        out = {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                # `ask`, never `deny`: memory informs; it never allows or denies
-                # on its own. The human still makes the call.
-                "permissionDecision": "ask",
-                "permissionDecisionReason": reason,
-            }
-        }
-        count_emitted()
-        print(json.dumps(out))
-        return 0
-    out = {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "additionalContext": reason,
-        }
-    }
-    count_emitted()
-    print(json.dumps(out))
-    return 0
-
-
 def _work_dirty_files(files: list) -> tuple[str, ...]:
     """The dirty-file set with the memory store's own churn removed.
 
@@ -14675,548 +9196,6 @@ def _work_dirty_files(files: list) -> tuple[str, ...]:
             if isinstance(f, str) and f.strip() and MEMORY_DIRNAME not in f.split("/")
         )
     )
-
-
-def _hook_capture_is_redundant(memory_dir: Path, root: Path) -> bool:
-    """True when nothing has moved since the newest session record.
-
-    Claude Code's `Stop` fires every time the agent finishes responding — every
-    turn, not once per session — so an unconditional capture floods `sessions/`
-    with near-empty records. A firing earns a record only when the work moved:
-    a different HEAD commit, or a different set of dirty working-tree files.
-    """
-    rec = _newest_session_record(memory_dir)
-    if rec is None or rec.error:
-        return False
-    recorded = rec.meta.get("dirty_files")
-    if not isinstance(recorded, list):
-        return False
-    head = git_commit(root)
-    if not _same_commit(rec.meta.get("commit") or "", head):
-        # HEAD moved — but a commit that touches only the memory store (the
-        # agent committing the previous snapshot, or its own capture) is not
-        # work. Re-snapshotting on it rewrote the record with the sha of the
-        # commit that committed it, which left the store dirty again, which
-        # the agent committed again: the tree could never settle (0.6.0).
-        if _work_commits_between(root, rec.meta.get("commit") or "", head):
-            return False
-    # The record holds the capped list (`derive_fields`), so compare with the
-    # live list capped the same way: comparing a capped list with an uncapped
-    # one made every firing with more than DIRTY_FILES_MAX dirty files look
-    # like new work, and re-snapshot every turn (field report 2026-10-01, N5).
-    live = _cap_dirty_files(git_dirty_files(root, include_memory=False))
-    return _work_dirty_files(recorded) == _work_dirty_files(live)
-
-
-def _work_commits_between(root: Path, base: str, head: str) -> bool:
-    """True when `base..head` holds a commit touching anything outside the
-    memory store — the same filter `_session_commits` applies. A base this
-    clone cannot resolve (rebase, shallow fetch) counts as work: there is no
-    honest way to say nothing moved."""
-    if not base or not head or NO_GIT_COMMIT in (base, head):
-        return True
-    out = _git_out(
-        root, "log", "--format=%H", f"{base}..{head}", "--", ".", f":(exclude){MEMORY_DIRNAME}"
-    )
-    return out is None or bool(out.strip())
-
-
-def _same_commit(a: str, b: str) -> bool:
-    """Two commit ids name the same commit, whatever their abbreviation length.
-
-    Short shas are compared as strings across machines, where `core.abbrev` or
-    a grown object count can make one longer than the other (N8)."""
-    a, b = (a or "").strip(), (b or "").strip()
-    if not a or not b or NO_GIT_COMMIT in (a, b):
-        return a == b
-    n = min(len(a), len(b))
-    return n >= 7 and a[:n] == b[:n]
-
-
-def _extraction_enabled(memory_dir: Path) -> bool:
-    """Manifest kill switch for the Stop-hook extraction prompt (default on)."""
-    manifest = load_manifest(memory_dir) or {}
-    raw = str(manifest.get("extraction_prompt", "true")).strip().lower()
-    return raw not in ("false", "no", "off", "0")
-
-
-# The extraction prompt fires only when the ending turn produced new commits —
-# a proportional trigger: chunky agent turns that landed real work get asked
-# once; small interactive turns (edits with no commit) only get the silent
-# snapshot. Bound mirrors the capture window's philosophy (never dump a wall).
-EXTRACTION_MAX_COMMITS_SHOWN = 5
-
-
-# A commit authored this long before the session started is not the session's
-# work (a fast-forward `git pull` of other people's commits); the margin
-# absorbs clock skew between the commit's machine and this one.
-EXTRACTION_AUTHOR_MARGIN_SECONDS = 120
-
-
-def _session_commits(memory_dir: Path, root: Path, session_id: str) -> list[str]:
-    """One-line subjects of the commits this session made since it was last asked.
-
-    Counted from the HEAD the session started on (SessionStart records it), not
-    from the newest session record in the store, which may be another session's
-    or another machine's from days ago (field report 2026-10-01, issue 2).
-
-    - No baseline yet (SessionStart not installed, or a session that predates
-      it): this firing records one and asks nothing.
-    - HEAD is not a descendant of the baseline (an amend, a rebase, a
-      `pull --rebase`): count from where the two histories meet, keeping only
-      commits authored after the last ask (an amend or a rebase keeps the
-      author time, so a rewritten copy of a commit already asked about is not
-      asked about again). Before 0.6.0 this re-baselined silently, and the
-      rewritten work was never asked about. No common history at all (a
-      checkout of an unrelated branch, a reset to a gone commit): re-baseline.
-    - Commits that touch only the memory store, and commits authored before
-      the session started (pulled history), are not the session's work.
-
-    The caller advances the baseline to HEAD once it has asked, so the same
-    commits are never asked about twice, whatever the agent then does (issue 3).
-    """
-    from breadcrumbs import hooks_common
-
-    if not is_git_repo(root):
-        return []
-    head = _git_out(root, "rev-parse", "HEAD")
-    if not head:
-        return []
-    entry = hooks_common.session_baseline(memory_dir, session_id)
-    base = entry.get("head")
-    if not base:
-        hooks_common.set_session_baseline(memory_dir, session_id, head)
-        return []
-    if base == head:
-        return []
-    asked = None  # set only when history was rewritten under the baseline
-    rewritten = False
-    if _git_out(root, "merge-base", "--is-ancestor", base, head) is None:
-        fork = (_git_out(root, "merge-base", base, head) or "").strip()
-        if not fork:
-            hooks_common.set_session_baseline(memory_dir, session_id, head)
-            return []
-        base, rewritten = fork, True
-        asked = _epoch(entry.get("asked_at"))
-    out = _git_out(
-        root,
-        "log",
-        "--no-decorate",
-        "--format=%at %H %h %s",
-        f"{base}..{head}",
-        "--",
-        ".",
-        f":(exclude){MEMORY_DIRNAME}",
-    )
-    started = _epoch(entry.get("started_at"))
-    made_here = _commits_made_here(root) if out else None
-    lines: list[str] = []
-    for line in (out or "").splitlines():
-        stamp, _, rest = line.strip().partition(" ")
-        full, _, rest = rest.partition(" ")
-        if not rest:
-            continue
-        if started is not None and stamp.isdigit():
-            if int(stamp) < started - EXTRACTION_AUTHOR_MARGIN_SECONDS:
-                continue
-        # Local commits on a local clock: no skew margin. A commit authored at
-        # or before the ask is one the ask already covered.
-        if asked is not None and stamp.isdigit() and int(stamp) <= asked:
-            continue
-        if made_here is not None and full not in made_here:
-            continue
-        lines.append(rest)
-    if not lines and rewritten:
-        # Nothing new on the rewritten history: count from it from now on.
-        hooks_common.set_session_baseline(memory_dir, session_id, head)
-    return lines
-
-
-# Reflog actions that create a commit in this checkout. Everything else that
-# moves HEAD (`pull: Fast-forward`, `merge`, `reset`, `checkout`, `clone`)
-# brings in commits someone else made.
-_LOCAL_COMMIT_ACTIONS = ("commit", "cherry-pick", "revert", "rebase", "am")
-_REFLOG_SCAN = 2000
-
-
-def _commits_made_here(root: Path) -> set[str] | None:
-    """Full shas HEAD's reflog says were created in this checkout, or None
-    when there is no reflog to ask (then every commit in range counts).
-
-    A `git pull` of a commit a cloud session made *after* this session started
-    passed the author-time filter, and the Stop hook asked about it as this
-    session's work (DoWhat retest of 0.5.0, F1). The reflog tells the two apart:
-    a local commit is logged as `commit: …`, a pulled one arrives by `pull:`.
-    """
-    out = _git_out(root, "reflog", "show", f"-n{_REFLOG_SCAN}", "--format=%H%x09%gs", "HEAD")
-    if not out:
-        return None
-    made: set[str] = set()
-    for line in out.splitlines():
-        sha, _, action = line.partition("\t")
-        verb = action.strip().lower()
-        if "(start)" in verb or "(abort)" in verb:
-            continue  # a rebase's start checks out the upstream: not made here
-        if verb.startswith(_LOCAL_COMMIT_ACTIONS) or (
-            verb.startswith("pull") and "--rebase" in verb and "(pick)" in verb
-        ):
-            made.add(sha.strip())
-    return made
-
-
-def _epoch(stamp) -> int | None:
-    from breadcrumbs import validation as _validation
-
-    when = _validation.parse_timestamp(stamp) if stamp else None
-    return int(when.timestamp()) if when is not None else None
-
-
-def _extraction_commits(memory_dir: Path, root: Path) -> list[str]:
-    """One-line subjects for commits since the last session record.
-
-    Superseded on the Stop hook by `_session_commits` (per-session baseline);
-    kept for callers that ask about the store as a whole. Empty means nothing
-    new, no git, or no prior session record.
-    """
-    last = _last_session_commit(memory_dir)
-    if not last:
-        return []
-    cur = git_commit(root)
-    if cur == NO_GIT_COMMIT or cur == last:
-        return []
-    out = _git_out(root, "log", "--oneline", "--no-decorate", f"{last}..HEAD")
-    if out is None:
-        # `last` unknown to this clone (rebase / shallow fetch): HEAD still
-        # moved, which is the signal — say so without a bogus range.
-        return [f"(history rewritten; HEAD is now {_short_ref(cur)})"]
-    lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    return lines or [f"(HEAD moved to {_short_ref(cur)})"]
-
-
-# Mined candidates the extraction prompt lists. Six is enough to cover a busy
-# session's real findings; beyond that the prompt stops being a request and
-# becomes a backlog.
-EXTRACTION_MAX_JOTS_SHOWN = 6
-
-# Mined candidates that, on their own, earn an extraction turn even with no
-# commits. One failed-then-fixed command is a real finding; three notes of any
-# kind means the session produced enough to be worth a minute.
-EXTRACTION_MIN_ATTEMPT_JOTS = 1
-EXTRACTION_MIN_SESSION_JOTS = 3
-
-
-def _extraction_reason(commits: list[str], session_jots: list[dict] | None = None) -> str:
-    """The block message: a concrete, one-shot instruction to persist memory.
-
-    This is the agent-as-author moment — the request lands while the model
-    still holds the session's "why", instead of relying on a standing signpost
-    it read hundreds of turns ago. `capture session` is the last step, so
-    completing the instruction is exactly what clears it (a re-firing Stop sees
-    the fresh session record as redundant and stays silent).
-
-    When the miner found candidates, they are listed with their ids. That turns
-    the request from "compose a record about what just happened" — expensive,
-    at the moment the model has least context left — into "promote this one, drop
-    that one", which is a judgement it can still make cheaply and well.
-    """
-    parts: list[str] = []
-    if commits:
-        shown = commits[:EXTRACTION_MAX_COMMITS_SHOWN]
-        extra = len(commits) - len(shown)
-        listing = "\n".join(f"  {c}" for c in shown)
-        if extra > 0:
-            listing += f"\n  … and {extra} more"
-        # "landed", not "this turn produced": the range is HEAD-based, and the
-        # workspace may be shared with other terminals/agents (P1-7) —
-        # attributing someone else's commit to the agent would ask it to
-        # describe work it never did. The instruction below scopes recording to
-        # the session's own work.
-        parts.append(
-            f"breadcrumbs: {len(commits)} new commit(s) since this session started "
-            f"(or since it was last asked) — this session's work, or another actor's "
-            f"if the workspace is shared:\n{listing}"
-        )
-    else:
-        parts.append(
-            "breadcrumbs: this session produced findings worth keeping, though no commits landed."
-        )
-
-    jots = list(session_jots or [])[:EXTRACTION_MAX_JOTS_SHOWN]
-    if jots:
-        rows = "\n".join(f"  {j['id']} [{j.get('kind', 'note')}] {j['text']}" for j in jots)
-        parts.append(
-            "Candidates mined from this session (unconfirmed; each is a private jot):\n"
-            f"{rows}\n"
-            "Promote what is durable:  `crumb inbox promote <jot id> "
-            "attempt|verification|trap --evidence commit <sha>`\n"
-            "Drop what is noise:       `crumb inbox drop <jot id>`"
-        )
-
-    parts.append(
-        "Before stopping, persist what the next session cannot rediscover — from "
-        "this session's own work only; skip commits you did not make:\n"
-        '1. A durable choice made here -> `crumb remember decision --title "…" '
-        '--set Decision "…" --evidence commit <sha>`\n'
-        '2. An approach tried that failed -> `crumb remember attempt --title "…" '
-        '--result "…" --do-not-retry "…" --evidence commit <sha>`\n'
-        '3. Something checked against reality -> `crumb verify "<subject>" '
-        '--status fixed|open|regressed --evidence command "<cmd>"`\n'
-        "4. A record this session contradicted -> `crumb mark-status <id> "
-        'stale --reason "…"`\n'
-        "A write refused with exit 3 is a near-duplicate: pass `--supersedes <id>` "
-        "to replace that record, or `--allow-duplicate` to keep both.\n"
-        'Finish with `crumb capture session --next "<the next concrete action — cite '
-        'a commit sha or file so the claim stays checkable>"`; it adds an entry above '
-        "the handoff's earlier ones and replaces nothing. "
-        "Record durable facts only — routine work needs no records; if nothing "
-        "durable happened, run just the final capture command. You will not be "
-        "asked about these commits again."
-    )
-    return "\n".join(parts)
-
-
-def _session_jot_rows(memory_dir: Path, session_id: str) -> list[dict]:
-    """Live machine-local jots this session produced, newest first.
-
-    What the extraction prompt offers for promotion. Scoped by `host_session`
-    so one terminal never asks an agent to triage another's findings.
-    """
-    try:
-        from breadcrumbs import inbox as _inbox
-
-        rows = []
-        for rec in _inbox.load_jots(memory_dir):
-            if rec.meta.get("host_session") != session_id:
-                continue
-            tags = rec.meta.get("tags") or []
-            kind = next(
-                (t for t in tags if t in ("attempt", "verification", "trap", "correction")), "note"
-            )
-            rows.append(
-                {
-                    "id": rec.meta.get("id") or rec.stem,
-                    "text": _inbox.jot_title(rec)[:140],
-                    "kind": kind,
-                    "tags": tags,
-                }
-            )
-        return rows
-    except Exception:  # pragma: no cover - the prompt degrades to commits-only
-        return []
-
-
-def _hook_capture_snapshot(root: Path, host_session: str | None = None) -> str:
-    """The machine snapshot: the same --fast path the CLI uses (diff-stat already
-    summarized). The Next Action is placeholder text (`_is_placeholder` knows
-    it), so this capture cannot clobber a Next Action / Focus a human set.
-
-    `host_session` is the harness's session id from the Stop payload. It is what
-    lets the second and later firings of one session update the first firing's
-    snapshot instead of stacking a new record beside it (F-6).
-
-    Returns `"ok"` or `"failed: <why>"` for the hook log. It used to swallow
-    every failure, so a snapshot that never landed looked like one that did
-    (field report 2026-10-01, issue 3)."""
-    import argparse
-
-    ns = argparse.Namespace(
-        project=str(root),
-        json=True,
-        plain=False,
-        verbose=False,
-        fast=True,
-        next_action=HOOK_SESSION_NEXT_ACTION,
-        title="session",
-        set=None,
-        focus=None,
-        host_session=host_session,
-        # A Stop-hook capture is always a machine write, so `agent` is the floor
-        # here, not `unknown` — named harness when the env names one.
-        agent=detect_agent(fallback="agent"),
-        capture_what="session",
-    )
-    err = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
-            code = cmd_capture_session(ns)
-    except Exception as exc:  # a capture failure must not block Stop — but it is logged
-        return f"failed: {type(exc).__name__}: {exc}"[:200]
-    if code != 0:
-        detail = " ".join(err.getvalue().split())
-        return f"failed: exit {code}" + (f": {detail}" if detail else "")[:200]
-    return "ok"
-
-
-def _hook_capture(memory_dir: Path, root: Path, payload: dict) -> int:
-    if not memory_dir.is_dir():
-        print(json.dumps({}))
-        return 0
-    return _hook_capture_inner(memory_dir, root, payload)
-
-
-def _answered_since_ask(memory_dir: Path, session_key: str) -> bool:
-    """Did the agent write its own session capture after this session's ask?
-
-    The extraction turn ends with `crumb capture session --next …`; that record
-    is authored (a real Next Action), created after `asked_at`, and carries no
-    other session's id. Only while the ask is open: the continuation right
-    after it closes it (`hooks_common.close_ask`).
-    """
-    from breadcrumbs import hooks_common
-
-    entry = hooks_common.session_baseline(memory_dir, session_key)
-    asked = _epoch(entry.get("asked_at"))
-    if asked is None or not entry.get("ask_pending"):
-        return False
-    for rec in load_records(memory_dir, types=("session",)):
-        if rec.error or _is_machine_snapshot(rec):
-            continue
-        owner = rec.meta.get("host_session")
-        if owner and str(owner) != session_key:
-            continue
-        made = _epoch(rec.meta.get("created_at"))
-        if made is not None and made >= asked:
-            return True
-    return False
-
-
-def _live_work_dirty(root: Path) -> list[str]:
-    return _work_dirty_files(_cap_dirty_files(git_dirty_files(root, include_memory=False)))
-
-
-def _same_as_settled(memory_dir: Path, root: Path, session_key: str) -> bool:
-    """Is the tree still the one the agent's answer to the ask left?
-
-    Its capture recorded the tree *before* it committed (code it had not
-    committed at the ask, committed with the records), so to the session-record
-    comparison that commit looked like new work, and the next Stop stacked a
-    machine snapshot beside the agent's record (0.6.0).
-    """
-    from breadcrumbs import hooks_common
-
-    settled = hooks_common.session_baseline(memory_dir, session_key).get("settled")
-    if not isinstance(settled, dict) or not settled.get("head"):
-        return False
-    head = (_git_out(root, "rev-parse", "HEAD") or "").strip()
-    if not head:
-        return False
-    if head != settled["head"] and _work_commits_between(root, settled["head"], head):
-        return False
-    return _work_dirty_files(settled.get("dirty") or []) == _live_work_dirty(root)
-
-
-def _hook_capture_inner(memory_dir: Path, root: Path, payload: dict) -> int:
-    from breadcrumbs import hooks_common
-    from breadcrumbs import transcript as _transcript
-
-    session_key = hooks_common.session_id_of(payload)
-    # Mine first, unconditionally: it is a side effect, not a decision. Even a
-    # firing that will stay silent — a continuation, a redundant snapshot, a
-    # store with the prompt switched off — should still salvage what the
-    # transcript shows, because nothing else will read it again.
-    from breadcrumbs import hooklog as _hooklog
-
-    mined = _transcript.mine_transcript_into_jots(
-        memory_dir,
-        root,
-        payload.get("transcript_path"),
-        session_id=session_key,
-        use_cursor=True,
-    )
-    _transcript.note_report(mined)
-    try:
-        redundant = _hook_capture_is_redundant(memory_dir, root)
-    except Exception:  # pragma: no cover - a dedupe failure must not block Stop
-        redundant = False
-    # The key snapshots coalesce on: the harness id, or the transcript-derived
-    # stand-in; never the shared id-less bucket, which would fold sessions.
-    host_session = session_key if session_key != hooks_common.UNKNOWN_SESSION else None
-    # A Stop firing that is itself the continuation of a blocked Stop already
-    # had its extraction chance — never block twice (that is the loop).
-    if payload.get("stop_hook_active"):
-        if _answered_since_ask(memory_dir, session_key):
-            # The agent captured. Whatever it committed in that turn — code it
-            # had not committed before the ask, committed with its records — is
-            # what its capture describes: count from here, and no machine
-            # snapshot beside the record it wrote (0.6.0).
-            head = _git_out(root, "rev-parse", "HEAD") if is_git_repo(root) else None
-            if head:
-                hooks_common.set_session_baseline(memory_dir, session_key, head.strip())
-                hooks_common.set_settled(
-                    memory_dir, session_key, head.strip(), _live_work_dirty(root)
-                )
-            _hooklog.note(answered=True)
-        elif not redundant:
-            # It ignored the instruction (or another hook blocked this Stop):
-            # the machine snapshot is the floor.
-            _note_snapshot(_hook_capture_snapshot(root, host_session))
-            hooks_common.set_settled(memory_dir, session_key, None, None)
-        hooks_common.close_ask(memory_dir, session_key)
-        print(json.dumps({}))
-        return 0
-    if not redundant:
-        try:
-            redundant = _same_as_settled(memory_dir, root, session_key)
-        except Exception:  # pragma: no cover - a dedupe failure must not block Stop
-            redundant = False
-    if redundant:
-        # Nothing moved, so there is nothing to count or ask: no git log, no
-        # reflog scan (0.6.0). Only make sure the session has a start.
-        hooks_common.ensure_session_baseline(memory_dir, session_key, root)
-        _hooklog.note(redundant=True)
-        print(json.dumps({}))
-        return 0
-    try:
-        commits = _session_commits(memory_dir, root, session_key)
-    except Exception:  # pragma: no cover - the prompt degrades to jots-only
-        commits = []
-    if _extraction_enabled(memory_dir):
-        # Candidates this session produced that have not already been offered.
-        # Re-offering a jot the agent declined, every turn until it expires, is
-        # exactly the fatigue that makes an agent start ignoring the prompt.
-        asked = hooks_common.extraction_asked(memory_dir, session_key)
-        jots = [j for j in _session_jot_rows(memory_dir, session_key) if j["id"] not in asked]
-        # A subagent's findings are listed when the turn is asked about, but
-        # never earn the ask on their own: one "attempt" line from a search
-        # subagent blocked the parent's Stop with "this session produced
-        # findings" (0.6.0).
-        own = [j for j in jots if "subagent" not in (j.get("tags") or [])]
-        attempts = [j for j in own if "attempt" in (j.get("tags") or [])]
-        earned = (
-            bool(commits)
-            or len(attempts) >= EXTRACTION_MIN_ATTEMPT_JOTS
-            or len(own) >= EXTRACTION_MIN_SESSION_JOTS
-        )
-        if earned:
-            hooks_common.record_extraction_asked(
-                memory_dir, session_key, [j["id"] for j in jots[:EXTRACTION_MAX_JOTS_SHOWN]]
-            )
-            # Asked once: these commits are never asked about again, whether
-            # or not the agent's capture (or the continuation's snapshot)
-            # then lands. Without this a failed snapshot re-asked every turn.
-            # `asked_at` dates the ask (see `set_session_baseline`).
-            head = _git_out(root, "rev-parse", "HEAD")
-            if head:
-                hooks_common.set_session_baseline(memory_dir, session_key, head.strip(), asked=True)
-            _hooklog.note(offered=len(jots[:EXTRACTION_MAX_JOTS_SHOWN]), commits=len(commits))
-            print(json.dumps({"decision": "block", "reason": _extraction_reason(commits, jots)}))
-            return 0
-    _note_snapshot(_hook_capture_snapshot(root, host_session))
-    # The tree moved past the answer; the snapshot describes it from now on.
-    hooks_common.set_settled(memory_dir, session_key, None, None)
-    print(json.dumps({}))
-    return 0
-
-
-def _note_snapshot(status: str) -> None:
-    """Log a Stop-hook snapshot as `ok` or `failed` (with why) — never claim one
-    that did not land."""
-    from breadcrumbs import hooklog as _hooklog
-
-    if status == "ok":
-        _hooklog.note(snapshot="ok")
-    else:
-        _hooklog.note(snapshot="failed", snapshot_error=status.removeprefix("failed: "))
 
 
 def cmd_hook(args: argparse.Namespace) -> int:
@@ -15239,7 +9218,7 @@ def cmd_hook(args: argparse.Namespace) -> int:
         # Everything a hook does runs in one application context on the hook
         # channel (audit F18, WP16): admission, the store's aliases, one parse
         # cache for the firing.
-        before, before_ms = GIT_CALLS[0], GIT_MS[0]
+        before, before_ms = _git.CALLS[0], _git.MS[0]
         try:
             with _service.active(_service.Context(root, memory_dir, "hook")):
                 return _run_hook(event, memory_dir, root, payload)
@@ -15248,8 +9227,8 @@ def cmd_hook(args: argparse.Namespace) -> int:
             # `git` processes and their milliseconds, and the module import
             # (Python's own start-up is the rest of the host's wall time).
             _hooklog.note(
-                git=GIT_CALLS[0] - before,
-                git_ms=round(GIT_MS[0] - before_ms, 1),
+                git=_git.CALLS[0] - before,
+                git_ms=round(_git.MS[0] - before_ms, 1),
                 import_ms=IMPORT_MS,
             )
 
@@ -15258,9 +9237,9 @@ def cmd_hook(args: argparse.Namespace) -> int:
 
 def _run_hook(event: str, memory_dir: Path, root: Path, payload: dict) -> int:
     if event == "session":
-        return _hook_session(memory_dir, root, payload)
+        return _hooks_session._hook_session(memory_dir, root, payload)
     if event == "guard":
-        return _hook_guard(memory_dir, root, payload)
+        return _hooks_guard._hook_guard(memory_dir, root, payload)
     if event == "prompt" or not memory_dir.is_dir():
         # The prompt hook is mostly a read; it locks around its one write
         # (a correction jot) itself, so contention never costs the injection.
@@ -15299,7 +9278,7 @@ def _dispatch_writing_hook(event: str, memory_dir: Path, root: Path, payload: di
         handler = hooks_compact.hook_compact if event == "compact" else hooks_compact.hook_subagent
         print(json.dumps(handler(memory_dir, root, payload)))
         return 0
-    return _hook_capture(memory_dir, root, payload)
+    return _hooks_stop._hook_capture(memory_dir, root, payload)
 
 
 # --------------------------------------------------------------------------- #
@@ -15462,6 +9441,15 @@ def build_parser(only: str | None = None) -> argparse.ArgumentParser:
 def __getattr__(name: str):
     if name in _PARSER_NAMES or name.startswith("_add_"):
         return getattr(_parser(), name)
+    # A name moved to an extracted module (health review 2.1) still resolves
+    # here, for code outside the package that reaches into `breadcrumbs.cli`
+    # (the audit's probe scripts in tools/audit are kept byte-identical). The
+    # package itself names the module: tests/test_extracted_modules.py.
+    for module in globals().get("EXTRACTED_MODULES", ()):
+        loaded = sys.modules.get(f"breadcrumbs.{module}")
+        found = vars(loaded).get(name) if loaded is not None else None
+        if found is not None and not isinstance(found, types.ModuleType):
+            return found
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -15674,3 +9662,33 @@ IMPORT_MS = round((time.perf_counter() - _breadcrumbs_pkg._IMPORT_STARTED) * 100
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+# --------------------------------------------------------------------------- #
+# Modules extracted from this one (health review 2.1)
+# --------------------------------------------------------------------------- #
+# Each imports `cli` for the helpers that stay here, and this module calls into
+# them. They are imported last, after every definition they use, so the cycle
+# is harmless whichever side is imported first. The `crumb.py` shim re-exports
+# their names, as it does this module's.
+EXTRACTED_MODULES = (
+    "hooks_stop",
+    "hooks_session",
+    "hooks_guard",
+    "packet",
+    "textmatch",
+    "scoring",
+    "validate",
+    "secretscan",
+    "audit",
+)
+
+from breadcrumbs import audit as _audit  # noqa: E402
+from breadcrumbs import hooks_guard as _hooks_guard  # noqa: E402
+from breadcrumbs import hooks_session as _hooks_session  # noqa: E402
+from breadcrumbs import hooks_stop as _hooks_stop  # noqa: E402
+from breadcrumbs import packet as _packet  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
+from breadcrumbs import secretscan as _secretscan  # noqa: E402
+from breadcrumbs import textmatch as _textmatch  # noqa: E402
+from breadcrumbs import validate as _validate  # noqa: E402

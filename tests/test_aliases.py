@@ -23,6 +23,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
+from breadcrumbs import textmatch as _textmatch  # noqa: E402
 
 
 def run(argv: list[str]) -> tuple[int, str]:
@@ -54,32 +55,34 @@ def store_with_trap(tmp: str) -> Path:
 
 class ParseAliasesTests(unittest.TestCase):
     def test_first_word_is_canonical(self):
-        mapping, problems = _cli.parse_store_aliases("billing payments invoicing\n")
+        mapping, problems = _textmatch.parse_store_aliases("billing payments invoicing\n")
         self.assertEqual(problems, [])
-        canonical = _cli._base_stem("billing")
-        self.assertEqual(mapping[_cli._base_stem("payments")], canonical)
-        self.assertEqual(mapping[_cli._base_stem("invoicing")], canonical)
+        canonical = _textmatch._base_stem("billing")
+        self.assertEqual(mapping[_textmatch._base_stem("payments")], canonical)
+        self.assertEqual(mapping[_textmatch._base_stem("invoicing")], canonical)
         self.assertNotIn(canonical, mapping, "the canonical stem maps to itself implicitly")
 
     def test_comments_and_blank_lines_are_ignored(self):
-        mapping, problems = _cli.parse_store_aliases("# vocabulary\n\nauth login  # same thing\n")
+        mapping, problems = _textmatch.parse_store_aliases(
+            "# vocabulary\n\nauth login  # same thing\n"
+        )
         self.assertEqual(problems, [])
-        self.assertEqual(mapping, {_cli._base_stem("login"): _cli._base_stem("auth")})
+        self.assertEqual(mapping, {_textmatch._base_stem("login"): _textmatch._base_stem("auth")})
 
     def test_a_one_word_line_is_a_problem_not_a_crash(self):
-        mapping, problems = _cli.parse_store_aliases("lonely\nauth login\n")
+        mapping, problems = _textmatch.parse_store_aliases("lonely\nauth login\n")
         self.assertEqual([p["line"] for p in problems], [1])
-        self.assertIn(_cli._base_stem("login"), mapping)
+        self.assertIn(_textmatch._base_stem("login"), mapping)
 
     def test_an_earlier_group_keeps_a_word(self):
-        mapping, problems = _cli.parse_store_aliases("auth login\nsession login\n")
-        self.assertEqual(mapping[_cli._base_stem("login")], _cli._base_stem("auth"))
+        mapping, problems = _textmatch.parse_store_aliases("auth login\nsession login\n")
+        self.assertEqual(mapping[_textmatch._base_stem("login")], _textmatch._base_stem("auth"))
         self.assertEqual([p["line"] for p in problems], [2])
 
     def test_chains_resolve_so_stemming_stays_idempotent(self):
         # `login` -> `auth`, and a later group makes `auth`'s canonical form a
         # member of nothing new; every value must itself be a fixpoint.
-        mapping, _ = _cli.parse_store_aliases("signin login\nauth signin\n")
+        mapping, _ = _textmatch.parse_store_aliases("signin login\nauth signin\n")
         for value in mapping.values():
             self.assertNotIn(value, mapping)
 
@@ -87,7 +90,7 @@ class ParseAliasesTests(unittest.TestCase):
 class AliasSearchTests(unittest.TestCase):
     def tearDown(self):
         # Aliases are per-thread state while active; never leak into other tests.
-        _cli._ALIASES.__dict__.clear()
+        _textmatch._ALIASES.__dict__.clear()
 
     def test_an_alias_makes_the_synonym_match(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,10 +107,10 @@ class AliasSearchTests(unittest.TestCase):
             mem = store_with_trap(tmp)
             (mem / "aliases.txt").write_text("billing payments\n", encoding="utf-8")
             crumb.search(mem, Path(tmp), "payments")
-            self.assertTrue(_cli.active_store_aliases())
+            self.assertTrue(_textmatch.active_store_aliases())
             (mem / "aliases.txt").unlink()
             crumb.search(mem, Path(tmp), "payments")
-            self.assertEqual(_cli.active_store_aliases(), {})
+            self.assertEqual(_textmatch.active_store_aliases(), {})
 
     def test_editing_aliases_makes_projections_stale(self):
         # The guard prefilter stores stems; a new alias changes what they are,
@@ -135,7 +138,7 @@ class AliasSearchTests(unittest.TestCase):
             code, out = run(["search", "payments webhooks", "--project", tmp, "--explain"])
             self.assertEqual(code, 0)
             self.assertIn("query stems:", out)
-            self.assertIn(_cli._base_stem("webhooks"), out)
+            self.assertIn(_textmatch._base_stem("webhooks"), out)
             code, out = run(
                 ["search", "payments webhooks", "--project", tmp, "--explain", "--json"]
             )

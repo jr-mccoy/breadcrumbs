@@ -21,6 +21,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import lifecycle  # noqa: E402
+from breadcrumbs import validation  # noqa: E402
 
 
 def run(argv: list[str]) -> tuple[int, str]:
@@ -97,8 +98,10 @@ class TtlTests(unittest.TestCase):
             opened = crumb.verify(mem, Path(tmp), "cache eviction leaks", status="regressed")
             self.assertIsNotNone(fixed["expires_at"])
             self.assertIsNone(opened["expires_at"])
-            created = _cli._parse_iso(crumb.find_record_by_id(mem, fixed["id"]).meta["created_at"])
-            expires = _cli._parse_iso(fixed["expires_at"])
+            created = validation.parse_timestamp(
+                crumb.find_record_by_id(mem, fixed["id"]).meta["created_at"]
+            )
+            expires = validation.parse_timestamp(fixed["expires_at"])
             self.assertEqual((expires - created).days, lifecycle.TTL_DEFAULTS["verification"])
 
     def test_expiry_and_created_at_are_one_instant(self):
@@ -121,8 +124,8 @@ class TtlTests(unittest.TestCase):
             with mock.patch.object(_cli, "datetime", Ticking):
                 fixed = crumb.verify(mem, Path(tmp), "cache eviction works", status="fixed")
             rec = crumb.find_record_by_id(mem, fixed["id"])
-            created = _cli._parse_iso(rec.meta["created_at"])
-            expires = _cli._parse_iso(fixed["expires_at"])
+            created = validation.parse_timestamp(rec.meta["created_at"])
+            expires = validation.parse_timestamp(fixed["expires_at"])
             self.assertEqual(
                 expires - created, timedelta(days=lifecycle.TTL_DEFAULTS["verification"])
             )
@@ -136,8 +139,10 @@ class TtlTests(unittest.TestCase):
             self.assertEqual(lifecycle.ttl_days(mem, "verification"), 10)
             self.assertEqual(lifecycle.ttl_days(mem, "question"), 45)
             fixed = crumb.verify(mem, Path(tmp), "cache eviction works", status="fixed")
-            created = _cli._parse_iso(crumb.find_record_by_id(mem, fixed["id"]).meta["created_at"])
-            self.assertEqual((_cli._parse_iso(fixed["expires_at"]) - created).days, 10)
+            created = validation.parse_timestamp(
+                crumb.find_record_by_id(mem, fixed["id"]).meta["created_at"]
+            )
+            self.assertEqual((validation.parse_timestamp(fixed["expires_at"]) - created).days, 10)
 
     def test_the_jot_ttl_keeps_its_old_key(self):
         with tempfile.TemporaryDirectory() as tmp:

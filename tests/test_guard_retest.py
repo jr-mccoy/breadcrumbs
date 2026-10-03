@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import shellcmd  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 from test_guard_field_report import StoreCase, attempt, hook, run  # noqa: E402
 
 
@@ -117,11 +118,11 @@ class SedAwkReadOnlyTests(unittest.TestCase):
     ]
 
     def test_read_only(self):
-        wrong = [c for c in self.READ_ONLY if not _cli._is_read_only_action(c)]
+        wrong = [c for c in self.READ_ONLY if not _scoring._is_read_only_action(c)]
         self.assertEqual(wrong, [])
 
     def test_not_read_only(self):
-        wrong = [c for c in self.NOT_READ_ONLY if _cli._is_read_only_action(c)]
+        wrong = [c for c in self.NOT_READ_ONLY if _scoring._is_read_only_action(c)]
         self.assertEqual(wrong, [])
 
 
@@ -135,14 +136,14 @@ class CrumbPipelineClassificationTests(unittest.TestCase):
             "cd app && crumb resume | grep Next",
         ):
             with self.subTest(cmd):
-                self.assertEqual(_cli.classify_action(cmd)[0], "routine_edit")
+                self.assertEqual(_scoring.classify_action(cmd)[0], "routine_edit")
 
     def test_a_real_migrate_is_still_a_migration_in_a_pipeline(self):
-        self.assertEqual(_cli.classify_action("crumb migrate | tee log.txt")[0], "migration")
+        self.assertEqual(_scoring.classify_action("crumb migrate | tee log.txt")[0], "migration")
 
     def test_a_non_crumb_writer_in_the_pipeline_is_still_read(self):
         self.assertEqual(
-            _cli.classify_action("crumb resume && rm -rf build")[0],
+            _scoring.classify_action("crumb resume && rm -rf build")[0],
             "deletion",
         )
 
@@ -287,7 +288,7 @@ class CommonWordsTests(StoreCase):
                 # README edit on the strength of the git tag alone).
                 self.assertEqual(res["verdict"], "PROCEED", res["matches"])
                 cited = [
-                    m["id"] for m in res["matches"] if m["score"] >= _cli.GUARD_READ_FIRST_SCORE
+                    m["id"] for m in res["matches"] if m["score"] >= _scoring.GUARD_READ_FIRST_SCORE
                 ]
                 self.assertNotIn("dec_20260601_merges-conflict-on-memory-files", cited)
 

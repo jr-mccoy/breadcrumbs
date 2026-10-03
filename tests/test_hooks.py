@@ -27,6 +27,10 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402  (patch target: `_hook_guard` resolves `guard` here)
+from breadcrumbs import git as _git  # noqa: E402
+from breadcrumbs import hooks_stop  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -46,6 +50,11 @@ def make_repo(tmp: str) -> Path:
     git(root, "init", "-q")
     git(root, "config", "user.email", "t@t")
     git(root, "config", "user.name", "t")
+    # Git 2.47+ runs its post-commit auto-maintenance detached; a lock file it
+    # left in `.git` failed this file's temp-directory cleanup on CI
+    # ("Directory not empty: '.git'"). These repositories never need it.
+    git(root, "config", "maintenance.auto", "false")
+    git(root, "config", "gc.auto", "0")
     (root / "f.txt").write_text("a\n")
     git(root, "add", "f.txt")
     git(root, "commit", "-qm", "init")
@@ -175,7 +184,7 @@ class HookGuardTests(unittest.TestCase):
             "PAUSE": ("ask", "permissionDecisionReason"),
             "ASK_HUMAN": ("ask", "permissionDecisionReason"),
         }
-        self.assertEqual(set(expected), set(_cli._VERDICTS))
+        self.assertEqual(set(expected), set(_scoring._VERDICTS))
         with tempfile.TemporaryDirectory() as tmp:
             root = make_repo(tmp)
             init_store(root)
@@ -184,7 +193,7 @@ class HookGuardTests(unittest.TestCase):
                 "tool_name": "Bash",
                 "tool_input": {"command": "git push --force origin main"},
             }
-            real_guard = _cli.guard
+            real_guard = _scoring.guard
             for verdict, (decision, reason_key) in expected.items():
                 with self.subTest(verdict=verdict):
 
@@ -193,11 +202,11 @@ class HookGuardTests(unittest.TestCase):
                         result["verdict"] = _v
                         return result
 
-                    _cli.guard = fake_guard
+                    _scoring.guard = fake_guard
                     try:
                         out = run_hook("guard", payload)
                     finally:
-                        _cli.guard = real_guard
+                        _scoring.guard = real_guard
                     if decision is None and reason_key is None:
                         self.assertEqual(out, {})
                         continue
@@ -276,7 +285,7 @@ class HookCaptureTests(unittest.TestCase):
                 self.assertEqual(len(files), 1, [f.name for f in files])
                 return crumb.Record.from_file(files[0], "session").meta
 
-            self.assertEqual(newest(mem)["commit"], crumb.git_commit(root))
+            self.assertEqual(newest(mem)["commit"], _git.short_head(root))
             # an uncommitted edit outside the store is new work too, but not
             # commit-shaped — snapshot only, no prompt.
             (root / "h.txt").write_text("c\n")
@@ -436,7 +445,7 @@ class ExtractionTurnTests(unittest.TestCase):
             self.assertEqual(run_hook("capture", {"cwd": str(root)}), {})
             # Snapshot taken with no prompt, coalesced into the same record (F-6):
             # it now points at the new HEAD.
-            self.assertEqual(self._snapshot(mem)["commit"], crumb.git_commit(root))
+            self.assertEqual(self._snapshot(mem)["commit"], _git.short_head(root))
 
     def test_commit_listing_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -568,7 +577,7 @@ class PrefilterEvidencePathTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertTrue(
-                _cli._prefilter_trap_hit(mem, "batching the reconciliation writes", None)
+                hooks_guard._prefilter_trap_hit(mem, "batching the reconciliation writes", None)
             )
 
 
@@ -579,26 +588,28 @@ class HookEditContentTests(unittest.TestCase):
 
     def test_edit_action_carries_bounded_snippet(self):
         long_new = "val req = PeriodicWorkRequest(flexTimeInterval = 5)\n" * 50
-        action, files = _cli._hook_action_from_tool(
+        action, files = hooks_guard._hook_action_from_tool(
             "Edit", {"file_path": "a/b.kt", "new_string": long_new}
         )
         self.assertTrue(action.startswith("edit a/b.kt: val req = PeriodicWorkRequest"))
-        self.assertLessEqual(len(action), len("edit a/b.kt: ") + _cli._HOOK_CONTENT_SNIPPET_CHARS)
+        self.assertLessEqual(
+            len(action), len("edit a/b.kt: ") + hooks_guard._HOOK_CONTENT_SNIPPET_CHARS
+        )
         self.assertEqual(files, ["a/b.kt"])
 
     def test_edit_without_content_keeps_the_old_shape(self):
-        action, files = _cli._hook_action_from_tool("Edit", {"file_path": "a/b.kt"})
+        action, files = hooks_guard._hook_action_from_tool("Edit", {"file_path": "a/b.kt"})
         self.assertEqual(action, "edit a/b.kt")
         self.assertEqual(files, ["a/b.kt"])
 
     def test_multiedit_and_write_content_is_seen(self):
-        action, _ = _cli._hook_action_from_tool(
+        action, _ = hooks_guard._hook_action_from_tool(
             "MultiEdit",
             {"file_path": "x.py", "edits": [{"new_string": "alpha"}, {"new_string": "beta"}]},
         )
         self.assertIn("alpha", action)
         self.assertIn("beta", action)
-        action, _ = _cli._hook_action_from_tool(
+        action, _ = hooks_guard._hook_action_from_tool(
             "Write", {"file_path": "x.py", "content": "gamma delta"}
         )
         self.assertIn("gamma delta", action)
@@ -686,7 +697,7 @@ class HookAdvisoryDedupeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = self._store_with_file_trap(tmp)
             run_hook("guard", self._edit_payload(root, "s1"))
-            state = root / crumb.MEMORY_DIRNAME / "private" / _cli._HOOK_SEEN_FILENAME
+            state = root / crumb.MEMORY_DIRNAME / "private" / hooks_guard._HOOK_SEEN_FILENAME
             self.assertTrue(state.is_file(), "advisory state must be machine-local")
 
 
@@ -1035,7 +1046,7 @@ class SessionCursorTests(unittest.TestCase):
             for i in range(40):
                 (root / f"d{i}.txt").write_text("x\n")
             run_hook("capture", {"cwd": str(root), "session_id": "S"})
-            self.assertTrue(_cli._hook_capture_is_redundant(mem, root))
+            self.assertTrue(hooks_stop._hook_capture_is_redundant(mem, root))
 
     def test_session_start_records_the_head_once(self):
         from breadcrumbs import hooks_common
@@ -1105,9 +1116,9 @@ class SessionCursorTests(unittest.TestCase):
             self.assertNotIn("cloud session work", out["reason"])
 
     def test_short_shas_of_different_lengths_are_the_same_commit(self):
-        self.assertTrue(_cli._same_commit("abc1234", "abc1234de"))
-        self.assertFalse(_cli._same_commit("abc1234", "abc1235"))
-        self.assertFalse(_cli._same_commit("abc", "abcdef0"))
+        self.assertTrue(_git.same_commit("abc1234", "abc1234de"))
+        self.assertFalse(_git.same_commit("abc1234", "abc1235"))
+        self.assertFalse(_git.same_commit("abc", "abcdef0"))
 
 
 class StopLifecycleTests(unittest.TestCase):
@@ -1144,7 +1155,7 @@ class StopLifecycleTests(unittest.TestCase):
             mem = init_store(root)
             sid = {"cwd": str(root), "session_id": "s1"}
             run_hook("capture", sid)  # first firing: the snapshot
-            with mock.patch.object(_cli, "_session_commits", side_effect=AssertionError):
+            with mock.patch.object(hooks_stop, "_session_commits", side_effect=AssertionError):
                 self.assertEqual(run_hook("capture", sid), {})
             # No SessionStart ran, so the redundant firing gave the session a start.
             from breadcrumbs import hooks_common
@@ -1176,7 +1187,7 @@ class StopLifecycleTests(unittest.TestCase):
             run_hook("session", {"cwd": str(root), "hook_event_name": "SessionStart"})
             second = hooks_common.session_baseline(mem, key)
             self.assertNotEqual(first["head"], second["head"])
-            self.assertEqual(second["head"], _cli._git_out(root, "rev-parse", "HEAD").strip())
+            self.assertEqual(second["head"], _git.head(root))
 
     def test_an_amend_of_an_asked_commit_is_not_asked_again(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1332,7 +1343,7 @@ class StopReviewFindingsTests(unittest.TestCase):
 
             def snapshot(sid: str) -> None:
                 with mock.patch.object(_cli, "now_iso", return_value=next(stamps)):
-                    self.assertEqual(_cli._hook_capture_snapshot(root, sid), "ok")
+                    self.assertEqual(hooks_stop._hook_capture_snapshot(root, sid), "ok")
 
             commit("a0")
             snapshot("A")

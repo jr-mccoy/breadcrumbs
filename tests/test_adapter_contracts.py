@@ -33,6 +33,9 @@ import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import mcp_core, promote  # noqa: E402
 from breadcrumbs.adapters import claude  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
+from breadcrumbs import packet as _packet  # noqa: E402
+from breadcrumbs import textmatch as _textmatch  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 AGENT_MARKERS = ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT")
@@ -78,14 +81,14 @@ class ClaudeAdapterTests(unittest.TestCase):
             tool, expect = case["tool_name"], case["expect"]
             with self.subTest(tool=tool, input=case["tool_input"]):
                 action = claude.normalize_tool(
-                    tool, case["tool_input"], paths_from_text=_cli._paths_from_text
+                    tool, case["tool_input"], paths_from_text=_textmatch._paths_from_text
                 )
                 self.assertEqual(action.kind, expect["kind"])
                 self.assertEqual(action.text, expect["text"])
                 self.assertEqual(action.files, expect["files"])
                 self.assertEqual(action.supported, expect.get("supported", True))
                 # The CLI's hook translation is the adapter's.
-                text, files = _cli._hook_action_from_tool(tool, case["tool_input"])
+                text, files = hooks_guard._hook_action_from_tool(tool, case["tool_input"])
                 self.assertEqual((text, files or []), (expect["text"], expect["files"]))
                 seen.add(tool)
         # Every tool the adapter declares is covered by a fixture.
@@ -323,7 +326,7 @@ class CrossHarnessTests(unittest.TestCase):
 
             # Harness 1: Claude Code's SessionStart packet, CLAUDE.md loaded.
             loaded = promote.loaded_rules(root)
-            claude_packet = _cli.build_resume_packet(
+            claude_packet = _packet.build_resume_packet(
                 mem, root, loaded_rules=loaded, loaded_rules_from=("CLAUDE.md",)
             )
             claude_ids = {d["id"] for d in claude_packet["active_decisions"]} | set(loaded)

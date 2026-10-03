@@ -36,6 +36,8 @@ from pathlib import Path
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import packet as _packet
+from breadcrumbs import audit as _audit
 
 PROMOTED_BEGIN = (
     "<!-- >>> breadcrumbs promoted rules (managed by `crumb promote`) "
@@ -99,7 +101,7 @@ def _item_texts(item: dict) -> tuple[str, str]:
         return rule, why
     rec = cli.Record.from_file(Path(item["path"]), kind)
     if kind == "decision":
-        return (title or rec.stem), cli._decision_rationale(rec)
+        return (title or rec.stem), _packet._decision_rationale(rec)
     # attempt
     unless = cli._first_line(rec.sections.get("Do Not Retry Unless", ""))
     rule = f"Do not retry: {title or rec.stem}" + (f" — unless {unless}" if unless else "")
@@ -563,23 +565,23 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
         block = block_text(cli.read_text_lenient(path)[0])
         if block is None:
             continue
-        if len(block) > cli.ADAPTER_BLOAT_CHARS:
+        if len(block) > _audit.ADAPTER_BLOAT_CHARS:
             findings.append(
-                cli._audit_finding(
+                _audit._audit_finding(
                     "promoted-bloat",
-                    cli.AUDIT_WARN,
+                    _audit.AUDIT_WARN,
                     name,
                     f"the promoted-rules block in {name} is {len(block)} chars (over "
-                    f"{cli.ADAPTER_BLOAT_CHARS}); every session loads it — demote rules that "
+                    f"{_audit.ADAPTER_BLOAT_CHARS}); every session loads it — demote rules that "
                     "no longer earn a place (`crumb demote <id>`)",
                 )
             )
         for sid, line in read_bullets(path):
             if sid is None:
                 findings.append(
-                    cli._audit_finding(
+                    _audit._audit_finding(
                         "demote-candidate",
-                        cli.AUDIT_WARN,
+                        _audit.AUDIT_WARN,
                         name,
                         f"a rule in {name}'s promoted block names no source record: {line.strip()[:80]}",
                     )
@@ -589,9 +591,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
             item = cli.find_item(memory_dir, sid)
             if item is None:
                 findings.append(
-                    cli._audit_finding(
+                    _audit._audit_finding(
                         "demote-candidate",
-                        cli.AUDIT_WARN,
+                        _audit.AUDIT_WARN,
                         name,
                         f"promoted rule's source {sid} no longer exists — `crumb demote {sid}`",
                         id=sid,
@@ -600,9 +602,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
                 continue
             if (item.get("status") or "active") != "active":
                 findings.append(
-                    cli._audit_finding(
+                    _audit._audit_finding(
                         "demote-candidate",
-                        cli.AUDIT_WARN,
+                        _audit.AUDIT_WARN,
                         name,
                         f"promoted rule's source {sid} is {item['status']} — `crumb demote {sid}`",
                         id=sid,
@@ -611,9 +613,9 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
                 continue
             if expected_bullet(memory_dir, item).strip() != line.strip():
                 findings.append(
-                    cli._audit_finding(
+                    _audit._audit_finding(
                         "promoted-drift",
-                        cli.AUDIT_INFO,
+                        _audit.AUDIT_INFO,
                         name,
                         f"the promoted rule for {sid} no longer matches its record (edited by "
                         f"hand, or the record changed) — `crumb promote {sid}` re-renders it",
@@ -639,10 +641,10 @@ def audit_findings(memory_dir: Path, root: Path) -> list[dict]:
             if len(set(sessions)) < PROMOTE_MIN_SESSIONS:
                 continue
             findings.append(
-                cli._audit_finding(
+                _audit._audit_finding(
                     "promote-candidate",
-                    cli.AUDIT_INFO,
-                    rec.path.relative_to(memory_dir).as_posix(),
+                    _audit.AUDIT_INFO,
+                    path_policy.posix_rel(rec.path, memory_dir),
                     f"{rid} has held for {age} days and surfaced in {len(set(sessions))} "
                     f"sessions — make it a standing rule with `crumb promote {rid}`",
                     id=rid,

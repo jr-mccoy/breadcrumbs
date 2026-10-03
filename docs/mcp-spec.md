@@ -157,19 +157,19 @@ current instruction, the code, the tests, or authoritative docs.
 
 | Tool | Signature | Wraps | Output |
 |---|---|---|---|
-| `memory_search` | `(query, filters?, files?)` | `cli.search` | `{ok, query, filters, count, matches[]}` |
+| `memory_search` | `(query, filters?, files?)` | `scoring.search` | `{ok, query, filters, count, matches[]}` |
 | `memory_record` | `(type, payload)` | `cli.write_record` + validate gate, reindex | `{ok, id, type, path, confidence, supersedes?}` or `{ok:false, error}` |
 | `memory_verify` | `(subject, status, method?, note?, evidence?, tags?, confidence?, allow_duplicate?, supersedes?, scope?)` | `cli.verify` + validate gate, reindex | `{ok, id, subject, outcome, method, confidence, expires_at, path, supersedes?}` or `{ok:false, error}` |
 | `memory_note` | `(kind, text, fields?, tags?, allow_duplicate?, supersedes?)` | `cli.note` | `{ok, kind, ref|id, path, supersedes?}` or `{ok:false, error}` |
 | `memory_jot` | `(text, tags?, files?, local?, allow_duplicate?, scope?)` | `inbox.write_jot` + validate gate, reindex | `{ok, kind, id, path, local, expires_at, source, scope}` or `{ok:false, error}` |
 | `memory_inbox_promote` | `(id, target, title?, sections?, evidence?, tags?, confidence?, scope?, allow_duplicate?, supersedes?)` | `inbox.promote_jot` | `{ok, jot, promoted_to, type, path, scope, confidence, from_private, scope_widened, supersedes?}` or `{ok:false, error}` (a near-duplicate carries `duplicates` and `message`) |
 | `memory_reindex` | `()` | `cli.reindex_projections` | `{ok, path}` |
-| `memory_guard_before_action` | `(action, files?)` | `cli.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
-| `memory_build_resume_packet` | `(task?)` | `cli.build_resume_packet` | `{ok, …packet}` (`task` is passed to the engine: scoped `likely_files`, echoed `requested_task`, `starting cold` label, list sections ordered by relevance with `ordering: "relevance"` — identical to `crumb resume --task`) |
+| `memory_guard_before_action` | `(action, files?)` | `scoring.guard` | `{ok, verdict, matches, history, staleness, recommended_action, …}` |
+| `memory_build_resume_packet` | `(task?)` | `all.build_resume_packet` | `{ok, …packet}` (`task` is passed to the engine: scoped `likely_files`, echoed `requested_task`, `starting cold` label, list sections ordered by relevance with `ordering: "relevance"` — identical to `crumb resume --task`) |
 | `memory_show` | `(id)` | `cli.find_item` + `generated/related.json` | `{ok, id, kind, status, path, text, related}` or `{ok:false, error}` |
-| `memory_validate` | `()` | `cli.run_validate` | `{ok, fail_count, findings[]}` (includes the projection-freshness check) |
+| `memory_validate` | `()` | `validate.run_validate` | `{ok, fail_count, findings[]}` (includes the projection-freshness check) |
 | `memory_mark_status` | `(id, status, reason, superseded_by?)` | `cli.set_record_status`, reindex | `{ok, id, from, to, path, demoted?}` or `{ok:false, error}` |
-| `memory_scan_secrets` | `()` | `cli.scan_secrets` | `{ok, clean, count, findings[]}` (pattern names + locations only) |
+| `memory_scan_secrets` | `()` | `secretscan.scan_secrets` | `{ok, clean, count, findings[]}` (pattern names + locations only) |
 
 **`recommended_action` (guard) and `next_action` (resume packet) are not the same
 field.** `memory_guard_before_action`'s **`recommended_action`** is *synthesized by
@@ -185,7 +185,7 @@ search tool includes `ideas/`; the guard tool does not, exactly as `crumb search
 and `crumb guard` differ (see `cli-spec.md` → `search`). An idea is a proposal
 exempt from the §16.9 evidence rule, so it may be *retrieved* but must never reach
 a verdict. Do not "fix" the asymmetry by passing `include_ideas=True` into
-`cli.guard`; `tests/test_guard.py::SpeculativeIdeaTests` fails if you do.
+`scoring.guard`; `tests/test_guard.py::SpeculativeIdeaTests` fails if you do.
 
 **Envelope.** Every tool success carries `ok`; a missing store is always
 `{ok:false, error}`. For `memory_validate` and `memory_scan_secrets`, `ok`

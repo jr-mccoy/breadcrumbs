@@ -25,6 +25,10 @@ from pathlib import Path
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import packet as _packet
+from breadcrumbs import validate as _validate
+from breadcrumbs import secretscan as _secretscan
+from breadcrumbs import audit as _audit
 
 MEMORY_DIRNAME = cli.MEMORY_DIRNAME
 
@@ -78,7 +82,7 @@ def _rel(path: str | Path, memory_dir: Path) -> str:
     """
     p = Path(path)
     try:
-        return p.relative_to(memory_dir).as_posix()
+        return path_policy.posix_rel(p, memory_dir)
     except ValueError:
         # Not under the store (should not happen): the bare name still tells the
         # client which file, without naming a directory on this machine.
@@ -207,7 +211,7 @@ def resource_handoff(root: str | Path | None = None) -> str:
 
     project_root, mem = resolve(root)
     path, _label = _handoffs.read_path(mem, project_root)
-    return _read_singleton(mem, path.relative_to(mem).as_posix())
+    return _read_singleton(mem, path_policy.posix_rel(path, mem))
 
 
 @_data_view
@@ -229,8 +233,8 @@ def resource_resume_packet(root: str | Path | None = None) -> str:
     """`memory://resume-packet` — the rendered packet (same as `crumb resume`)."""
     project_root, mem = resolve(root)
     _require_memory(mem)
-    packet = cli.build_resume_packet(mem, project_root)
-    return cli.render_packet_markdown(packet)
+    packet = _packet.build_resume_packet(mem, project_root)
+    return _packet.render_packet_markdown(packet)
 
 
 @_data_view
@@ -525,7 +529,7 @@ def tool_search(
     files: list[str] | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_search` — wraps `cli.search` (deterministic; same input→same output).
+    """`memory_search` — wraps `scoring.search` (deterministic; same input→same output).
 
     Lookup, so it uses the wider corpus that includes `ideas/`, matching
     `crumb search` exactly. `memory_guard_before_action` keeps the narrower one —
@@ -555,7 +559,7 @@ def tool_guard_before_action(
     files: list[str] | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_guard_before_action` — wraps `cli.guard` (identical verdict logic)."""
+    """`memory_guard_before_action` — wraps `scoring.guard` (identical verdict logic)."""
     project_root, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
@@ -569,7 +573,7 @@ def tool_build_resume_packet(
     task: str | None = None,
     root: str | Path | None = None,
 ) -> dict:
-    """`memory_build_resume_packet` — wraps `cli.build_resume_packet`.
+    """`memory_build_resume_packet` — wraps `packet.build_resume_packet`.
 
     Returns the structured packet (the same object the CLI renders to MD/JSON).
     `task` is passed through to the engine, so the F4/F6 task
@@ -588,34 +592,34 @@ def tool_build_resume_packet(
         _context(root),
         task=task or None,
         view="json",
-        render=lambda p: cli.packet_json_text({"ok": True, **p}),
+        render=lambda p: _packet.packet_json_text({"ok": True, **p}),
     )
     return {"ok": True, **packet}
 
 
 @_data_tree
 def tool_validate(root: str | Path | None = None) -> dict:
-    """`memory_validate` — wraps `cli.run_validate`."""
+    """`memory_validate` — wraps `validate.run_validate`."""
     _, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    findings = cli.run_validate(mem)
+    findings = _validate.run_validate(mem)
     fails = [f for f in findings if f["status"] == "fail"]
     return {"ok": not fails, "fail_count": len(fails), "findings": findings}
 
 
 @_data_tree
 def tool_scan_secrets(root: str | Path | None = None) -> dict:
-    """`memory_scan_secrets` — wraps `cli.scan_secrets` (pattern names + locations only)."""
+    """`memory_scan_secrets` — wraps `secretscan.scan_secrets` (pattern names + locations only)."""
     _, mem = resolve(root)
     if (missing := _memory_missing(mem)) is not None:
         return missing
-    findings = cli.scan_secrets(mem)
+    findings = _secretscan.scan_secrets(mem)
     # `ok` mirrors memory_validate's semantics (safe ⇔ true); `clean` is kept for
     # compatibility with existing consumers. Only blocking findings decide `ok`:
     # `high-entropy-string` is a heuristic and no longer gates a commit (R5), so a
     # tool caller that acts on `ok` sees the same policy the CLI's exit code does.
-    blocking = [f for f in findings if f.get("severity", cli.AUDIT_FAIL) == cli.AUDIT_FAIL]
+    blocking = [f for f in findings if f.get("severity", _audit.AUDIT_FAIL) == _audit.AUDIT_FAIL]
     return {
         "ok": not blocking,
         "clean": not findings,

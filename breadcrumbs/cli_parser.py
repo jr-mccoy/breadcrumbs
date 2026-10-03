@@ -11,6 +11,10 @@ from __future__ import annotations
 import argparse
 
 from breadcrumbs import cli
+from breadcrumbs import packet as _packet
+from breadcrumbs import textmatch as _textmatch
+from breadcrumbs import secretscan as _secretscan
+from breadcrumbs import audit as _audit
 
 
 def _add_duplicate_flags(parser: argparse.ArgumentParser, *, supersede: bool = True) -> None:
@@ -733,8 +737,8 @@ def _add_resume(sub, global_parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         metavar="TOKENS",
-        help=f"bound the printed view to TOKENS approx tokens ({cli.TOKEN_ESTIMATOR}; "
-        f"default {cli.TOKEN_BUDGET_MAX}, {cli.FAST_TOKEN_BUDGET} with --fast); affects what you "
+        help=f"bound the printed view to TOKENS approx tokens ({_packet.TOKEN_ESTIMATOR}; "
+        f"default {_packet.TOKEN_BUDGET_MAX}, {_packet.FAST_TOKEN_BUDGET} with --fast); affects what you "
         "see, never the committed packet",
     )
     p_resume.set_defaults(func=cli.cmd_resume)
@@ -759,7 +763,7 @@ def _add_search(sub, global_parser: argparse.ArgumentParser) -> None:
     p_search.add_argument(
         "--explain",
         action="store_true",
-        help=f"print the stems the query became (and whether {cli.ALIASES_FILENAME} is active)",
+        help=f"print the stems the query became (and whether {_textmatch.ALIASES_FILENAME} is active)",
     )
     p_search.add_argument(
         "--status",
@@ -836,7 +840,7 @@ def _add_scan_secrets(sub, global_parser: argparse.ArgumentParser) -> None:
             "Scan committed memory for secret-like strings. A structured credential "
             "shape (AWS key, PEM block, bearer token, …) exits non-zero; the "
             "high-entropy heuristic warns without blocking. Add one regex per line to "
-            f"{cli.MEMORY_DIRNAME}/{cli.CRUMBIGNORE_FILENAME} to silence a shape this project "
+            f"{cli.MEMORY_DIRNAME}/{_secretscan.CRUMBIGNORE_FILENAME} to silence a shape this project "
             "has already decided is not a secret."
         ),
     )
@@ -986,7 +990,7 @@ def _add_usage(sub, global_parser: argparse.ArgumentParser) -> None:
         "--decay",
         nargs="?",
         type=int,
-        const=cli.DECAY_DAYS_DEFAULT,
+        const=_audit.DECAY_DAYS_DEFAULT,
         default=None,
         metavar="DAYS",
         help="list active decisions, attempts and traps at least DAYS old (default 180) "

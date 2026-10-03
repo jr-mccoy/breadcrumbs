@@ -36,6 +36,10 @@ from pathlib import Path
 
 from breadcrumbs import cli
 
+# Command identity lives with the rest of command reading (`shellcmd`).
+from breadcrumbs.shellcmd import COMMAND_MAX_CHARS, normalize_command
+from breadcrumbs import secretscan as _secretscan
+
 # --------------------------------------------------------------------------- #
 # Reading
 # --------------------------------------------------------------------------- #
@@ -340,39 +344,6 @@ def pair_tool_calls(entries: list[dict], carried: list[ToolCall] | None = None) 
     return out
 
 
-# --------------------------------------------------------------------------- #
-# Command identity
-# --------------------------------------------------------------------------- #
-
-_CD_PREFIX_RE = re.compile(r"^\s*cd\s+[^\s;&|]+\s*&&\s*")
-_REDIRECT_TAIL_RE = re.compile(r"\s*2>&1\s*$")
-_PAGER_TAIL_RE = re.compile(r"\s*\|\s*(head|tail)\b[^|]*$")
-
-COMMAND_MAX_CHARS = 200
-
-
-def normalize_command(command: str) -> str:
-    """The identity of a command across retries.
-
-    An agent that reruns a failing test rarely retypes it identically: it adds a
-    `cd`, pipes through `head`, drops `2>&1`. Without folding those away, "the
-    same command passed later" never matches and rule 1 never fires.
-    """
-    text = " ".join(str(command or "").split())
-    for _ in range(3):  # a couple of `cd x && cd y &&` layers
-        stripped = _CD_PREFIX_RE.sub("", text)
-        if stripped == text:
-            break
-        text = stripped
-    prev = None
-    while prev != text:
-        prev = text
-        text = _PAGER_TAIL_RE.sub("", text)
-        text = _REDIRECT_TAIL_RE.sub("", text)
-        text = text.strip()
-    return text[:COMMAND_MAX_CHARS]
-
-
 def _edited_path(call: ToolCall) -> str | None:
     """The file a call edited — only when the edit is known to have happened.
 
@@ -479,7 +450,7 @@ def redact_secrets(text: str) -> str | None:
     it has no structure behind it, and using it here would silently drop
     candidates that merely cite a build hash.
     """
-    return None if cli.secret_pattern_hits(str(text or "")) else text
+    return None if _secretscan.secret_pattern_hits(str(text or "")) else text
 
 
 # --------------------------------------------------------------------------- #

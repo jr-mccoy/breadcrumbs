@@ -35,6 +35,8 @@ from datetime import timedelta
 from pathlib import Path
 
 from breadcrumbs import cli, path_policy
+from breadcrumbs import validation as _validation
+from breadcrumbs import secretscan as _secretscan
 
 JOT_TYPE = "jot"
 INBOX_DIRNAME = "inbox"
@@ -212,7 +214,7 @@ def write_jot(
 
 
 def _expiry_from(created_at: str, days: int) -> str | None:
-    dt = cli._parse_iso(created_at)
+    dt = _validation.parse_timestamp(created_at)
     if dt is None:  # pragma: no cover - created_at is ours and always parseable
         return None
     return (dt + timedelta(days=days)).replace(microsecond=0).isoformat()
@@ -454,7 +456,7 @@ def promote_jot(
     text = jot_text(rec)
     new_title = (title or jot_title(rec)).strip()
     private = is_private(memory_dir, rec)
-    if private and cli.secret_pattern_hits(f"{text}\n{new_title}"):
+    if private and _secretscan.secret_pattern_hits(f"{text}\n{new_title}"):
         return {
             "ok": False,
             "error": f"{source_id} carries a credential-shaped string; promoting it would "
@@ -790,7 +792,7 @@ def import_drafts(memory_dir: Path, project_root: Path, *, agent: str | None = N
         text = " ".join((body or title or "").split())
         if not text:
             continue
-        rel = path.relative_to(memory_dir.parent).as_posix()
+        rel = path_policy.posix_rel(path, memory_dir.parent)
         long = len(text) > JOT_MAX_CHARS
         result = write_jot(
             memory_dir,

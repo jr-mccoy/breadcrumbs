@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from breadcrumbs import cli, hooks_common, transcript
+from breadcrumbs import cli, git, hooks_common, transcript
 
 # Reserved manifest key for the deferred "hold the subagent" behaviour (WM-13).
 # Read here so the name is claimed and a store can set it before the behaviour
@@ -68,7 +68,7 @@ def hook_compact(memory_dir: Path, root: Path, payload: dict) -> dict:
         memory_dir,
         session_id,
         trigger=str(payload.get("trigger") or "") or None,
-        commit=cli.git_commit(root),
+        commit=git.short_head(root),
         jots=report["written"],
     )
     return {}

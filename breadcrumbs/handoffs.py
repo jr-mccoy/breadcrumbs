@@ -20,6 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from breadcrumbs import cli
+from breadcrumbs import git
 from breadcrumbs import path_policy
 
 HANDOFFS_SCHEMA = 4
@@ -48,32 +49,7 @@ def default_branch(root: Path) -> str | None:
     """
     root = Path(root)
     # Asked several times per guard firing; one answer per operation (issue 6).
-    return cli.op_memo(("default_branch", str(root)), lambda: _default_branch(root))
-
-
-def _default_branch(root: Path) -> str | None:
-    if not cli.is_git_repo(root):
-        return None
-    from breadcrumbs import gitrefs
-
-    # Read from .git when it can be (no `git` process on the guard path; DoWhat
-    # retest of 0.5.0, item 7); `git` answers whatever that cannot.
-    readable = gitrefs.has_ref(root, "refs/heads/main") is not None
-    if readable:
-        ref = gitrefs.symbolic_target(root, "refs/remotes/origin/HEAD")
-    else:
-        ref = cli._git_out(root, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")
-    if ref and ref.strip().startswith("refs/remotes/origin/"):
-        return ref.strip()[len("refs/remotes/origin/") :]
-    for name in ("main", "master"):
-        if readable:
-            if gitrefs.has_ref(root, f"refs/heads/{name}"):
-                return name
-        elif (
-            cli._git_out(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{name}") is not None
-        ):
-            return name
-    return None
+    return cli.op_memo(("default_branch", str(root)), lambda: git.default_branch(root))
 
 
 def branch_slug(branch: str) -> str:
@@ -94,7 +70,7 @@ def branch_slug(branch: str) -> str:
 
 
 def _is_feature_branch(root: Path, branch: str | None) -> bool:
-    if not branch or branch in (cli.NO_GIT_BRANCH, "HEAD"):
+    if not branch or branch in (git.NO_BRANCH, "HEAD"):
         return False
     default = default_branch(root)
     return default is not None and branch != default
@@ -167,21 +143,9 @@ def seed_text(memory_dir: Path, path: Path) -> str:
 
 def live_branch_slugs(root: Path) -> set[str] | None:
     """Slugs of every local branch and every `origin/` branch; None without git."""
-    root = Path(root)
-    if not cli.is_git_repo(root):
+    names = git.branch_names(Path(root))
+    if names is None:
         return None
-    names: set[str] = set()
-    local = cli._git_out(root, "for-each-ref", "--format=%(refname:short)", "refs/heads")
-    remote = cli._git_out(root, "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin")
-    for line in (local or "").splitlines():
-        if line.strip():
-            names.add(line.strip())
-    for line in (remote or "").splitlines():
-        name = line.strip()
-        if name.startswith("origin/"):
-            name = name[len("origin/") :]
-        if name and name != "HEAD" and name != "origin":
-            names.add(name)
     return {branch_slug(n) for n in names}
 
 

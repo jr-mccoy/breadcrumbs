@@ -269,9 +269,9 @@ def review_state(meta: dict, body: str) -> str:
 def default_reviewer(root: Path) -> str:
     """Who is reviewing, when `--reviewer` is not given: git's user.email, else
     the OS user. A label the person running the command supplies, not proof."""
-    from breadcrumbs import cli
+    from breadcrumbs import cli, git
 
-    email = cli._git_out(Path(root), "config", "user.email")
+    email = git.run(Path(root), "config", "user.email")
     return (email or "").strip() or cli.current_user()
 
 

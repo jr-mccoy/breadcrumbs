@@ -37,6 +37,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli, mcp_core, promote  # noqa: E402
+from breadcrumbs import hooks_session  # noqa: E402
+from breadcrumbs import packet as _packet  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -114,8 +116,8 @@ class PacketCase(unittest.TestCase):
     def assert_within(self, views: dict) -> None:
         for name, (text, budget) in views.items():
             with self.subTest(view=name):
-                self.assertLessEqual(cli.approx_tokens(text.rstrip("\n")), budget["limit"])
-                self.assertLessEqual(cli.approx_tokens(text.rstrip("\n")), budget["used"] + 1)
+                self.assertLessEqual(_packet.approx_tokens(text.rstrip("\n")), budget["limit"])
+                self.assertLessEqual(_packet.approx_tokens(text.rstrip("\n")), budget["used"] + 1)
 
 
 class BoundTests(PacketCase):
@@ -131,7 +133,7 @@ class BoundTests(PacketCase):
         self.assert_within(views)
         packet = json.loads(views["json"][0])
         self.assertEqual(packet["budget"]["unit"], "approx_tokens")
-        self.assertEqual(packet["budget"]["estimator"], cli.TOKEN_ESTIMATOR)
+        self.assertEqual(packet["budget"]["estimator"], _packet.TOKEN_ESTIMATOR)
         self.assertTrue(packet["budget"]["within"])
         excerpt = packet["excerpted"]["current_focus"]
         self.assertEqual(excerpt["total_chars"], len(focus.strip()))
@@ -143,29 +145,29 @@ class BoundTests(PacketCase):
         self.assertEqual((self.mem / "current.md").read_bytes(), before)
         # The committed packet obeys the same bound.
         md = (self.mem / "generated" / "resume-packet.md").read_text(encoding="utf-8")
-        self.assertLessEqual(cli.approx_tokens(md), cli.TOKEN_BUDGET_MAX)
+        self.assertLessEqual(_packet.approx_tokens(md), _packet.TOKEN_BUDGET_MAX)
 
     def test_huge_titles_and_warnings_are_excerpted_with_pointers(self):
         rid = self.decision("Ledger " * 400, rationale="because " * 600)
         warnings = [f"warning {i}: " + "stale " * 200 for i in range(60)]
-        with mock.patch.object(cli, "compute_staleness", return_value=warnings):
-            packet = cli.build_resume_packet(self.mem, self.root, view="json")
-            text = cli.packet_json_text(packet)
-        self.assertLessEqual(cli.approx_tokens(text), packet["budget"]["limit"])
+        with mock.patch.object(_packet, "compute_staleness", return_value=warnings):
+            packet = _packet.build_resume_packet(self.mem, self.root, view="json")
+            text = _packet.packet_json_text(packet)
+        self.assertLessEqual(_packet.approx_tokens(text), packet["budget"]["limit"])
         entry = next(d for d in packet["active_decisions"] if d["id"] == rid)
         for field in ("title", "rationale"):
             shown, mark = entry[field].split("… [excerpt: ", 1)
-            self.assertLessEqual(len(shown), cli.ITEM_EXCERPT_CHARS)
+            self.assertLessEqual(len(shown), _packet.ITEM_EXCERPT_CHARS)
             self.assertTrue(mark.endswith(f"; full text: crumb show {rid}]"), mark)
         self.assertGreater(packet["excerpted"]["active_decisions"], 0)
-        self.assertTrue(all(len(w) <= cli.ITEM_EXCERPT_CHARS + 60 for w in packet["warnings"]))
+        self.assertTrue(all(len(w) <= _packet.ITEM_EXCERPT_CHARS + 60 for w in packet["warnings"]))
         self.assertGreater(packet["omitted"]["warnings"], 0)
 
     def test_unicode_and_tiny_budgets_terminate_and_disclose_omissions(self):
         # Two tokens' worth of estimate per character would have been 0.5 under
         # chars/4; the named estimator counts each non-ASCII char as one.
-        self.assertEqual(cli.approx_tokens("日本語のテキスト"), 8)
-        self.assertEqual(cli.approx_tokens("abcd" * 10), 10)
+        self.assertEqual(_packet.approx_tokens("日本語のテキスト"), 8)
+        self.assertEqual(_packet.approx_tokens("abcd" * 10), 10)
         self.set_focus("台帳の照合を完了する 🚀 " * 900)
         for i in range(30):
             self.decision(f"決定 {i} " + "記録 " * 60, rationale="理由 " * 200)
@@ -175,20 +177,20 @@ class BoundTests(PacketCase):
         for view in ("markdown", "json"):
             for fast in (False, True):
                 name = f"{view}-fast" if fast else view
-                floor = cli.PACKET_MIN_BUDGET[name]
-                for budget in (1, floor, floor + 1, floor * 2, 2500, cli.TOKEN_BUDGET_MAX):
+                floor = _packet.PACKET_MIN_BUDGET[name]
+                for budget in (1, floor, floor + 1, floor * 2, 2500, _packet.TOKEN_BUDGET_MAX):
                     with self.subTest(view=name, budget=budget):
                         started = time.monotonic()
-                        packet = cli.build_resume_packet(
+                        packet = _packet.build_resume_packet(
                             self.mem, self.root, view=view, fast=fast, budget=budget
                         )
                         self.assertLess(time.monotonic() - started, 30)
                         render = (
-                            cli.render_packet_markdown
+                            _packet.render_packet_markdown
                             if view == "markdown"
-                            else cli.packet_json_text
+                            else _packet.packet_json_text
                         )
-                        size = cli.approx_tokens(render(packet))
+                        size = _packet.approx_tokens(render(packet))
                         limit = packet["budget"]["limit"]
                         self.assertEqual(limit, max(budget, floor))
                         self.assertLessEqual(size, limit)
@@ -210,14 +212,16 @@ class BoundTests(PacketCase):
 
     def test_the_hook_adds_only_its_declared_preamble(self):
         self.set_focus("Reconcile every ledger shard. " * 2000)
-        packet_budget = cli.TOKEN_BUDGET_MAX
-        with mock.patch.object(cli, "_compaction_preamble", return_value="x" * 3000 + "\n\n"):
+        packet_budget = _packet.TOKEN_BUDGET_MAX
+        with mock.patch.object(
+            hooks_session, "_compaction_preamble", return_value="x" * 3000 + "\n\n"
+        ):
             code, text, _err = run(
                 ["hook", "session"], stdin=json.dumps({"cwd": self.p, "source": "compact"})
             )
         context = json.loads(text)["hookSpecificOutput"]["additionalContext"]
         self.assertLessEqual(
-            cli.approx_tokens(context), packet_budget + cli._COMPACT_PREAMBLE_TOKENS
+            _packet.approx_tokens(context), packet_budget + hooks_session._COMPACT_PREAMBLE_TOKENS
         )
 
 
@@ -232,10 +236,10 @@ class PortabilityTests(PacketCase):
         self.promote(rid)
         (self.root / "CLAUDE.md").unlink()
         for label, packet in (
-            ("portable", cli.build_resume_packet(self.mem, self.root)),
+            ("portable", _packet.build_resume_packet(self.mem, self.root)),
             (
                 "claude hook",
-                cli.build_resume_packet(
+                _packet.build_resume_packet(
                     self.mem,
                     self.root,
                     loaded_rules=promote.loaded_rules(self.root, ("CLAUDE.md",)),
@@ -248,7 +252,7 @@ class PortabilityTests(PacketCase):
                 self.assertFalse(entry["rule_in_file"])
                 self.assertIn("Ledger rows are append-only", entry["rule"])
                 self.assertEqual(packet["promoted"], {})
-                md = cli.render_packet_markdown(packet)
+                md = _packet.render_packet_markdown(packet)
                 self.assertIn(
                     f"`{rid}` — standing rule (promoted to CLAUDE.md, not found there):", md
                 )
@@ -272,7 +276,7 @@ class PortabilityTests(PacketCase):
         )
 
         portable = [
-            cli.build_resume_packet(self.mem, self.root),
+            _packet.build_resume_packet(self.mem, self.root),
             mcp_core.tool_build_resume_packet(root=self.p),
             json.loads(run(["resume", "--json", "--project", self.p])[1]),
         ]
@@ -300,7 +304,7 @@ class PortabilityTests(PacketCase):
         self.assertIn(f"`{claude_rid}` — the audit trail needs it", context)
         entry = next(
             d
-            for d in cli.build_resume_packet(self.mem, self.root)["active_decisions"]
+            for d in _packet.build_resume_packet(self.mem, self.root)["active_decisions"]
             if d["id"] == claude_rid
         )
         self.assertNotIn("rule", entry)

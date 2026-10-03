@@ -25,6 +25,7 @@ sys.path.insert(0, str(REPO_ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402  (patch target: migrate reads SCHEMA_VERSION here)
 from breadcrumbs import migrate as mig  # noqa: E402
+from breadcrumbs import validate as _validate  # noqa: E402
 
 
 def init_store(tmp: str) -> Path:
@@ -430,7 +431,7 @@ class LegacyBlockTests(unittest.TestCase):
             fails = [
                 {"status": "fail", "path": f"traps/t{i}.md", "message": "bad"} for i in range(12)
             ]
-            with mock.patch.object(_cli, "run_validate", return_value=fails):
+            with mock.patch.object(_validate, "run_validate", return_value=fails):
                 with self.assertRaises(RuntimeError) as ctx:
                     blockfiles.adopt_blocks(mem, Path(tmp))
             self.assertIn("traps/t11.md", str(ctx.exception))

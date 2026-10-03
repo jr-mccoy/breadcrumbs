@@ -21,7 +21,26 @@ measured on this repo at the commit above unless marked otherwise.
 
 ## 1. Signal quality
 
-### 1.1 `crumb audit` is mostly age noise
+### ~~1.1 `crumb audit` is mostly age noise~~
+
+**Done** on branch `ccr-4e962709-tubaoe` (2026-10-03), commit "audit: decision
+staleness keyed on evidence, not age". The age line is gone from the packet and
+from audit. Audit asks whether a decision's evidence moved:
+`decision-evidence-rewritten` (WARN: a cited file churned by half its size
+since the decision, its own landing commit and hub files excluded),
+`decision-evidence-changed` (one INFO line for smaller changes), and
+`decision-aged` (INFO, 8x the cutoff, only when nothing else questions it);
+contradictions, near-duplicates and vanished evidence still count.
+
+One correction to the direction below: keying on "the evidence files changed
+after the decision" alone flagged 48 of 56 decisions on `main`, because cited
+code changes in a project under work. Measuring how much changed, with hubs
+and the decision's own landing left out, flags 6, each worth a look. On this
+store the audit goes from 21 warnings (17 of them age) to 10. The eval is the
+`staleness` suite with `audit_flags` / `audit_quiet` critical cases; the
+decision record is in project memory.
+
+The original finding, for the record:
 
 **Found.** On this store, 17 of the 21 audit warnings were of one kind: an
 active decision "is N days old with no update — is this still true?". A
@@ -54,7 +73,36 @@ is parked. An open question nobody owns is itself audit noise.
 
 ## 2. Code structure
 
-### 2.1 `breadcrumbs/cli.py` holds half the package
+### ~~2.1 `breadcrumbs/cli.py` holds half the package~~
+
+**Done** on branch `ccr-4e962709-tubaoe` (2026-10-03), all four seams, one
+commit each, by a mechanical AST move (each node's source kept, comments
+included) behind the parity fixture, the evals and the full suite:
+
+| Seam | Modules |
+|---|---|
+| 1. hooks | `hooks_stop`, `hooks_guard`, `hooks_session` |
+| 2. resume packet | `packet` |
+| 3. guard scoring | `textmatch` (shared tokens, stems, aliases), `scoring` (search, guard, verdicts) |
+| 4. validate and audit | `validate`, `audit`, `secretscan` |
+
+| Measure | Before | After |
+|---|---|---|
+| `cli.py` lines | 15,651 | 9,694 |
+| Functions in `cli.py` | 424 | 260 |
+| Functions over 150 lines in `cli.py` | 13 | 5 (largest: `doctor_report`, 285) |
+| Modules that import `cli` back | 18 | 28 |
+
+The last row went up, and that is expected: each extracted module calls
+back into the record I/O and helpers that stayed in `cli.py`. What remains
+there is that shared core (frontmatter, record loading, capture,
+publication and freshness, doctor, integrations, jots, hook dispatch); moving
+it below the extracted modules is the next structural step, not part of this
+item. The freshness comment block stays in `cli.py` with `_inputs_hash`, as
+asked. The contract every extraction keeps is pinned by
+`tests/test_extracted_modules.py`; `docs/architecture.md` §6 has the map.
+
+The original finding, for the record:
 
 **Found.**
 
@@ -85,24 +133,48 @@ functions, one primitive") with whichever module gets `_inputs_hash`.
 
 **Size.** Large in total; each seam is medium.
 
-### 2.2 Duplicated helpers, where the field bugs came from
+### ~~2.2 Duplicated helpers, where the field bugs came from~~
+
+**Done** on branch `ccr-4e962709-tubaoe` (2026-10-03), one commit per
+concern; each bullet says where it went.
 
 **Found.**
 
-- **Git state is read two ways.** `cli._git_out` spawns `git`, while
+- ~~**Git state is read two ways.** `cli._git_out` spawns `git`, while
   `breadcrumbs/gitrefs.py` reads `.git` directly. `cli.git_commit` returns a
   short sha from a subprocess and `gitrefs.head_sha` a full one; the
   short-versus-full mismatch is what field-report item N8 was. Five other
-  modules call the private `cli._git_out`.
-- **Timestamps are parsed by two near-identical functions:**
-  `cli._parse_iso` and `validation.parse_timestamp`.
-- **Text is read by three helpers:** `cli.read_text_lenient`,
-  `path_policy.read_text`, `handoffs.read_text`.
-- **POSIX path conversion** is open-coded about 23 times in `cli.py` and in
+  modules call the private `cli._git_out`.~~ **Done** on branch
+  `ccr-4e962709-tubaoe`: `breadcrumbs/git.py` owns every git spawn and is the
+  only importer of `gitrefs` (`tests/test_git.py::OwnershipTests` enforces
+  both). HEAD identity is the full sha (`git.head`); the record's `commit`
+  field keeps git's short form (`git.short_head`), compared with
+  `git.same_commit`. Storing full shas in records was left out: it changes a
+  stored format and needs its own decision.
+- ~~**Timestamps are parsed by two near-identical functions:**
+  `cli._parse_iso` and `validation.parse_timestamp`.~~ **Done:** `_parse_iso`
+  is gone and every reader uses `validation.parse_timestamp`. They were not
+  identical: `_parse_iso` took whatever the interpreter's `fromisoformat`
+  accepts, so on 3.11 readers acted on stamps `validate` rejects.
+- ~~**Text is read by three helpers:** `cli.read_text_lenient`,
+  `path_policy.read_text`, `handoffs.read_text`.~~ **Not duplicates:** they
+  are layers (strict primitive; lenient reader built on it; "find this
+  branch's handoff, then read leniently"). The real gap was a read that
+  bypassed all three: the fresh-projection check read the committed file
+  with a plain `read_bytes`, so a link passed as fresh. It now goes through
+  `path_policy` (`tests/test_path_containment.py`).
+- ~~**POSIX path conversion** is open-coded about 23 times in `cli.py` and in
   11 other modules, although `path_policy` exists and a decision says
-  store-relative paths are POSIX.
-- **Shell commands are tokenized twice:** `cli._command_tokens` and
-  `shellcmd.segments`/`words`; guard uses both.
+  store-relative paths are POSIX.~~ **Done:** `path_policy.posix_rel` and
+  `path_policy.to_posix` replace 45 open-coded conversions (34
+  `relative_to(…).as_posix()`, 11 `replace("\\", "/")`) in 12 modules; an
+  AST test in `tests/test_platform_portability.py` refuses new ones.
+- ~~**Shell commands are tokenized twice:** `cli._command_tokens` and
+  `shellcmd.segments`/`words`; guard uses both.~~ **Kept as two tokenizers,
+  one owner:** `words` is exact argv (what a command does); the other is
+  loose, because guard matches it against prose trap titles, and merging them
+  would change verdicts. It moved to `shellcmd.match_tokens`, with
+  `normalize_command` from `transcript`.
 
 **Direction.** One owner per concern: a `git` module (public functions, full
 shas everywhere, short only for display), one timestamp parser, one lenient

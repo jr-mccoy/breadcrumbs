@@ -54,6 +54,7 @@ from pathlib import Path
 from typing import Callable, NamedTuple
 
 from breadcrumbs import cli, path_policy
+from breadcrumbs import validate as _validate
 
 # Directories a backup skips: machine-local (`private/`) or disposable
 # (`index/`). Also where the backups themselves live, so a second migration
@@ -436,7 +437,7 @@ def store_files(directory: Path) -> dict[str, str]:
     windows = top != os.fspath(directory)
     out: dict[str, str] = {}
     for dirpath, dirnames, filenames in os.walk(top, followlinks=False):
-        rel_parts = [p for p in dirpath[len(top) :].replace("\\", "/").split("/") if p]
+        rel_parts = [p for p in path_policy.to_posix(dirpath[len(top) :]).split("/") if p]
         if not rel_parts:
             dirnames[:] = [d for d in dirnames if d not in _BACKUP_SKIP_DIRS]
         dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
@@ -494,7 +495,7 @@ def _discard(path: Path) -> None:
 
 def _rel(path: Path, memory_dir: Path) -> str:
     try:
-        return Path(path).relative_to(Path(memory_dir).parent).as_posix()
+        return path_policy.posix_rel(Path(path), Path(memory_dir).parent)
     except ValueError:
         return Path(path).name
 
@@ -674,7 +675,7 @@ def legacy_findings(memory_dir: Path) -> tuple[dict, list[str]]:
     preview names each record a person has to fix, not just how many."""
     counts: dict[str, int] = {}
     items: list[str] = []
-    for finding in cli.run_validate(Path(memory_dir)):
+    for finding in _validate.run_validate(Path(memory_dir)):
         if finding.get("status") != "fail":
             continue
         code = finding.get("code") or finding.get("check")
@@ -695,7 +696,7 @@ def legacy_report(memory_dir: Path) -> dict:
     frontmatter keys are not listed; they are kept by every step and writer.
     """
     counts: dict[str, int] = {}
-    for finding in cli.run_validate(Path(memory_dir)):
+    for finding in _validate.run_validate(Path(memory_dir)):
         if finding.get("status") != "fail":
             continue
         code = finding.get("code") or finding.get("check")

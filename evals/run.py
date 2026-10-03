@@ -36,9 +36,15 @@ Each suite is a directory under `evals/suites/` with:
 - `store.crumb` — the commands that build the store, one per `@DATE` line
   (continuation lines are indented). Each runs with the clock set to that date,
   through `crumb.main`, so the store is made by the same writers a user's is.
+  A line whose command starts with `!` works on the project's files and git
+  history instead (health review 1.1): `!lines PATH N [TAG]` writes N numbered
+  lines, `!append PATH TEXT`, `!rm PATH`, and `!commit MESSAGE` commits
+  everything, dated that day. The first `!` line makes the project a git
+  repository before the store is created.
 - `files/` (optional) — copied into the store as-is (`aliases.txt`, say).
 - `tasks.yml` — `as_of` (the clock for the queries), optionally `split:
-  holdout`, and the tasks.
+  holdout` or `split: checks`, and the tasks. A `checks` suite has no scored
+  tasks: it exists for its critical cases and is left out of every aggregate.
 
 Stores are built in a temporary directory on every run; nothing in the repo is
 written except `baseline.json`, and only with `--write-baseline --reason`.
@@ -55,6 +61,7 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -69,6 +76,9 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from breadcrumbs import cli, hooks_prompt  # noqa: E402
+from breadcrumbs import audit as _audit  # noqa: E402
+from breadcrumbs import packet as _packet  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 TOP_K = 5
 TOLERANCE = 0.05
@@ -94,11 +104,12 @@ COUNT_METRICS = ("reject_hits",)
 # Reported, never gated: cost moves with any content change.
 DIAGNOSTIC_METRICS = ("tokens_mean", "tokens_max")
 TASK_KEYS = {"task", "expect", "reject", "verdict", "files", "note"}
-VERDICTS = set(cli.GUARD_VERDICT_EXIT_CODES)
+VERDICTS = set(_scoring.GUARD_VERDICT_EXIT_CODES)
 # `split: holdout` in a suite's tasks.yml: a fixed scenario set, reported under
 # its own scope and left out of `overall`, whose tasks are not edited to suit
 # the tool (evals/README.md).
-SPLITS = ("dev", "holdout")
+# `split: checks`: a suite that only backs critical cases (no tasks, no scope).
+SPLITS = ("dev", "holdout", "checks")
 CRITICAL_PATH = EVALS_DIR / "critical" / "cases.yml"
 
 # What every reported metric means, and what it is divided by. Serialized with
@@ -143,7 +154,7 @@ METRIC_DEFINITIONS = {
         },
     },
     "guard": {
-        "_system": "cli.guard(task, files): the verdict the library computes",
+        "_system": "scoring.guard(task, files): the verdict the library computes",
         "guard_accuracy": {
             "definition": "share of tasks whose verdict is one of those listed",
             "denominator": "tasks that set `verdict`",
@@ -372,6 +383,35 @@ def parse_store(text: str, source: str = "store.crumb") -> list[tuple[str, list[
     return commands
 
 
+def _git(project: Path, date: str, *args: str) -> None:
+    stamp = _clock(date).isoformat()
+    env = {**os.environ, "GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+    r = subprocess.run(["git", *args], cwd=str(project), env=env, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise SuiteError(f"`git {' '.join(args)}` failed: {r.stderr.strip()}")
+
+
+def _file_step(suite: str, project: Path, date: str, argv: list[str]) -> None:
+    """One `!` line of a store.crumb: the project's files and history."""
+    verb, args = argv[0], argv[1:]
+    where = f"{suite}/store.crumb `{shlex.join(argv)}`"
+    path = project / args[0] if args else None
+    if verb == "!lines" and len(args) in (2, 3) and args[1].isdigit():
+        tag = args[2] if len(args) == 3 else "v1"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("".join(f"line {i} {tag}\n" for i in range(1, int(args[1]) + 1)), "utf-8")
+    elif verb == "!append" and len(args) == 2:
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(args[1] + "\n")
+    elif verb == "!rm" and len(args) == 1:
+        path.unlink()
+    elif verb == "!commit" and len(args) == 1:
+        _git(project, date, "add", "-A")
+        _git(project, date, "commit", "-q", "-m", args[0])
+    else:
+        raise SuiteError(f"{where}: unknown or malformed file step")
+
+
 def _clock(date: str) -> datetime:
     return datetime.strptime(date, "%Y-%m-%d").replace(hour=12, tzinfo=timezone.utc)
 
@@ -392,11 +432,18 @@ def build_store(suite_dir: Path, project: Path) -> Path:
         raise SuiteError(f"{suite_dir.name}/store.crumb has no commands")
     project.mkdir(parents=True, exist_ok=True)
     first = commands[0][0]
+    if any(argv and argv[0].startswith("!") for _date, argv in commands):
+        _git(project, first, "init", "-q", "-b", "main")
+        _git(project, first, "config", "user.email", "evals@example.invalid")
+        _git(project, first, "config", "user.name", "evals")
     with mock.patch.object(cli, "_now", return_value=_clock(first)):
         code, out = _quiet_main(["init", "--project", str(project), "--session-tracking", "full"])
     if code != 0:
         raise SuiteError(f"{suite_dir.name}: init failed:\n{out}")
     for date, argv in commands:
+        if argv and argv[0].startswith("!"):
+            _file_step(suite_dir.name, project, date, argv)
+            continue
         with mock.patch.object(cli, "_now", return_value=_clock(date)):
             code, out = _quiet_main([*argv, "--project", str(project)])
         if code != 0:
@@ -439,7 +486,7 @@ def delivered_ids(text: str) -> list[str]:
         match = _ENTRY_RE.match(line) or _TRAP_ENTRY_RE.match(line)
         rid = match.group(1) if match else None
         if rid is None and section.startswith("Open Questions") and line.startswith("- "):
-            rid = cli.question_item_id(line[2:])
+            rid = _scoring.question_item_id(line[2:])
         if rid and rid not in ids:
             ids.append(rid)
     return ids
@@ -490,7 +537,7 @@ def deliver_prompt(project: Path, text: str, session: str) -> dict:
         "ids": delivered_ids(injected),
         "spoke": bool(injected),
         "repeat_spoke": bool(_hook_text(second)),
-        "tokens": cli.approx_tokens(injected) if injected else 0,
+        "tokens": _packet.approx_tokens(injected) if injected else 0,
         "malformed": "_malformed" in first or "_malformed" in second,
     }
 
@@ -501,7 +548,7 @@ def deliver_packet(project: Path, text: str) -> dict:
     out = out.rstrip("\n")
     match = _BUDGET_RE.search(out)
     limit = int(match.group(2)) if match else None
-    tokens = cli.approx_tokens(out)
+    tokens = _packet.approx_tokens(out)
     return {
         "ids": delivered_ids(out),
         "tokens": tokens,
@@ -552,16 +599,31 @@ CRITICAL_KEYS = {
     "note",
 }
 CRITICAL_CHECKS = {
-    "guard_not": "cli.guard(task) must not return any of `verdict_not`",
-    "guard_cites_none": "cli.guard(task) must cite none of `forbid` among its matches",
-    "guard_no_blocking": "cli.guard(task) must show no match as blocking (`[objects]`)",
+    "guard_not": "scoring.guard(task) must not return any of `verdict_not`",
+    "guard_cites_none": "scoring.guard(task) must cite none of `forbid` among its matches",
+    "guard_no_blocking": "scoring.guard(task) must show no match as blocking (`[objects]`)",
     "hook_guard_warns": "`crumb hook guard` on the task must deliver a warning",
     "never_delivered": "no `forbid` id is delivered as an entry (`via`: prompt, packet)",
     "delivered": "every `require` id is delivered as an entry (`via`: prompt, packet)",
     "quiet": "the prompt hook prints nothing for the task",
     "delivery_bounded": "every delivered packet is within its declared budget, every prompt "
     "injection within PROMPT_HOOK_TOKEN_BUDGET, and every hook output is JSON",
+    "audit_flags": "`crumb audit` questions every `require` decision (a staleness finding)",
+    "audit_quiet": "`crumb audit` questions none of the `forbid` decisions",
 }
+# The audit findings that question whether a decision still holds (health
+# review 1.1). A true staleness case must raise one of them.
+AUDIT_STALENESS_CHECKS = frozenset(
+    {
+        "decision-evidence-rewritten",
+        "decision-evidence-changed",
+        "decision-aged",
+        "possible-contradiction",
+        "near-duplicates",
+        "evidence-missing-file",
+    }
+)
+_NO_TASK_CHECKS = {"delivery_bounded", "audit_flags", "audit_quiet"}
 _VIAS = {"prompt", "packet"}
 
 
@@ -582,7 +644,7 @@ def parse_critical(text: str, source: str = "critical/cases.yml") -> list[dict]:
         seen.add(case["id"])
         if case["check"] not in CRITICAL_CHECKS:
             raise SuiteError(f"{source}: case {case['id']} has unknown check {case['check']!r}")
-        if case["check"] != "delivery_bounded" and not case.get("task"):
+        if case["check"] not in _NO_TASK_CHECKS and not case.get("task"):
             raise SuiteError(f"{source}: case {case['id']} needs a `task`")
         if set(case["via"]) - _VIAS:
             raise SuiteError(f"{source}: case {case['id']} `via` must be within {sorted(_VIAS)}")
@@ -612,10 +674,10 @@ def _critical_status(case: dict, ok: bool) -> str:
 
 
 def _packet_ranking(memory_dir: Path, root: Path, task: str) -> list[str]:
-    packet = cli.build_resume_packet(memory_dir, root, task=task)
-    scores = cli.task_relevance_scores(memory_dir, root, task)
+    packet = _packet.build_resume_packet(memory_dir, root, task=task)
+    scores = _packet.task_relevance_scores(memory_dir, root, task)
     seen: list[str] = []
-    for key, id_of in cli._RELEVANCE_SECTIONS.items():
+    for key, id_of in _packet._RELEVANCE_SECTIONS.items():
         for entry in packet.get(key) or []:
             rid = id_of(entry)
             if rid and rid not in seen and scores.get(rid, 0) > 0:
@@ -677,7 +739,9 @@ def run_suite(suite_dir: Path, critical: list[dict] | None = None) -> dict:
         project = Path(tmp) / suite_dir.name
         memory_dir = build_store(suite_dir, project)
         with mock.patch.object(cli, "_now", return_value=now):
-            known = {item["id"] for item in cli._candidate_items(memory_dir, include_ideas=True)}
+            known = {
+                item["id"] for item in _scoring._candidate_items(memory_dir, include_ideas=True)
+            }
             for i, task in enumerate(spec["tasks"], 1):
                 unknown = sorted((set(task["expect"]) | set(task["reject"])) - known)
                 if unknown:
@@ -705,9 +769,9 @@ def run_suite(suite_dir: Path, critical: list[dict] | None = None) -> dict:
                     deliver_packet(project, text), task
                 )
                 if task["verdict"]:
-                    verdict = cli.guard(memory_dir, project, text, files=task["files"] or None)[
-                        "verdict"
-                    ]
+                    verdict = _scoring.guard(
+                        memory_dir, project, text, files=task["files"] or None
+                    )["verdict"]
                     hook = deliver_guard_hook(
                         project, text, task["files"], f"eval-guard-{suite_dir.name}-{i}"
                     )
@@ -740,13 +804,13 @@ def run_critical(case: dict, memory_dir: Path, project: Path, rows: list[dict], 
     session = f"eval-critical-{case['id']}-{n}"
     detail = ""
     if check == "guard_not":
-        verdict = cli.guard(memory_dir, project, case["task"], files=case["files"] or None)[
+        verdict = _scoring.guard(memory_dir, project, case["task"], files=case["files"] or None)[
             "verdict"
         ]
         ok = verdict not in case["verdict_not"]
         detail = f"guard said {verdict}"
     elif check in ("guard_cites_none", "guard_no_blocking"):
-        matches = cli.guard(memory_dir, project, case["task"], files=case["files"] or None)[
+        matches = _scoring.guard(memory_dir, project, case["task"], files=case["files"] or None)[
             "matches"
         ]
         if check == "guard_cites_none":
@@ -780,6 +844,30 @@ def run_critical(case: dict, memory_dir: Path, project: Path, rows: list[dict], 
         else:
             ok = not shown["prompt"]
             detail = "silent" if ok else f"delivered {shown['prompt']}"
+    elif check in ("audit_flags", "audit_quiet"):
+        findings = _audit.run_audit(memory_dir, project)
+        named: dict[str, set[str]] = {}
+        for f in findings:
+            if f["check"] not in AUDIT_STALENESS_CHECKS:
+                continue
+            for rid in [f.get("id"), *(f.get("ids") or ())]:
+                if rid:
+                    named.setdefault(str(rid), set()).add(f["check"])
+        if check == "audit_flags":
+            missing = [rid for rid in case["require"] if rid not in named]
+            ok = not missing
+            detail = (
+                f"not questioned: {missing}"
+                if missing
+                else (
+                    "questioned: "
+                    + ", ".join(f"{r} ({'/'.join(sorted(named[r]))})" for r in case["require"])
+                )
+            )
+        else:
+            loud = {rid: sorted(named[rid]) for rid in case["forbid"] if rid in named}
+            ok = not loud
+            detail = f"questioned: {loud}" if loud else "none questioned"
     else:  # delivery_bounded
         problems = []
         for row in rows:
@@ -1128,12 +1216,13 @@ def main(argv: list[str] | None = None) -> int:
     if not results:
         print(f"no suites under {args.suites}", file=sys.stderr)
         return 2
-    scopes = {res["suite"]: res["summary"] for res in results}
+    scored = [res for res in results if res["split"] != "checks"]
+    scopes = {res["suite"]: res["summary"] for res in scored}
     dev = [res for res in results if res["split"] == "dev"]
     holdout = [res for res in results if res["split"] == "holdout"]
     # `overall` is the development suites, as it always was; the held-out
     # scenarios are reported beside it, never folded in.
-    scopes["overall"] = overall(dev or results)
+    scopes["overall"] = overall(dev or scored)
     if holdout:
         scopes["holdout"] = overall(holdout)
     critical = [c for res in results for c in res["critical"]]
@@ -1144,7 +1233,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.baseline.is_file():
         old_doc = json.loads(args.baseline.read_text("utf-8"))
     baseline = old_doc.get("scopes", {})
-    snapshot = task_snapshot(results)
+    snapshot = task_snapshot(scored)
     deltas = task_deltas(snapshot, old_doc.get("tasks"))
     problems = [] if args.write_baseline else compare(scopes, baseline)
 

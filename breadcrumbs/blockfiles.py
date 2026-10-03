@@ -34,6 +34,8 @@ from pathlib import Path
 
 from breadcrumbs import cli
 from breadcrumbs import path_policy
+from breadcrumbs import scoring as _scoring
+from breadcrumbs import validate as _validate
 
 FILES_SCHEMA = 3
 TRAP_DIR = "traps"
@@ -288,7 +290,7 @@ def trap_stem(slug: str) -> str:
 
 def question_stem(qid: str) -> str:
     """A question file's stem from its `q_<slug>` id."""
-    qid = cli.normalize_question_id(qid).lower()
+    qid = _scoring.normalize_question_id(qid).lower()
     prefix = cli.UNDATED_ID_PREFIX["question"]
     return qid[len(prefix) :] if qid.startswith(prefix) else qid
 
@@ -370,7 +372,7 @@ def write_question(
         memory_dir,
         project_root,
         "question",
-        question_stem(cli.question_item_id(text)),
+        question_stem(_scoring.question_item_id(text)),
         text,
         sections,
         status=status or "open",
@@ -463,7 +465,7 @@ def render_trap_index(memory_dir: Path, unadopted: list[str] | None = None) -> s
     if not traps:
         lines.append("_(none recorded)_")
     for t in sorted(traps, key=lambda t: t["id"]):
-        rel = Path(t["record_path"]).relative_to(Path(memory_dir)).as_posix()
+        rel = path_policy.posix_rel(Path(t["record_path"]), Path(memory_dir))
         lines.append(f"- `{t['id']}` [{t['status']}] {t['summary']} — `{rel}`")
     lines += _unadopted_tail(unadopted or [], "trap")
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -487,7 +489,7 @@ def render_question_index(memory_dir: Path, unadopted: list[str] | None = None) 
     if not questions:
         lines.append("_(none recorded)_")
     for q in sorted(questions, key=lambda q: (q["status"] != "open", q["id"])):
-        rel = Path(q["record_path"]).relative_to(Path(memory_dir)).as_posix()
+        rel = path_policy.posix_rel(Path(q["record_path"]), Path(memory_dir))
         lines.append(f"- `{q['id']}` [{q['status']}] {q['question']} — `{rel}`")
     lines += _unadopted_tail(unadopted or [], "question")
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -766,7 +768,7 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
 
     question_raw = _raw_blocks(
         memory_dir / "open-questions.md",
-        lambda h: cli.question_item_id(h[2:].strip()) if h.lower().startswith("q:") else None,
+        lambda h: _scoring.question_item_id(h[2:].strip()) if h.lower().startswith("q:") else None,
     )
     question_lines = _block_lines(memory_dir / "open-questions.md")
     question_raw_by_heading = _raw_blocks(memory_dir / "open-questions.md", lambda h: h.strip())
@@ -815,10 +817,10 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
         # One validate pass over everything just written. A failure removes
         # those files and raises: the singletons have not been rewritten, so the
         # store still reads exactly as it did.
-        written = {p.relative_to(memory_dir).as_posix() for p in new_paths}
+        written = {path_policy.posix_rel(p, memory_dir) for p in new_paths}
         fails = [
             f
-            for f in cli.run_validate(memory_dir)
+            for f in _validate.run_validate(memory_dir)
             if f["status"] == "fail" and f["path"] in written
         ]
         if fails:

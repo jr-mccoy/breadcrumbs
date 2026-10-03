@@ -32,6 +32,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
 from breadcrumbs import cli, hooklog, hooks_prompt, retrieval, searchindex  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 
 def git(root: Path, *args: str) -> None:
@@ -124,9 +126,9 @@ class SizeBoundaryTests(StoreCase):
                 delivered = context(self.prompt("amber quasar routing", f"s{size}"))
                 self.assertIn(f"`{self.rid}`", delivered)
                 # Indexed or not, search returns what the full scan returns.
-                indexed, _ = cli.search(self.mem, self.root, "amber quasar routing subsystem")
+                indexed, _ = _scoring.search(self.mem, self.root, "amber quasar routing subsystem")
                 with mock.patch.object(searchindex, "candidate_items", return_value=None):
-                    full, _ = cli.search(self.mem, self.root, "amber quasar routing subsystem")
+                    full, _ = _scoring.search(self.mem, self.root, "amber quasar routing subsystem")
                 self.assertEqual(
                     [(m["id"], m["score"]) for m in indexed], [(m["id"], m["score"]) for m in full]
                 )
@@ -169,7 +171,7 @@ class ShortPromptTests(StoreCase):
         for ack in ("ok", "Yes please", "go on", "thanks!", "👍", "LGTM", "ok, continue", "..."):
             with self.subTest(prompt=ack):
                 self.assertTrue(retrieval.is_acknowledgment(ack))
-                with mock.patch.object(cli, "search", side_effect=AssertionError("searched")):
+                with mock.patch.object(_scoring, "search", side_effect=AssertionError("searched")):
                     self.assertEqual(self.prompt(ack, f"ack-{ack}"), {})
                 self.assertEqual(hooklog.read_log(self.mem)[-1].get("retrieval"), "acknowledgment")
         for meaningful in ("quasar", "npm test", "ruff", "no, use the amber queue", "ok quasar"):
@@ -278,19 +280,23 @@ class CommandHazardTests(StoreCase):
         )
         for i, command in enumerate(warns):
             with self.subTest(command=command):
-                self.assertEqual(cli.guard(self.mem, self.root, command)["verdict"], "READ_FIRST")
-                self.assertTrue(cli._prefilter_trap_hit(self.mem, command, None))
+                self.assertEqual(
+                    _scoring.guard(self.mem, self.root, command)["verdict"], "READ_FIRST"
+                )
+                self.assertTrue(hooks_guard._prefilter_trap_hit(self.mem, command, None))
                 out = self.bash(command, f"w{i}")
                 self.assertIn("READ_FIRST", context(out))
                 # Advisory: the reader is told; the permission flow is untouched.
                 self.assertNotIn("permissionDecision", out.get("hookSpecificOutput") or {})
         for i, command in enumerate(quiet):
             with self.subTest(command=command):
-                self.assertEqual(cli.guard(self.mem, self.root, command)["verdict"], "PROCEED")
+                self.assertEqual(_scoring.guard(self.mem, self.root, command)["verdict"], "PROCEED")
                 self.assertEqual(self.bash(command, f"q{i}"), {})
 
     def test_proceed_is_explained_as_no_warning_not_permission(self):
-        advice = cli.guard(self.mem, self.root, "rename a local variable")["recommended_action"]
+        advice = _scoring.guard(self.mem, self.root, "rename a local variable")[
+            "recommended_action"
+        ]
         self.assertIn("No applicable memory warning found", advice)
         self.assertIn("not an authorization or a safety check", advice)
 
@@ -299,7 +305,7 @@ class CommandHazardTests(StoreCase):
         doc = json.loads(path.read_text("utf-8"))
         del doc["format"]
         path.write_text(json.dumps(doc), encoding="utf-8")
-        self.assertTrue(cli._prefilter_trap_hit(self.mem, "echo hello", None))
+        self.assertTrue(hooks_guard._prefilter_trap_hit(self.mem, "echo hello", None))
 
 
 if __name__ == "__main__":

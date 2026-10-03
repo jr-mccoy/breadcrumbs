@@ -29,6 +29,7 @@ import crumb  # noqa: E402
 from breadcrumbs import projections as bprojections  # noqa: E402
 from breadcrumbs import snapshots as bsnapshots  # noqa: E402
 from breadcrumbs import cli as bcli  # noqa: E402  (the module `crumb` re-exports)
+from breadcrumbs import packet as _packet  # noqa: E402
 
 FIXTURE = REPO_ROOT / "fixtures" / "fixture-11-multi-machine"
 
@@ -437,9 +438,9 @@ class ResumeLeavesAFreshPacketTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root, mem = self._committed_store(tmp)
             packet = mem / "generated" / "resume-packet.md"
-            real = bcli.render_packet_markdown
+            real = _packet.render_packet_markdown
             with mock.patch.object(
-                bcli, "render_packet_markdown", lambda p: real(p) + "<!-- newer renderer -->\n"
+                _packet, "render_packet_markdown", lambda p: real(p) + "<!-- newer renderer -->\n"
             ):
                 run(["resume", "--project", str(root)])
                 self.assertNotIn("newer renderer", packet.read_text(encoding="utf-8"))

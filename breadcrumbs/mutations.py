@@ -138,7 +138,7 @@ class Transaction:
         path = Path(path)
         if not self.tracks(path):
             return
-        rel = path.resolve().relative_to(self.root).as_posix()
+        rel = path_policy.posix_rel(path.resolve(), self.root)
         entry = self.entries.get(rel)
         if entry is None:
             before = _read(path)

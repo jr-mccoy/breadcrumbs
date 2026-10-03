@@ -29,7 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
-from breadcrumbs import cli  # noqa: E402  (`crumb` is a flat re-export; patching needs the module)
+from breadcrumbs import packet as _packet  # noqa: E402
 
 FIXTURES = REPO_ROOT / "fixtures"
 DATA = REPO_ROOT / "tests" / "data"
@@ -418,13 +418,13 @@ class FreshnessComplementarityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             with contextlib.redirect_stdout(io.StringIO()):
                 root, mem = self._store(tmp)
-            real = cli.render_packet_markdown
-            cli.render_packet_markdown = lambda p: real(p) + "\n<!-- newer renderer -->\n"
+            real = _packet.render_packet_markdown
+            _packet.render_packet_markdown = lambda p: real(p) + "\n<!-- newer renderer -->\n"
             try:
                 self.assertFalse(crumb.detect_packet_drift(mem), "inputs are untouched")
                 self.assertTrue(crumb._packet_is_stale(mem, root), "output would differ")
             finally:
-                cli.render_packet_markdown = real
+                _packet.render_packet_markdown = real
 
 
 # --------------------------------------------------------------------------- #

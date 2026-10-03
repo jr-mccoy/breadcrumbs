@@ -22,6 +22,7 @@ import crumb  # noqa: E402
 from _schema2 import downgrade_to_schema2  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import promote  # noqa: E402
+from breadcrumbs import audit as _audit  # noqa: E402
 
 CLAUDE_MD = "# Project instructions\n\nWrite tests first.\n"
 
@@ -506,7 +507,7 @@ class AuditTests(unittest.TestCase):
             block = promote.block_text(claude(tmp))
             self.assertEqual(len(promote.read_bullets(Path(tmp) / "CLAUDE.md")), 20)
             bloat = self._checks(mem, tmp).get("promoted-bloat", [])
-            if len(block) > _cli.ADAPTER_BLOAT_CHARS:
+            if len(block) > _audit.ADAPTER_BLOAT_CHARS:
                 self.assertEqual(len(bloat), 1)
             else:
                 self.assertEqual(bloat, [])

@@ -20,6 +20,9 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from breadcrumbs import cli as _cli  # noqa: E402
+from breadcrumbs import hooks_guard  # noqa: E402
+from breadcrumbs import textmatch as _textmatch  # noqa: E402
+from breadcrumbs import scoring as _scoring  # noqa: E402
 
 # Every one of these was harvested as a "path" by the lexical extractor, in a
 # real store, at review time.
@@ -71,11 +74,11 @@ REAL_PATHS = [
 
 class PathTokenTests(unittest.TestCase):
     def test_prose_is_not_mistaken_for_paths(self):
-        wrong = [t for t in PROSE_NOT_PATHS if _cli._is_path_token(t)]
+        wrong = [t for t in PROSE_NOT_PATHS if _textmatch._is_path_token(t)]
         self.assertEqual(wrong, [], f"still harvested as paths: {wrong}")
 
     def test_real_paths_are_still_recognized(self):
-        missed = [t for t in REAL_PATHS if not _cli._is_path_token(t)]
+        missed = [t for t in REAL_PATHS if not _textmatch._is_path_token(t)]
         self.assertEqual(missed, [], f"no longer recognized: {missed}")
 
     def test_extraction_from_a_sentence(self):
@@ -84,17 +87,19 @@ class PathTokenTests(unittest.TestCase):
             "breadcrumbs/cli.py — see also docs/architecture.md (AM/PM handling)."
         )
         self.assertEqual(
-            _cli._paths_from_text(text), {"breadcrumbs/cli.py", "docs/architecture.md"}
+            _textmatch._paths_from_text(text), {"breadcrumbs/cli.py", "docs/architecture.md"}
         )
 
     def test_a_url_is_never_a_path(self):
-        self.assertEqual(_cli._paths_from_text("see https://example.com/a/b for it"), set())
+        self.assertEqual(_textmatch._paths_from_text("see https://example.com/a/b for it"), set())
 
     def test_dev_null_in_a_command_is_no_mention(self):
-        self.assertEqual(_cli._paths_from_text("grep -r x app/build 2>/dev/null"), {"app/build"})
+        self.assertEqual(
+            _textmatch._paths_from_text("grep -r x app/build 2>/dev/null"), {"app/build"}
+        )
 
     def test_a_flag_list_is_never_a_path(self):
-        self.assertEqual(_cli._paths_from_text("pass --area/--symptom/--why"), set())
+        self.assertEqual(_textmatch._paths_from_text("pass --area/--symptom/--why"), set())
 
 
 class DeclaredVsMentionedTests(unittest.TestCase):
@@ -111,14 +116,14 @@ class DeclaredVsMentionedTests(unittest.TestCase):
         return _cli.Record(Path("decisions/2026-01-01-x.md"), "decision", meta, body)
 
     def test_evidence_file_refs_are_declared(self):
-        item = _cli._item_from_record(
+        item = _scoring._item_from_record(
             self._record("body text", evidence=[{"type": "file", "ref": "src/billing.py"}])
         )
         self.assertIn("src/billing.py", item["files"])
         self.assertNotIn("src/billing.py", item["mentioned_files"])
 
     def test_prose_paths_are_mentions_not_declarations(self):
-        item = _cli._item_from_record(self._record("we touched src/billing.py once"))
+        item = _scoring._item_from_record(self._record("we touched src/billing.py once"))
         self.assertEqual(item["files"], set())
         self.assertIn("src/billing.py", item["mentioned_files"])
 
@@ -133,7 +138,7 @@ class DeclaredVsMentionedTests(unittest.TestCase):
             ),
             "status": "active",
         }
-        item = _cli._item_from_trap(trap)
+        item = _scoring._item_from_trap(trap)
         self.assertIn("app/src/Foo.kt", item["files"])
         self.assertIn("tools/report.py", item["mentioned_files"])
         self.assertNotIn("app/src/Foo.kt", item["mentioned_files"])
@@ -141,8 +146,8 @@ class DeclaredVsMentionedTests(unittest.TestCase):
         self.assertNotIn("./gradlew", item["files"] | item["mentioned_files"])
 
     def test_a_mention_reads_differently_from_a_declaration(self):
-        declared = _cli._match_reason("trap", ["file"], ["a/b.py"], [], 0)
-        mentioned = _cli._match_reason("trap", ["mention"], [], [], 0, ["a/b.py"])
+        declared = _scoring._match_reason("trap", ["file"], ["a/b.py"], [], 0)
+        mentioned = _scoring._match_reason("trap", ["mention"], [], [], 0, ["a/b.py"])
         self.assertIn("same file(s)", declared)
         self.assertNotIn("same file(s)", mentioned)
         self.assertIn("mentions", mentioned)
@@ -159,14 +164,14 @@ class DeclaredVsMentionedTests(unittest.TestCase):
             }
         ]
         self.assertEqual(
-            _cli._decide_verdict(mention_only, ["routine_edit"], "edit a/b.py"), "PROCEED"
+            _scoring._decide_verdict(mention_only, ["routine_edit"], "edit a/b.py"), "PROCEED"
         )
 
 
 class ReadOnlyActionTests(unittest.TestCase):
     def test_reporting_commands_are_read_only(self):
         for action in ("git status", "git log --oneline", "cat README.md", "ls -la", "grep -r x ."):
-            self.assertTrue(_cli._is_read_only_action(action), action)
+            self.assertTrue(_scoring._is_read_only_action(action), action)
 
     def test_anything_that_acts_is_not(self):
         for action in (
@@ -177,16 +182,16 @@ class ReadOnlyActionTests(unittest.TestCase):
             "rm -rf build",
             "edit breadcrumbs/cli.py: rewrite the parser",
         ):
-            self.assertFalse(_cli._is_read_only_action(action), action)
+            self.assertFalse(_scoring._is_read_only_action(action), action)
 
     def test_shell_plumbing_forfeits_the_claim(self):
         for action in ("cat x > y", "git status && rm -rf x", "ls; rm -rf x", "cat `rm -rf x`"):
-            self.assertFalse(_cli._is_read_only_action(action), action)
+            self.assertFalse(_scoring._is_read_only_action(action), action)
 
     def test_flags_that_make_a_reporter_act_forfeit_it(self):
-        self.assertFalse(_cli._is_read_only_action("find . -delete"))
-        self.assertFalse(_cli._is_read_only_action("find . -exec rm {} +"))
-        self.assertTrue(_cli._is_read_only_action("find . -name '*.py'"))
+        self.assertFalse(_scoring._is_read_only_action("find . -delete"))
+        self.assertFalse(_scoring._is_read_only_action("find . -exec rm {} +"))
+        self.assertTrue(_scoring._is_read_only_action("find . -name '*.py'"))
 
     def test_a_read_only_action_cannot_reach_pause(self):
         blocking = [
@@ -198,9 +203,11 @@ class ReadOnlyActionTests(unittest.TestCase):
                 "stance": "blocking",
             }
         ]
-        self.assertEqual(_cli._decide_verdict(blocking, ["routine_edit"], "edit a/b.py"), "PAUSE")
         self.assertEqual(
-            _cli._decide_verdict(blocking, ["routine_edit"], "git status"), "READ_FIRST"
+            _scoring._decide_verdict(blocking, ["routine_edit"], "edit a/b.py"), "PAUSE"
+        )
+        self.assertEqual(
+            _scoring._decide_verdict(blocking, ["routine_edit"], "git status"), "READ_FIRST"
         )
 
     def test_an_executing_command_is_still_judged_on_its_matches(self):
@@ -213,7 +220,7 @@ class ReadOnlyActionTests(unittest.TestCase):
                 "stance": "blocking",
             }
         ]
-        self.assertEqual(_cli._decide_verdict(blocking, ["routine_edit"], "npm test"), "PAUSE")
+        self.assertEqual(_scoring._decide_verdict(blocking, ["routine_edit"], "npm test"), "PAUSE")
 
 
 class HookSurfacingTests(unittest.TestCase):
@@ -230,21 +237,21 @@ class HookSurfacingTests(unittest.TestCase):
                 self._match("dec_vocabulary", ["keyword"]),
             ],
         }
-        shown = _cli._hook_surfacing_matches(result)
+        shown = hooks_guard._hook_surfacing_matches(result)
         self.assertEqual([m["id"] for m in shown], ["dec_specific"])
-        self.assertNotIn("dec_vocabulary", _cli._hook_guard_reason(result, shown))
+        self.assertNotIn("dec_vocabulary", hooks_guard._hook_guard_reason(result, shown))
 
     def test_tags_titles_and_mentions_all_qualify(self):
         for signal in ("file", "tag", "title", "mention", "do-not-retry", "open-blocker"):
             result = {"verdict": "READ_FIRST", "matches": [self._match("m", [signal, "keyword"])]}
-            self.assertEqual(len(_cli._hook_surfacing_matches(result)), 1, signal)
+            self.assertEqual(len(hooks_guard._hook_surfacing_matches(result)), 1, signal)
 
     def test_an_all_keyword_result_is_still_shown(self):
         """A strong keyword-only match escalating through the score band is a
         deliberate behaviour of this tool; the hook does not silence it."""
         result = {"verdict": "READ_FIRST", "matches": [self._match("trap_x", ["keyword"])]}
-        self.assertEqual(_cli._hook_surfacing_matches(result), [])
-        self.assertIn("trap_x", _cli._hook_guard_reason(result, result["matches"]))
+        self.assertEqual(hooks_guard._hook_surfacing_matches(result), [])
+        self.assertIn("trap_x", hooks_guard._hook_guard_reason(result, result["matches"]))
 
 
 if __name__ == "__main__":

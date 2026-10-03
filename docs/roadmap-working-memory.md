@@ -903,7 +903,7 @@ Seven departures from what this document specified. Read these before Phase 2.
    with nothing changed, which is a flaky test, not a fix, and recording it as
    "X failed until 0 files changed" would be a false claim in the store.
 
-Two notes for Phase 2: `cli._hook_guard_advisory_seen` is now a thin shim over
+Two notes for Phase 2: `hooks_guard._hook_guard_advisory_seen` is now a thin shim over
 `hooks_common.advisory_seen` (the name stays because tests and the docs know the
 state by it), and `_HOOK_SPECS` gained no third tuple element — the matcher was
 already the second.
@@ -1682,7 +1682,7 @@ Departures from what this document specified. Read these before Phase 7.
 2. **The packet is ranked by its own task score.** The packet has no single
    ranked list. Its sections are each ordered, with the newest three pinned
    first whatever the task is. The eval ranks the records the bounded packet
-   kept by `cli.task_relevance_scores`, the score `_order_by_relevance` sorts
+   kept by `all.task_relevance_scores`, the score `_order_by_relevance` sorts
    by, so the two cannot drift apart. The recency floor is a reading-order
    rule, not relevance, so it is not what is measured.
 3. **Guard is a third system**, for tasks that name a `verdict`. The two

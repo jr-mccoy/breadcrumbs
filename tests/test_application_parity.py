@@ -32,6 +32,7 @@ sys.path.insert(0, str(ROOT))
 import crumb  # noqa: E402
 from breadcrumbs import cli as _cli  # noqa: E402
 from breadcrumbs import mcp_core  # noqa: E402
+from breadcrumbs import textmatch as _textmatch  # noqa: E402
 
 GOLDEN = Path(__file__).resolve().parent / "fixtures" / "application_parity.json"
 CLOCK = datetime(2026, 9, 20, 12, 0, 0, tzinfo=timezone.utc)
@@ -515,7 +516,7 @@ print(json.dumps({"loaded": sorted(loaded), "stdout": out.getvalue()}))
                 )
             ctx_a = service.Context(root_a, mem_a, "mcp", lambda: CLOCK)
             ctx_b = service.Context(root_b, mem_b, "mcp")
-            stem = _cli._base_stem
+            stem = _textmatch._base_stem
             results: dict = {}
             barrier = threading.Barrier(2)
 
@@ -524,7 +525,7 @@ print(json.dumps({"loaded": sorted(loaded), "stdout": out.getvalue()}))
                     barrier.wait()  # both contexts active at once, in two threads
                     matches, _ = service.search(ctx, "payments")
                     results[name] = {
-                        "payments": _cli._stem("payments"),
+                        "payments": _textmatch._stem("payments"),
                         "found": [m["id"] for m in matches],
                         "review": service.review_status_for(ctx, "decision"),
                         "now": _cli.now_iso(),
@@ -550,11 +551,11 @@ print(json.dumps({"loaded": sorted(loaded), "stdout": out.getvalue()}))
 
             # Nested in one thread: the inner context's aliases, then the outer's again.
             with service.active(ctx_a):
-                self.assertEqual(_cli._stem("payments"), stem("billing"))
+                self.assertEqual(_textmatch._stem("payments"), stem("billing"))
                 with service.active(ctx_b):
-                    self.assertEqual(_cli._stem("payments"), stem("payments"))
-                self.assertEqual(_cli._stem("payments"), stem("billing"))
-            self.assertEqual(_cli.active_store_aliases(), {})
+                    self.assertEqual(_textmatch._stem("payments"), stem("payments"))
+                self.assertEqual(_textmatch._stem("payments"), stem("billing"))
+            self.assertEqual(_textmatch.active_store_aliases(), {})
 
 
 if __name__ == "__main__":

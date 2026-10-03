@@ -15,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 import crumb  # noqa: E402
+from breadcrumbs import git as _git  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
@@ -266,7 +267,7 @@ class CaptureHandoffTests(unittest.TestCase):
 
     def test_leading_space_porcelain_line_survives_intact(self):
         """A worktree-only modification is ` M path` — the leading space is a
-        status column, and `_git_out`'s whole-output strip() used to eat it on the
+        status column, and `git.run`'s whole-output strip() used to eat it on the
         *first* line, after which line[3:] chopped three characters off the path
         (one unstaged edit to tracked.py -> ['racked.py']).
         """
@@ -282,7 +283,7 @@ class CaptureHandoffTests(unittest.TestCase):
             (root / "tracked.py").write_text("a\nb\n")
             (root / "second.py").write_text("a\nb\n")
             # the porcelain line the bug depended on, as git emits it
-            self.assertTrue(crumb._git_out(root, "status", "--porcelain").startswith(" M "))
+            self.assertTrue(_git.run(root, "status", "--porcelain").startswith(" M "))
             self.assertEqual(sorted(crumb.git_dirty_files(root)), ["second.py", "tracked.py"])
 
     def test_single_line_git_output_has_no_trailing_newline(self):
@@ -296,7 +297,7 @@ class CaptureHandoffTests(unittest.TestCase):
             self._git(root, "add", "-A")
             self._git(root, "commit", "-m", "init")
             branch = crumb.git_branch(root)
-            commit = crumb.git_commit(root)
+            commit = _git.short_head(root)
             self.assertEqual(branch, branch.strip())
             self.assertEqual(commit, commit.strip())
             self.assertTrue(commit and commit != crumb.NO_GIT_COMMIT)
@@ -989,9 +990,9 @@ class MediumLowRegressionTests(unittest.TestCase):
 
     # ---- R21: git C-quoted paths are decoded ------------------------------- #
     def test_R21_git_quoted_paths_are_unquoted(self):
-        self.assertEqual(crumb._unquote_git_path('"caf\\303\\251.txt"'), "café.txt")
-        self.assertEqual(crumb._unquote_git_path('"a\\"b.txt"'), 'a"b.txt')
-        self.assertEqual(crumb._unquote_git_path("plain/path.txt"), "plain/path.txt")
+        self.assertEqual(_git.unquote_path('"caf\\303\\251.txt"'), "café.txt")
+        self.assertEqual(_git.unquote_path('"a\\"b.txt"'), 'a"b.txt')
+        self.assertEqual(_git.unquote_path("plain/path.txt"), "plain/path.txt")
 
     # ---- R22: note hygiene -------------------------------------------------- #
     def test_R22_note_text_is_sanitized(self):
