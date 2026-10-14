@@ -1,25 +1,18 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: f20be72 | inputs_hash: 5b9a82fdc8be | generated_at: 2026-10-03T21:29:17+00:00 -->
-<!-- view: markdown | budget: 3090/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 5615583 | inputs_hash: 9e2a71e04014 | generated_at: 2026-10-14T00:04:52+00:00 -->
+<!-- view: markdown | budget: 2789/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `claude/charming-sagan-9o911q` · commit `f20be72` · 4 uncommitted file(s) · handoff: handoffs/claude-charming-sagan-9o911q-612e24.md
+branch `ccr-5278a3e4-sawnn8` · commit `5615583` · 3 uncommitted file(s) · handoff: handoffs/ccr-5278a3e4-sawnn8.md
 
 ## Current Focus
 0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
 
 ## Next Action
-DoWhat 0.6.0 retest fixes are on claude/charming-sagan-9o911q (plan: docs/reviews/2026-10-03-dowhat-0.6.0-retest-plan.md, CHANGELOG [Unreleased], proposed 0.6.1). Waiting on the operator: the launcher DECIDE (item 2) and the go to release. To release: bump __version__ to 0.6.1, move [Unreleased] to [0.6.1] with the date, add the docs/compatibility.md section 3 row, merge to main, run release.yml dry-run then publish. Then remeasure the hook on Windows with doctor --hook-log.
-
-## Landed Since The Handoff Was Written
-_(check Current Focus / Next Action against these before redoing work)_
-- 5b9e3c4 Windows: native-full green; migrate no longer doubles CRLF; no tempfile on the write path
-- ace0ae6 test_retest_060: allow what Python's own argparse loads (3.14 imports dataclasses through _colorize)
-- 59108fa Release 0.6.1: bump __version__, date the CHANGELOG, compatibility row, reconcile handoff.md
-- 11ae6d6 Memory: decisions and session capture for the 0.6.0 retest; plan note that the objection rule is guard's
+Operator reviews docs/v2-design.md (autonomous curator redesign) and answers its open questions (section 14); then start phase P0: gold set and autonomy/repeat-failure eval harness with v1 baseline numbers.
 
 ## Active Decisions
 - `dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached` — At a stable HEAD a full firing now starts 0 processes, including on a shallow blob-filtered clone; after HEAD moves at most 2 (rev-list, ls-tree), neither needing a blob.
@@ -57,10 +50,6 @@ _(none recorded)_
 ## Open Questions / Blockers
 - Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
 - Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?
-
-## Inbox (unsorted, expires)
-_(candidates, not findings — promote with `crumb inbox promote <id> <type>` or drop with `crumb inbox drop <id>`)_
-- `jot_20260922_phase-1-wm-14-s-transcript-miner-must-write-via-inbox-34ba` (11d, agent) Phase 1 WM-14's transcript miner must write via inbox.write_jot(source='transcript', local=True) — the private/inbox sp…
 
 ## Likely Relevant Files
 - breadcrumbs/cli.py
@@ -117,5 +106,5 @@ _(… 11 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 6 commit(s) behind current HEAD.
-- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 49 days — did this ever get resolved?
+- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 60 days — did this ever get resolved?
