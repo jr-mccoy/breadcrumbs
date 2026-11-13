@@ -109,7 +109,7 @@ class FieldContractTests(ContractCase):
         self.assertEqual(self.codes(path), [])
 
     def test_timestamps_are_the_same_on_every_interpreter(self):
-        # fromisoformat accepts much more on 3.11+ than on 3.9 (and no `Z` before
+        # fromisoformat accepts much more on 3.11+ than on 3.10 (and no `Z` before
         # 3.11); the contract accepts one subset everywhere.
         self.assertIsNotNone(validation.parse_timestamp("2026-09-01T10:00:00Z"))
         self.assertIsNotNone(validation.parse_timestamp("2026-09-01 10:00:00.123+02:00"))

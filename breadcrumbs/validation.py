@@ -45,7 +45,7 @@ RECORD_SCOPES = ("project", "branch")
 TIMESTAMP_FIELDS = ("created_at", "updated_at", "expires_at", "last_confirmed", "promoted_at")
 
 # The ISO-8601 subset this project writes and reads on every supported Python.
-# `datetime.fromisoformat` accepts far more on 3.11+ than on 3.9/3.10 (and no `Z`
+# `datetime.fromisoformat` accepts far more on 3.11+ than on 3.10 (and no `Z`
 # before 3.11), so parsing alone would make `validate` pass a store on one
 # interpreter and fail it on another.
 _TIMESTAMP_RE = re.compile(

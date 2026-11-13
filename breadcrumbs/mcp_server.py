@@ -160,9 +160,7 @@ _SERVER_ACCEPTS_VERSION = _server_accepts_version(FastMCP)
 
 SERVER_NAME = "breadcrumbs"
 _INSTALL_HINT = (
-    "The MCP server needs the optional Python MCP SDK (which needs Python >= 3.10;\n"
-    "on 3.9 the command below succeeds and installs nothing, because the extra's\n"
-    "marker excludes it).\n"
+    "The MCP server needs the optional Python MCP SDK:\n"
     '  pip install "crumb-kit[mcp]"   (or:  pip install "mcp>=1.2,<3")\n'
     "Both SDK 1.x and 2.x are supported. An SDK outside that range may install\n"
     "cleanly and still not be importable here, in which case the cause is printed\n"

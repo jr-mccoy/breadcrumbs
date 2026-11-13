@@ -113,7 +113,7 @@ prints the package version *and* the **record `schema_version`** (the manifest's
 code; the record schema version moves only on a breaking change to the on-disk
 record format, and a package MAJOR bump accompanies it.
 
-**Requires** Python ≥ 3.9.
+**Requires** Python ≥ 3.10.
 
 ### No `npx` (deliberate)
 
@@ -1006,8 +1006,7 @@ piece is independent:
   their own and stay, since they are the project's instructions now.
 - **MCP registration** (`--with-mcp`) — merges a `breadcrumbs` server into
   `.mcp.json` (preserving any other servers). Needs the optional `[mcp]` extra to
-  actually run: `pip install "crumb-kit[mcp]"` (the SDK needs Python ≥ 3.10; on
-  3.9 that command succeeds and installs nothing). Both MCP SDK **1.x and 2.x**
+  actually run: `pip install "crumb-kit[mcp]"`. Both MCP SDK **1.x and 2.x**
   work — 2.0 renamed the server class, so an older `crumb-kit` paired with a new
   SDK reports "SDK not installed"; upgrade `crumb-kit` if you see that.
 - **Claude Code hooks** (`--with-hooks[=session,guard,capture,prompt,compact,subagent]`)

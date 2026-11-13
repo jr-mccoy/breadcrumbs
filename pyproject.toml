@@ -11,7 +11,7 @@ dynamic = ["version"]
 description = "Breadcrumbs — leave a trail your future self and your agents can follow back: a portable, repo-local, human-readable ledger of durable project state for human–agent software work."
 readme = "README.md"
 license = { file = "LICENSE" }
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 keywords = ["agent", "memory", "continuity", "cli", "project-memory", "handoff"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -22,7 +22,6 @@ classifiers = [
     # the README's pyversions badge read, and with only the bare "3" the badge
     # rendered "python: 3" while CI was proving 3.9 through 3.14. Keep this list
     # in step with the `test` matrix in .github/workflows/ci.yml.
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -38,13 +37,14 @@ dependencies = []
 # The MCP server is the one optional interop layer. It is NOT a core
 # dependency: the CLI and plain files work without it (graceful degradation —
 # MCP comes later, or never). Install it explicitly with `pip install
-# "crumb-kit[mcp]"`. The SDK needs Python >=3.10, hence the marker.
+# "crumb-kit[mcp]"`. The SDK needs Python >=3.10, which is also the package's
+# floor, so the extra needs no environment marker.
 [project.optional-dependencies]
 # Upper-bounded on purpose. SDK 2.0 renamed the server class, and an
 # unbounded `mcp>=1.2` silently resolved to it — the server then reported itself
 # as "not installed". `mcp_server` supports both 1.x and 2.x; a future 3.x is
 # assumed to break again until someone checks.
-mcp = ["mcp>=1.2,<3; python_version >= '3.10'"]
+mcp = ["mcp>=1.2,<3"]
 
 # Contributor tooling. None of it is needed to *run* crumb-kit — the package has
 # no runtime dependencies and the canonical test runner is stdlib `unittest`
@@ -126,7 +126,7 @@ testpaths = ["tests"]
 # The code was written to ~100 columns; the formatter is set to match so adopting
 # it did not rewrap the whole codebase.
 line-length = 100
-target-version = "py39"   # the documented floor (requires-python >=3.9)
+target-version = "py310"  # the documented floor (requires-python >=3.10)
 # The 2026-09-26 audit's diagnostic scripts are kept byte-identical to the
 # checksummed bundle they arrived in (docs/reviews/), so they are evidence, not
 # code this repo formats. Their cases become ordinary tests as work packages land.

@@ -106,7 +106,7 @@ and limits.
    open for seven weeks, advertising bugs that no longer existed, purely because
    the fix commits wrote `(#5)` instead of `Fixes #5`.
 5. Open a PR describing what broke or what is now possible. CI runs the suite on
-   Python 3.9–3.14, the MCP server against both SDK majors, and a full
+   Python 3.10–3.14, the MCP server against both SDK majors, and a full
    packaging/install smoke test; all of it must be green.
 
 ## Project memory

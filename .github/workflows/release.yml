@@ -128,30 +128,21 @@ jobs:
 
       # A publish must not ship a commit whose CI failed. The suite above covers
       # the unit tests on 3.11; `ci` additionally runs the fixture/guard/MCP checks
-      # and the full Python matrix, and it is the only place those exist.
+      # and the full Python matrix, and it is the only place those exist. The rule
+      # is in .github/scripts/ci_gate.py (tested in tests/test_release_process.py):
+      # it fails closed, and the weekly scheduled run, which re-tests an unchanged
+      # commit on a newer runner image, does not decide.
       - name: CI succeeded on this commit
         if: github.event.inputs.mode == 'publish'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          RUNS="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=1" \
-                  --jq '.workflow_runs[0] | "\(.status) \(.conclusion) \(.html_url)"' 2>/dev/null || true)"
-          if [ -z "$RUNS" ] || [ "$RUNS" = "null null null" ]; then
-            echo "::warning::No 'ci' workflow run found for $GITHUB_SHA; continuing without that gate."
-            exit 0
-          fi
-          STATUS="$(echo "$RUNS" | cut -d' ' -f1)"
-          CONCLUSION="$(echo "$RUNS" | cut -d' ' -f2)"
-          URL="$(echo "$RUNS" | cut -d' ' -f3)"
-          if [ "$STATUS" != "completed" ]; then
-            echo "::error::CI is still $STATUS on $GITHUB_SHA ($URL). Wait for it to finish, then re-run."
+          RUNS="$RUNNER_TEMP/ci-runs.json"
+          if ! gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&per_page=100" > "$RUNS"; then
+            echo "::error::Could not read the 'ci' runs for $GITHUB_SHA from the GitHub API; not publishing."
             exit 1
           fi
-          if [ "$CONCLUSION" != "success" ]; then
-            echo "::error::CI concluded '$CONCLUSION' on $GITHUB_SHA ($URL). Fix it and merge before publishing."
-            exit 1
-          fi
-          echo "CI succeeded on $GITHUB_SHA ($URL)."
+          python .github/scripts/ci_gate.py --sha "$GITHUB_SHA" < "$RUNS"
 
       - name: Build wheel + sdist
         run: |

@@ -153,6 +153,12 @@ crumb --version
   below. Bump to a new version — a tag is never re-used.
 - **"CI is still running" / "CI concluded failure"**: `publish` requires the `ci`
   workflow to have succeeded on the exact commit. Wait for it, or fix and merge.
+  The newest push, pull-request or manual run decides; the weekly scheduled run
+  re-tests an unchanged commit on a newer runner image, so a red one is shown as
+  a warning and does not block. **"No 'ci' run tested …"** or **"Could not
+  read the 'ci' runs"**: the gate fails closed. Run `ci` on `main` (*Actions →
+  ci → Run workflow*), wait for it to pass, and re-run the release. The rule is
+  `.github/scripts/ci_gate.py`.
 - **"Publish must run from main"**: you ran it from a feature branch. Merge to
   `main` and select `main` in the branch dropdown.
 

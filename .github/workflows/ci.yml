@@ -45,12 +45,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 is the documented floor (requires-python >=3.9); nothing proved it
-        # actually ran until CI exercised it. `requires-python`
+        # The documented floor (requires-python) must run here: nothing proved it
+        # actually ran until CI exercised it. The list matches the pyproject
+        # classifiers (tests/test_release_process.py). `requires-python`
         # has no upper bound, so the newest releases are exercised too — 3.10 used
         # to be covered only by the `mcp` job below, which does not run the fixture
         # or packaging checks.
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -215,7 +216,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.10 is the SDK's floor (hence the extra's marker). The ceiling used to
+        # 3.10 is the SDK's floor and the package's. The ceiling used to
         # be 3.12 while the `test` matrix already ran to 3.14 and both SDK majors
         # declare 3.13/3.14 support — so the extra was untested on two Pythons it
         # installs on — the mirror image of the gap already closed for `test`.
@@ -396,7 +397,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-        python-version: ["3.9", "3.13"]
+        python-version: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -438,7 +439,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-        python-version: ["3.9", "3.13"]
+        python-version: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
