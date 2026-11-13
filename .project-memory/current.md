@@ -3,9 +3,13 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
+0.6.2 is released. docs/reviews/2026-11-13-system-review.md is a full review of what is broken and what to improve; nothing in it is fixed yet. CI on main is red, which blocks the next publish.
 
 ## Recently Changed
+### 2026-11-13 · `b8c6066`
+2026-11-13: system review written (docs/reviews/2026-11-13-system-review.md); no product code changed
+
+### Earlier, as written
 - 2083046 Plan fixes for the DoWhat field report on 0.4.0
 - 295c6db Merge pull request #55 from jr-mccoy/claude/new-session-9f1k6i
 - cb327eb Release checklist: reference hashes for the 0.4.0 artifacts

@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "9e2a71e04014",
+ "inputs_hash": "16901c016467",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -346,6 +346,11 @@
    "trap_a-hook-test-payload-without-cwd-fires-the-hook",
    "dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input",
    "trap_a-hand-written-version-literal-in-prose-drifts-silently"
+  ],
+  "trap_crumb-rename-deletes-the-record": [
+   "trap_a-hand-written-version-literal-in-prose-drifts-silently",
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
+   "trap_a-record-s-remedy-fields-are-mined-for-file-paths"
   ],
   "trap_eval-baseline-after-retrieval-change": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",

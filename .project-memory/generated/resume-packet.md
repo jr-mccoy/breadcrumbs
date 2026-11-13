@@ -1,18 +1,18 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 5615583 | inputs_hash: 9e2a71e04014 | generated_at: 2026-10-14T00:04:52+00:00 -->
-<!-- view: markdown | budget: 2789/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: b8c6066 | inputs_hash: 16901c016467 | generated_at: 2026-11-13T05:05:31+00:00 -->
+<!-- view: markdown | budget: 2991/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-5278a3e4-sawnn8` · commit `5615583` · 3 uncommitted file(s) · handoff: handoffs/ccr-5278a3e4-sawnn8.md
+branch `ccr-5a263b6c-3gtzxn` · commit `b8c6066` · 8 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
 
 ## Current Focus
-0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
+0.6.2 is released. docs/reviews/2026-11-13-system-review.md is a full review of what is broken and what to improve; nothing in it is fixed yet. CI on main is red, which blocks the next publish.
 
 ## Next Action
-Operator reviews docs/v2-design.md (autonomous curator redesign) and answers its open questions (section 14); then start phase P0: gold set and autonomy/repeat-failure eval harness with v1 baseline numbers.
+Work docs/reviews/2026-11-13-system-review.md in the order of its section 6. First: pin the ci.yml test job's Python 3.9 leg to ubuntu-24.04 (ubuntu-latest is 26.04 and has no 3.9; scheduled CI red since 2026-11-02, so mode publish is refused), or decide to drop 3.9. Second: fix crumb rename (it deletes the record; trap_crumb-rename-deletes-the-record), the journal-discard window in mutations.py and prune sessions ordering. Third: cap the SessionStart packet at 10,000 characters and resolve the store root from CLAUDE_PROJECT_DIR or by walking up from cwd.
 
 ## Active Decisions
 - `dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached` — At a stable HEAD a full firing now starts 0 processes, including on a shallow blob-filtered clone; after HEAD moves at most 2 (rev-list, ls-tree), neither needing a blob.
@@ -41,6 +41,7 @@ _(none recorded)_
 - trap_a-hook-test-payload-without-cwd-fires-the-hook: A hook test payload without cwd fires the hook at the repository the suite runs in
 - trap_a-record-s-remedy-fields-are-mined-for-file-paths: A record's remedy fields are mined for file paths and become its blast radius
 - trap_a-test-that-runs-resume-or-reindex-on-a-checked-in-fixture: A test that runs resume or reindex on a checked-in fixture rewrites it
+- trap_crumb-rename-deletes-the-record: crumb rename deletes the record it renames
 - trap_eval-baseline-after-retrieval-change: A retrieval change fails the evals CI job and test_evals until the baseline is rewritten
 - trap_guard-exit-code-in-ci: A CI step that calls crumb guard dies on guard's own verdict exit code
 - trap_hand-tagged-releases: Never create a git tag or GitHub Release by hand
@@ -107,4 +108,5 @@ _(… 11 more omitted to stay within the per-section cap)_
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
-- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 60 days — did this ever get resolved?
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 90 days — did this ever get resolved?
+- open question "Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?" has been open 42 days — did this ever get resolved?
