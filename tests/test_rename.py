@@ -47,6 +47,82 @@ class Case(unittest.TestCase):
         self._tmp.cleanup()
 
 
+class RenameWrittenRecordTests(Case):
+    """Records written by crumb itself, not by hand (review 2026-11-13, §1.2).
+
+    `RenameTests` builds its record by hand with no `slug:` key. Every record
+    crumb writes has one, and the rename left it pointing at the old name, so
+    the validate gate refused every real rename — after the old file had been
+    unlinked outside the journal. The command said "nothing was changed" and
+    the record was gone.
+    """
+
+    def _ids(self, rtype: str) -> list[str]:
+        return sorted(r.meta["id"] for r in crumb.load_records(self.mem, types=(rtype,)))
+
+    def _assert_valid(self):
+        fails = [f for f in crumb.run_validate(self.mem) if f["status"] == "fail"]
+        self.assertEqual(fails, [])
+
+    def test_a_remembered_decision_is_renamed(self):
+        code, _ = run(
+            [
+                "remember", "decision", "--project", str(self.root),
+                "--title", "Use Postgres for storage",
+                "--set", "Decision", "pg", "--confidence", "low",
+            ]
+        )  # fmt: skip
+        self.assertEqual(code, 0)
+        (old_id,) = self._ids("decision")
+        old_path = crumb.find_record_by_id(self.mem, old_id).path
+
+        code, out = run(["rename", old_id, "--slug", "pg", "--project", str(self.root), "--json"])
+        self.assertEqual(code, 0, out)
+        (new_id,) = self._ids("decision")
+        self.assertTrue(new_id.endswith("_pg"), new_id)
+        self.assertFalse(old_path.exists())
+        rec = crumb.find_record_by_id(self.mem, new_id)
+        self.assertEqual(rec.meta["slug"], "pg")
+        self.assertIn(old_id, rec.meta["formerly"])
+        self.assertEqual(crumb.find_record_by_id(self.mem, old_id).path, rec.path)
+        self._assert_valid()
+
+    def test_a_noted_trap_is_renamed(self):
+        code, _ = run(
+            ["note", "trap", "Never force push to main", "--why", "w", "--project", str(self.root)]
+        )
+        self.assertEqual(code, 0)
+        (old_id,) = self._ids("trap")
+        code, out = run(["rename", old_id, "--slug", "no-force", "--project", str(self.root)])
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self._ids("trap"), ["trap_no-force"])
+        self._assert_valid()
+
+    def test_a_refused_rename_leaves_the_record_in_place(self):
+        """If the renamed record fails validation, the original is still there."""
+        from unittest import mock
+
+        from breadcrumbs import mutations
+
+        run(
+            [
+                "remember", "decision", "--project", str(self.root),
+                "--title", "Use Postgres for storage",
+                "--set", "Decision", "pg", "--confidence", "low",
+            ]
+        )  # fmt: skip
+        (old_id,) = self._ids("decision")
+        old_path = crumb.find_record_by_id(self.mem, old_id).path
+        before = old_path.read_bytes()
+        synthetic = [{"message": "synthetic validation failure"}]
+        with mock.patch.object(_cli, "_validate_new_file", return_value=synthetic):
+            code, _ = run(["rename", old_id, "--slug", "pg", "--project", str(self.root)])
+        self.assertEqual(code, 1)
+        self.assertEqual(old_path.read_bytes(), before)
+        self.assertEqual(self._ids("decision"), [old_id])
+        self.assertEqual(mutations.pending_operations(self.mem), [])
+
+
 class RenameTests(Case):
     def _long_record(self) -> tuple[str, Path]:
         stem = "2026-05-01-" + "-".join(["very-long-name"] * 13)

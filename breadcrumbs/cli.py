@@ -5407,7 +5407,9 @@ def prune_sessions(
     """
     keep = max(1, keep)
     recs = [r for r in load_records(memory_dir, types=("session",)) if not r.error]
-    recs.sort(key=lambda r: r.path.name, reverse=True)
+    # Newest by when each record last described the work, the order the
+    # Stop hook reads. Not by file name: within a day that sorts by title.
+    recs.sort(key=_session_written_key, reverse=True)
     candidates = [r for r in recs[keep:] if _is_placeholder(r.sections.get("Next Action") or "")]
     deleted = []
     for r in candidates:
@@ -9462,15 +9464,28 @@ def cmd_recover(args: argparse.Namespace) -> int:
             summary={"operations": len(ops), "unresolved": len(unresolved)},
         )
         return 1 if unresolved else 0
+    debris = report.get("debris", 0)
+    if debris:
+        what = "removed" if args.apply else "found (`--apply` removes them)"
+        print(f"recover: {debris} empty journal director(ies) left by an interrupted write {what}.")
     if not ops:
         print("recover: no unfinished operations.")
         return 0
-    verb = "rolled back" if args.apply else "unfinished"
-    print(f"recover: {len(ops)} {verb} operation(s)\n")
+    finished = sum(1 for o in ops if o.get("finished"))
+    parts = []
+    if len(ops) - finished:
+        verb = "rolled back" if args.apply else "unfinished"
+        parts.append(f"{len(ops) - finished} {verb} operation(s)")
+    if finished:
+        removed = ", journal removed" if args.apply else ""
+        parts.append(f"{finished} finished operation(s) whose journal was left behind{removed}")
+    print(f"recover: {'; '.join(parts)}\n")
     for op in ops:
         print(f"  {op['id']} ({op['kind']})")
         for f in op["files"]:
             print(f"    {f['action']:9} {f['path']}")
+        if op.get("finished"):
+            print("    the operation had completed; its files are left as they are")
         for kept in op.get("kept", []):
             print(f"    kept a copy of a removed file: {kept}")
         if op.get("conflicts"):

@@ -68,7 +68,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `audit` | all memory + adapters | health report | Find stale / unsafe / bloated memory (incl. secret + instruction-like heuristics). Heuristic — does NOT gate `validate`. | **6 (built)** |
 | `scan-secrets` | committed memory | secret report | Scan committed memory for secret-like strings; non-zero on a hit. Run before committing memory. | **6 (built)** |
 | `mark-status <id> <status>` | one record, **one trap, or one open question** | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. A `trap_<slug>` or `q_<slug>` id (legacy `q:<slug>` accepted) resolves too. At schema 3 each is its own file, so its frontmatter `status` is edited like any record's; on a schema-2 store — or for a block somebody typed into a singleton since the last reindex — the block's `- Status:` bullet is edited in place (every other byte preserved). Retiring a trap drops it from the resume packet and the hook pre-filter and stops it driving a `guard` verdict; answering a question drops it from the packet, from `guard`'s open-blocker floor and from the aged-unresolved staleness warning. Both stay findable in `search` under their real status. Questions carry their own vocabulary (`open`/`answered`/`closed`) because the record words do not fit — the id decides which vocabulary applies, and a mismatch is rejected by name. A block with no `- Status:` bullet counts as `active` (trap) / `open` (question). Marking a promoted decision, attempt or trap `superseded`, `stale`, `rejected`, `disputed` or `quarantined` also demotes it (see `promote` and `demote`); the output adds `also demoted: …` and `--json` a `demoted` object. | **built** |
-| `prune sessions` | `sessions/` | deletions + reindex | Delete old **machine** session snapshots (placeholder Next Action) beyond the newest `--keep N` (default 20). Human handoffs are never candidates; `--dry-run` lists. The Stop hook creates snapshots eagerly (an interrupted session is a handoff worth keeping) — retention is this separate, explicit act. | **built** |
+| `prune sessions` | `sessions/` | deletions + reindex | Delete old **machine** session snapshots (placeholder Next Action) beyond the newest `--keep N` (default 20), newest by when each record last described the work (a Stop-hook snapshot's `updated_at`, else `created_at`), not by file name. Human handoffs are never candidates; `--dry-run` lists. The Stop hook creates snapshots eagerly (an interrupted session is a handoff worth keeping) — retention is this separate, explicit act. | **built** |
 | `rollup sessions --before YYYY-MM-DD` | `sessions/` | one session record, deletions + reindex | Fold the machine snapshots created before the date (at least two) into one session record that supersedes them, then delete them. Human/agent sessions are never touched; `--dry-run` lists. See `rollup sessions` below. | **built (WM-35)** |
 | `prune jots` | `inbox/`, `private/inbox/` | deletions + reindex | Delete jots that are expired or retired **and** older than 30 days. An active, unexpired jot is never deleted however old the store is: it is still waiting for somebody to promote or drop it. `--dry-run` lists. | **built (WM-03)** |
 | `prune handoffs` | `handoffs/`, local and `origin` branches | deletions + reindex | Delete branch handoffs whose branch exists neither locally nor on `origin` **and** whose `_Last updated_` is at least 30 days old. `--dry-run` lists. See [Branch handoffs](#branch-handoffs-built-wm-50). | **built (WM-50)** |
@@ -1463,12 +1463,21 @@ completely, or it has not happened at all.
   - `crumb recover --apply` rolls them back. A file is restored only if it
     still holds its before-image or a state the operation wrote. One changed by
     anybody since is a `conflict`: it is left alone, and the journal stays.
+  - A finished operation's journal is removed `manifest.json` first, so a
+    writer killed while removing it leaves either nothing `recover` lists or
+    a journal whose before-images are gone. `recover` reports the latter as
+    `finished` and `--apply` removes it without touching any file: the
+    operation had completed. Before this, `--apply` rolled back half of such
+    an operation (review 2026-11-13, §2.5).
+  - A journal directory with no manifest, left by a death before an
+    operation's first manifest or after its removal, is counted as `debris`
+    and removed by `--apply`.
   - A file the operation created and the rollback removes is copied to
     `private/recovered/<id>/` first, so rolling back never erases what was
     written.
   - `--json` returns `{operations: [{id, kind, files: [{path, action}],
-    rolled_back?, conflicts?, kept?}], applied}`. Exit 1 while any operation
-    remains unfinished.
+    rolled_back?, finished?, conflicts?, kept?}], applied, debris}`. Exit 1
+    while any operation remains unfinished.
 - **A rewrite checks its revision.** A rewrite of a record (a status change, a
   retitle, a trap confirmation, a promotion's fields) refuses when the file no
   longer holds the text the writer read. The error says the file "changed since
