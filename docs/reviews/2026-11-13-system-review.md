@@ -606,8 +606,10 @@ Action is stranded.** On any branch but the default, `capture session` writes
 `handoffs/<branch>.md`, and nothing carries it forward on merge. In a
 pull-request workflow no session ever runs on `main`, so `handoff.md` changes
 only when someone edits it by hand (the 0.6.1 release commit did: "reconcile
-handoff.md"). The store holds eleven branch handoffs; ten belong to branches
-that no longer exist.
+handoff.md"). The store holds eleven branch handoffs. Ten are from earlier
+sessions whose recorded commit is already in `main`. Their branches were
+never deleted (the remote has 48), so `crumb prune handoffs`, which waits for
+the branch to be gone, never removes them either.
 
 This session shows it. Its capture set a new Current Focus and a Next Action.
 In a clone of the result, on a fresh branch, as the next session will be:
