@@ -1,20 +1,24 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: b8c6066 | inputs_hash: 16901c016467 | generated_at: 2026-11-13T05:05:31+00:00 -->
-<!-- view: markdown | budget: 2991/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 52d3bfe | inputs_hash: 777a75dc68bd | generated_at: 2026-11-13T14:04:41+00:00 -->
+<!-- view: markdown | budget: 3044/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-5a263b6c-3gtzxn` · commit `b8c6066` · 8 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
+branch `ccr-5a263b6c-3gtzxn` · commit `52d3bfe` · 13 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
 
 ## Current Focus
-0.6.2 is released. docs/reviews/2026-11-13-system-review.md is a full review of what is broken and what to improve; nothing in it is fixed yet. CI on main is red, which blocks the next publish.
+Review items 1 and 2 are done on ccr-5a263b6c-3gtzxn: Python floor is 3.10, the release CI gate fails closed, and rename / recover / prune sessions no longer lose records. Not yet merged or released; the next release is 0.7.0.
 
 ## Next Action
-Work docs/reviews/2026-11-13-system-review.md in the order of its section 6. First: pin the ci.yml test job's Python 3.9 leg to ubuntu-24.04 (ubuntu-latest is 26.04 and has no 3.9; scheduled CI red since 2026-11-02, so mode publish is refused), or decide to drop 3.9. Second: fix crumb rename (it deletes the record; trap_crumb-rename-deletes-the-record), the journal-discard window in mutations.py and prune sessions ordering. Third: cap the SessionStart packet at 10,000 characters and resolve the store root from CLAUDE_PROJECT_DIR or by walking up from cwd.
+Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there (the 3.9 legs are gone). Then release 0.7.0: bump __version__, date the [Unreleased] CHANGELOG section as 0.7.0, add the docs/compatibility.md section 3 row, dry-run, publish. After that, item 3 of docs/reviews/2026-11-13-system-review.md section 6: cap the SessionStart packet at 10,000 characters and resolve the store root from CLAUDE_PROJECT_DIR or by walking up from cwd.
+
+_(1 earlier entry in handoffs/ccr-5a263b6c-3gtzxn.md)_
 
 ## Active Decisions
+- `dec_20261113_the-release-ci-gate-fails-closed-and-ignores-scheduled-runs` — The shell gate published with a warning when it could not read CI, and it read the newest run of any kind, so a weekly scheduled run on a newer runner image made the green commit 4606001 unpublishable. A scheduled run measures runner drift, not the commit; the release job runs the suite and the crit… [excerpt: 300 of 318 chars; full text: crumb show dec_20261113_the-release-ci-gate-fails-closed-and-ignores-scheduled-runs]
+- `dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped` — 3.9 reached end of life in October 2025 and ubuntu-latest (Ubuntu 26.04) no longer provides it, which turned CI on main red from 2026-11-02 and blocked publishing. The operator chose dropping it over pinning the runner. Dropping a Python version is breaking, so it ships in a minor release (0.7.0).
 - `dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached` — At a stable HEAD a full firing now starts 0 processes, including on a shallow blob-filtered clone; after HEAD moves at most 2 (rev-list, ls-tree), neither needing a blob.
 - `dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about` — Stance is what interrupts a human; ranking and labels are what find memory. Applying the rule to lookups changed crumb search's wire output (parity fixture) and, with the weight removed too, lost the service eval's logout/cookie attempt from the prompt hook.
 - `dec_20261003_code-moves-out-of-cli-py-by-mechanical-ast-move-into` — A mechanical move behind the parity fixture, the evals and the full suite cannot change behaviour. A patch on cli no longer reaches a moved function's callers, so tests patch the owning module; tests/test_extracted_modules.py enforces the contract.
@@ -28,9 +32,7 @@ Work docs/reviews/2026-11-13-system-review.md in the order of its section 6. Fir
 - `dec_20261002_a-store-names-its-oldest-allowed-writer-with-min-crumb` — DoWhat retest of 0.5.0, item 14, operator decision D14: a 0.4.x capture session replaced the Next Action log 0.5.0 keeps; the requires: bridge is the only way to stop builds that predate the field.
 - `dec_20261002_the-guard-pre-filter-is-machine-local-in-index-compact` — DoWhat retest of 0.5.0, items 8-9, operator decision D8: the hook only trusts a copy this machine's generation manifest vouches for, so a committed copy bought nothing and was a 33,000-line diff that conflicted on merges.
 - `dec_20261001_guard-reads-shell-commands-by-segment-and-effect` — Field report issues 7/8/N4: 23 of 23 firings warned, and find | xargs rm -rf was capped as read-only. Operator decision D3 (built-in floor).
-- `dec_20261001_capture-session-next-adds-a-dated-entry-only-replace` — Field report 2026-10-01 issue 1: a one-line --next destroyed a 139-line hand-kept log with no copy. Operator decision D1 (append unless --replace); D1b: no requires: flag.
-- `dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand` — Keeps per-push cost low while main and a weekly run still see platform regressions; run it by hand on a branch before merging platform-sensitive changes.
-_(… 47 more omitted to stay within the per-section cap)_
+_(… 49 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -41,7 +43,6 @@ _(none recorded)_
 - trap_a-hook-test-payload-without-cwd-fires-the-hook: A hook test payload without cwd fires the hook at the repository the suite runs in
 - trap_a-record-s-remedy-fields-are-mined-for-file-paths: A record's remedy fields are mined for file paths and become its blast radius
 - trap_a-test-that-runs-resume-or-reindex-on-a-checked-in-fixture: A test that runs resume or reindex on a checked-in fixture rewrites it
-- trap_crumb-rename-deletes-the-record: crumb rename deletes the record it renames
 - trap_eval-baseline-after-retrieval-change: A retrieval change fails the evals CI job and test_evals until the baseline is rewritten
 - trap_guard-exit-code-in-ci: A CI step that calls crumb guard dies on guard's own verdict exit code
 - trap_hand-tagged-releases: Never create a git tag or GitHub Release by hand
@@ -53,6 +54,10 @@ _(none recorded)_
 - Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?
 
 ## Likely Relevant Files
+- .github/scripts/ci_gate.py
+- .github/workflows/release.yml
+- pyproject.toml
+- .github/workflows/ci.yml
 - breadcrumbs/cli.py
 - breadcrumbs/hooks_guard.py
 - tests/test_retest_060.py
@@ -69,14 +74,13 @@ _(none recorded)_
 - tests/test_git.py
 - breadcrumbs/hooks_common.py
 - breadcrumbs/hooks_compact.py
-- breadcrumbs/gitrefs.py
-- breadcrumbs/compat.py
-- breadcrumbs/migrate.py
-- docs/reviews/2026-10-02-dowhat-retest-plan.md
-_(… 52 more omitted to stay within the per-section cap)_
+_(… 54 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
+- `ver_20261113_prune-sessions-keep-keeps-the-newest-sessions-not-the-last` — prune sessions --keep keeps the newest sessions, not the last by file name: **fixed** · test
+- `ver_20261113_crumb-rename-deletes-the-record-it-renames-fixed` — crumb rename deletes the record it renames: **fixed** · test
+- `ver_20261113_crumb-recover-apply-no-longer-undoes-half-of-a-finished` — crumb recover --apply no longer undoes half of a finished operation: **fixed** · test
 - `ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci` — CI mcp job fails: stale pinned tool/resource counts in ci.yml: **fixed** · test
 - `ver_20260923_relevance-evals-hold-the-committed-baseline-prompt-p-5-0-66` — Relevance evals hold the committed baseline (prompt P@5 0.66, R@5 0.87, 1 reject hit): **fixed**
 - `ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52` — Phase 5 of the working-memory roadmap (WM-50 to WM-52) is implemented and green: **fixed** · test
@@ -85,12 +89,10 @@ _(… 52 more omitted to stay within the per-section cap)_
 - `ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25` — Phase 2 of the working-memory roadmap (WM-20 to WM-25) is implemented and green: **fixed** · test
 - `ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16` — Phase 1 of the working-memory roadmap (WM-10 to WM-16: capture hooks and the transcript miner): **fixed** · test
 - `ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02` — Phase 0 of the working-memory roadmap (WM-01 migration, WM-02 usage, WM-03 inbox): **fixed** · test
-- `ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re` — the 16 findings of the 0.1.11 crumb-kit field review, re-checked against 0.1.12: **fixed** · static
-- `ver_20260903_resume-s-possible-drift-line-fires-on-incidental-two-word` — resume's possible-drift line fires on incidental two-word overlap and version fragments: **fixed** · test
-- `ver_20260818_readme-status-blurb-no-longer-hard-codes-a-package-version` — README Status blurb no longer hard-codes a package version: **fixed** · static
-_(… 8 more omitted to stay within the per-section cap)_
+_(… 11 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
+- tests/test_release_process.py
 - tests/test_hooks.py::StopLifecycleTests
 - tests/test_multi_machine.py::ResumeLeavesAFreshPacketTests
 - tests/test_hooks.py::HookCaptureTests::test_committing_the_snapshot_is_not_new_work
@@ -102,8 +104,7 @@ _(… 8 more omitted to stay within the per-section cap)_
 - python -m unittest tests.test_blockfiles
 - python -m unittest tests.test_transcript
 - python -m unittest tests.test_hooks_phase1
-- python -m unittest tests.test_usage
-_(… 11 more omitted to stay within the per-section cap)_
+_(… 12 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_

@@ -3,9 +3,12 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-0.6.2 is released. docs/reviews/2026-11-13-system-review.md is a full review of what is broken and what to improve; nothing in it is fixed yet. CI on main is red, which blocks the next publish.
+Review items 1 and 2 are done on ccr-5a263b6c-3gtzxn: Python floor is 3.10, the release CI gate fails closed, and rename / recover / prune sessions no longer lose records. Not yet merged or released; the next release is 0.7.0.
 
 ## Recently Changed
+### 2026-11-13 · `52d3bfe`
+2026-11-13: dropped Python 3.9; ci_gate.py fails closed; fixed crumb rename, the recover journal window and prune sessions ordering
+
 ### 2026-11-13 · `b8c6066`
 2026-11-13: system review written (docs/reviews/2026-11-13-system-review.md); no product code changed
 

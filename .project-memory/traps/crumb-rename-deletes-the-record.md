@@ -3,9 +3,9 @@ id: trap_crumb-rename-deletes-the-record
 type: trap
 slug: crumb-rename-deletes-the-record
 title: crumb rename deletes the record it renames
-status: active
+status: stale
 created_at: 2026-11-13T05:05:30+00:00
-updated_at: 2026-11-13T05:05:30+00:00
+updated_at: 2026-11-13T14:04:30+00:00
 created_by: unknown
 agent: claude-code
 project: breadcrumbs
@@ -40,3 +40,5 @@ Do not run crumb rename until rename.py sets the slug and deletes through mutati
 
 ## Verification
 python -m unittest tests.test_rename # after adding a test that renames a record created by crumb remember
+
+<!-- status: active -> stale (Fixed on ccr-5a263b6c-3gtzxn (0c06773): the slug follows the file name and the delete is journaled; see the matching verification.) by claude-code at 2026-11-13T14:04:30+00:00 -->

@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "16901c016467",
+ "inputs_hash": "777a75dc68bd",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -25,7 +25,7 @@
   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer"
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped"
   ],
   "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author": [
    "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction",
@@ -238,9 +238,9 @@
    "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
   ],
   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand": [
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped",
    "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
-   "trap_guard-exit-code-in-ci",
-   "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed"
+   "trap_guard-exit-code-in-ci"
   ],
   "dec_20261001_capture-session-next-adds-a-dated-entry-only-replace": [
    "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
@@ -312,6 +312,16 @@
    "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
   ],
+  "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped": [
+   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand",
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
+  ],
+  "dec_20261113_the-release-ci-gate-fails-closed-and-ignores-scheduled-runs": [
+   "trap_hand-tagged-releases",
+   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped"
+  ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
@@ -347,11 +357,6 @@
    "dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input",
    "trap_a-hand-written-version-literal-in-prose-drifts-silently"
   ],
-  "trap_crumb-rename-deletes-the-record": [
-   "trap_a-hand-written-version-literal-in-prose-drifts-silently",
-   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "trap_a-record-s-remedy-fields-are-mined-for-file-paths"
-  ],
   "trap_eval-baseline-after-retrieval-change": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
    "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
@@ -359,13 +364,13 @@
   ],
   "trap_guard-exit-code-in-ci": [
    "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed",
-   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand",
-   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci"
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped",
+   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand"
   ],
   "trap_hand-tagged-releases": [
+   "dec_20261113_the-release-ci-gate-fails-closed-and-ignores-scheduled-runs",
    "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
-   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
-   "trap_a-hand-written-version-literal-in-prose-drifts-silently"
+   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer"
   ],
   "trap_linux-cannot-show-a-windows-path-separator-bug": [
    "dec_20260928_store-relative-paths-are-posix-and-line-endings",
@@ -473,9 +478,24 @@
    "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record"
   ],
   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci": [
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped",
    "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand",
-   "trap_guard-exit-code-in-ci",
-   "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed"
+   "trap_guard-exit-code-in-ci"
+  ],
+  "ver_20261113_crumb-recover-apply-no-longer-undoes-half-of-a-finished": [
+   "ver_20261113_crumb-rename-deletes-the-record-it-renames-fixed",
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
+   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest"
+  ],
+  "ver_20261113_crumb-rename-deletes-the-record-it-renames-fixed": [
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
+   "ver_20261113_crumb-recover-apply-no-longer-undoes-half-of-a-finished",
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+  ],
+  "ver_20261113_prune-sessions-keep-keeps-the-newest-sessions-not-the-last": [
+   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new",
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path",
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
   ]
  },
  "skipped": null
