@@ -6,6 +6,57 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
+## [Unreleased]
+
+Fixes for the first two items of the 2026-11-13 system review
+(`docs/reviews/2026-11-13-system-review.md` §6): CI and releases were blocked,
+and three commands could lose records. Dropping Python 3.9 is a breaking
+change, so the next release is a minor one (0.7.0). `schema_version` (4) and
+`requires` are unchanged.
+
+### Removed
+
+- **Python 3.9 is no longer supported**; the floor is 3.10
+  (`requires-python`, the classifiers, the CI matrices). 3.9 reached end of
+  life in October 2025, and the `ubuntu-latest` runner (Ubuntu 26.04) no longer
+  provides it, which had turned every CI run red since 2026-11-02 and so
+  blocked `mode: publish`. pip on 3.9 keeps resolving to 0.6.2. The `[mcp]`
+  extra drops its `python_version >= '3.10'` marker, which the floor now
+  implies, and the install hint stops explaining it. The CI matrix test now
+  reads the supported list from the classifiers, so the two cannot drift.
+
+### Fixed
+
+- **`crumb rename` deleted the record it renamed.** The rewritten record kept
+  its old `slug:`, so the validate gate refused every record crumb had written
+  (the test used a hand-written one without the key), and the old file had
+  been unlinked outside the journal, so the rollback could not restore it. The
+  command printed "nothing was changed" and `crumb recover` found nothing. The
+  slug now follows the file name, and the old file is deleted through the
+  journal.
+- **`crumb recover --apply` could undo half of a finished operation.** A
+  finished operation's journal was removed with one `rmtree`, which could
+  delete the before-images while `manifest.json` survived. A writer killed in
+  that window left a journal that `recover` rolled back: it removed the new
+  record and could not restore the old one, leaving a `superseded_by` that
+  named nothing (`remember --supersedes`, `consolidate --merge`,
+  `inbox promote`, `promote`, `handoff trim`), or deleted sessions a `rollup` had
+  folded (three of five in the review's run). The manifest is now removed first, as the commit
+  point; `recover` reports a journal with missing before-images as `finished`
+  and removes it without touching a file; and `--apply` sweeps journal
+  directories with no manifest (`debris`).
+- **`crumb prune sessions --keep N` kept the wrong sessions.** It sorted by file
+  name, which within a day is by title, so it could delete the newest snapshots
+  and keep the oldest. It now orders by when each record last described the
+  work, the order the Stop hook reads.
+- **The release workflow's CI gate failed open and read the wrong run.** When
+  the API call failed or found no run it published with a warning, and it
+  read only the newest `ci` run of any kind, so a weekly scheduled run on a
+  newer runner image could make an already-green commit unpublishable. The
+  rule moved to `.github/scripts/ci_gate.py` (unit-tested like
+  `release_preflight.py`): it fails closed, and the newest push, pull-request
+  or manual run decides, with a later red scheduled run shown as a warning.
+
 ## [0.6.2] — 2026-10-03
 
 Windows fixes found by the full Windows CI job after 0.6.1. A patch release:

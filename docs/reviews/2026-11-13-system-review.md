@@ -275,10 +275,11 @@ Two related gaps:
   truncates a pattern, so `C# sample fixtures` becomes `C` and exempts any
   line containing a capital C. (audit)
 
-The scanner also blocks on ordinary prose such as
-`postgres://postgres:postgres@localhost:5432/app` and
-`private_key: config/keys/deploy_private.pem` (audit), and the only way past
-that is `.crumbignore`.
+The scanner also blocks on ordinary prose (audit): a local development
+database URL whose user and password are both `postgres`, pointing at
+`localhost` (not quoted here, because this repo's own test refuses
+credential-shaped URLs in its tree), and `private_key:
+config/keys/deploy_private.pem`. The only way past either is `.crumbignore`.
 
 **Fix.** Replace the leading `\b` with `(?<![A-Za-z0-9])` and allow an
 uppercase prefix; add `token`, `access_key` and the common prefixed tokens;
@@ -797,6 +798,11 @@ memory current when asked to. Specific points:
 ---
 
 ## 6. Suggested order
+
+**Status.** Items 1 and 2 are done on branch `ccr-5a263b6c-3gtzxn` (see
+`CHANGELOG.md`, `[Unreleased]`). For item 1 the operator chose to drop Python
+3.9 rather than pin the runner; the floor is now 3.10, which every runner
+image provides.
 
 1. **Unblock CI and releases:** pin the runner for the 3.9 leg (§1.1), make
    the gate fail closed and read the `push` run (§3.4 C1).
