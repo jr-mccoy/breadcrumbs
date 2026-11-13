@@ -332,6 +332,25 @@ The module's stated contract is "anything this cannot read is treated as
 capable of side effects". These cases go the other way. §5.3 argues for
 changing the approach, not adding fourteen more rules.
 
+**A trap about a `crumb` command cannot fire on that command.** After writing
+this review I recorded `trap_crumb-rename-deletes-the-record` (title "crumb
+rename deletes the record it renames", tag `rename`) so the next agent would
+be warned. Guard then gave:
+
+| Action | Verdict |
+|---|---|
+| `crumb rename dec_x --slug y` | PROCEED, "none above the noise floor" |
+| `python crumb.py rename dec_x --slug short` | PROCEED |
+| `rename a record with crumb rename` | READ_FIRST, cites the trap |
+| `edit breadcrumbs/rename.py` | READ_FIRST, cites the trap |
+
+Guard classifies crumb's own commands by effect and does not match their text
+against records. That was a deliberate fix for warnings on every
+`crumb remember`, and `CRUMB_WRITES` (`shellcmd.py:490`) lets a trap keyed to
+a store file fire on the command that writes it. A trap keyed to the
+subcommand itself has no route. Matching the subcommand name against a trap's
+tags and title tokens (exact token, not prose) would give it one.
+
 ### 2.5 `crumb recover --apply` can undo half of a finished operation (audit)
 
 `discard_journal` (`mutations.py:169-170`) is a plain `shutil.rmtree`, which
@@ -582,7 +601,35 @@ The store here is the longest-running real use of the tool:
 The packet does notice ("Landed Since The Handoff Was Written" lists the
 0.6.2 release), but it prints the stale focus above that note.
 
-v2's curator is the structural answer. Three cheaper steps help now:
+**Part of this is structural, not agent neglect: a merged branch's Next
+Action is stranded.** On any branch but the default, `capture session` writes
+`handoffs/<branch>.md`, and nothing carries it forward on merge. In a
+pull-request workflow no session ever runs on `main`, so `handoff.md` changes
+only when someone edits it by hand (the 0.6.1 release commit did: "reconcile
+handoff.md"). The store holds eleven branch handoffs; ten belong to branches
+that no longer exist.
+
+This session shows it. Its capture set a new Current Focus and a Next Action.
+In a clone of the result, on a fresh branch, as the next session will be:
+
+```text
+## Current Focus
+0.6.2 is released. docs/reviews/2026-11-13-system-review.md is a full review ...
+## Next Action
+Release 0.6.2 (Windows fixes from the native-full job ...
+```
+
+The focus arrives because `current.md` is shared. The Next Action is the old
+one from `handoff.md`; the new one sits in `handoffs/ccr-5a263b6c-3gtzxn.md`,
+which only this branch reads.
+
+**Fix.** When reading on any branch, also consider branch handoffs whose
+recorded commit is an ancestor of `HEAD` and that are newer than `handoff.md`,
+and show their Next Action entries labelled with the branch they came from.
+That needs no write on merge and no agent action.
+
+v2's curator is the structural answer to the rest. Three cheaper steps help
+now:
 
 - **Derive, do not store, what git already knows.** When the handoff's Next
   Action or Current Focus is older than the newest commits, lead with the
@@ -753,8 +800,9 @@ memory current when asked to. Specific points:
    the gate fail closed and read the `push` run (§3.4 C1).
 2. **Stop data loss:** `rename` (§1.2), the journal-discard window (§2.5),
    `prune sessions` ordering (§3.2 W1).
-3. **Make delivery reach the agent:** the character cap (§1.3) and one root
-   resolver (§1.4). Then install the hooks in this repo.
+3. **Make delivery reach the agent:** the character cap (§1.3), one root
+   resolver (§1.4), and merged branch handoffs (§5.2). Then install the hooks
+   in this repo.
 4. **Close the gate:** frontmatter separators (§2.1), `memory_note`
    supersede (§2.2), scanner patterns and file selection (§2.3), jot evidence
    (§2.6), invisible characters (§2.7).
