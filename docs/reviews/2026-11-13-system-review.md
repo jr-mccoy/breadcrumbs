@@ -799,10 +799,16 @@ memory current when asked to. Specific points:
 
 ## 6. Suggested order
 
-**Status.** Items 1 and 2 are done on branch `ccr-5a263b6c-3gtzxn` (see
+**Status.** Items 1 to 3 are done on branch `ccr-5a263b6c-3gtzxn` (see
 `CHANGELOG.md`, `[Unreleased]`). For item 1 the operator chose to drop Python
 3.9 rather than pin the runner; the floor is now 3.10, which every runner
-image provides.
+image provides. For item 3 the hooks are installed in this repository
+(`.claude/settings.json`). One limit remains: the installed launcher's last
+fallback, `python -m breadcrumbs`, imports this checkout's package only when
+the hook process starts at the repository root. With crumb-kit not installed,
+a hook process started in a subdirectory finds no `crumb` and prints `{}`.
+Installing crumb-kit (`pip install -e .`) or a `.venv` in the checkout avoids
+it.
 
 1. **Unblock CI and releases:** pin the runner for the 3.9 leg (§1.1), make
    the gate fail closed and read the `push` run (§3.4 C1).

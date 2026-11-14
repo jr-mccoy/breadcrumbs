@@ -1,0 +1,71 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "unset _crumb_in; command -v cat >/dev/null 2>&1 && _crumb_in=$(cat); _crumb_run() { if [ -n \"${_crumb_in+x}\" ]; then printf '%s' \"$_crumb_in\" | \"$@\"; else \"$@\"; fi; }; for c in crumb \"${CLAUDE_PROJECT_DIR:-.}/.venv/bin/crumb\" \".venv/bin/crumb\" \"${CLAUDE_PROJECT_DIR:-.}/.venv/Scripts/crumb.exe\" \".venv/Scripts/crumb.exe\"; do command -v \"$c\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$c\" hook session 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; for p in python3 python py; do command -v \"$p\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$p\" -m breadcrumbs hook session 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; printf '%s\\n' '{\"hookSpecificOutput\": {\"hookEventName\": \"SessionStart\", \"additionalContext\": \"Project memory (breadcrumbs) is INACTIVE this session: no working crumb CLI was found on PATH, in ./.venv, or via `python -m breadcrumbs` (missing, or too old for this hook), so no resume packet was loaded. Read .project-memory/generated/resume-packet.md directly if it exists; `pip install -U crumb-kit` restores automatic loading.\"}}'; exit 0",
+            "breadcrumbsHook": "session"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "unset _crumb_in; command -v cat >/dev/null 2>&1 && _crumb_in=$(cat); _crumb_run() { if [ -n \"${_crumb_in+x}\" ]; then printf '%s' \"$_crumb_in\" | \"$@\"; else \"$@\"; fi; }; for c in crumb \"${CLAUDE_PROJECT_DIR:-.}/.venv/bin/crumb\" \".venv/bin/crumb\" \"${CLAUDE_PROJECT_DIR:-.}/.venv/Scripts/crumb.exe\" \".venv/Scripts/crumb.exe\"; do command -v \"$c\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$c\" hook guard 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; for p in python3 python py; do command -v \"$p\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$p\" -m breadcrumbs hook guard 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; printf '%s\\n' '{}'; exit 0",
+            "breadcrumbsHook": "guard"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "unset _crumb_in; command -v cat >/dev/null 2>&1 && _crumb_in=$(cat); _crumb_run() { if [ -n \"${_crumb_in+x}\" ]; then printf '%s' \"$_crumb_in\" | \"$@\"; else \"$@\"; fi; }; for c in crumb \"${CLAUDE_PROJECT_DIR:-.}/.venv/bin/crumb\" \".venv/bin/crumb\" \"${CLAUDE_PROJECT_DIR:-.}/.venv/Scripts/crumb.exe\" \".venv/Scripts/crumb.exe\"; do command -v \"$c\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$c\" hook capture 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; for p in python3 python py; do command -v \"$p\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$p\" -m breadcrumbs hook capture 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; printf '%s\\n' '{}'; exit 0",
+            "breadcrumbsHook": "capture"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "unset _crumb_in; command -v cat >/dev/null 2>&1 && _crumb_in=$(cat); _crumb_run() { if [ -n \"${_crumb_in+x}\" ]; then printf '%s' \"$_crumb_in\" | \"$@\"; else \"$@\"; fi; }; for c in crumb \"${CLAUDE_PROJECT_DIR:-.}/.venv/bin/crumb\" \".venv/bin/crumb\" \"${CLAUDE_PROJECT_DIR:-.}/.venv/Scripts/crumb.exe\" \".venv/Scripts/crumb.exe\"; do command -v \"$c\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$c\" hook prompt 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; for p in python3 python py; do command -v \"$p\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$p\" -m breadcrumbs hook prompt 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; printf '%s\\n' '{}'; exit 0",
+            "breadcrumbsHook": "prompt"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "unset _crumb_in; command -v cat >/dev/null 2>&1 && _crumb_in=$(cat); _crumb_run() { if [ -n \"${_crumb_in+x}\" ]; then printf '%s' \"$_crumb_in\" | \"$@\"; else \"$@\"; fi; }; for c in crumb \"${CLAUDE_PROJECT_DIR:-.}/.venv/bin/crumb\" \".venv/bin/crumb\" \"${CLAUDE_PROJECT_DIR:-.}/.venv/Scripts/crumb.exe\" \".venv/Scripts/crumb.exe\"; do command -v \"$c\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$c\" hook compact 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; for p in python3 python py; do command -v \"$p\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$p\" -m breadcrumbs hook compact 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; printf '%s\\n' '{}'; exit 0",
+            "breadcrumbsHook": "compact"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "unset _crumb_in; command -v cat >/dev/null 2>&1 && _crumb_in=$(cat); _crumb_run() { if [ -n \"${_crumb_in+x}\" ]; then printf '%s' \"$_crumb_in\" | \"$@\"; else \"$@\"; fi; }; for c in crumb \"${CLAUDE_PROJECT_DIR:-.}/.venv/bin/crumb\" \".venv/bin/crumb\" \"${CLAUDE_PROJECT_DIR:-.}/.venv/Scripts/crumb.exe\" \".venv/Scripts/crumb.exe\"; do command -v \"$c\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$c\" hook subagent 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; for p in python3 python py; do command -v \"$p\" >/dev/null 2>&1 || continue; o=$(_crumb_run \"$p\" -m breadcrumbs hook subagent 2>/dev/null) && { printf '%s\\n' \"$o\"; exit 0; }; done; printf '%s\\n' '{}'; exit 0",
+            "breadcrumbsHook": "subagent"
+          }
+        ]
+      }
+    ]
+  }
+}
