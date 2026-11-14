@@ -8,10 +8,11 @@ prints both.
 
 ## [Unreleased]
 
-Fixes for the first four items of the 2026-11-13 system review
+Fixes for the first five items of the 2026-11-13 system review
 (`docs/reviews/2026-11-13-system-review.md` §6): CI and releases were blocked,
 three commands could lose records, memory did not reach the agent in three
-common situations, and the write gate let five things through. Dropping Python 3.9 is a breaking change, so the next
+common situations, the write gate let five things through, and guard misread
+ordinary shell commands. Dropping Python 3.9 is a breaking change, so the next
 release is a minor one (0.7.0). `schema_version` (4) and `requires` are
 unchanged.
 
@@ -60,6 +61,31 @@ unchanged.
 
 ### Fixed
 
+- **Guard misread ordinary shell commands** (review §2.4, §5.3).
+  - `<<<` and a quoted `<<` were taken for here-documents, so every later
+    line, `rm -rf src` included, was read as data.
+  - `cat /dev/null>file` (no space before `>`) was read-only.
+  - Commands that write were read-only: `sort -o`, `uniq in out`, `yq -i`,
+    `fd -x`/`-X`, `rg --pre`, `tree -o`, `xxd in out`, `date -s`,
+    `git reflog expire`, `git -c …`, `git diff --output=`, `find -fprint0`, a
+    sed label followed by `w`, an abbreviated `sed --in-pl`, and
+    `echo \'$(cmd)\'`, whose substitution runs.
+  - The always-ask list missed common spellings of what it names:
+    `sudo`/`env`/`timeout`/`nice`/`command` before the command,
+    `bash -c '…'`, `eval`, `$(…)`, a here-document a shell runs,
+    `xargs --max-args 1 rm -rf`, `--force-with-lease`, `refs/heads/main`,
+    `--delete main` and `:main`, `rm -rf build/../src`, `rm -rf /tmp`,
+    `rm -rf ~/reports`, a lowercase `$tmp`, and `crumb --project . migrate`.
+  - A Bash command starting `edit X: ` was read as a file edit and skipped
+    the always-ask list; the hook now says a shell command is one.
+  - A trap about a crumb subcommand (`crumb rename …`) now fires on that
+    command, however it is spelled.
+  - Property tests check that a wrapper, a second line, a leading
+    here-string or a missing space never makes a command look safer.
+- **With the search index built, guard missed an attempt naming the exact
+  command** (`make build --jobs 4`), because the index held no command
+  heads. It does now (search-index format 3; an older index is ignored
+  until `crumb reindex` rebuilds it).
 - **The SessionStart packet was longer than Claude Code shows.** Claude Code
   caps a hook's `additionalContext` at 10,000 characters and hands the model a
   2,000-character preview of anything longer; this repository's own packet was

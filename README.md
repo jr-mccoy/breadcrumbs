@@ -664,12 +664,18 @@ A read-only command never shows a record as `[objects]`. The guard hook shows
 an advisory record once per session, unless the action names that record's
 file or command; an objection and a high-impact action always speak.
 
-**A few actions always ask.** A force-push to `main`/`master`, `rm -rf`
-outside build and cache directories (or on piped input), and a real
-`crumb migrate` get `ASK_HUMAN` even when no record is about them, and say so
-("no project memory about it") instead of citing unrelated records. When
-records are cited, they are only the ones about the action itself: its file,
-the file it writes, its exact command, or a topical match.
+**A few actions always ask.** A force-push to, or a delete of, `main`,
+`master`, `trunk` or `develop` (`--force`, `-f`, `--force-with-lease`, `+ref`,
+`--delete`, `:ref`, with or without `refs/heads/`), `rm -rf` outside build and
+cache directories (a project-relative path with no `..`; absolute paths only
+under the system temp directory; or on piped input), and a real `crumb
+migrate` get `ASK_HUMAN` even when no record is about them, and say so ("no
+project memory about it") instead of citing unrelated records. They are read
+through wrappers and scripts: `sudo`, `env`, `timeout`, `nice`, `command`,
+`bash -c '…'`, `eval`, `$(…)` and a here-document a shell runs. This is a
+reminder, not a sandbox: a command built at run time from variables can still
+get past it. When records are cited, they are only the ones about the action
+itself: its file, the file it writes, its exact command, or a topical match.
 
 **A do-not-retry line has to be about this action.** It raises a match (and
 makes it `[objects]`) only when the record is topical: it names the file, the
