@@ -1,20 +1,20 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 973bbcb | inputs_hash: bd44d42c689b | generated_at: 2026-11-14T14:57:29+00:00 -->
-<!-- view: markdown | budget: 3203/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: e3f6036 | inputs_hash: bff747d86cae | generated_at: 2026-11-14T14:58:42+00:00 -->
+<!-- view: markdown | budget: 3190/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-5a263b6c-3gtzxn` · commit `973bbcb` · 11 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
+branch `ccr-5a263b6c-3gtzxn` · commit `e3f6036` · 7 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
 
 ## Current Focus
 Review items 1 to 3 are done on ccr-5a263b6c-3gtzxn and the Claude Code hooks are installed in this repo. Not yet merged or released; the next release is 0.7.0.
 
 ## Next Action
-Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there. Then release 0.7.0: bump __version__, date the [Unreleased] CHANGELOG section as 0.7.0, add the docs/compatibility.md section 3 row, dry-run, publish. Next review item is 4 (docs/reviews/2026-11-13-system-review.md section 6): close the gate (frontmatter line separators, memory_note supersede under propose, secret-scan patterns, jot evidence, invisible characters).
+Merge ccr-5a263b6c-3gtzxn (head after this capture) to main; confirm ci is green there; release 0.7.0 per CLAUDE.md. Then review item 4 (docs/reviews/2026-11-13-system-review.md section 6), and look at trap_miner-reads-hook-feedback-as-a-correction.
 
-_(2 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
+_(3 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
 
 ## Active Decisions
 - `dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd` — Payload cwd follows every cd, so hooks went silent in subdirectories and crumb init from src/ made a nested store. Stopping at .git keeps an enclosing repo's store out of submodules and nested repos. Payload cwd comes before CLAUDE_PROJECT_DIR because inside a linked worktree it is the worktree, who… [excerpt: 300 of 419 chars; full text: crumb show dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd]
@@ -47,6 +47,7 @@ _(none recorded)_
 - trap_guard-exit-code-in-ci: A CI step that calls crumb guard dies on guard's own verdict exit code
 - trap_hand-tagged-releases: Never create a git tag or GitHub Release by hand
 - trap_linux-cannot-show-a-windows-path-separator-bug: Linux cannot show a Windows path-separator bug
+- trap_miner-reads-hook-feedback-as-a-correction: The transcript miner files harness-injected Stop hook feedback as a user correction
 - trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
 
 ## Open Questions / Blockers

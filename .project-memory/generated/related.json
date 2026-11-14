@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "bd44d42c689b",
+ "inputs_hash": "bff747d86cae",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -128,9 +128,9 @@
    "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint"
   ],
   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only": [
+   "trap_miner-reads-hook-feedback-as-a-correction",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns"
+   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls"
   ],
   "dec_20260922_the-user-pre-approves-store-migrations-of-this-repo-s-own": [
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
@@ -391,6 +391,11 @@
    "dec_20260928_store-relative-paths-are-posix-and-line-endings",
    "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
    "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
+  ],
+  "trap_miner-reads-hook-feedback-as-a-correction": [
+   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
+   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
+   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest"
   ],
   "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field": [
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
