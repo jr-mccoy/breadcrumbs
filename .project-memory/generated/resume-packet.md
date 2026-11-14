@@ -1,22 +1,25 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 52d3bfe | inputs_hash: 777a75dc68bd | generated_at: 2026-11-13T14:04:41+00:00 -->
-<!-- view: markdown | budget: 3044/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 973bbcb | inputs_hash: bd44d42c689b | generated_at: 2026-11-14T14:57:29+00:00 -->
+<!-- view: markdown | budget: 3203/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-5a263b6c-3gtzxn` · commit `52d3bfe` · 13 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
+branch `ccr-5a263b6c-3gtzxn` · commit `973bbcb` · 11 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
 
 ## Current Focus
-Review items 1 and 2 are done on ccr-5a263b6c-3gtzxn: Python floor is 3.10, the release CI gate fails closed, and rename / recover / prune sessions no longer lose records. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 3 are done on ccr-5a263b6c-3gtzxn and the Claude Code hooks are installed in this repo. Not yet merged or released; the next release is 0.7.0.
 
 ## Next Action
-Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there (the 3.9 legs are gone). Then release 0.7.0: bump __version__, date the [Unreleased] CHANGELOG section as 0.7.0, add the docs/compatibility.md section 3 row, dry-run, publish. After that, item 3 of docs/reviews/2026-11-13-system-review.md section 6: cap the SessionStart packet at 10,000 characters and resolve the store root from CLAUDE_PROJECT_DIR or by walking up from cwd.
+Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there. Then release 0.7.0: bump __version__, date the [Unreleased] CHANGELOG section as 0.7.0, add the docs/compatibility.md section 3 row, dry-run, publish. Next review item is 4 (docs/reviews/2026-11-13-system-review.md section 6): close the gate (frontmatter line separators, memory_note supersede under propose, secret-scan patterns, jot evidence, invisible characters).
 
-_(1 earlier entry in handoffs/ccr-5a263b6c-3gtzxn.md)_
+_(2 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
 
 ## Active Decisions
+- `dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd` — Payload cwd follows every cd, so hooks went silent in subdirectories and crumb init from src/ made a nested store. Stopping at .git keeps an enclosing repo's store out of submodules and nested repos. Payload cwd comes before CLAUDE_PROJECT_DIR because inside a linked worktree it is the worktree, who… [excerpt: 300 of 419 chars; full text: crumb show dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd]
+- `dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action` — Branch handoffs are committed on their branch, so presence in the checkout is the merge; no ancestry check or git spawn is needed. Nothing carried a branch's Next Action forward on merge, so main's handoff.md was 40 days stale in a pull-request workflow. Emitting the key only when non-empty kept the… [excerpt: 300 of 343 chars; full text: crumb show dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action]
+- `dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap` — Claude Code caps additionalContext at 10,000 characters and shows only a 2,000-character preview of anything longer; this repo's packet was 12,317, so the model saw two decisions. Token budgets do not bound characters. Counting UTF-16 units matches a JavaScript host; 500 characters of headroom absor… [excerpt: 300 of 333 chars; full text: crumb show dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap]
 - `dec_20261113_the-release-ci-gate-fails-closed-and-ignores-scheduled-runs` — The shell gate published with a warning when it could not read CI, and it read the newest run of any kind, so a weekly scheduled run on a newer runner image made the green commit 4606001 unpublishable. A scheduled run measures runner drift, not the commit; the release job runs the suite and the crit… [excerpt: 300 of 318 chars; full text: crumb show dec_20261113_the-release-ci-gate-fails-closed-and-ignores-scheduled-runs]
 - `dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped` — 3.9 reached end of life in October 2025 and ubuntu-latest (Ubuntu 26.04) no longer provides it, which turned CI on main red from 2026-11-02 and blocked publishing. The operator chose dropping it over pinning the runner. Dropping a Python version is breaking, so it ships in a minor release (0.7.0).
 - `dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached` — At a stable HEAD a full firing now starts 0 processes, including on a shallow blob-filtered clone; after HEAD moves at most 2 (rev-list, ls-tree), neither needing a blob.
@@ -29,10 +32,7 @@ _(1 earlier entry in handoffs/ccr-5a263b6c-3gtzxn.md)_
 - `dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input` — inputs_hash equality is already the definition of fresh that validate gates on. The kept file stays internally consistent: its commit, ages and dirty count all describe the store as of its own generated_at.
 - `dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new` — The hook runs after the agent's last commit by construction, so any tracked file it writes is left uncommitted; the one-round cost is acceptable, an unbounded one is not. Reusing the commit counter's definition of work keeps one notion of 'this session's work' across the ask and the snapshot.
 - `dec_20261002_guard-speed-remove-git-processes-first-remeasure-on-windows` — DoWhat retest of 0.5.0, item 7, operator decision D7: p50 764 ms on Windows; 24 of 29 firings took the full path with 5 git spawns each.
-- `dec_20261002_a-store-names-its-oldest-allowed-writer-with-min-crumb` — DoWhat retest of 0.5.0, item 14, operator decision D14: a 0.4.x capture session replaced the Next Action log 0.5.0 keeps; the requires: bridge is the only way to stop builds that predate the field.
-- `dec_20261002_the-guard-pre-filter-is-machine-local-in-index-compact` — DoWhat retest of 0.5.0, items 8-9, operator decision D8: the hook only trusts a copy this machine's generation manifest vouches for, so a committed copy bought nothing and was a 33,000-line diff that conflicted on merges.
-- `dec_20261001_guard-reads-shell-commands-by-segment-and-effect` — Field report issues 7/8/N4: 23 of 23 firings warned, and find | xargs rm -rf was capped as read-only. Operator decision D3 (built-in floor).
-_(… 49 more omitted to stay within the per-section cap)_
+_(… 52 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -54,11 +54,14 @@ _(none recorded)_
 - Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?
 
 ## Likely Relevant Files
+- breadcrumbs/cli.py
+- breadcrumbs/handoffs.py
+- breadcrumbs/packet.py
+- breadcrumbs/hooks_common.py
 - .github/scripts/ci_gate.py
 - .github/workflows/release.yml
 - pyproject.toml
 - .github/workflows/ci.yml
-- breadcrumbs/cli.py
 - breadcrumbs/hooks_guard.py
 - tests/test_retest_060.py
 - breadcrumbs/scoring.py
@@ -71,10 +74,7 @@ _(none recorded)_
 - breadcrumbs/path_policy.py
 - breadcrumbs/validation.py
 - breadcrumbs/git.py
-- tests/test_git.py
-- breadcrumbs/hooks_common.py
-- breadcrumbs/hooks_compact.py
-_(… 54 more omitted to stay within the per-section cap)_
+_(… 55 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -92,6 +92,7 @@ _(… 54 more omitted to stay within the per-section cap)_
 _(… 11 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
+- tests/test_delivery_reach.py
 - tests/test_release_process.py
 - tests/test_hooks.py::StopLifecycleTests
 - tests/test_multi_machine.py::ResumeLeavesAFreshPacketTests
@@ -103,11 +104,10 @@ _(… 11 more omitted to stay within the per-section cap)_
 - python -m unittest tests.test_searchindex
 - python -m unittest tests.test_blockfiles
 - python -m unittest tests.test_transcript
-- python -m unittest tests.test_hooks_phase1
-_(… 12 more omitted to stay within the per-section cap)_
+_(… 13 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
-- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 90 days — did this ever get resolved?
-- open question "Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?" has been open 42 days — did this ever get resolved?
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 91 days — did this ever get resolved?
+- open question "Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?" has been open 43 days — did this ever get resolved?

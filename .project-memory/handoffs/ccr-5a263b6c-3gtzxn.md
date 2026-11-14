@@ -1,13 +1,16 @@
 # Project Handoff
 
-_Last updated: 2026-11-13T14:04:40+00:00_
+_Last updated: 2026-11-14T14:57:28+00:00_
 _Branch: ccr-5a263b6c-3gtzxn_
-_Commit: 52d3bfe_
+_Commit: 973bbcb_
 
 ## Current Focus
-Review items 1 and 2 are done on ccr-5a263b6c-3gtzxn: Python floor is 3.10, the release CI gate fails closed, and rename / recover / prune sessions no longer lose records. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 3 are done on ccr-5a263b6c-3gtzxn and the Claude Code hooks are installed in this repo. Not yet merged or released; the next release is 0.7.0.
 
 ## Next Action
+### 2026-11-14 · `973bbcb`
+Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there. Then release 0.7.0: bump __version__, date the [Unreleased] CHANGELOG section as 0.7.0, add the docs/compatibility.md section 3 row, dry-run, publish. Next review item is 4 (docs/reviews/2026-11-13-system-review.md section 6): close the gate (frontmatter line separators, memory_note supersede under propose, secret-scan patterns, jot evidence, invisible characters).
+
 ### 2026-11-13 · `52d3bfe`
 Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there (the 3.9 legs are gone). Then release 0.7.0: bump __version__, date the [Unreleased] CHANGELOG section as 0.7.0, add the docs/compatibility.md section 3 row, dry-run, publish. After that, item 3 of docs/reviews/2026-11-13-system-review.md section 6: cap the SessionStart packet at 10,000 characters and resolve the store root from CLAUDE_PROJECT_DIR or by walking up from cwd.
 

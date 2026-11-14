@@ -3,9 +3,12 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Review items 1 and 2 are done on ccr-5a263b6c-3gtzxn: Python floor is 3.10, the release CI gate fails closed, and rename / recover / prune sessions no longer lose records. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 3 are done on ccr-5a263b6c-3gtzxn and the Claude Code hooks are installed in this repo. Not yet merged or released; the next release is 0.7.0.
 
 ## Recently Changed
+### 2026-11-14 · `973bbcb`
+2026-11-14: SessionStart packet capped at 9,500 characters; root resolver walks up to the nearest store; merged branch handoffs shown; hooks installed in this repo
+
 ### 2026-11-13 · `52d3bfe`
 2026-11-13: dropped Python 3.9; ci_gate.py fails closed; fixed crumb rename, the recover journal window and prune sessions ordering
 

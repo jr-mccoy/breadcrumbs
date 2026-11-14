@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "777a75dc68bd",
+ "inputs_hash": "bd44d42c689b",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -104,8 +104,8 @@
   ],
   "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store": [
    "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+   "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
   ],
   "dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps": [
    "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim",
@@ -245,7 +245,7 @@
   "dec_20261001_capture-session-next-adds-a-dated-entry-only-replace": [
    "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
    "dec_20261002_a-store-names-its-oldest-allowed-writer-with-min-crumb",
-   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new"
+   "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action"
   ],
   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect": [
    "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
@@ -322,6 +322,21 @@
    "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
    "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped"
   ],
+  "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action": [
+   "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
+   "dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+  ],
+  "dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap": [
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action",
+   "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction"
+  ],
+  "dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd": [
+   "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
+   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+  ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
@@ -344,8 +359,8 @@
   ],
   "trap_a-hook-test-payload-without-cwd-fires-the-hook": [
    "trap_a-test-that-runs-resume-or-reindex-on-a-checked-in-fixture",
-   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd",
+   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode"
   ],
   "trap_a-record-s-remedy-fields-are-mined-for-file-paths": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
