@@ -1,13 +1,16 @@
 # Project Handoff
 
-_Last updated: 2026-11-14T14:58:42+00:00_
+_Last updated: 2026-11-14T15:15:54+00:00_
 _Branch: ccr-5a263b6c-3gtzxn_
-_Commit: e3f6036_
+_Commit: 10f8a9d_
 
 ## Current Focus
-Review items 1 to 3 are done on ccr-5a263b6c-3gtzxn and the Claude Code hooks are installed in this repo. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 4 are done on ccr-5a263b6c-3gtzxn: CI/release, data loss, delivery, and the write gate. Not yet merged or released; the next release is 0.7.0.
 
 ## Next Action
+### 2026-11-14 · `10f8a9d`
+Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there (6f39bbb fixed a format failure in 973bbcb); release 0.7.0 per CLAUDE.md. Next review work: item 5 in docs/reviews/2026-11-13-system-review.md section 6 (guard here-string and redirect parsing, then the allowlist and wrapper redesign with property tests), and trap_miner-reads-hook-feedback-as-a-correction.
+
 ### 2026-11-14 · `e3f6036`
 Merge ccr-5a263b6c-3gtzxn (head after this capture) to main; confirm ci is green there; release 0.7.0 per CLAUDE.md. Then review item 4 (docs/reviews/2026-11-13-system-review.md section 6), and look at trap_miner-reads-hook-feedback-as-a-correction.
 

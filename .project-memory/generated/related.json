@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "bff747d86cae",
+ "inputs_hash": "5f05245daf0c",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -183,9 +183,9 @@
    "dec_20260815_cut-0-1-10-as-the-agent-authorship-release"
   ],
   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches": [
+   "dec_20261114_safetext-escapes-format-characters-blank-fillers",
    "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
-   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written"
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
   ],
   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted": [
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
@@ -327,10 +327,25 @@
    "dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap",
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
   ],
+  "dec_20261114_frontmatter-lines-end-only-at-a-newline-writers-refuse": [
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+   "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path"
+  ],
   "dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action",
    "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction"
+  ],
+  "dec_20261114_safetext-escapes-format-characters-blank-fillers": [
+   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+   "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
+   "dec_20261114_frontmatter-lines-end-only-at-a-newline-writers-refuse"
+  ],
+  "dec_20261114_scan-secrets-reads-every-committed-file-and-needs": [
+   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
   ],
   "dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd": [
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",

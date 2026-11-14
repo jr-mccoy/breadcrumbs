@@ -3,9 +3,12 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Review items 1 to 3 are done on ccr-5a263b6c-3gtzxn and the Claude Code hooks are installed in this repo. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 4 are done on ccr-5a263b6c-3gtzxn: CI/release, data loss, delivery, and the write gate. Not yet merged or released; the next release is 0.7.0.
 
 ## Recently Changed
+### 2026-11-14 · `10f8a9d`
+2026-11-14: write gate closed (10f8a9d): frontmatter line breaks, memory_note supersede, scan-secrets coverage, mined jot evidence, hidden characters
+
 ### 2026-11-14 · `973bbcb`
 2026-11-14: SessionStart packet capped at 9,500 characters; root resolver walks up to the nearest store; merged branch handoffs shown; hooks installed in this repo
 

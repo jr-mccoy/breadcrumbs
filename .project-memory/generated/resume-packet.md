@@ -1,22 +1,25 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: e3f6036 | inputs_hash: bff747d86cae | generated_at: 2026-11-14T14:58:42+00:00 -->
-<!-- view: markdown | budget: 3190/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 10f8a9d | inputs_hash: 5f05245daf0c | generated_at: 2026-11-14T15:18:57+00:00 -->
+<!-- view: markdown | budget: 3256/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-5a263b6c-3gtzxn` · commit `e3f6036` · 7 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
+branch `ccr-5a263b6c-3gtzxn` · commit `10f8a9d` · 9 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
 
 ## Current Focus
-Review items 1 to 3 are done on ccr-5a263b6c-3gtzxn and the Claude Code hooks are installed in this repo. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 4 are done on ccr-5a263b6c-3gtzxn: CI/release, data loss, delivery, and the write gate. Not yet merged or released; the next release is 0.7.0.
 
 ## Next Action
-Merge ccr-5a263b6c-3gtzxn (head after this capture) to main; confirm ci is green there; release 0.7.0 per CLAUDE.md. Then review item 4 (docs/reviews/2026-11-13-system-review.md section 6), and look at trap_miner-reads-hook-feedback-as-a-correction.
+Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there (6f39bbb fixed a format failure in 973bbcb); release 0.7.0 per CLAUDE.md. Next review work: item 5 in docs/reviews/2026-11-13-system-review.md section 6 (guard here-string and redirect parsing, then the allowlist and wrapper redesign with property tests), and trap_miner-reads-hook-feedback-as-a-correction.
 
-_(3 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
+_(4 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
 
 ## Active Decisions
+- `dec_20261114_scan-secrets-reads-every-committed-file-and-needs` — Common env-style secrets passed as OK, files outside five suffixes were never read, and one .crumbignore line could disable the scan silently. The value rule keeps prose such as token budgets and key-file paths from blocking; this repository's own store and docs stay clean under the new patterns.
+- `dec_20261114_safetext-escapes-format-characters-blank-fillers` — Tag characters spell an instruction a diff does not show and reached hook output; a run of variation selectors carries one byte each. A single presentation selector is ordinary emoji text, so keeping it leaves normal titles unchanged.
+- `dec_20261114_frontmatter-lines-end-only-at-a-newline-writers-refuse` — With splitlines() on read and a two-character refusal on write, a U+2028 inside an evidence ref became keys on read and forged review fields past admission, which inspects payload keys only. Both sides now agree, and other tools reading the files cannot be fooled by a value crumb wrote.
 - `dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd` — Payload cwd follows every cd, so hooks went silent in subdirectories and crumb init from src/ made a nested store. Stopping at .git keeps an enclosing repo's store out of submodules and nested repos. Payload cwd comes before CLAUDE_PROJECT_DIR because inside a linked worktree it is the worktree, who… [excerpt: 300 of 419 chars; full text: crumb show dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd]
 - `dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action` — Branch handoffs are committed on their branch, so presence in the checkout is the merge; no ancestry check or git spawn is needed. Nothing carried a branch's Next Action forward on merge, so main's handoff.md was 40 days stale in a pull-request workflow. Emitting the key only when non-empty kept the… [excerpt: 300 of 343 chars; full text: crumb show dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action]
 - `dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap` — Claude Code caps additionalContext at 10,000 characters and shows only a 2,000-character preview of anything longer; this repo's packet was 12,317, so the model saw two decisions. Token budgets do not bound characters. Counting UTF-16 units matches a JavaScript host; 500 characters of headroom absor… [excerpt: 300 of 333 chars; full text: crumb show dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap]
@@ -29,10 +32,7 @@ _(3 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
 - `dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps` — A reader that accepts more than validate acts on stamps validate rejects, and differently per interpreter. One spelling for POSIX paths keeps the store-relative POSIX rule in one place. Exact and loose tokenizing serve different jobs; merging them would change guard verdicts and the eval baseline.
 - `dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas` — One implementation per question removes the class of drift that produced N8, and moving HEAD reads to the disk reader removes git spawns from the Stop hook path on Windows. Storing full shas in records would change a stored format, so it was kept out.
 - `dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction` — The ask's instruction ends with the capture, so a capture after the ask is the answer, whatever else the turn committed. Amend and rebase preserve author time, which is what tells an already-asked commit from new work.
-- `dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input` — inputs_hash equality is already the definition of fresh that validate gates on. The kept file stays internally consistent: its commit, ages and dirty count all describe the store as of its own generated_at.
-- `dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new` — The hook runs after the agent's last commit by construction, so any tracked file it writes is left uncommitted; the one-round cost is acceptable, an unbounded one is not. Reusing the commit counter's definition of work keeps one notion of 'this session's work' across the ask and the snapshot.
-- `dec_20261002_guard-speed-remove-git-processes-first-remeasure-on-windows` — DoWhat retest of 0.5.0, item 7, operator decision D7: p50 764 ms on Windows; 24 of 29 firings took the full path with 5 git spawns each.
-_(… 52 more omitted to stay within the per-section cap)_
+_(… 55 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -55,6 +55,8 @@ _(none recorded)_
 - Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?
 
 ## Likely Relevant Files
+- breadcrumbs/secretscan.py
+- breadcrumbs/safetext.py
 - breadcrumbs/cli.py
 - breadcrumbs/handoffs.py
 - breadcrumbs/packet.py
@@ -73,9 +75,7 @@ _(none recorded)_
 - evals/suites/staleness/store.crumb
 - breadcrumbs/shellcmd.py
 - breadcrumbs/path_policy.py
-- breadcrumbs/validation.py
-- breadcrumbs/git.py
-_(… 55 more omitted to stay within the per-section cap)_
+_(… 56 more omitted to stay within the per-section cap)_
 
 ## Verifications
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
@@ -93,6 +93,7 @@ _(… 55 more omitted to stay within the per-section cap)_
 _(… 11 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
+- tests/test_gate.py
 - tests/test_delivery_reach.py
 - tests/test_release_process.py
 - tests/test_hooks.py::StopLifecycleTests
@@ -104,8 +105,7 @@ _(… 11 more omitted to stay within the per-section cap)_
 - python -m unittest tests.test_lifecycle
 - python -m unittest tests.test_searchindex
 - python -m unittest tests.test_blockfiles
-- python -m unittest tests.test_transcript
-_(… 13 more omitted to stay within the per-section cap)_
+_(… 14 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
