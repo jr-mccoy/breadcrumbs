@@ -1,22 +1,24 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 10f8a9d | inputs_hash: 5f05245daf0c | generated_at: 2026-11-14T15:18:57+00:00 -->
-<!-- view: markdown | budget: 3256/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 8a6ee60 | inputs_hash: d5a02a3f1158 | generated_at: 2026-11-14T17:17:07+00:00 -->
+<!-- view: markdown | budget: 3267/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-5a263b6c-3gtzxn` · commit `10f8a9d` · 9 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
+branch `ccr-5a263b6c-3gtzxn` · commit `8a6ee60` · 8 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
 
 ## Current Focus
-Review items 1 to 4 are done on ccr-5a263b6c-3gtzxn: CI/release, data loss, delivery, and the write gate. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 5 are done on ccr-5a263b6c-3gtzxn. Not yet merged or released; the next release is 0.7.0.
 
 ## Next Action
-Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there (6f39bbb fixed a format failure in 973bbcb); release 0.7.0 per CLAUDE.md. Next review work: item 5 in docs/reviews/2026-11-13-system-review.md section 6 (guard here-string and redirect parsing, then the allowlist and wrapper redesign with property tests), and trap_miner-reads-hook-feedback-as-a-correction.
+Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there; release 0.7.0 per CLAUDE.md (search-index format is now 3: the first reindex after upgrade rebuilds it). Next review work: item 6 (agent-outcome eval, review section 5.1), the section 3 tables, and trap_miner-reads-hook-feedback-as-a-correction.
 
-_(4 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
+_(5 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
 
 ## Active Decisions
+- `dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program` — Allowlisting a program by name made its writing options read-only, which capped verdicts at READ_FIRST and dropped permission prompts. A wrong 'not read-only' only costs a guard run; a wrong 'read-only' silences guard.
+- `dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts` — Each of these spellings returned PROCEED for an action the floor exists to catch. Reading through wrappers in one place ends the pattern of adding one rule per spelling; property tests pin that a rewrite never lowers a verdict. It stays a reminder: a command assembled from variables at run time can… [excerpt: 299 of 311 chars; full text: crumb show dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts]
 - `dec_20261114_scan-secrets-reads-every-committed-file-and-needs` — Common env-style secrets passed as OK, files outside five suffixes were never read, and one .crumbignore line could disable the scan silently. The value rule keeps prose such as token budgets and key-file paths from blocking; this repository's own store and docs stay clean under the new patterns.
 - `dec_20261114_safetext-escapes-format-characters-blank-fillers` — Tag characters spell an instruction a diff does not show and reached hook output; a run of variation selectors carries one byte each. A single presentation selector is ordinary emoji text, so keeping it leaves normal titles unchanged.
 - `dec_20261114_frontmatter-lines-end-only-at-a-newline-writers-refuse` — With splitlines() on read and a two-character refusal on write, a U+2028 inside an evidence ref became keys on read and forged review fields past admission, which inspects payload keys only. Both sides now agree, and other tools reading the files cannot be fooled by a value crumb wrote.
@@ -30,9 +32,7 @@ _(4 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
 - `dec_20261003_code-moves-out-of-cli-py-by-mechanical-ast-move-into` — A mechanical move behind the parity fixture, the evals and the full suite cannot change behaviour. A patch on cli no longer reaches a moved function's callers, so tests patch the owning module; tests/test_extracted_modules.py enforces the contract.
 - `dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence` — Measured on this store: 6 warnings on main where the age rule gave 17 and 'touched since' gave 48, each a real candidate. Two git processes for the whole store. The staleness eval suite (split: checks) asserts every true staleness kind is questioned and an old untouched decision is not.
 - `dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps` — A reader that accepts more than validate acts on stamps validate rejects, and differently per interpreter. One spelling for POSIX paths keeps the store-relative POSIX rule in one place. Exact and loose tokenizing serve different jobs; merging them would change guard verdicts and the eval baseline.
-- `dec_20261003_git-state-has-one-owner-breadcrumbs-git-full-shas` — One implementation per question removes the class of drift that produced N8, and moving HEAD reads to the disk reader removes git spawns from the Stop hook path on Windows. Storing full shas in records would change a stored format, so it was kept out.
-- `dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction` — The ask's instruction ends with the capture, so a capture after the ask is the answer, whatever else the turn committed. Amend and rebase preserve author time, which is what tells an already-asked commit from new work.
-_(… 55 more omitted to stay within the per-section cap)_
+_(… 57 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
 _(none recorded)_
@@ -55,6 +55,8 @@ _(none recorded)_
 - Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?
 
 ## Likely Relevant Files
+- breadcrumbs/shellcmd.py
+- breadcrumbs/scoring.py
 - breadcrumbs/secretscan.py
 - breadcrumbs/safetext.py
 - breadcrumbs/cli.py
@@ -67,13 +69,11 @@ _(none recorded)_
 - .github/workflows/ci.yml
 - breadcrumbs/hooks_guard.py
 - tests/test_retest_060.py
-- breadcrumbs/scoring.py
 - tests/test_extracted_modules.py
 - docs/architecture.md
 - breadcrumbs/audit.py
 - tests/test_decision_staleness.py
 - evals/suites/staleness/store.crumb
-- breadcrumbs/shellcmd.py
 - breadcrumbs/path_policy.py
 _(… 56 more omitted to stay within the per-section cap)_
 
@@ -93,6 +93,7 @@ _(… 56 more omitted to stay within the per-section cap)_
 _(… 11 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
+- tests/test_guard_reading.py
 - tests/test_gate.py
 - tests/test_delivery_reach.py
 - tests/test_release_process.py
@@ -104,8 +105,7 @@ _(… 11 more omitted to stay within the per-section cap)_
 - python -m unittest tests.test_promote
 - python -m unittest tests.test_lifecycle
 - python -m unittest tests.test_searchindex
-- python -m unittest tests.test_blockfiles
-_(… 14 more omitted to stay within the per-section cap)_
+_(… 15 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_

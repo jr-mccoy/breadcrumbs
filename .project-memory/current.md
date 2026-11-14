@@ -3,9 +3,12 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Review items 1 to 4 are done on ccr-5a263b6c-3gtzxn: CI/release, data loss, delivery, and the write gate. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 5 are done on ccr-5a263b6c-3gtzxn. Not yet merged or released; the next release is 0.7.0.
 
 ## Recently Changed
+### 2026-11-14 · `8a6ee60`
+2026-11-14: guard parsing, wrappers, read-only checks, floor spellings and index parity (8a6ee60)
+
 ### 2026-11-14 · `10f8a9d`
 2026-11-14: write gate closed (10f8a9d): frontmatter line breaks, memory_note supersede, scan-secrets coverage, mined jot evidence, hidden characters
 

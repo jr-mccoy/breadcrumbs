@@ -1,13 +1,16 @@
 # Project Handoff
 
-_Last updated: 2026-11-14T15:15:54+00:00_
+_Last updated: 2026-11-14T17:17:06+00:00_
 _Branch: ccr-5a263b6c-3gtzxn_
-_Commit: 10f8a9d_
+_Commit: 8a6ee60_
 
 ## Current Focus
-Review items 1 to 4 are done on ccr-5a263b6c-3gtzxn: CI/release, data loss, delivery, and the write gate. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 5 are done on ccr-5a263b6c-3gtzxn. Not yet merged or released; the next release is 0.7.0.
 
 ## Next Action
+### 2026-11-14 · `8a6ee60`
+Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there; release 0.7.0 per CLAUDE.md (search-index format is now 3: the first reindex after upgrade rebuilds it). Next review work: item 6 (agent-outcome eval, review section 5.1), the section 3 tables, and trap_miner-reads-hook-feedback-as-a-correction.
+
 ### 2026-11-14 · `10f8a9d`
 Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there (6f39bbb fixed a format failure in 973bbcb); release 0.7.0 per CLAUDE.md. Next review work: item 5 in docs/reviews/2026-11-13-system-review.md section 6 (guard here-string and redirect parsing, then the allowlist and wrapper redesign with property tests), and trap_miner-reads-hook-feedback-as-a-correction.
 

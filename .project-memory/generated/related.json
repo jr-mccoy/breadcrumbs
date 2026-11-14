@@ -1,11 +1,11 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "5f05245daf0c",
+ "inputs_hash": "d5a02a3f1158",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
    "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
-   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap"
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts"
   ],
   "dec_20260815_cut-0-1-10-as-the-agent-authorship-release": [
    "dec_20260924_phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per",
@@ -135,7 +135,7 @@
   "dec_20260922_the-user-pre-approves-store-migrations-of-this-repo-s-own": [
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts"
   ],
   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases": [
    "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
@@ -248,9 +248,9 @@
    "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action"
   ],
   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect": [
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts",
    "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
-   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program"
   ],
   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new": [
    "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction",
@@ -284,8 +284,8 @@
   ],
   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about": [
    "dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached",
-   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
-   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
+   "dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program",
+   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap"
   ],
   "dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
@@ -303,9 +303,9 @@
    "dec_20261003_code-moves-out-of-cli-py-by-mechanical-ast-move-into"
   ],
   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps": [
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts",
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
-   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect",
-   "dec_20260905_path-extraction-is-structural-and-a-mined-path"
+   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect"
   ],
   "dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
@@ -337,6 +337,11 @@
    "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action",
    "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction"
   ],
+  "dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program": [
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts",
+   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
+   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect"
+  ],
   "dec_20261114_safetext-escapes-format-characters-blank-fillers": [
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
    "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
@@ -346,6 +351,11 @@
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
+  ],
+  "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts": [
+   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect",
+   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
+   "dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program"
   ],
   "dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd": [
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
