@@ -275,6 +275,7 @@ def hook_prompt(memory_dir: Path, root: Path, payload: dict) -> dict:
     return {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
-            "additionalContext": text,
+            # Bounded by construction (five excerpted records); the cap is the backstop.
+            "additionalContext": hooks_common.fit_context(text),
         }
     }

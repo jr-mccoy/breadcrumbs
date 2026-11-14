@@ -177,18 +177,32 @@ def _hook_session(memory_dir: Path, root: Path, payload: dict | None = None) -> 
             # itself. A promoted record whose rule is in that file right now is
             # already in the session's context, so only those are left out
             # (audit F13); everything else stays, rule text included.
+            from breadcrumbs import hooks_common as _hc
             from breadcrumbs import promote as _promote
 
+            preamble = _compaction_preamble(memory_dir, session_id) if compacted else ""
+            # The host shows only a 2,000-character preview of a longer value
+            # (`hooks_common.HOST_CONTEXT_CHARS`), so the packet is trimmed by
+            # meaning to what is left of the budget after the preamble and the
+            # closing note, the way it is trimmed to its token budget.
+            note = "\n\n" + _hc.CONTEXT_TRIMMED_NOTE
+            room = _hc.CONTEXT_CHAR_BUDGET - _hc.host_chars(preamble) - _hc.host_chars(note)
             packet = _packet.build_resume_packet(
                 memory_dir,
                 root,
                 task=task or None,
                 loaded_rules=_promote.loaded_rules(root, ("CLAUDE.md",)),
                 loaded_rules_from=("CLAUDE.md",),
+                char_limit=room,
             )
-            context = _packet.render_packet_markdown(packet)
-            if compacted:
-                context = _compaction_preamble(memory_dir, session_id) + context
+            context = preamble + _packet.render_packet_markdown(packet)
+            limited = any(
+                _hc.CONTEXT_LIMIT_REASON.removeprefix("the ") in str(why)
+                for why in (packet.get("omitted_reason") or {}).values()
+            )
+            if limited:
+                context = context.rstrip("\n") + note
+            context = _hc.fit_context(context)
             out = {
                 "hookSpecificOutput": {
                     "hookEventName": "SessionStart",

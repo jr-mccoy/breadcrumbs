@@ -15,9 +15,19 @@ Every command accepts:
 --json            machine-readable JSON output
 --plain           plain-text output (no decoration)
 --verbose         verbose output
---project <path>  project root (default: cwd)
+--project <path>  project root, taken as given (default: see below)
 --fast            capture/resume only: git-only, no prompts or LLM narrative
 ```
+
+**Which project.** `--project` is used exactly as given. Without it, the root
+is the nearest directory at or above the working directory that holds
+`.project-memory/`. The walk stops at the first directory with a `.git` entry
+(a work tree's top, a submodule, a linked worktree), so it never reaches an
+enclosing repository's store, and it never takes the home directory or the
+filesystem root. With no store found the root is the working directory, as
+before. Before this, a command run from `src/` reported no store and advised
+`crumb init`, which made a second one there (review 2026-11-13, §1.4). The MCP
+server resolves its root the same way. Hooks: see [Hook events](#hook-events).
 
 `crumb --version` (top level, not a subcommand) prints the package version and the
 record `schema_version` — two independent numbers, see `README.md`.
@@ -81,6 +91,27 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `doctor` | adapters, `.mcp.json`, hooks, packet, `index/search.sqlite` (`--hook-log`: `private/hook-log.jsonl`) | integration-health report | Is memory wired up? Exit 1 if a store exists but no integration is active. A `search_index` row reports the search index as fresh / stale / unreadable / unavailable (no `sqlite3` module) / not built (fine below the 200-record threshold, flagged above it); none of these changes the exit code. An `operations` row fails while a multi-record operation is unfinished (`crumb recover`), and a `projections` row fails when the last projection rebuild raised (`crumb reindex`); neither changes the exit code. A `promoted_rules` row (`CLAUDE.md: 3 rule(s), 612 chars`), present only when a promoted-rules block has rules, says what the long-term tier costs every session; it does not change the exit code either. Since audit WP20 four more rows name a recovery: `compatibility` (a store this build may not write — upgrade), `records` (validation failures — `crumb validate`, or `crumb migrate` for an older layout), `related_map` (present only when `related.json` is `degraded`) and `hook_matcher` (present only when hooks are installed; fails when the installed guard matcher is older than `adapters.claude.GUARD_MATCHER` — `crumb init --with-hooks`); none changes the exit code. See [`operator-guide.md`](operator-guide.md) §5. `--hook-log` instead summarises `private/hook-log.jsonl` per hook (exit 0; 2 with no store) — see [Hook log](#hook-log-built-wm-62). | **built** |
 | `mcp serve\|register\|doctor` | `.mcp.json` | running server / registration / health | Run the MCP server, merge its `.mcp.json` entry, or report MCP wiring (`[mcp]` extra + registration). | **built** |
 | `hook session\|guard\|capture\|prompt\|compact\|subagent` | hook stdin payload | hook JSON on stdout (+ mined jots, one `private/hook-log.jsonl` line) | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve; a candidate that is found but fails — say an older crumb-kit on PATH that predates the event — is skipped like a missing one, and the launcher itself always exits 0, because Claude Code reads exit 2 from `UserPromptSubmit`/`PreToolUse` as "block"). An event this version does not know (installed by a newer `init`) prints `{}` and exits 0 rather than a usage error. Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). Re-running `init --with-hooks` also brings an entry **we own** up to the current matcher, which is how an existing install picked up `Task\|Agent`, and then `PowerShell\|NotebookEdit` (audit WP17), on the guard. The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. **Every event exits 0 and prints JSON**, whatever the payload. See the per-event table below. | **built** |
+
+**Which project a hook serves.** The payload's `cwd` follows the agent's `cd`,
+so it is not the project root. A hook uses the nearest store at or above
+`cwd` (the walk under [Global flags](#global-flags)), then the one at
+`$CLAUDE_PROJECT_DIR` (the root of the session the hooks belong to), then
+`$BREADCRUMBS_PROJECT`. `cwd` comes first because inside a linked worktree it
+is the worktree, whose store is the branch being worked on. A `cwd` that is
+not a string is ignored. Before this, every hook printed `{}` once the agent
+was in a subdirectory (review 2026-11-13, §1.4).
+
+**Length.** Claude Code caps `additionalContext` at 10,000 characters and
+shows the model only a 2,000-character preview of a longer value. Every hook's
+text stays within 9,500 characters (`hooks_common.CONTEXT_CHAR_BUDGET`, counted
+in UTF-16 code units as the host counts). The SessionStart packet is trimmed by
+meaning to fit, in the packet's `TRIM_ORDER`, after the compaction preamble's
+share; a section cut for it says "to stay within the host's context limit",
+the view header adds `chars: <used>/<limit>`, and the text ends with a pointer
+to `crumb resume`. The other hooks' text is short by construction and is cut
+at a line boundary as a backstop. Before this, this repository's own packet was
+12,317 characters (review 2026-11-13, §1.3).
+
 
 ### Hook events
 
@@ -1369,6 +1400,19 @@ manifest's `schema_version`.
   `handoff.md` otherwise; the packet's Project line and `project.handoff` say
   which (see `resume`), and so does `memory://handoff`. Branch handoffs are
   inputs to `inputs_hash`, like `handoff.md`.
+- **Merged branches' newer Next Actions.** Nothing carries a branch's handoff
+  forward when it merges, so in a pull-request workflow, where no session runs
+  on the default branch, `handoff.md` only changes by hand and each merged
+  branch's Next Action was stranded (review 2026-11-13, §5.2). A branch handoff
+  is committed on its branch, so one in the checkout came in with a merge,
+  unless it is the current branch's own. The packet lists those whose
+  `_Last updated_` is later than the handoff it reads, newest first, under
+  **Newer Next Action From Merged Branches**, above Next Action: each is its
+  newest entry (up to 1,000 characters, then an excerpt naming the file),
+  labelled with its branch, file and date. At most 3; the rest are counted.
+  JSON: `merged_handoffs: [{branch, path, updated_at, next_action}]`, present
+  only when there are any. `<slug>.history.md` files from `crumb handoff trim`
+  are not handoffs. No git is involved.
 
 **`prune handoffs`** deletes a branch handoff only when both hold:
 

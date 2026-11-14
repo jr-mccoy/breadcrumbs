@@ -64,6 +64,56 @@ MAX_KEYS_PER_SESSION = 200
 
 UNKNOWN_SESSION = "unknown"
 
+# Claude Code caps a hook's `additionalContext` (and `systemMessage`, and plain
+# stdout) at 10,000 characters. A longer value is saved to a file and the model
+# is handed its path and a 2,000-character preview, and is not asked to read
+# the rest (hooks reference, "JSON output"). On this repository's own store the
+# SessionStart packet was 12,317 characters, so the preview ended inside the
+# second decision (review 2026-11-13, §1.3).
+HOST_CONTEXT_CHARS = 10_000
+# What crumb's hooks aim for, leaving room under the host's cap for a host
+# that counts a little differently.
+CONTEXT_CHAR_BUDGET = 9_500
+# Said wherever something was left out to stay under the cap.
+CONTEXT_LIMIT_REASON = "the host's context limit"
+CONTEXT_TRIMMED_NOTE = (
+    "_(trimmed to fit the host's context limit; `crumb resume` prints the full packet)_"
+)
+
+
+def host_chars(text: str) -> int:
+    """Length as the host measures it: UTF-16 code units, as in JavaScript.
+
+    An emoji or another character outside the Basic Multilingual Plane is two.
+    """
+    return len(text.encode("utf-16-le", "surrogatepass")) // 2
+
+
+def fit_context(text: str, limit: int = CONTEXT_CHAR_BUDGET) -> str:
+    """`text` cut to at most `limit` host characters, at a line boundary.
+
+    The last resort for anything a hook hands the host. Callers that can trim
+    by meaning (the resume packet) do so first; this only guarantees the cap.
+    """
+    if host_chars(text) <= limit:
+        return text
+    note = "\n\n" + CONTEXT_TRIMMED_NOTE
+    room = max(limit - host_chars(note), 0)
+    kept: list[str] = []
+    used = 0
+    for line in text.splitlines(keepends=True):
+        size = host_chars(line)
+        if used + size > room:
+            break
+        kept.append(line)
+        used += size
+    head = "".join(kept)
+    if not head:  # one line longer than the whole budget
+        head = text[:room]
+        while host_chars(head) > room:
+            head = head[:-1]
+    return head.rstrip("\n") + note
+
 
 def private_path(memory_dir: Path, filename: str) -> Path:
     return Path(memory_dir) / "private" / filename

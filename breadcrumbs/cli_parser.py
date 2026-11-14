@@ -1260,7 +1260,7 @@ def build_parser(only: str | None = None) -> argparse.ArgumentParser:
         "--verbose", action="store_true", default=argparse.SUPPRESS, help="verbose output"
     )
     global_parser.add_argument(
-        "--project", metavar="PATH", default=argparse.SUPPRESS, help="project root (default: cwd)"
+        "--project", metavar="PATH", default=argparse.SUPPRESS, help="project root, taken as given (default: the nearest directory at or above cwd that holds .project-memory/, stopping at a .git; else cwd)"
     )
 
     parser = _BreadcrumbsParser(

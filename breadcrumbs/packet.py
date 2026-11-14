@@ -64,6 +64,9 @@ SECTION_CAPS = {
     # and a packet that spends more context on unsorted notes than on decisions
     # has inverted what it is for.
     "inbox": 10,
+    # Next Actions from merged branches' handoffs that are newer than the one
+    # read (`handoffs.newer_merged`): the newest few are what matter.
+    "merged_handoffs": 3,
     # Warnings are capped too: every aged decision/question emits
     # a warning, so a neglected store could blow the token bound through the one
     # section the trimmer never touched.
@@ -85,6 +88,9 @@ TRIM_ORDER = [
     "known_traps",
     "failed_attempts",
     "active_decisions",
+    # A merged branch's newer Next Action is the instruction the session most
+    # likely needs, so it goes after every record section.
+    "merged_handoffs",
     # What landed since the handoff makes the focus falsifiable; it goes after
     # every record section, and before the warnings.
     "commits_since_handoff",
@@ -97,6 +103,7 @@ TRIM_ORDER = [
 PROTECTED_EXCERPT_CHARS = 2000  # Current Focus, Next Action
 TASK_EXCERPT_CHARS = 500  # Requested Task
 ITEM_EXCERPT_CHARS = 300  # one entry of any list section, one warning
+MERGED_EXCERPT_CHARS = 1000  # one merged branch's Next Action: an instruction, not a title
 NAME_EXCERPT_CHARS = 120  # project name, branch, handoff path
 # Still over budget once every list is empty: the protected fields shrink
 # through these caps, down to a bare pointer.
@@ -436,6 +443,7 @@ def build_resume_packet(
     render=None,
     loaded_rules: dict[str, str] | None = None,
     loaded_rules_from: tuple[str, ...] | None = None,
+    char_limit: int | None = None,
 ) -> dict:
     """Assemble the structured resume packet (the source of both MD and JSON output).
 
@@ -453,7 +461,9 @@ def build_resume_packet(
     caller wraps it (default: `render_packet_markdown` / `packet_json_text`).
     The packet is portable unless `loaded_rules` (`promote.loaded_rules`) says
     which standing rules its consumer has loaded, from `loaded_rules_from`;
-    only those promoted records are left out.
+    only those promoted records are left out. `char_limit` also bounds the
+    rendered view in host characters (`hooks_common.host_chars`), for a
+    consumer that caps text by length: the SessionStart hook.
     """
     from breadcrumbs import snapshots as _snapshots
 
@@ -466,6 +476,7 @@ def build_resume_packet(
         "render": render,
         "loaded_rules": loaded_rules,
         "loaded_rules_from": loaded_rules_from,
+        "char_limit": char_limit,
     }
     packet, digest = _snapshots.stable_build(
         memory_dir,
@@ -498,6 +509,7 @@ def _build_resume_packet_once(
     render=None,
     loaded_rules: dict[str, str] | None = None,
     loaded_rules_from: tuple[str, ...] | None = None,
+    char_limit: int | None = None,
     lead_warnings: list[str] | None = None,
 ) -> dict:
     """One build of the packet, stamped with the digest the caller verifies."""
@@ -528,6 +540,7 @@ def _build_resume_packet_once(
         unreadable.append(f"{handoff_label}: {problem}")
     handoff_sections = cli.split_md_sections(handoff_text)
     handoff_meta = cli.parse_handoff_meta(handoff_text)
+    merged_handoffs = _handoffs.newer_merged(memory_dir, root, handoff_path)
 
     decisions = cli.active_decisions(memory_dir)
     attempts = cli.active_attempts(memory_dir)
@@ -777,6 +790,11 @@ def _build_resume_packet_once(
     # and label an empty result so the consumer knows the store is cold here rather
     # than trusting noise.
     packet["ordering"] = "recency"
+    if merged_handoffs:
+        # Newer than the handoff read: merged branches' own (review 2026-11-13,
+        # §5.2). Only when there are any, so the wire format is unchanged for
+        # every store without them.
+        packet["merged_handoffs"] = merged_handoffs
     if task:
         packet["requested_task"] = task
         scoped, note = _task_scoped_files(memory_dir, root, task, stale_days=stale_days)
@@ -791,6 +809,7 @@ def _build_resume_packet_once(
         view=view,
         budget=budget,
         render=render,
+        char_limit=char_limit,
         sources={
             "current_focus": focus_source,
             "next_action": f"{handoff_label} → Next Action",
@@ -941,6 +960,8 @@ def _entry_source(section: str, entry) -> str | None:
         return f"crumb show {str(entry).split(':', 1)[0].strip()}"
     if section == "open_questions":
         return f"crumb show {_scoring.question_item_id(str(entry))}"
+    if section == "merged_handoffs" and isinstance(entry, dict) and entry.get("path"):
+        return f"{cli.MEMORY_DIRNAME}/{entry['path']}"
     return None
 
 
@@ -951,7 +972,11 @@ _ENTRY_TEXT_FIELDS = {
     "failed_attempts": ("title", "do_not_retry", "rule"),
     "verifications": ("subject",),
     "inbox": ("text",),
+    "merged_handoffs": ("next_action",),
 }
+
+# Sections whose entries may be longer than ITEM_EXCERPT_CHARS.
+_ENTRY_EXCERPT_CHARS = {"merged_handoffs": MERGED_EXCERPT_CHARS}
 
 
 def _excerpt_entries(packet: dict) -> None:
@@ -967,7 +992,8 @@ def _excerpt_entries(packet: dict) -> None:
                 entry = dict(entry)
                 for field in _ENTRY_TEXT_FIELDS.get(key, ()):
                     if isinstance(entry.get(field), str):
-                        entry[field], cut = _excerpt(entry[field], ITEM_EXCERPT_CHARS, source)
+                        cap = _ENTRY_EXCERPT_CHARS.get(key, ITEM_EXCERPT_CHARS)
+                        entry[field], cut = _excerpt(entry[field], cap, source)
                         hit = hit or cut
             elif isinstance(entry, str):
                 entry, hit = _excerpt(entry, ITEM_EXCERPT_CHARS, source)
@@ -1031,6 +1057,7 @@ def _bound_packet(
     budget: int | None = None,
     render=None,
     sources: dict | None = None,
+    char_limit: int | None = None,
 ) -> None:
     """Fit the packet into its view's budget, measured on the final text (audit F14).
 
@@ -1040,7 +1067,14 @@ def _bound_packet(
     shortened is disclosed (`omitted`, `excerpted`, the inline marks), and
     `budget` names the view, the unit, the estimator, the limit and what the
     view actually used.
+
+    `char_limit` is a second ceiling, in host characters, enforced by the same
+    steps: a host that caps hook text by length (Claude Code, 10,000) shows a
+    2,000-character preview of anything longer, whatever its token count. A
+    section trimmed for it says so (`hooks_common.CONTEXT_LIMIT_REASON`).
     """
+    from breadcrumbs import hooks_common as _hooks_common
+
     if view not in ("markdown", "json"):
         raise ValueError(f"unknown packet view: {view!r}")
     view_name = f"{view}-fast" if fast else view
@@ -1054,6 +1088,15 @@ def _bound_packet(
     def measure() -> int:
         return approx_tokens(render(packet))
 
+    def excess() -> str | None:
+        """Which ceiling the rendered view is over, if any."""
+        text = render(packet)
+        if approx_tokens(text) > limit:
+            return "the token budget"
+        if char_limit is not None and _hooks_common.host_chars(text) > char_limit:
+            return _hooks_common.CONTEXT_LIMIT_REASON
+        return None
+
     packet["budget"] = {
         "view": view_name,
         "unit": "approx_tokens",
@@ -1065,6 +1108,10 @@ def _bound_packet(
         "used": limit,
         "within": False,
     }
+    if char_limit is not None:
+        # Placeholder as wide as the final value, as for `used`.
+        packet["budget"]["char_limit"] = int(char_limit)
+        packet["budget"]["chars"] = int(char_limit)
     if limit != requested:
         packet["budget"]["requested"] = int(requested)
 
@@ -1095,18 +1142,20 @@ def _bound_packet(
             packet["omitted_reason"][key] = "the per-section cap"
             packet[key] = items[:cap]
 
-    # Budget trim, lowest-priority section first, until within the ceiling.
-    while measure() > limit:
+    # Budget trim, lowest-priority section first, until within the ceilings.
+    while why := excess():
         for key in TRIM_ORDER:
             if packet.get(key):
                 packet[key].pop()
                 packet["omitted"][key] = packet["omitted"].get(key, 0) + 1
-                # A key already capped is now also budget-trimmed — record both.
-                prior = packet["omitted_reason"].get(key)
+                # A key already capped is now also trimmed for a ceiling — say
+                # both, on every later trim too (it used to revert to the
+                # budget alone after the second).
+                prior = packet["omitted_reason"].get(key) or ""
                 packet["omitted_reason"][key] = (
-                    "the per-section cap and token budget"
-                    if prior == "the per-section cap"
-                    else "the token budget"
+                    "the per-section cap and " + why.removeprefix("the ")
+                    if prior.startswith("the per-section cap")
+                    else why
                 )
                 break
         else:
@@ -1115,15 +1164,20 @@ def _bound_packet(
     # Every list is empty and it is still over: the protected fields give way,
     # as marked excerpts and finally bare pointers.
     for cap in _PROTECTED_SHRINK:
-        if measure() <= limit:
+        if not excess():
             break
         _excerpt_protected(packet, originals, sources, cap)
 
     if not packet["excerpted"]:
         packet.pop("excerpted")
-    used = measure()
+    text = render(packet)
+    used = approx_tokens(text)
     packet["budget"]["used"] = used
     packet["budget"]["within"] = used <= limit
+    if char_limit is not None:
+        chars = _hooks_common.host_chars(text)
+        packet["budget"]["chars"] = chars
+        packet["budget"]["within"] = packet["budget"]["within"] and chars <= char_limit
 
 
 # ---- rendering ------------------------------------------------------------- #
@@ -1166,10 +1220,11 @@ def _view_header(packet: dict) -> str | None:
     else:
         mode = "rules: portable"
     asked = f", raised from {budget['requested']}" if "requested" in budget else ""
+    chars = f"| chars: {budget['chars']}/{budget['char_limit']} " if "char_limit" in budget else ""
     return (
         f"<!-- view: {budget['view']} | budget: {budget['used']}/{budget['limit']} "
         f"{budget['unit']}{asked} ({budget['estimator']}: {budget['estimator_rule']}) "
-        f"| {mode} -->"
+        f"{chars}| {mode} -->"
     )
 
 
@@ -1226,6 +1281,27 @@ def render_packet_markdown(packet: dict) -> str:
         "## Current Focus",
         cf or "_(not recorded — see current.md / handoff.md)_",
         "",
+    ]
+    merged = packet.get("merged_handoffs") or []
+    if merged or packet.get("omitted", {}).get("merged_handoffs"):
+        # The label, without its "(no branch handoff)" aside.
+        read = ((packet.get("project") or {}).get("handoff") or "the handoff").split(" (")[0]
+        out += [
+            "## Newer Next Action From Merged Branches",
+            f"_(written after {read}, below; each came in with its branch's merge)_",
+            "",
+        ]
+        for m in merged:
+            when = str(m.get("updated_at") or "")[:10]
+            out += [
+                f"**From `{m.get('branch')}`** ({m.get('path')}, {when}):",
+                m.get("next_action") or "",
+                "",
+            ]
+        notes = _omitted_note(packet, "merged_handoffs")
+        if notes:
+            out[-1:-1] = notes
+    out += [
         "## Next Action",
         packet["next_action"] or "_(not recorded — set one with `crumb capture session --next`)_",
         "",

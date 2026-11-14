@@ -8,11 +8,12 @@ prints both.
 
 ## [Unreleased]
 
-Fixes for the first two items of the 2026-11-13 system review
+Fixes for the first three items of the 2026-11-13 system review
 (`docs/reviews/2026-11-13-system-review.md` §6): CI and releases were blocked,
-and three commands could lose records. Dropping Python 3.9 is a breaking
-change, so the next release is a minor one (0.7.0). `schema_version` (4) and
-`requires` are unchanged.
+three commands could lose records, and memory did not reach the agent in three
+common situations. Dropping Python 3.9 is a breaking change, so the next
+release is a minor one (0.7.0). `schema_version` (4) and `requires` are
+unchanged.
 
 ### Removed
 
@@ -27,6 +28,34 @@ change, so the next release is a minor one (0.7.0). `schema_version` (4) and
 
 ### Fixed
 
+- **The SessionStart packet was longer than Claude Code shows.** Claude Code
+  caps a hook's `additionalContext` at 10,000 characters and hands the model a
+  2,000-character preview of anything longer; this repository's own packet was
+  12,317, so the model saw the project line and two decisions. The packet the
+  hook injects is now trimmed by meaning to 9,500 characters (counted as the
+  host counts, in UTF-16 code units), after the compaction preamble's share, in
+  the usual trim order. A section cut for it says "to stay within the host's
+  context limit", the view header reports `chars: <used>/<limit>`, and the text
+  ends with a pointer to `crumb resume`. The prompt and guard hooks' text is
+  capped the same way as a backstop. `crumb resume` itself is unchanged.
+- **Hooks went silent once the agent changed directory, and the CLI wanted a
+  second store.** The hooks took the payload's `cwd`, which follows every `cd`,
+  as the project root, so from a subdirectory every hook printed `{}`, the
+  guard included. The CLI took its working directory, so `crumb guard` from
+  `src/` said there was no store and advised `crumb init`, which made one
+  there. Both now walk up to the nearest `.project-memory/`, stopping at the
+  first `.git` so an enclosing repository's store is never used; hooks then
+  fall back to `$CLAUDE_PROJECT_DIR` and `$BREADCRUMBS_PROJECT`. `--project` is
+  still taken exactly as given. A hook payload whose `cwd` is not a string no
+  longer exits 1.
+- **A merged branch's Next Action was stranded.** A capture on a feature
+  branch writes that branch's handoff, and nothing carried it forward on
+  merge, so in a pull-request workflow `handoff.md` only changed by hand and
+  the next session read a Next Action from weeks earlier. The packet now shows,
+  above Next Action, the newest entry of each branch handoff in the checkout
+  that was written after the handoff it reads (at most 3, newest first,
+  labelled with branch, file and date). JSON: `merged_handoffs`, present only
+  when non-empty.
 - **`crumb rename` deleted the record it renamed.** The rewritten record kept
   its old `slug:`, so the validate gate refused every record crumb had written
   (the test used a hand-written one without the key), and the old file had

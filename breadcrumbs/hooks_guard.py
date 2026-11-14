@@ -390,7 +390,10 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     # shown — a strong keyword-only match escalating through the score band is a
     # deliberate behaviour of this tool, not something to silence from here.
     shown = _hook_surfacing_matches(result) or result.get("matches", [])
-    reason = _hook_guard_reason(result, shown)
+    from breadcrumbs import hooks_common as _hooks_common
+
+    # Bounded by construction (a few excerpted matches); the cap is the backstop.
+    reason = _hooks_common.fit_context(_hook_guard_reason(result, shown))
     # Only what the reason names is emitted (audit F16): it lists the first
     # `_HOOK_GUARD_REASON_MATCHES`. Counted just before each non-empty output,
     # keyed by host session so WM-42 can ask "how many *sessions* did this

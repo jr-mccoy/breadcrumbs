@@ -458,9 +458,46 @@ def derive_project_name(root: Path) -> str:
     return name if name else "project"
 
 
+def find_store_root(start: Path) -> Path | None:
+    """The nearest directory at or above `start` that holds a store, or None.
+
+    The walk ends at the first directory with a `.git` entry: the top of a
+    work tree, a submodule or a linked worktree, so it never reaches a store
+    that belongs to an enclosing repository, or another checkout's. It never
+    takes the home directory or the filesystem root as a project.
+    """
+    try:
+        here = Path(start).resolve()
+    except (OSError, ValueError, TypeError):
+        return None
+    try:
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        home = None
+    for d in (here, *here.parents):
+        if d == home or d.parent == d:
+            return None
+        if (d / MEMORY_DIRNAME).is_dir():
+            return d
+        if (d / ".git").exists():
+            return None
+    return None
+
+
 def resolve_root(project_arg: str | None) -> Path:
-    """Resolve the project root: --project overrides cwd."""
-    return (Path(project_arg) if project_arg else Path.cwd()).resolve()
+    """The project root: `--project` exactly as given, else the nearest store
+    at or above the working directory (`find_store_root`), else the working
+    directory.
+
+    Without the walk, an agent that had `cd`-ed into `src/` was told there was
+    no store and to run `crumb init`, which made a second one there (review
+    2026-11-13, §1.4). `--project` is never walked: `crumb init --project sub`
+    means a store in `sub`.
+    """
+    if project_arg:
+        return Path(project_arg).resolve()
+    cwd = Path.cwd().resolve()
+    return find_store_root(cwd) or cwd
 
 
 def _service_context(args, root: Path | None = None):
@@ -9306,7 +9343,33 @@ def _read_hook_stdin() -> dict:
 
 
 def _hook_root(payload: dict) -> Path:
-    return Path(payload.get("cwd") or os.environ.get("BREADCRUMBS_PROJECT") or Path.cwd()).resolve()
+    """The project a hook firing serves.
+
+    The payload's `cwd` is where the agent is now, not where the session
+    started: it follows every `cd`. Taken as the root, it made every hook
+    return `{}` once the agent was in a subdirectory (review 2026-11-13, §1.4).
+    So: the nearest store at or above `cwd`; else the one at
+    `$CLAUDE_PROJECT_DIR`, the root of the session the hooks belong to; else
+    `$BREADCRUMBS_PROJECT`; else the hook process's own directory. `cwd` comes
+    first because inside a linked worktree it is that worktree, whose store is
+    the branch being worked on.
+    """
+    raw = payload.get("cwd")
+    cwd = Path(raw) if isinstance(raw, str) and raw.strip() and "\0" not in raw else None
+    for start in (
+        cwd,
+        os.environ.get("CLAUDE_PROJECT_DIR"),
+        os.environ.get("BREADCRUMBS_PROJECT"),
+        None if cwd is not None else Path.cwd(),
+    ):
+        if start:
+            found = find_store_root(Path(start))
+            if found is not None:
+                return found
+    try:
+        return (cwd or Path.cwd()).resolve()
+    except (OSError, ValueError):
+        return Path.cwd()
 
 
 # Cheap risk patterns the keyword classifier misses (destructive shell/git ops).
