@@ -808,6 +808,12 @@ def tool_note(
         return missing
     if kind not in cli.NOTE_KINDS:
         return {"ok": False, "error": f"kind must be one of {', '.join(cli.NOTE_KINDS)}"}
+    # Superseding retires a live trap or question, which is what `mcp_mode:
+    # propose` keeps for a person; `memory_record`, `memory_verify` and
+    # `memory_inbox_promote` already asked (review 2026-11-13, §2.2).
+    refused = _admit(mem, supersedes=supersedes)
+    if refused:
+        return refused
     return _relativize(
         cli.note(
             mem,

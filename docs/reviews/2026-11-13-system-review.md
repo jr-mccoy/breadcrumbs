@@ -799,7 +799,7 @@ memory current when asked to. Specific points:
 
 ## 6. Suggested order
 
-**Status.** Items 1 to 3 are done on branch `ccr-5a263b6c-3gtzxn` (see
+**Status.** Items 1 to 4 are done on branch `ccr-5a263b6c-3gtzxn` (see
 `CHANGELOG.md`, `[Unreleased]`). For item 1 the operator chose to drop Python
 3.9 rather than pin the runner; the floor is now 3.10, which every runner
 image provides. For item 3 the hooks are installed in this repository

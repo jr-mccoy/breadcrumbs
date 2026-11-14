@@ -8,10 +8,10 @@ prints both.
 
 ## [Unreleased]
 
-Fixes for the first three items of the 2026-11-13 system review
+Fixes for the first four items of the 2026-11-13 system review
 (`docs/reviews/2026-11-13-system-review.md` §6): CI and releases were blocked,
-three commands could lose records, and memory did not reach the agent in three
-common situations. Dropping Python 3.9 is a breaking change, so the next
+three commands could lose records, memory did not reach the agent in three
+common situations, and the write gate let five things through. Dropping Python 3.9 is a breaking change, so the next
 release is a minor one (0.7.0). `schema_version` (4) and `requires` are
 unchanged.
 
@@ -25,6 +25,38 @@ unchanged.
   extra drops its `python_version >= '3.10'` marker, which the floor now
   implies, and the install hint stops explaining it. The CI matrix test now
   reads the supported list from the classifiers, so the two cannot drift.
+
+### Security
+
+- **A line separator in a field forged frontmatter keys.** The reader split
+  frontmatter on every character `str.splitlines()` ends a line at; the writer
+  refused only `\n` and `\r`. A U+2028 inside an evidence ref became extra keys
+  on read: `review_status: reviewed` and a `reviewed_hash`, which let a team
+  store's `crumb promote` write an unreviewed rule into `CLAUDE.md`, through the
+  CLI and MCP alike. The reader now ends a line only at a newline (CRLF still
+  reads), and the writer refuses U+2028, U+2029, NEL, form feed and the
+  information separators too. A rewrite no longer turns those characters in a
+  body into newlines.
+- **`memory_note` with `supersedes` retired a record under `mcp_mode:
+  propose`.** Every other MCP writer refuses that; this one now does too.
+- **`scan-secrets` missed common shapes and files.** `DB_PASSWORD=…`,
+  `GITHUB_TOKEN=…`, `token: …`, `AWS_SECRET_ACCESS_KEY=…`, GitLab, npm,
+  Hugging Face and webhook tokens and `ASIA` key ids passed as OK; a credential
+  label is now found inside a variable name, and a value must hold a letter and
+  a digit or both cases, so prose such as `token: approx_tokens_per_section`
+  does not block. Every file the store commits is scanned, not five suffixes,
+  and a binary file is unscannable. In `.crumbignore` a `#` only starts a
+  comment at the start of a line, a pattern matching every line is reported
+  and not used, and each run says how many lines were exempted.
+- **A token late in a long command reached a mined jot, and promotion
+  published it.** The miner checked only a candidate's title and note; it now
+  checks its command, evidence refs and file paths too, and promotion checks
+  the evidence it carries over.
+- **Invisible characters reached hook output.** Unicode tag characters (which
+  spell out hidden text), the soft hyphen, blank fillers and runs of variation
+  selectors are now escaped wherever record text is shown; one presentation
+  selector after a visible character, as in ordinary emoji, is kept. `crumb
+  audit` warns about a record that holds any (`hidden-characters`).
 
 ### Fixed
 

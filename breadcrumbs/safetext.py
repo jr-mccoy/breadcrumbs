@@ -12,7 +12,12 @@ the MCP SDK), so no record text can break the serialization itself. What text
 - **Control characters.** ANSI escapes rewrite a terminal; NUL and friends
   confuse readers; a carriage return overprints the line before it.
 - **Invisible formatting.** Bidirectional overrides and zero-width characters
-  make what is displayed differ from what is read.
+  make what is displayed differ from what is read. Unicode tag characters
+  (U+E0000-E007F) spell out a whole hidden sentence, and a run of variation
+  selectors after one emoji carries arbitrary bytes. So every format character
+  (category `Cf`), every blank filler, and every variation selector except one
+  directly after a visible character (ordinary emoji presentation) is escaped
+  (review 2026-11-13, §2.7).
 - **Framing tags.** A closing tag, or an opening tag named like a harness
   envelope (`</system-reminder>`, `<function_results>`), can pose as the end of
   the tool's output and the start of something the harness said.
@@ -35,12 +40,14 @@ Markdown, passes through unchanged.
 from __future__ import annotations
 
 import re
+import unicodedata
 
 # Characters that end a line somewhere: in a terminal, a Markdown renderer, a
 # JSON/JS consumer, or a model's tokenizer.
 _BREAKS = "\r\x0b\x0c\x1c\x1d\x1e\x85  "
 
-# Zero-width and bidirectional formatting characters.
+# Zero-width and bidirectional formatting characters. Most are category `Cf`,
+# which `_hidden` escapes whole; the set stays as the explicit list.
 _INVISIBLE = frozenset("؜᠎​‌‍‎‏‪‫‬‭‮⁠⁡⁢⁣⁤⁦⁧⁨⁩﻿")
 
 # Tag names that frame tool output, prompts or roles in the harnesses this tool
@@ -82,18 +89,66 @@ _FRAMING = frozenset(
 _TAG = re.compile(r"<(/?)\s*([A-Za-z][\w:.-]*)")
 
 
+# Blank or invisible characters outside category `Cf`: the combining grapheme
+# joiner, the Hangul fillers, the braille blank, the Mongolian free variation
+# selectors.
+_BLANK = frozenset("\u034f\u115f\u1160\u3164\uffa0\u2800\u180b\u180c\u180d\u180f")
+# The two selectors an emoji or symbol may carry once: text and emoji style.
+_PRESENTATION_SELECTORS = frozenset("\ufe0e\ufe0f")
+
+
 def _escape(ch: str) -> str:
     code = ord(ch)
-    return f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}"
+    if code < 0x100:
+        return f"\\x{code:02x}"
+    return f"\\u{code:04x}" if code < 0x10000 else f"\\U{code:08x}"
 
 
-def _clean_char(ch: str) -> str:
-    code = ord(ch)
-    if code < 0x20 and ch not in "\n\t":
-        return _escape(ch)
-    if 0x7F <= code <= 0x9F or ch in _INVISIBLE:
-        return _escape(ch)
-    return ch
+def _is_selector(code: int) -> bool:
+    return 0xFE00 <= code <= 0xFE0F or 0xE0100 <= code <= 0xE01EF
+
+
+def _hidden(ch: str) -> bool:
+    """A character that draws nothing or changes how others draw."""
+    return ch in _INVISIBLE or ch in _BLANK or unicodedata.category(ch) == "Cf"
+
+
+def _clean(text: str, *, escape_breaks: bool = False) -> tuple[str, int]:
+    """`(text, escaped)`: control, invisible and hidden characters as escapes.
+
+    A variation selector is kept only as one presentation selector directly
+    after a visible character; a run of them, or any supplementary selector, is
+    escaped. With `escape_breaks`, `_BREAKS` are escaped too.
+    """
+    out: list[str] = []
+    escaped = 0
+    after_visible = False
+    for ch in text:
+        code = ord(ch)
+        if _is_selector(code):
+            keep = after_visible and ch in _PRESENTATION_SELECTORS
+            out.append(ch if keep else _escape(ch))
+            escaped += not keep
+            after_visible = False
+            continue
+        if (
+            (escape_breaks and ch in _BREAKS)
+            or (code < 0x20 and ch not in "\n\t")
+            or 0x7F <= code <= 0x9F
+            or _hidden(ch)
+        ):
+            out.append(_escape(ch))
+            escaped += 1
+            after_visible = False
+            continue
+        out.append(ch)
+        after_visible = not ch.isspace()
+    return "".join(out), escaped
+
+
+def hidden_count(text: str) -> int:
+    """How many characters `block` would show as escapes rather than as text."""
+    return _clean(str(text or "").replace("\r\n", "\n"), escape_breaks=True)[1]
 
 
 def _neutralize_tags(text: str) -> str:
@@ -118,7 +173,7 @@ def inline(value, limit: int | None = None) -> str:
     for br in _BREAKS + "\n\t":
         if br in text:
             text = text.replace(br, " ")
-    text = "".join(_clean_char(ch) for ch in text)
+    text = _clean(text)[0]
     text = re.sub(r" {2,}", " ", text).strip()
     return _clip(_neutralize_tags(text), limit)
 
@@ -130,7 +185,7 @@ def block(text, limit: int | None = None) -> str:
     # Only a real newline starts a line. Every other break (a bare carriage
     # return, U+2028, a form feed) is shown as an escape rather than turned
     # into a line nobody wrote.
-    text = "".join(_escape(ch) if ch in _BREAKS else _clean_char(ch) for ch in text)
+    text = _clean(text, escape_breaks=True)[0]
     text = _neutralize_tags(text)
     if limit is not None and len(text) > limit:
         left = len(text) - limit

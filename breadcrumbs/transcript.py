@@ -453,6 +453,20 @@ def redact_secrets(text: str) -> str | None:
     return None if _secretscan.secret_pattern_hits(str(text or "")) else text
 
 
+def candidate_carries_secret(c: "Candidate") -> bool:
+    """True when any part of a candidate a jot would keep holds a credential.
+
+    Title and note were the only parts checked. A title is clipped to
+    TITLE_MAX_CHARS while the command and its evidence ref are kept whole, so
+    a token late in a long command reached the jot, and a promotion carried it
+    into committed memory (review 2026-11-13, §2.6). So: the command, every
+    evidence ref and every file path too, and any hit drops the candidate.
+    """
+    parts = [c.title, c.note, c.command or "", *(c.files or [])]
+    parts += [str(e.get("ref") or "") for e in c.evidence or [] if isinstance(e, dict)]
+    return any(redact_secrets(part) is None for part in parts)
+
+
 # --------------------------------------------------------------------------- #
 # The rules
 # --------------------------------------------------------------------------- #
@@ -750,11 +764,10 @@ def write_candidates(
         if len(report["written"]) >= MINER_MAX_JOTS_PER_FIRING:
             report["skipped"] += 1
             continue
-        title = redact_secrets(candidate.title)
-        note = redact_secrets(candidate.note)
-        if title is None or note is None:
+        if candidate_carries_secret(candidate):
             report["dropped_for_secrets"] += 1
             continue
+        title, note = candidate.title, candidate.note
         fingerprint = candidate.fingerprint
         if fingerprint in known:
             report["skipped"] += 1
@@ -1096,11 +1109,11 @@ def _ingest_locked(
     # 2. Queue the candidates. Secrets are refused here, before anything
     #    is stored, and the refusal is an acknowledgment.
     for c in window.candidates:
-        title, note = redact_secrets(c.title), redact_secrets(c.note)
-        if title is None or note is None:
+        if candidate_carries_secret(c):
             report["dropped_for_secrets"] += 1
             ack(c.events)
             continue
+        title, note = c.title, c.note
         if len(backlog) >= MAX_BACKLOG:
             report["dropped_backlog"] += 1
             ack(c.events)

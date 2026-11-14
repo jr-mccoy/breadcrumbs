@@ -28,14 +28,54 @@ from breadcrumbs import audit as _audit
 # scanned (DoWhat retest of 0.5.0, item 9): it is committed, and its projections
 # copy record text, so a secret there would be published like any other.
 _SECRET_SKIP_DIRS = {"private", "index"}
+# Files under a skipped directory that the store's .gitignore still commits.
+_SECRET_SCAN_KEEP = {("index", "README.md")}
 
 # Common secret SHAPES. Deliberately conservative: better to miss
 # an exotic secret than to flag every git sha. The covered set is this tuple; the
 # three deliberate gaps (bare hex only in a labeled context, path/CamelCase tokens
 # allowlisted, URL credentials floored at 6 characters and placeholder-aware) are
 # written up in `docs/security.md` §2 and pinned by `tests/test_secrets.py`.
+# A credential label: one of these words, alone or inside an environment-
+# variable name (`DB_PASSWORD`, `GITHUB_TOKEN`, `SECRET_KEY_BASE`). A word
+# boundary before the label missed every `PREFIX_` form, because `_` is a word
+# character (review 2026-11-13, §2.3). Case-insensitive, and only the label is.
+_SECRET_LABEL = (
+    r"(?<![A-Za-z0-9])(?i:(?:[a-z0-9]+_)*"
+    r"(?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?key|access[_-]?token|auth[_-]?token|"
+    r"refresh[_-]?token|id[_-]?token|session[_-]?token|private[_-]?key|"
+    r"signing[_-]?key|client[_-]?secret|password|passwd|pwd|token)"
+    r"(?:_[a-z0-9]+)*)"
+)
+# The value after it. Unquoted: 16+ characters of a key alphabet, with a letter
+# and either a digit or both cases, so a phrase (`token: approx_tokens_per_x`,
+# `private_key: config/keys/deploy_private.pem`) or a number is not a secret.
+# Quoted: 12+ non-space characters with a letter and a digit, punctuation
+# allowed (`"P@ssw0rd!2024"`).
+_KEY_CHAR = r"[A-Za-z0-9/+_\-]"
+_SECRET_VALUE = (
+    r"(?:"
+    rf"(?=[^\s'\"]*[A-Za-z])(?=[^\s'\"]*[0-9]|{_KEY_CHAR}*[a-z]{_KEY_CHAR}*[A-Z]|"
+    rf"{_KEY_CHAR}*[A-Z]{_KEY_CHAR}*[a-z]){_KEY_CHAR}{{16,}}"
+    r"|(['\"])(?=[^'\"\s]*[A-Za-z])(?=[^'\"\s]*[0-9])[^'\"\s]{12,}\1"
+    r")"
+)
+
 SECRET_PATTERNS: tuple[tuple[str, "cli._LazyPattern"], ...] = (
-    ("aws-access-key-id", cli._LazyPattern(r"\bAKIA[0-9A-Z]{16}\b")),
+    # AKIA long-term, ASIA temporary (STS) access key ids.
+    ("aws-access-key-id", cli._LazyPattern(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
+    # The 40-character secret beside it has no prefix; its label is the shape.
+    (
+        "aws-secret-access-key",
+        cli._LazyPattern(
+            r"(?i:aws_?secret_?access_?key)['\"]?\s*[:=]\s*['\"]?"
+            r"[A-Za-z0-9/+]{40}(?![A-Za-z0-9/+])"
+        ),
+    ),
+    ("gitlab-token", cli._LazyPattern(r"\bglpat-[A-Za-z0-9_\-]{20,}")),
+    ("npm-token", cli._LazyPattern(r"\bnpm_[A-Za-z0-9]{36}\b")),
+    ("huggingface-token", cli._LazyPattern(r"\bhf_[A-Za-z0-9]{30,}\b")),
+    ("webhook-signing-secret", cli._LazyPattern(r"\bwhsec_[A-Za-z0-9+/=]{24,}")),
     ("github-token", cli._LazyPattern(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
     ("github-fine-grained-pat", cli._LazyPattern(r"\bgithub_pat_[A-Za-z0-9_]{22,}\b")),
     ("slack-token", cli._LazyPattern(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
@@ -51,13 +91,11 @@ SECRET_PATTERNS: tuple[tuple[str, "cli._LazyPattern"], ...] = (
     (
         "secret-assignment",
         cli._LazyPattern(
-            r"(?i)\b(?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|auth[_-]?token|"
-            r"refresh[_-]?token|id[_-]?token|session[_-]?token|private[_-]?key|"
-            r"signing[_-]?key|client[_-]?secret|password|passwd|pwd)\b"
+            _SECRET_LABEL
             # allow a closing quote on the label so JSON keys ("private_key":)
             # match too — the scan now covers .json files
-            r"['\"]?\s*[:=]\s*"
-            r"['\"]?([A-Za-z0-9/+_\-]{16,})['\"]?"
+            + r"['\"]?\s*[:=]\s*"
+            + _SECRET_VALUE
         ),
     ),
     # A bare lowercase-hex token is shape-identical to the SHA-1/256 digests
@@ -236,22 +274,26 @@ def _looks_high_entropy(tok: str) -> bool:
     return _shannon_entropy(tok) >= 3.5
 
 
-# Text-file suffixes the secret scan covers. A `.yaml`/`.json`/`.txt` dropped
-# under memory was previously never scanned.
-_SECRET_SCAN_GLOBS = ("*.md", "*.yml", "*.yaml", "*.json", "*.txt")
-
-
 def _iter_committed_memory_files(memory_dir: Path):
-    """Yield committed-memory text files (skips the private/ and index/ subtrees)."""
+    """Yield every file the store commits: all of it but private/ and index/,
+    and index/README.md, which the store's .gitignore keeps.
+
+    Chosen by place, not by extension. A list of text suffixes missed what git
+    commits all the same: `note.MD`, a `.log`, a `.jsonl`, a name with no
+    suffix, the `.tmp` copy an interrupted write leaves (review 2026-11-13,
+    §2.3). A link is yielded too, so the read refuses it as unscannable.
+    """
     memory_dir = Path(memory_dir)
-    paths: list[Path] = []
-    for pattern in _SECRET_SCAN_GLOBS:
-        paths.extend(memory_dir.rglob(pattern))
-    for p in sorted(set(paths)):
+    for p in sorted(memory_dir.rglob("*")):
         rel_parts = p.relative_to(memory_dir).parts
-        if rel_parts and rel_parts[0] in _SECRET_SKIP_DIRS:
+        if (
+            rel_parts
+            and rel_parts[0] in _SECRET_SKIP_DIRS
+            and tuple(rel_parts) not in _SECRET_SCAN_KEEP
+        ):
             continue
-        yield p
+        if p.is_symlink() or p.is_file():
+            yield p
 
 
 CRUMBIGNORE_FILENAME = ".crumbignore"
@@ -260,31 +302,53 @@ CRUMBIGNORE_FILENAME = ".crumbignore"
 # every commit of the memory store. A project that has decided a given shape is
 # not a secret should be able to say so once, rather than re-deciding it — and
 # hand-overriding a gate on every commit is how a gate stops being read at all.
-SECRET_WARNING_PATTERNS = frozenset({"high-entropy-string"})
+SECRET_WARNING_PATTERNS = frozenset({"high-entropy-string", "crumbignore-pattern"})
 
 
 def load_crumbignore(memory_dir: Path) -> list:
-    """Patterns from `.project-memory/.crumbignore`, newest-wins order irrelevant.
+    """Patterns from `.project-memory/.crumbignore` (see `crumbignore_rules`)."""
+    return crumbignore_rules(memory_dir)[0]
 
-    One pattern per line; `#` starts a comment. Each line is used as a regex, or
-    as a literal substring if it does not compile. A hit whose *line text*
-    matches any pattern is dropped by `scan_secrets` — the project has said, in a
-    file its reviewers can see, that this shape is not a secret here.
+
+def crumbignore_rules(memory_dir: Path) -> tuple[list, list[dict]]:
+    """`(patterns, problems)` from `.project-memory/.crumbignore`.
+
+    One pattern per line; a line *starting* with `#` is a comment. Each line is
+    used as a regex, or as a literal substring if it does not compile. A hit
+    whose *line text* matches any pattern is dropped by `scan_secrets` — the
+    project has said, in a file its reviewers can see, that this shape is not a
+    secret here.
+
+    `#` used to start a comment anywhere, so `C# sample fixtures` became the
+    pattern `C` and exempted every line with a capital C. And a pattern that
+    matches the empty string (`FIXTURE|`) matches every line, which switched
+    the scan off while it still printed OK. Such a pattern is not used; it is
+    returned in `problems` as `{line, detail}` (review 2026-11-13, §2.3).
     """
     path = Path(memory_dir) / CRUMBIGNORE_FILENAME
     if not path.is_file():
-        return []
+        return [], []
     text, _problem = cli.read_text_lenient(path)
-    patterns = []
-    for raw in text.splitlines():
-        line = raw.split("#", 1)[0].strip() if not raw.lstrip().startswith("#") else ""
-        if not line:
+    patterns, problems = [], []
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
             continue
         try:
-            patterns.append(re.compile(line))
+            pat = re.compile(line)
         except re.error:
-            patterns.append(re.compile(re.escape(line)))
-    return patterns
+            pat = re.compile(re.escape(line))
+        if pat.search(""):
+            problems.append(
+                {
+                    "line": n,
+                    "detail": "this pattern matches every line, so it is not used; "
+                    "make it name what it exempts",
+                }
+            )
+            continue
+        patterns.append(pat)
+    return patterns, problems
 
 
 def _secret_severity(pattern: str) -> str:
@@ -316,7 +380,7 @@ def secret_pattern_hits(text: str, *, blocking_only: bool = True) -> list[str]:
     return out
 
 
-def scan_secrets(memory_dir: Path) -> list[dict]:
+def scan_secrets(memory_dir: Path, *, stats: dict | None = None) -> list[dict]:
     """Scan committed memory for secret-like strings.
 
     Each hit is {pattern, path, line} — the pattern NAME and location, never the
@@ -327,11 +391,17 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
     rather than being skipped: silently exempting it made the whole "secrets are
     blocking" posture void for that file. Undecodable bytes are
     replaced and the readable remainder is still scanned, so a real secret next
-    to a bad byte is still found.
+    to a bad byte is still found. A file holding NUL bytes (a binary, a UTF-16
+    file) is unscannable as text, and blocking for the same reason.
+
+    `stats`, when given, receives `suppressed`: lines with a hit that
+    `.crumbignore` exempted. A `.crumbignore` pattern that matches every line
+    is a `crumbignore-pattern` warning, and is not used.
     """
     findings: list[dict] = []
     seen: set[tuple[str, str, int]] = set()
-    ignores = load_crumbignore(memory_dir)
+    ignores, ignore_problems = crumbignore_rules(memory_dir)
+    suppressed = 0
 
     def record(pattern: str, rel: str, i: int, **extra) -> None:
         key = (pattern, rel, i)
@@ -348,20 +418,76 @@ def scan_secrets(memory_dir: Path) -> list[dict]:
             }
         )
 
+    for problem in ignore_problems:
+        record(
+            "crumbignore-pattern",
+            CRUMBIGNORE_FILENAME,
+            problem["line"],
+            detail=problem["detail"],
+        )
     for p in _iter_committed_memory_files(memory_dir):
         rel = path_policy.posix_rel(p, memory_dir)
         text, problem = cli.read_text_lenient(p)
         if problem:
             record("unscannable-file", rel, 0, detail=problem)
+        if "\x00" in text:
+            record(
+                "unscannable-file",
+                rel,
+                0,
+                detail="binary content (NUL bytes); it cannot be scanned as text",
+            )
         for i, line in enumerate(text.splitlines(), 1):
-            if any(pat.search(line) for pat in ignores):
+            hits = [name for name, pat in SECRET_PATTERNS if pat.search(line)]
+            if any(_looks_high_entropy(m.group(0)) for m in _HIGH_ENTROPY_TOKEN.finditer(line)):
+                hits.append("high-entropy-string")
+            if not hits:
                 continue
-            for name, pat in SECRET_PATTERNS:
-                if pat.search(line):
-                    record(name, rel, i)
-            for m in _HIGH_ENTROPY_TOKEN.finditer(line):
-                if _looks_high_entropy(m.group(0)):
-                    record("high-entropy-string", rel, i)
+            if any(pat.search(line) for pat in ignores):
+                suppressed += 1
+                continue
+            for name in hits:
+                record(name, rel, i)
+    if stats is not None:
+        stats["suppressed"] = suppressed
+    return findings
+
+
+# ---- hidden characters ----------------------------------------------------- #
+
+
+def scan_hidden_characters(memory_dir: Path) -> list[dict]:
+    """Records holding characters a reader does not see: format characters
+    such as Unicode tags, blank fillers, smuggling runs of variation
+    selectors, and line breaks other than a newline.
+
+    Every view escapes them (`safetext`), but the file still holds them and a
+    diff does not show them, so a person should look (review 2026-11-13,
+    §2.7). One finding per file: `{path, lines, count}`. Flag only.
+    """
+    from breadcrumbs import safetext
+
+    memory_dir = Path(memory_dir)
+    targets: list[Path] = []
+    kt = memory_dir / "known-traps.md"
+    if kt.is_file():
+        targets.append(kt)
+    targets += [rec.path for rec in cli.load_records(memory_dir) if not rec.error]
+    findings: list[dict] = []
+    for p in dict.fromkeys(targets):
+        if not p.is_file():
+            continue
+        text = cli.read_text_lenient(p)[0]
+        lines, count = [], 0
+        for i, line in enumerate(text.split("\n"), 1):
+            n = safetext.hidden_count(line.rstrip("\r"))
+            if n:
+                lines.append(i)
+                count += n
+        if count:
+            findings.append(
+                {"path": path_policy.posix_rel(p, memory_dir), "lines": lines, "count": count}
+            )
     return findings
 
 

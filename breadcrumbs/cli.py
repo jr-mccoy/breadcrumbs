@@ -1297,7 +1297,14 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
         # A UTF-8 BOM survives str.strip(), so it would mask the opening fence
         # and silently drop the whole frontmatter. Strip a single leading BOM.
         text = text[1:]
-    lines = text.splitlines()
+    # Only a newline ends a line (CRLF read as one). `str.splitlines()` also
+    # breaks on U+2028, U+2029, NEL, form feed and the information separators,
+    # which the writer let through: a U+2028 inside a value became extra keys
+    # here, enough to forge `review_status: reviewed`, and a rewrite turned
+    # those characters in the body into newlines (review 2026-11-13, §2.1).
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
     if not lines or lines[0].strip() != "---":
         return {}, text
     close = None
@@ -2054,6 +2061,11 @@ def _needs_quote(s: str, in_list: bool = False) -> bool:
     return False
 
 
+# Every character `str.splitlines()` ends a line at. Readers here split on
+# `\n` only, but other tools reading these files may not.
+FRONTMATTER_LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
+
+
 def _render_scalar(v, in_list: bool = False) -> str:
     """Render a scalar so it round-trips through `parse_frontmatter`."""
     if v is None:
@@ -2063,11 +2075,15 @@ def _render_scalar(v, in_list: bool = False) -> str:
     if v is False:
         return "false"
     s = str(v)
-    if "\n" in s or "\r" in s:
+    if any(ch in s for ch in FRONTMATTER_LINE_BREAKS):
         # The frontmatter is a line-based YAML subset with no multi-line scalar
-        # support: a newline would silently truncate the value and inject the
-        # remainder as bogus keys. Reject it at the source instead of corrupting.
-        raise ValueError("frontmatter values must be single-line (no newlines)")
+        # support: a line break would silently truncate the value and inject the
+        # remainder as keys. Every character any reader treats as a line end is
+        # refused, not only `\n` (review 2026-11-13, §2.1).
+        raise ValueError(
+            "frontmatter values must be single-line (no newline, carriage return, "
+            "U+2028/U+2029, NEL, form feed or other line-break character)"
+        )
     if _needs_quote(s, in_list=in_list):
         if '"' in s:
             # A double quote in the value forces the single-quoted form; interior
@@ -7231,7 +7247,14 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
 
-    hits = _secretscan.scan_secrets(memory_dir)
+    stats: dict = {}
+    hits = _secretscan.scan_secrets(memory_dir, stats=stats)
+    suppressed = stats.get("suppressed", 0)
+    # A suppression is said every time: one broad .crumbignore line used to
+    # exempt most of the store while the scan still printed OK.
+    skipped = (
+        f"{suppressed} line(s) skipped by {_secretscan.CRUMBIGNORE_FILENAME}" if suppressed else ""
+    )
     # Only a shape with real structure gates a commit (R5). An entropy heuristic
     # with no allowlist punishes exactly the records that are most useful — the
     # ones citing a concrete production path — and a gate that is hand-overridden
@@ -7246,6 +7269,7 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
                 "count": len(hits),
                 "blocking": len(blocking),
                 "warnings": len(warnings),
+                "suppressed": suppressed,
                 "hits": hits,
             },
             ok=not blocking,
@@ -7276,9 +7300,13 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
                 f"secret in this project, add a pattern to {MEMORY_DIRNAME}/"
                 f"{_secretscan.CRUMBIGNORE_FILENAME} instead of overriding this every time."
             )
+        if skipped:
+            print(f"note: {skipped}.")
         return 1 if blocking else 0
 
     print("scan-secrets: OK — no secret-like strings in committed memory.")
+    if skipped:
+        print(f"note: {skipped}.")
     return 0
 
 

@@ -26,11 +26,21 @@ part of the memory design, not an add-on.
 
 - **Secret scan memory before commit.** Implemented as `crumb
   scan-secrets` (and the `audit` secret sub-check) scans committed memory for
-  token-like strings and exits non-zero on a hit — the one blocking check in `audit`.
-  Run it before any "commit memory" workflow. Coverage is conservative: the covered
-  set is `SECRET_PATTERNS` in `breadcrumbs/cli.py` (AWS / GitHub / Slack / Google /
-  OpenAI / Stripe key shapes, JWTs, PEM private-key headers, bearer tokens,
-  `secret|token|password=`-style assignments, labeled hex secrets, and credentials
+  token-like strings and exits non-zero on a structured hit — the one blocking
+  check in `audit`; the high-entropy heuristic only warns. Run it before any
+  "commit memory" workflow. It reads every file the store commits, whatever the
+  extension: everything but `private/` and `index/` (whose committed `README.md`
+  is read too), so a `.log`, a `.MD`, a file with no suffix or an interrupted
+  write's `.tmp` copy is scanned; a file holding NUL bytes (a binary, UTF-16) is
+  a blocking `unscannable-file`. Coverage is conservative: the covered set is
+  `SECRET_PATTERNS` in `breadcrumbs/secretscan.py` (AWS access key ids, `AKIA`
+  and `ASIA`, and a labeled AWS secret key; GitHub / GitLab / npm / Hugging Face /
+  Slack / Google / OpenAI / Stripe key shapes and webhook signing secrets, JWTs,
+  PEM private-key headers, bearer tokens, credential assignments — a label such
+  as `password`, `token`, `api_key`, `access_key` or `secret`, alone or inside a
+  variable name like `DB_PASSWORD` or `GITHUB_TOKEN`, then `=` or `:` and a value
+  with a letter and either a digit or both cases (or, quoted, 12+ characters with
+  a letter and a digit), labeled hex secrets, and credentials
   embedded in a connection string — `postgres://app:<pw>@host/db`,
   `redis://:<pw>@…`, `https://user:<token>@host/repo.git`, with the real
   credential in place of the placeholder) plus a mixed-character-class high-entropy
@@ -45,6 +55,14 @@ part of the memory design, not an add-on.
   wolf on every commit ref would be turned off, and the check is only useful while
   it blocks. `tests/test_secrets.py` pins the covered shapes, these controls, and —
   for the URL pattern — a zero-false-positive sweep of this repository.
+
+  `.crumbignore` (in the store) exempts lines whose text matches one of its
+  patterns, one per line; a line *starting* with `#` is a comment, and a pattern
+  that would match every line is not used and is reported. Every run says how
+  many lines it exempted. Before 0.7.0 an inline `#` cut a pattern short and an
+  empty-matching pattern switched the scan off while it printed OK; before that
+  release `PREFIX_PASSWORD=` forms, bare `token:`, the AWS secret key and files
+  outside five suffixes were not scanned at all (review 2026-11-13, §2.3).
 
   The URL case was missed until 0.1.8: a password after a bare `:` inside
   a URL carries no `password=`-style label for the keyword list to match, and it is
@@ -95,8 +113,19 @@ part of the memory design, not an add-on.
   `breadcrumbs/safetext.py`). Hook context, the resume packet, guard reasons,
   MCP resources and tool results, and the CLI's human output escape control
   characters (ANSI, NUL, bare `\r`, U+2028) and invisible formatting (bidi
-  overrides, zero-width), and neutralize closing tags and envelope-named
-  opening tags (`&lt;/system-reminder>`).
+  overrides, zero-width, every other format character such as the Unicode tag
+  block U+E0000-E007F that can spell a hidden sentence, blank fillers, and any
+  variation selector but one directly after a visible character), and
+  neutralize closing tags and envelope-named opening tags
+  (`&lt;/system-reminder>`). `crumb audit` flags a record holding such
+  characters (`hidden-characters`), since its file and diff still hide them.
+- **Frontmatter is one line per key.** The reader ends a line only at a
+  newline, and the writer refuses a value holding any line-break character
+  (U+2028, U+2029, NEL, form feed, the information separators, as well as
+  `\n` and `\r`). Before 0.7.0 the reader split on all of them and the writer
+  refused only two, so a U+2028 in an evidence ref became extra keys on read,
+  enough to forge `review_status: reviewed` past the admission check, which
+  reads the payload's keys (review 2026-11-13, §2.1).
   - A field that must be one line (a title in a hook line) has every line
     break flattened, so it cannot start a line posing as the tool's verdict.
   - MCP text is bounded at 200,000 characters.

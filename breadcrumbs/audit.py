@@ -702,6 +702,23 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = cli.STALE_AGE_D
             )
         )
 
+    # C2. Characters a reader does not see (flag only): every view escapes
+    # them, but the file and its diff still hide them.
+    for hc in _secretscan.scan_hidden_characters(memory_dir):
+        shown = ", ".join(str(n) for n in hc["lines"][:5]) + ("…" if len(hc["lines"]) > 5 else "")
+        findings.append(
+            _audit_finding(
+                "hidden-characters",
+                AUDIT_WARN,
+                hc["path"],
+                f"{hc['count']} invisible or formatting character(s) on line(s) {shown} — "
+                "Unicode tags, zero-width or bidi characters, fillers or line breaks a "
+                "diff does not show; review (they are escaped wherever memory is shown)",
+                lines=hc["lines"],
+                count=hc["count"],
+            )
+        )
+
     # D. Generated-packet drift (§15, §17.8, Fixture 8).
     for d in cli.detect_packet_drift(memory_dir):
         findings.append(
