@@ -530,6 +530,18 @@ def run_validate(memory_dir: Path) -> list[dict]:
             )
         )
 
+    # A temporary copy an interrupted write left in a committed directory
+    # would be committed with the store (review 2026-11-13, W7).
+    for tmp in path_policy.orphan_temp_files(memory_dir):
+        findings.append(
+            _finding(
+                "temp-files",
+                "fail",
+                path_policy.posix_rel(tmp, memory_dir),
+                "temporary file left by an interrupted write; run `crumb recover --apply`",
+            )
+        )
+
     # 16.13 — adapter files are not loaded as canonical records. By construction the
     # loader walks only decisions/attempts/sessions/ideas, so project-root adapter
     # files (AGENTS.md/CLAUDE.md/etc.) are never treated as records. Recorded as pass.

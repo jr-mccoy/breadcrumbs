@@ -359,9 +359,15 @@ def recover(memory_dir: Path, *, apply: bool = False) -> dict:
     report = []
     with _lock.store_lock(memory_dir):
         debris = _journal_debris(memory_dir)
+        # Under the store lock no writer is mid-write, so an old temporary
+        # file belongs to a dead one (review 2026-11-13, W7).
+        temp_files = path_policy.orphan_temp_files(memory_dir)
         if apply:
             for path in debris:
                 shutil.rmtree(path, ignore_errors=True)
+            for path in temp_files:
+                with contextlib.suppress(OSError):
+                    path.unlink()
         for op in pending_operations(memory_dir):
             files = op.get("files", [])
             missing = [] if op.get("corrupt") else _missing_before_images(op["dir"], files)
@@ -404,4 +410,9 @@ def recover(memory_dir: Path, *, apply: bool = False) -> dict:
             report.append(row)
         if apply and any(not op.get("finished") for op in report):
             cli.reindex_projections(memory_dir)
-    return {"operations": report, "applied": apply, "debris": len(debris)}
+    return {
+        "operations": report,
+        "applied": apply,
+        "debris": len(debris),
+        "temp_files": [path_policy.posix_rel(p, memory_dir) for p in temp_files],
+    }

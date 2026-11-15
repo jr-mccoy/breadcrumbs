@@ -112,6 +112,25 @@ class PreflightRecoveryTests(unittest.TestCase):
         self.assertFalse(d.ok)
         self.assertIn("dead tag", d.reason())
 
+    def test_a_tag_with_pypi_unreachable_is_not_called_dead(self):
+        """It may be a full release; "delete the dead tag" would be wrong (review C2)."""
+        d = decide(on_pypi=preflight.ON_PYPI_UNKNOWN, tag_exists=True)
+        self.assertFalse(d.ok)
+        self.assertNotIn("dead tag", d.reason())
+        self.assertIn("could not be reached", d.reason())
+
+    def test_a_fresh_version_below_the_newest_release_stops(self):
+        """Not on PyPI, tag free, but lower than what is published (review C2)."""
+        d = decide(version="0.6.1", on_pypi=preflight.ON_PYPI_NO, latest_on_pypi="0.6.2")
+        self.assertFalse(d.ok)
+        self.assertIn("version regression", d.reason())
+        for newer in ("0.7.0", "0.6.10", "1.0"):
+            with self.subTest(version=newer):
+                d = decide(version=newer, on_pypi=preflight.ON_PYPI_NO, latest_on_pypi="0.6.2")
+                self.assertTrue(d.ok, d.reason())
+        d = decide(version="0.7.0rc1", on_pypi=preflight.ON_PYPI_NO, latest_on_pypi="0.6.2")
+        self.assertTrue(d.ok, d.reason())  # not a plain release: not compared
+
     def test_clean_version_proceeds(self):
         d = decide()
         self.assertTrue(d.ok, d.reason())
@@ -382,7 +401,10 @@ class PublishRetryTests(unittest.TestCase):
         cls.yml = RELEASE_YML.read_text(encoding="utf-8")
 
     def _publish_job(self) -> str:
-        return self.yml.split("\n  publish-pypi:", 1)[1]
+        return self.yml.split("\n  publish-pypi:", 1)[1].split("\n  release-tag:", 1)[0]
+
+    def _tag_job(self) -> str:
+        return self.yml.split("\n  release-tag:", 1)[1]
 
     def _upload_steps(self) -> list[str]:
         """The publish job's steps that invoke the PyPI action, as text blocks."""
@@ -434,13 +456,44 @@ class PublishRetryTests(unittest.TestCase):
                 self.assertIn("skip-existing: true", step)
 
     def test_the_tag_step_still_runs_only_after_a_successful_upload(self):
-        """`continue-on-error` on attempt 1 must not let the tag outlive a failure."""
+        """`continue-on-error` on attempt 1 must not let the tag outlive a failure:
+        the tag is a job that needs the publish job, which fails when both
+        attempts do."""
+        self.assertNotIn("gh release create", self._publish_job())
+        tag = self._tag_job()
+        self.assertIn("gh release create", tag)
+        self.assertRegex(tag, r"needs: \[[^\]]*publish-pypi")
+
+    def test_only_the_tag_job_can_write_the_repo(self):
+        """The OIDC job held `contents: write` too (review 2026-11-13, C7)."""
+        self.assertNotIn("contents: write", self._publish_job())
+        self.assertIn("contents: read", self._publish_job())
+        self.assertIn("contents: write", self._tag_job())
+        self.assertNotIn("id-token", self._tag_job())
+
+    def test_the_retry_clears_attempt_ones_attestations(self):
+        """The action refuses a dist/ that already holds them (review C5)."""
         job = self._publish_job()
-        self.assertLess(
-            job.rindex("uses: pypa/gh-action-pypi-publish@"),
-            job.index("gh release create"),
-            "the tag is cut before the last upload attempt",
-        )
+        clear = job.index("rm -f dist/*.publish.attestation")
+        self.assertLess(clear, job.rindex("uses: pypa/gh-action-pypi-publish@"))
+        self.assertGreater(clear, job.index("uses: pypa/gh-action-pypi-publish@"))
+
+    def test_no_expression_is_spliced_into_a_shell_script(self):
+        """`${{ }}` inside `run:` is code injection waiting for a value (C7)."""
+        in_run, indent = False, 0
+        for ln in self.yml.splitlines():
+            stripped, depth = ln.strip(), len(ln) - len(ln.lstrip())
+            if in_run and stripped and depth <= indent:
+                in_run = False
+            if stripped.startswith("run:"):
+                in_run, indent = True, depth
+            if in_run:
+                self.assertNotIn("${{", ln, stripped)
+
+    def test_the_release_build_tools_are_pinned(self):
+        job = self.yml.split("\n  publish-pypi:", 1)[0]
+        self.assertIn('"build==', job)
+        self.assertIn('"twine==', job)
 
 
 # --------------------------------------------------------------------------- #
@@ -522,6 +575,13 @@ class WorkflowHygieneTests(unittest.TestCase):
                 block = self._top_level_block(text, "permissions")
                 self.assertIsNotNone(block, f"{name} has no top-level permissions block")
                 self.assertIn("contents: read", block)
+
+    def test_ci_groups_a_prs_push_and_pull_request_runs_together(self):
+        """`github.ref` differs between the two events (review 2026-11-13, C4)."""
+        block = self._top_level_block(self.files["ci.yml"], "concurrency")
+        group = next(ln for ln in block.splitlines() if "group:" in ln)
+        self.assertNotIn("github.ref }}", group)
+        self.assertIn("github.head_ref || github.ref_name", group)
 
     def test_both_workflows_declare_a_concurrency_group(self):
         """ci ran twice per PR (push + pull_request); two publishes could race."""

@@ -154,6 +154,46 @@ unchanged.
   rule moved to `.github/scripts/ci_gate.py` (unit-tested like
   `release_preflight.py`): it fails closed, and the newest push, pull-request
   or manual run decides, with a later red scheduled run shown as a warning.
+- **Contained failures from the review's §3 tables** (review 2026-11-13):
+  - A directory named like a record (`decisions/x.md/`) took down every
+    command with `Is a directory: 3`; `validate` now reports it by path (R3).
+  - `crumb … | head` printed `CRUMB-ERROR … Broken pipe`, or a double traceback
+    under `--json`. A closed pipe now exits 141 quietly (R9).
+  - Hook payloads are decoded as UTF-8 whatever the locale (a cp1252 Windows
+    pipe broke non-ASCII paths and prompts), and a lone surrogate, a
+    5,000-digit integer or a garbage `index/commit-order.txt` no longer makes
+    a hook exit 1 (H1, H5).
+  - A `~/…` `transcript_path` is expanded, and a missing transcript is logged
+    as `miner_missing` instead of mining nothing silently (H7).
+  - The hook log's `snapshot_error` no longer carries file paths, and
+    `init --with-hooks` and `doctor` report a `settings.json` whose `hooks` is
+    not an object instead of a traceback (H8).
+  - `remember --privacy local-private` (or `secret-prohibited`) is refused
+    before writing, pointing at `crumb jot --local`; it used to write a record
+    the validate gate then rejected (W4).
+  - On a read-only store `resume` and the hooks work and writers say "the store
+    is read-only"; the lock file's `EROFS` used to escape as a raw `OSError` (W5).
+  - A temporary file an interrupted write leaves in a committed directory is
+    now gitignored (`.project-memory/**/.*.tmp`), fails `validate`
+    (`temp-files`), and is listed and removed by `crumb recover [--apply]` (W7).
+- **Release and CI** (review 2026-11-13, C2 to C7): the pre-flight no longer
+  calls a tag a dead tag when PyPI is unreachable, and refuses a fresh version
+  lower than the newest on PyPI. The tag and Release moved to their own job, so
+  the OIDC publishing job cannot write the repository; the upload retry clears
+  attempt one's attestations, which the action otherwise refuses; `build` and
+  `twine` are pinned; no `${{ }}` value is spliced into a release shell
+  script; `ci` groups a PR's push and pull-request runs so the matrix runs
+  once; and the lint job runs `crumb scan-secrets` on this repo's own store.
+  Packaging uses the SPDX `license = "MIT"` (the table form is deprecated, with
+  removal announced for 2027-02-18), bounds setuptools, and the sdist no longer
+  ships a test suite it cannot run (`MANIFEST.in`).
+- **Docs that were false** (review §3.5): a schema change is a minor release,
+  not a MAJOR one; bare `--with-adapter` can create `AGENTS.md`; `cli-spec.md`
+  now has rows for `repair`, `rename`, `retitle`, `traps`, `handoff trim` and
+  `inbox import` (a test keeps the table complete); `0.1.13` has a dead
+  Release; `get_version()` has no fallback; a release is more than one line;
+  and `PreCompact` stdout steers the compaction summary rather than going
+  nowhere.
 
 ## [0.6.2] — 2026-10-03
 

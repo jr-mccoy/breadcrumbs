@@ -1,11 +1,16 @@
-# Reliability release checklist: crumb-kit 0.4.0 (prepared, not released)
+# Reliability release checklist: crumb-kit 0.4.0
+
+> **Historical.** Written before 0.4.0 shipped, and kept as the record of what
+> that release was checked against. 0.4.0 was released on 2026-09-28 by the
+> release workflow ([CHANGELOG](../../CHANGELOG.md)); the status below is as of
+> the checklist's writing.
 
 This is audit work package WP22
 ([roadmap](../reviews/2026-09-26-breadcrumbs-audit-and-roadmap.md#wp22)). It
 collects what a release of the audit remediation would stand on, so the person
 who releases it can check each item instead of trusting a summary.
 
-**Status: prepared, not released.** Nothing here has been published. At the
+**Status when written: prepared, not released.** Nothing here had been published. At the
 operator's request, the branch carries the version bump to `0.4.0` (section
 7, step 3). Merging to `main` and running the release workflow are the
 operator's steps, and neither has been taken.

@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import time
 from pathlib import Path
 
@@ -543,4 +544,18 @@ def _note_snapshot(status: str) -> None:
     if status == "ok":
         _hooklog.note(snapshot="ok")
     else:
-        _hooklog.note(snapshot="failed", snapshot_error=status.removeprefix("failed: "))
+        _hooklog.note(snapshot="failed", snapshot_error=_error_kind(status))
+
+
+def _error_kind(status: str) -> str:
+    """Why the snapshot failed, with every file path replaced by `<path>`.
+
+    The hook log records no file path (review 2026-11-13, H8), and an
+    `OSError`'s message names one; the full text still reaches stderr.
+    """
+    body = status.removeprefix("failed: ")
+    return _PATH_IN_MESSAGE.sub("<path>", body)
+
+
+# A quoted string holding a separator, or any other token holding one.
+_PATH_IN_MESSAGE = re.compile(r"""'[^']*[/\\][^']*'|"[^"]*[/\\][^"]*"|[^\s'"]*[/\\][^\s'"]*""")

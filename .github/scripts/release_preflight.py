@@ -62,6 +62,23 @@ class Decision:
         return self.messages[0][1] if self.messages else ""
 
 
+def _release(version: str) -> tuple[int, ...] | None:
+    """`0.7.0` -> `(0, 7, 0)`; None for anything but dotted integers."""
+    parts = version.strip().split(".")
+    if not parts or not all(p.isdigit() for p in parts):
+        return None
+    out = [int(p) for p in parts]
+    while len(out) > 1 and out[-1] == 0:
+        out.pop()
+    return tuple(out)
+
+
+def _older(version: str, other: str) -> bool:
+    """True only when both are plain releases and `version` sorts first."""
+    a, b = _release(version), _release(other)
+    return a is not None and b is not None and a < b
+
+
 def decide(
     *,
     version: str,
@@ -143,8 +160,24 @@ def decide(
             )
         return Decision(True, messages)
 
+    if tag_exists and on_pypi == ON_PYPI_UNKNOWN:
+        # Released, or a dead tag: without PyPI there is no telling which, and
+        # "delete the dead tag" is wrong advice for a released version (review
+        # 2026-11-13, C2).
+        return Decision(
+            False,
+            [
+                (
+                    ERROR,
+                    f"tag v{version} already exists and PyPI could not be reached, so whether "
+                    f"crumb-kit {version} is released is unknown. Re-run when PyPI is "
+                    "reachable; if it is released, bump __version__.",
+                )
+            ],
+        )
+
     if tag_exists:
-        # Not on PyPI (or unknown) but tagged: a dead tag, like v0.1.5 / v0.1.6.
+        # Not on PyPI but tagged: a dead tag, like v0.1.5 / v0.1.6.
         # Re-using it would put a second, different commit behind an existing tag.
         return Decision(
             False,
@@ -155,6 +188,21 @@ def decide(
                     'dead tag (see RELEASING.md, "Tag / PyPI history"). Never re-use a tag: '
                     "bump __version__ to a new version, or delete the dead tag and its Release "
                     "first if you deliberately want to re-cut it.",
+                )
+            ],
+        )
+
+    if latest_on_pypi and _older(version, latest_on_pypi):
+        # A fresh version below the newest release would publish as an
+        # out-of-order "latest" and tag today's commit with an old number
+        # (review 2026-11-13, C2).
+        return Decision(
+            False,
+            [
+                (
+                    ERROR,
+                    f"version regression: {version} is lower than {latest_on_pypi}, the "
+                    f"newest version on PyPI. Bump __version__ past {latest_on_pypi} and re-run.",
                 )
             ],
         )

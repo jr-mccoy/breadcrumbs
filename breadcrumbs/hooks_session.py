@@ -33,8 +33,8 @@ def _compaction_preamble(memory_dir: Path, session_id: str) -> str:
     """What was in flight when the context was destroyed, for the model that lost it.
 
     After a compaction the model holds a summary and has no memory of the
-    records it was shown or the task it was on. `PreCompact` cannot tell it
-    anything — that hook's output never reaches the model — so it left the facts
+    records it was shown or the task it was on. `PreCompact` cannot add context
+    (its stdout would steer the compaction summary instead), so it left the facts
     in `private/` and this is where they are read back.
 
     Empty when there is no marker for this session, which is the normal case:

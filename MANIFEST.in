@@ -1,0 +1,10 @@
+# What the sdist carries beyond the package (review 2026-11-13, C6).
+#
+# The sdist builds the package; it does not run the test suite. The suite needs
+# the whole checkout (crumb.py, tests/data, fixtures/, evals/, .github/scripts),
+# so shipping tests/ alone gave 77 modules that could not run. Test from a clone.
+include LICENSE README.md CHANGELOG.md
+prune tests
+prune fixtures
+prune evals
+prune docs

@@ -552,7 +552,9 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     lines.append(f"!{MEMORY_DIRNAME}/index/README.md")
     # local/tmp generated projections are never committed
     lines.append(f"{MEMORY_DIRNAME}/generated/*.local.md")
-    lines.append(f"{MEMORY_DIRNAME}/generated/*.tmp")
+    # An interrupted atomic write leaves `.<name>.<hex>.tmp` beside its
+    # target, in any directory (review 2026-11-13, W7).
+    lines.append(f"{MEMORY_DIRNAME}/**/.*.tmp")
     if not commit_generated:
         # flip generated projections to local-only, but keep the explainer README.
         # *.json covers related.json and conflicts.json (and the guard
@@ -5946,6 +5948,7 @@ _EXACT_LOOKUPS = 3
 # (DoWhat retest of 0.5.0, item 7). The `rev-list` it replaces ran on every
 # guard firing that scored a record; HEAD moves far less often than that.
 COMMIT_ORDER_RELPATH = ("index", "commit-order.txt")
+_SHA_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
 def _cached_commit_order(root: Path) -> list[str]:
@@ -5961,11 +5964,13 @@ def _cached_commit_order(root: Path) -> list[str]:
     if head:
         try:
             text = path_policy.read_text(cache)
-        except OSError:
+        except (OSError, ValueError):  # not UTF-8 is a cache miss (review 2026-11-13, H5)
             text = ""
         first, _, rest = text.partition("\n")
         if first == f"{head} {_REVLIST_INDEX_CAP}":
-            return rest.split()
+            shas = rest.split()
+            if shas and shas[0] == head and all(_SHA_RE.fullmatch(x) for x in shas):
+                return shas
     out = _git.run(root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD")
     order = (out or "").split()
     if head and order and order[0] == head and cache.parent.parent.is_dir():
@@ -8481,10 +8486,22 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
     path = root / ".claude" / "settings.json"
 
     def _mut(data: dict) -> None:
+        # A shape we cannot merge into is reported, not a traceback (review
+        # 2026-11-13, H8); nothing is written.
         hooks = data.setdefault("hooks", {})
+        if not isinstance(hooks, dict):
+            raise ValueError(
+                f"{path}: `hooks` is a {type(hooks).__name__}, not an object; "
+                "fix it by hand, then re-run"
+            )
         for ev in events:
             cc_event, matcher = _HOOK_SPECS[ev]
             arr = hooks.setdefault(cc_event, [])
+            if not isinstance(arr, list):
+                raise ValueError(
+                    f"{path}: `hooks.{cc_event}` is a {type(arr).__name__}, not a list; "
+                    "fix it by hand, then re-run"
+                )
             existing = [
                 (g, h) for g in arr for h in _group_entries(g) if _hook_entry_event(h) == ev
             ]
@@ -9119,6 +9136,12 @@ def doctor_report(root: Path) -> dict:
     return {"checks": checks, "integrated": integrated, "store": store}
 
 
+def _settings_hooks(data) -> dict:
+    """`data["hooks"]` when settings.json and its `hooks` are both objects."""
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    return hooks if isinstance(hooks, dict) else {}
+
+
 def _outdated_guard_matchers(root: Path) -> list[str]:
     """Matchers of installed breadcrumbs guard entries that differ from the
     adapter's current `GUARD_MATCHER` (audit WP17/WP20)."""
@@ -9128,7 +9151,7 @@ def _outdated_guard_matchers(root: Path) -> list[str]:
     except (json.JSONDecodeError, OSError, path_policy.Refused):
         return []
     out = []
-    for group in (data.get("hooks") or {}).get("PreToolUse") or []:
+    for group in _settings_hooks(data).get("PreToolUse") or []:
         if not isinstance(group, dict):
             continue
         if any(_hook_entry_event(h) == "guard" for h in _group_entries(group)):
@@ -9153,7 +9176,7 @@ def _installed_hook_commands(root: Path) -> list[str]:
     except (json.JSONDecodeError, OSError):
         return []
     cmds: list[str] = []
-    for arr in (data.get("hooks") or {}).values():
+    for arr in _settings_hooks(data).values():
         if not isinstance(arr, list):
             continue
         for group in arr:
@@ -9357,17 +9380,43 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
 
 
 def _read_hook_stdin() -> dict:
+    # The host writes UTF-8 JSON. Read in the locale encoding (cp1252 for a
+    # Windows pipe) a non-ASCII path became mojibake and an `Á` in a prompt
+    # raised (review 2026-11-13, H1). Bytes, decoded here, whatever the locale;
+    # a lone surrogate or a bad byte is replaced, never raised.
     try:
-        raw = sys.stdin.read()
-    except OSError:
+        buffer = getattr(sys.stdin, "buffer", None)
+        raw = (
+            buffer.read().decode("utf-8", errors="replace")
+            if buffer is not None
+            else sys.stdin.read()
+        )
+    except (OSError, ValueError):
         return {}
+    if raw.startswith("\ufeff"):
+        raw = raw[1:]
     try:
         payload = json.loads(raw) if raw.strip() else {}
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):  # also a 5,000-digit integer (H5)
         return {}
     # Valid JSON that isn't an object (a list, a string) is as useless to the
     # hook as malformed JSON — treat it the same.
-    return payload if isinstance(payload, dict) else {}
+    return _scrub_surrogates(payload) if isinstance(payload, dict) else {}
+
+
+def _scrub_surrogates(value):
+    """`value` with every lone surrogate replaced by `?`.
+
+    JSON's `\\ud800` escape decodes to a string no UTF-8 writer accepts, so a
+    prompt carrying one failed at the first write (review 2026-11-13, H5).
+    """
+    if isinstance(value, str):
+        return value.encode("utf-8", "replace").decode("utf-8")
+    if isinstance(value, dict):
+        return {_scrub_surrogates(k): _scrub_surrogates(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_surrogates(v) for v in value]
+    return value
 
 
 def _hook_root(payload: dict) -> Path:
@@ -9559,6 +9608,12 @@ def cmd_recover(args: argparse.Namespace) -> int:
     if debris:
         what = "removed" if args.apply else "found (`--apply` removes them)"
         print(f"recover: {debris} empty journal director(ies) left by an interrupted write {what}.")
+    temps = report.get("temp_files") or []
+    if temps:
+        what = "removed" if args.apply else "found (`--apply` removes them)"
+        print(f"recover: {len(temps)} temporary file(s) left by an interrupted write {what}:")
+        for rel in temps:
+            print(f"  {rel}")
     if not ops:
         print("recover: no unfinished operations.")
         return 0
@@ -9874,7 +9929,18 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     try:
-        return _run_command(args)
+        code = _run_command(args)
+        # Flush here, inside the handler: a reader that closed the pipe
+        # otherwise surfaces at interpreter exit, past every `except`.
+        sys.stdout.flush()
+        return code
+    except BrokenPipeError:
+        # `crumb … | head`: the reader has what it wanted. Not a failure of
+        # crumb's, so no CRUMB-ERROR line, which agents grep for (review
+        # 2026-11-13, R9). Point stdout at devnull so the exit flush is quiet;
+        # 141 is what a shell reports for a process killed by SIGPIPE.
+        _silence_stdout()
+        return 141
     except KeyboardInterrupt:
         # Ctrl+C at a prompt aborts the command. 130 is the shell
         # convention for SIGINT; the message goes to stderr so `--json` output is
@@ -9890,6 +9956,15 @@ def main(argv: list[str] | None = None) -> int:
             args, path_policy.describe_copy_error(exc) if isinstance(exc, OSError) else str(exc)
         )
         return 1
+
+
+def _silence_stdout() -> None:
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except (OSError, ValueError, AttributeError):
+        pass
 
 
 # How long importing the package and this module took, for the hook log's

@@ -262,7 +262,12 @@ def _add_remember(sub, global_parser: argparse.ArgumentParser) -> None:
         )
         pr.add_argument("--tags", help="comma-separated tags")
         pr.add_argument("--confidence", choices=("low", "medium", "high"))
-        pr.add_argument("--privacy", choices=cli.VALID_PRIVACY)
+        pr.add_argument(
+            "--privacy",
+            choices=cli.VALID_PRIVACY,
+            help="repo-safe (the default) is the only value a decision or attempt "
+            "can hold; for a machine-local note use `crumb jot --local`",
+        )
         # Free text until the record contract (audit F05): any other value was
         # stored and silently read as `project`, whatever its author meant.
         pr.add_argument("--scope", choices=cli.RECORD_SCOPES)

@@ -5,9 +5,11 @@ there into machine-local jots and get out of the way. Neither can speak to the
 model, and neither blocks.
 
 **PreCompact** is the biggest memory-loss event in a long session — the whole
-conversation is about to be replaced by a summary. The hook cannot inject
-anything (its stdout goes to the debug log), so it does the only useful
-deterministic thing: mines the transcript, and leaves a marker so the
+conversation is about to be replaced by a summary. The hook prints nothing:
+what a PreCompact hook prints is not context the model reads afterwards (the
+reference makes it instructions for the summary, which this hook leaves
+alone). So it does the only useful deterministic thing: mines the
+transcript, and leaves a marker so the
 `SessionStart` that fires afterwards with `source: compact` can say what was
 salvaged. That handoff, not this hook's output, is how the mined candidates
 reach the model.

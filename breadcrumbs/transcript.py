@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1010,6 +1011,7 @@ def _empty_report() -> dict:
         "malformed_lines": 0,
         "reset": None,
         "locked": False,
+        "missing": False,
         "error": None,
     }
 
@@ -1043,7 +1045,9 @@ def ingest(
             _ingest_locked(
                 memory_dir,
                 Path(project_root),
-                Path(transcript_path),
+                # The host's own examples spell it `~/.claude/…` (review
+                # 2026-11-13, H7); a `~` path read literally mines nothing.
+                Path(os.path.expanduser(str(transcript_path))),
                 session_id=session_id,
                 extra_tags=extra_tags,
                 one_shot=one_shot,
@@ -1095,7 +1099,9 @@ def _ingest_locked(
     progress: dict = {}
     entries: list[dict] = []
     carried: list[ToolCall] = []
-    if path.is_file():
+    if not path.is_file():
+        report["missing"] = True
+    else:
         if one_shot:
             size = path.stat().st_size
             report["skipped_bytes"] = max(0, size - ONE_SHOT_MAX_BYTES)
@@ -1230,6 +1236,8 @@ def note_report(report: dict) -> None:
         miner_dropped=report.get("dropped_backlog") or None,
         miner_reset=report.get("reset"),
         miner_locked=True if report.get("locked") else None,
+        # Said, not left silent: a path that is not there mines nothing.
+        miner_missing=True if report.get("missing") else None,
     )
 
 

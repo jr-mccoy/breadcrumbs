@@ -3,6 +3,6 @@
 .project-memory/index/**
 !.project-memory/index/README.md
 .project-memory/generated/*.local.md
-.project-memory/generated/*.tmp
+.project-memory/**/.*.tmp
 .project-memory/sessions/
 # <<< breadcrumbs managed block <<<

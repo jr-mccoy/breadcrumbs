@@ -112,8 +112,9 @@ crumb init                      # locates bundled templates post-install
 **Versioning.** The package uses semantic versioning. `crumb --version`
 prints the package version *and* the **record `schema_version`** (the manifest's
 `schema_version:`, currently `4`). These are independent: the package version moves with the
-code; the record schema version moves only on a breaking change to the on-disk
-record format, and a package MAJOR bump accompanies it.
+code; the record schema version moves only when the on-disk record format
+changes, which is always a minor release with a migration
+([`docs/compatibility.md`](docs/compatibility.md) §1).
 
 **Requires** Python ≥ 3.10.
 
@@ -1008,7 +1009,9 @@ piece is independent:
 - **Adapter signpost** (`--with-adapter[=CLAUDE.md,AGENTS.md]`) — injects a small
   managed block into the agent-guidance files that already exist, telling the
   agent to read the resume packet, `guard` before risky actions, and `note`/
-  `capture` as it goes. It never creates a file you don't already have, and stays
+  `capture` as it goes. It edits the guidance files you have; in a project with
+  none, a bare `--with-adapter` creates `AGENTS.md` (the cross-agent standard),
+  and naming files explicitly writes those. The block stays
   well under the bloat threshold so `audit` stays green. `--remove-integrations`
   removes this block only: rules added with `crumb promote` sit in a block of
   their own and stay, since they are the project's instructions now.
@@ -1070,8 +1073,8 @@ piece is independent:
     `retain_prompt_text: false` keeps only a digest.
   - `PreCompact → crumb hook compact` mines the transcript just before the
     context is destroyed. Compaction is the biggest memory-loss event in a long
-    session and this hook cannot speak to the model at all (its stdout goes to
-    the debug log), so it writes candidates to `private/inbox/` and leaves a
+    session, and this hook cannot add context (what it prints would become
+    instructions for the compaction summary, so it prints nothing). It writes candidates to `private/inbox/` and leaves a
     marker that the next `SessionStart` reads. That `SessionStart` names the
     latest task and builds the packet around it.
   - `SubagentStop → crumb hook subagent` mines a finished subagent's transcript.
