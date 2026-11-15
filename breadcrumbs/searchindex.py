@@ -66,7 +66,7 @@ INDEX_MIN_CORPUS = 200
 # 3: command heads are posted (field `c`), so an attempt naming the exact
 # command is found through the index as it is by the full scan (review
 # 2026-11-13, §2.8). An index of an older format is ignored until rebuilt.
-INDEX_FORMAT = "3"
+INDEX_FORMAT = "4"
 
 # The directories whose records the index may cover, by record type. Sessions
 # are never in the search corpus. Traps and questions are few (tens, not

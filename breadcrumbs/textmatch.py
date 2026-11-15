@@ -41,24 +41,43 @@ _FUNCTION_WORDS = frozenset(
     """.split()
 )
 
-GUARD_STOPWORDS = _FUNCTION_WORDS | frozenset(
-    """
+GUARD_STOPWORDS = (
+    _FUNCTION_WORDS
+    | frozenset(
+        """
     add added adding update updated updating change changed changing fix fixed
     fixing new old make made making run running set get got use used using create
     created creating build built work working file files code project thing things
     stuff need needs want wants now today please let lets go going into onto
-    src lib test tests spec specs index main app ts js tsx jsx py md json yml yaml
-    txt cfg ini case feature support handle handling
+    case feature support handle handling
     why fail fails failed failing failure error errors broken wrong issue issues
     problem problems
     """.split()
+    )
+    | frozenset(
+        # Path segments (`src/index.ts`): stop words only as written. As English
+        # words their inflections carry meaning ("indexing", "testing").
+        _PATH_WORDS := frozenset(
+            """
+        src lib test tests spec specs index main app ts js tsx jsx py md json yml
+        yaml txt cfg ini
+        """.split()
+        )
+    )
 )
 # The last line above (field report 2026-10-01, issue 8): the words a question
 # about *any* failure uses. "why is my robolectric test failing" shared `why`
 # and `fail` with every attempt record, which is what let five unrelated
 # attempts outrank the one trap about the actual error.
 
-_TOKEN_RE = re.compile(r"[a-z0-9_]+")
+# Words in any script (review 2026-11-13, R7: `[a-z0-9_]+` made a Cyrillic or
+# CJK title reachable only by file path).
+_TOKEN_RE = re.compile(r"\w+")
+# `0.6.0`, `v1.2`: one token, not single digits that are dropped.
+_VERSION_IN_TEXT_RE = re.compile(r"(?<![\w.])v?(\d+(?:\.\d+)+)(?![\w.]*\w)")
+# Scripts written without spaces: a run is a phrase, so it is indexed as its
+# character bigrams as well (a query word then meets the phrase holding it).
+_NO_SPACE_RE = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff]+")
 # Candidate path tokens in free text. This regex only *finds* things shaped like
 # a path; `_is_path_token` decides whether each one is one. Keeping the two
 # separate is the point — the old code treated the regex's own output as the
@@ -153,8 +172,29 @@ def _is_path_token(token: str) -> bool:
 
 
 def _tokenize(text: str) -> set[str]:
-    """Lowercase word tokens (alnum + underscore), single chars dropped."""
-    return {t for t in _TOKEN_RE.findall((text or "").lower()) if len(t) > 1}
+    """Lowercase word tokens, single characters dropped.
+
+    Words in any script (with `_`), plus what the old `[a-z0-9_]+` lost
+    (review 2026-11-13, R7): a version (`0.6.0`) as one token, and the
+    character bigrams of a CJK run.
+
+    Identifiers stay whole. Split on `_` on both sides, holdout packet
+    precision@5 fell from 0.514 to 0.389; split on camelCase,
+    `fallbackToDestructiveMigration()` shared "migration" with a Room
+    migration-test attempt and failed the critical eval
+    `android-room-builder-edit-shows-nothing-blocking`. Finding
+    `parse_frontmatter` from `frontmatter` needs a lookup-only match, not a
+    tokenizer change.
+    """
+    text = text or ""
+    lower = text.lower()
+    out = {t for t in _TOKEN_RE.findall(lower) if len(t) > 1}
+    if "." in text:
+        out.update(m.group(1) for m in _VERSION_IN_TEXT_RE.finditer(lower))
+    if not text.isascii():
+        for run in _NO_SPACE_RE.findall(lower):
+            out.update(run[i : i + 2] for i in range(len(run) - 1))
+    return out
 
 
 # Morphology folding for guard/search matching. Exact-token intersection missed
@@ -374,19 +414,73 @@ def _base_stem(token: str) -> str:
     return GUARD_STEM_ALIASES.get(word, word)
 
 
-# Stopwords are filtered on stems so inflections a raw list misses ("changes"
-# when the list has "change changed changing") drop out too.
-_GUARD_STOPWORD_STEMS = frozenset(GUARD_STOPWORDS | {_stem(w) for w in GUARD_STOPWORDS})
+# The development words whose regular inflections are stop words too
+# ("changes" when the list has "change changed changing"). Function words and
+# path segments are matched only as written.
+_INFLECTED_STOPWORDS = GUARD_STOPWORDS - _FUNCTION_WORDS - _PATH_WORDS
+
+
+def _uninflect(word: str) -> set[str]:
+    """The bases `word` could be a regular -s/-es/-ed/-ing form of."""
+    out = set()
+    if word.endswith(("ies", "ied")):
+        out.add(word[:-3] + "y")
+    for suffix in ("es", "s", "ed", "d", "ing"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 2:
+            base = word[: -len(suffix)]
+            out.add(base)
+            if suffix in ("ed", "ing"):
+                out.add(base + "e")  # used, making
+                if len(base) > 2 and base[-1] == base[-2]:
+                    out.add(base[:-1])  # stopped, running
+    return out
+
+
+@functools.lru_cache(maxsize=65536)
+def _is_stopword(word: str) -> bool:
+    """A stop word, or a regular inflection of a development stop word.
+
+    Stop words were filtered on *stems*, so every word sharing a stem with one
+    vanished: `projection` (-> `project`), `note` (-> `not`), `handler`,
+    `worker`; `crumb search projection` found nothing in a store where seven
+    decisions said it (review 2026-11-13, R6).
+    """
+    return word in GUARD_STOPWORDS or not _INFLECTED_STOPWORDS.isdisjoint(_uninflect(word))
 
 
 def _specific(text: str) -> set[str]:
-    """Meaningful stems only: tokenized words, stemmed, minus stop-word stems."""
+    """Meaningful stems only: tokenized words, stemmed, minus stop words."""
     out = set()
     for t in _tokenize(text):
         s = _stem(t)
-        if len(s) > 1 and s not in _GUARD_STOPWORD_STEMS and t not in GUARD_STOPWORDS:
+        if len(s) > 1 and not _is_stopword(t):
             out.add(s)
     return out
+
+
+# The characters `_FILE_TOKEN_RE` can match, as maximal runs.
+_PATH_RUN_RE = re.compile(r"[\w./\-]+")
+# No real path is longer. A run past this is a hash, a blob or a pasted token.
+_PATH_RUN_MAX = 1024
+
+
+def _file_token_matches(text: str):
+    """`_FILE_TOKEN_RE` matches in `text`, in linear time.
+
+    On a long run of word characters with no `.` or `/`, the regex retried
+    from every position and was quadratic: a 20 KB token made `remember` take
+    8 s and every later `guard` 2 s, under the store lock (review 2026-11-13,
+    W2). Each alternative needs a `.` or a `/`, so a run without either cannot
+    match, and is skipped; so is a run too long to be a path. Positions are
+    the text's, as before.
+    """
+    for run in _PATH_RUN_RE.finditer(text):
+        if len(run.group(0)) > _PATH_RUN_MAX:
+            continue
+        chunk = run.group(0)
+        if "." not in chunk and "/" not in chunk:
+            continue
+        yield from _FILE_TOKEN_RE.finditer(text, run.start(), run.end())
 
 
 def _paths_from_text(text: str) -> set[str]:
@@ -397,7 +491,7 @@ def _paths_from_text(text: str) -> set[str]:
     """
     text = text or ""
     out = set()
-    for m in _FILE_TOKEN_RE.finditer(text):
+    for m in _file_token_matches(text):
         token = m.group(0)
         before = text[max(0, m.start() - 3) : m.start()]
         if before.endswith(":") or before.endswith(":/") or token.startswith("//"):

@@ -193,6 +193,18 @@ unchanged.
     and evidence history cannot be measured, instead of dropping the warning (R8).
   - A retitled question keeps its id in the packet, and a question's age uses
     its full timestamp, not a date cut to ten characters (R10).
+- **Retrieval** (review 2026-11-13, R6, R7, W2):
+  - Stop words are matched as written and in their regular inflections, not by
+    stem: `projection`, `note`, `handler`, `worker` and `indexing` were dropped
+    from every query and record because they share a stem with a stop word (R6).
+  - Words in any script are tokens, a CJK run is also indexed as its character
+    bigrams, and a version such as `0.6.0` is one token; a Cyrillic or CJK
+    title was reachable only by file path (R7). Identifiers stay whole: split
+    on `_`, holdout packet precision@5 fell from 0.514 to 0.389.
+  - Finding file paths in text is linear: a 20 KB unbroken token made every
+    later `guard` take 2 s, under the store lock (W2).
+  - The guard pre-filter (format 5) and search index (format 4) are rebuilt on
+    the next write or `crumb reindex`; until then guard runs in full.
 - **Release and CI** (review 2026-11-13, C2 to C7): the pre-flight no longer
   calls a tag a dead tag when PyPI is unreachable, and refuses a fresh version
   lower than the newest on PyPI. The tag and Release moved to their own job, so

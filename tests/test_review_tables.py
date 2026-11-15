@@ -300,6 +300,55 @@ class ReadPathOrderTests(unittest.TestCase):
             self.assertNotIn("shallow clone", out)
 
 
+class RetrievalTests(unittest.TestCase):
+    def _store(self, tmp: str) -> Path:
+        root = make_repo(tmp)
+        init_store(root)
+        for title, body in (
+            ("Rebuild the projection on every write", "The projection was stale."),
+            ("Release 0.6.0 pins the hook matcher", "Pinned in 0.6.0."),
+            ("Кэш индексов сбрасывается при миграции", "Сбросить кэш вручную."),
+            ("数据库迁移需要停机", "迁移期间停止写入。"),
+        ):
+            run(
+                [
+                    "remember", "decision", "--project", str(root), "--title", title,
+                    "--set", "Rationale", body, "--confidence", "low", "--allow-duplicate",
+                ]
+            )  # fmt: skip
+        return root
+
+    def search(self, root: Path, query: str) -> list[str]:
+        out = json.loads(run(["--json", "search", query, "--project", str(root)])[1])
+        return [m.get("title", "") for m in out.get("matches", out.get("items", []))]
+
+    def test_r6_a_word_sharing_a_stopwords_stem_is_searchable(self):
+        from breadcrumbs import textmatch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            self.assertTrue(any("projection" in t for t in self.search(root, "projection")))
+        for word in ("projection", "note", "handler", "worker", "indexing"):
+            self.assertFalse(textmatch._is_stopword(word), word)
+        for word in ("changes", "fixed", "running", "the", "index"):
+            self.assertTrue(textmatch._is_stopword(word), word)
+
+    def test_r7_versions_and_non_ascii_text_are_searchable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self._store(tmp)
+            self.assertTrue(any("0.6.0" in t for t in self.search(root, "0.6.0")))
+            self.assertTrue(any("Кэш" in t for t in self.search(root, "кэш индексов")))
+            self.assertTrue(any("迁移" in t for t in self.search(root, "迁移")))
+
+    def test_w2_a_long_token_is_linear(self):
+        from breadcrumbs import textmatch
+
+        text = "see " + "a" * 200_000 + ". and src/app/main.py"
+        started = time.perf_counter()
+        self.assertEqual(textmatch._paths_from_text(text), {"src/app/main.py"})
+        self.assertLess(time.perf_counter() - started, 1.0)
+
+
 class WritePathTests(unittest.TestCase):
     def test_w4_local_private_is_refused_before_anything_is_written(self):
         with tempfile.TemporaryDirectory() as tmp:

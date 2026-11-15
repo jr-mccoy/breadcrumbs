@@ -3708,7 +3708,7 @@ def _may_drive_verdict(item: dict) -> bool:
 # 2: `commands` added (audit F10). 3: every record that could drive a verdict,
 # with `titles` and `tags` (audit WP11). A pre-filter of another format is not
 # trusted: the hook runs the full guard instead.
-GUARD_PREFILTER_FORMAT = 4
+GUARD_PREFILTER_FORMAT = 5
 
 
 # Written when a projection rebuild raised, removed by the next one that works.
