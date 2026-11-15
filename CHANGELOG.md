@@ -12,7 +12,7 @@ Fixes for the first five items of the 2026-11-13 system review
 (`docs/reviews/2026-11-13-system-review.md` §6): CI and releases were blocked,
 three commands could lose records, memory did not reach the agent in three
 common situations, the write gate let five things through, and guard misread
-ordinary shell commands. Dropping Python 3.9 is a breaking change, so the next
+ordinary shell commands; and the first agent-outcome eval (item 6). Dropping Python 3.9 is a breaking change, so the next
 release is a minor one (0.7.0). `schema_version` (4) and `requires` are
 unchanged.
 
@@ -26,6 +26,17 @@ unchanged.
   extra drops its `python_version >= '3.10'` marker, which the floor now
   implies, and the install hint stops explaining it. The CI matrix test now
   reads the supported list from the classifiers, so the two cannot drift.
+
+### Added
+
+- **An agent-outcome eval** (`evals/agent_outcomes/`, review §5.1): a real
+  agent, headless, on repeat-failure tasks under no memory, a hand-kept notes
+  file, breadcrumbs with the `CLAUDE.md` signpost, and breadcrumbs with hooks.
+  The first run is in `docs/benchmarks/agent-outcomes.md`. Any memory stopped
+  the repeat where the model did not already know better; a notes file did
+  as well as breadcrumbs for a third of the context; and guard's `ASK_HUMAN`
+  on a correct migration plan stalled 5 of 6 breadcrumbs runs in one
+  scenario. Run by hand; not part of CI.
 
 ### Security
 

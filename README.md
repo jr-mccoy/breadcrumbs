@@ -32,7 +32,9 @@ minutes, one project, executed in CI. Then read:
 - [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) for which
   agents and platforms get what;
 - [`docs/benchmarks/continuity-results.md`](docs/benchmarks/continuity-results.md)
-  for measured delivery against no memory and a hand-kept notes file.
+  for measured delivery against no memory and a hand-kept notes file;
+- [`docs/benchmarks/agent-outcomes.md`](docs/benchmarks/agent-outcomes.md)
+  for what a real agent did with each, on repeat-failure tasks.
 
 The rest of this README is the reference.
 

@@ -156,6 +156,25 @@ need, before the tool was run against them. Do not edit them to match the
 tool: a task it scores badly is a measured gap. A change that moves a holdout
 number goes through the same reviewed baseline write as any other.
 
+## Agent outcomes (a real agent, run by hand)
+
+Everything above is deterministic: it scores what memory *delivers*.
+`evals/agent_outcomes/` runs a real agent (`claude -p`, headless) on small
+repositories whose task invites an approach an earlier session tried and
+that failed, under four conditions (no memory, a hand-kept notes file,
+breadcrumbs with the `CLAUDE.md` signpost, breadcrumbs with hooks), and
+judges from the final files whether the agent repeated it.
+
+```bash
+python evals/agent_outcomes/run.py --dry-run                     # build the repos, no agent
+python evals/agent_outcomes/run.py --repeats 3 --out results.json  # costs model usage
+```
+
+It is not part of CI or the release gate: it costs model usage, and its
+results vary from run to run. `tests/test_agent_outcomes.py` checks the
+harness and the oracle without an agent. The latest results and what they
+show are in [`docs/benchmarks/agent-outcomes.md`](../docs/benchmarks/agent-outcomes.md).
+
 ## Changing things
 
 **The baseline is rewritten only with a reason, and task by task.**

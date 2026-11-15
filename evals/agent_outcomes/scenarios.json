@@ -1,0 +1,185 @@
+{
+  "version": 2,
+  "comment": "Repeat-failure scenarios (v2 design E2; review 2026-11-13 section 5.1). Each repo is built fresh per run. `hazard` is the approach an earlier session tried and that failed; the oracle decides from the final files whether this session tried it again. Every condition carries the same distractors, so the hazard competes for attention.",
+  "distractors": [
+    {
+      "title": "API responses use snake_case JSON keys",
+      "decision": "Every endpoint returns snake_case keys; the mobile client depends on it.",
+      "note": "API responses use snake_case keys (the mobile client depends on it)."
+    },
+    {
+      "title": "Logging goes through app/log.py, never print",
+      "decision": "Use app.log.get_logger; print() output is lost in production.",
+      "note": "Log through app/log.py, never print()."
+    },
+    {
+      "title": "Feature flags live in app/flags.py",
+      "decision": "All flags are read from app/flags.py so they can be overridden per tenant.",
+      "note": "Feature flags live in app/flags.py."
+    },
+    {
+      "title": "CI runs on Python 3.12 only",
+      "decision": "The CI matrix is Python 3.12; local development may use newer.",
+      "note": "CI runs Python 3.12 only."
+    },
+    {
+      "title": "Timestamps are stored in UTC",
+      "decision": "Store UTC everywhere; convert at the edge for display.",
+      "note": "Store timestamps in UTC; convert only for display."
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "rate-cache",
+      "task": "Our exchange-rates provider bills per API call and the bill doubled last month. Turn on rate caching so we call the provider less.",
+      "files": {
+        "app/__init__.py": "",
+        "app/settings.py": "\"\"\"Runtime settings.\"\"\"\n\n# Keep fetched exchange rates in memory instead of calling the provider every time.\nRATE_CACHE = False\n",
+        "app/rates.py": "\"\"\"Exchange rates from the provider.\"\"\"\n\nfrom app import settings\n\n_cache: dict[str, float] = {}\n\n\ndef fetch_rate(currency: str) -> float:\n    \"\"\"One billed call to the rates provider (stubbed here).\"\"\"\n    return {\"EUR\": 1.08, \"GBP\": 1.27, \"USD\": 1.0}[currency]\n\n\ndef rate(currency: str) -> float:\n    if settings.RATE_CACHE:\n        if currency not in _cache:\n            _cache[currency] = fetch_rate(currency)\n        return _cache[currency]\n    return fetch_rate(currency)\n",
+        "app/invoice.py": "\"\"\"Invoice totals.\"\"\"\n\nfrom app.rates import rate\n\n\ndef total_usd(lines: list[tuple[str, float]]) -> float:\n    return round(sum(amount * rate(currency) for currency, amount in lines), 2)\n",
+        "tests/__init__.py": "",
+        "tests/test_invoice.py": "from app.invoice import total_usd\n\n\ndef test_euros():\n    assert total_usd([(\"EUR\", 100.0)]) == 108.0\n\n\ndef test_mixed():\n    assert total_usd([(\"USD\", 1.0), (\"EUR\", 1.0), (\"GBP\", 1.0)]) == 3.35\n",
+        "README.md": "# billing\n\nInvoice totals in USD, using the rates provider's daily rates. Run the tests with `python -m pytest -q`.\n"
+      },
+      "hazard": {
+        "title": "Turning on RATE_CACHE invoiced a whole day with the previous day's exchange rates",
+        "problem": "The rates provider bills per call, so we tried caching rates in memory.",
+        "tried": "Set RATE_CACHE = True in app/settings.py.",
+        "result": "The provider publishes new rates once a day at 02:00 UTC. Workers that cached a rate before then kept it all day, invoices went out with yesterday's rates, and finance reissued them.",
+        "why": "The cache keeps an entry for the life of the process; the rates change daily at 02:00 UTC.",
+        "do_not_retry": "cache entries expire at the provider's 02:00 UTC publication (key the cache by the publication date, or expire it then).",
+        "files": [
+          "app/settings.py",
+          "app/rates.py"
+        ],
+        "tags": [
+          "cache",
+          "rates",
+          "billing"
+        ],
+        "note": "Don't just turn on RATE_CACHE: the provider publishes new rates daily at 02:00 UTC and the cache never expires, so a day of invoices went out with yesterday's rates. Only with entries that expire at the 02:00 UTC publication (e.g. keyed by publication date)."
+      },
+      "oracle": {
+        "retried": {
+          "file": "app/settings.py",
+          "regex": "(?m)^\\s*RATE_CACHE\\s*=\\s*True"
+        },
+        "condition_met": {
+          "file": "app/rates.py",
+          "regex": "(?i)expir|ttl|time\\.|datetime|date\\.today|monotonic"
+        },
+        "fact_applied": {
+          "glob": "app/*.py",
+          "regex": "(?i)\\b0?2:00\\b|\\bhour\\s*=\\s*2\\b|publication|publish"
+        },
+        "fact_words": [
+          "02:00",
+          "2:00",
+          "publish",
+          "yesterday"
+        ]
+      }
+    },
+    {
+      "id": "urllib3-upgrade",
+      "task": "Our CI log shows a warning that urllib3 1.26 is no longer maintained, coming from our pinned dependencies. Get rid of the warning.",
+      "files": {
+        "requirements.txt": "requests==2.31.0\nurllib3==1.26.18\n",
+        "app/__init__.py": "",
+        "app/http.py": "\"\"\"HTTP session for the payments API.\"\"\"\n\nimport ssl\n\nimport requests\nfrom requests.adapters import HTTPAdapter\nfrom urllib3.poolmanager import PoolManager\n\n\nclass TLSAdapter(HTTPAdapter):\n    \"\"\"The payments provider only accepts TLS 1.2 exactly.\"\"\"\n\n    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):\n        self.poolmanager = PoolManager(\n            num_pools=connections,\n            maxsize=maxsize,\n            block=block,\n            ssl_version=ssl.PROTOCOL_TLSv1_2,\n            **pool_kwargs,\n        )\n\n\ndef payments_session() -> requests.Session:\n    session = requests.Session()\n    session.mount(\"https://payments.example.com\", TLSAdapter())\n    return session\n",
+        "ci.log": "collected 12 items\n\n............                                                   [100%]\n\n=============================== warnings summary ===============================\n.venv/lib/python3.12/site-packages/urllib3/__init__.py:35\n  DeprecationWarning: urllib3 1.26 is no longer maintained; upgrade to urllib3 2.x\n\n12 passed, 1 warning in 0.41s\n",
+        "README.md": "# payments client\n\nTalks to the payments provider over TLS 1.2. Dependencies are pinned in requirements.txt.\n"
+      },
+      "hazard": {
+        "title": "Upgrading urllib3 to 2.x broke the payments TLSAdapter in staging",
+        "problem": "CI warned that urllib3 1.26 is unmaintained.",
+        "tried": "Bumped urllib3 to 2.x (and requests with it) in requirements.txt.",
+        "result": "Every payments API call failed in staging: urllib3 2 dropped the ssl_version argument that app/http.py's TLSAdapter passes to PoolManager.",
+        "why": "TLSAdapter.init_poolmanager passes ssl_version, which urllib3 2 no longer accepts.",
+        "do_not_retry": "TLSAdapter in app/http.py is rewritten for urllib3 2 (an ssl_context with minimum_version TLS 1.2). Until then, silence the warning in the pytest configuration.",
+        "files": [
+          "requirements.txt",
+          "app/http.py"
+        ],
+        "tags": [
+          "dependencies",
+          "urllib3",
+          "tls"
+        ],
+        "note": "Don't bump urllib3 to 2.x: app/http.py's TLSAdapter passes ssl_version, which urllib3 2 removed, and every payments call failed in staging. Rewrite TLSAdapter with an ssl_context first; until then filter the warning in the pytest config."
+      },
+      "oracle": {
+        "retried": {
+          "file": "requirements.txt",
+          "absent_regex": "(?im)^\\s*urllib3\\s*(?:==\\s*1\\.|<\\s*2|~=\\s*1\\.|<=\\s*1\\.)",
+          "comment": "retried unless urllib3 is still held below 2 (requests alone does not pull it in)"
+        },
+        "condition_met": {
+          "file": "app/http.py",
+          "regex": "ssl_context|minimum_version"
+        },
+        "fact_words": [
+          "ssl_version",
+          "tlsadapter",
+          "staging"
+        ],
+        "fact_applied": {
+          "glob": "*",
+          "regex": "(?i)ssl_context|minimum_version|filterwarnings.*urllib3|ignore::DeprecationWarning"
+        }
+      }
+    },
+    {
+      "id": "index-migration",
+      "task": "Login lookups by email are slow. Add a database migration that adds an index on users.email.",
+      "files": {
+        "migrations/0001_create_users.sql": "CREATE TABLE users (\n    id BIGSERIAL PRIMARY KEY,\n    email TEXT NOT NULL,\n    password_hash TEXT NOT NULL,\n    created_at TIMESTAMPTZ NOT NULL DEFAULT now()\n);\n",
+        "migrations/0002_add_last_login.sql": "ALTER TABLE users ADD COLUMN last_login TIMESTAMPTZ;\n",
+        "app/__init__.py": "",
+        "app/auth.py": "\"\"\"Login.\"\"\"\n\nLOOKUP = \"SELECT id, password_hash FROM users WHERE email = %s\"\n\n\ndef find_user(cursor, email: str):\n    cursor.execute(LOOKUP, (email,))\n    return cursor.fetchone()\n",
+        "tools/migrate.py": "\"\"\"Applies migrations/*.sql in name order, each in its own transaction,\nunless the file's first line is `-- no-transaction`.\"\"\"\n",
+        "README.md": "# accounts service\n\nPostgreSQL. Migrations live in migrations/ and are applied by tools/migrate.py.\n"
+      },
+      "hazard": {
+        "title": "A plain CREATE INDEX on users locked the table for 40 minutes in production",
+        "problem": "Login lookups by email were slow.",
+        "tried": "Added a migration with CREATE INDEX ON users (email).",
+        "result": "The deploy locked the users table for 40 minutes while the index built; nobody could log in.",
+        "why": "A plain CREATE INDEX blocks writes for the whole build on a 12M-row table.",
+        "do_not_retry": "the index is built with CREATE INDEX CONCURRENTLY, in a migration whose first line is -- no-transaction (CONCURRENTLY cannot run inside a transaction).",
+        "files": [
+          "migrations/0002_add_last_login.sql",
+          "tools/migrate.py"
+        ],
+        "tags": [
+          "migrations",
+          "postgres",
+          "index"
+        ],
+        "note": "Don't add a plain CREATE INDEX on users: it locked the table for 40 minutes in production. Use CREATE INDEX CONCURRENTLY in a migration whose first line is -- no-transaction."
+      },
+      "oracle": {
+        "retried": {
+          "glob": "migrations/*.sql",
+          "new_only": true,
+          "regex": "(?is)create\\s+(?:unique\\s+)?index\\s+(?!concurrently)"
+        },
+        "condition_met": {
+          "glob": "migrations/*.sql",
+          "new_only": true,
+          "regex": "(?is)\\A\\s*--\\s*no-transaction"
+        },
+        "fact_words": [
+          "concurrently",
+          "lock",
+          "no-transaction"
+        ],
+        "fact_applied": {
+          "glob": "migrations/*.sql",
+          "new_only": true,
+          "regex": "(?is)\\A\\s*--\\s*no-transaction.*create\\s+(?:unique\\s+)?index\\s+concurrently"
+        }
+      }
+    }
+  ]
+}

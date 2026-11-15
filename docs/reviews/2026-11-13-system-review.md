@@ -799,7 +799,7 @@ memory current when asked to. Specific points:
 
 ## 6. Suggested order
 
-**Status.** Items 1 to 5 are done on branch `ccr-5a263b6c-3gtzxn` (see
+**Status.** Items 1 to 6 are done on branch `ccr-5a263b6c-3gtzxn` (see
 `CHANGELOG.md`, `[Unreleased]`). For item 1 the operator chose to drop Python
 3.9 rather than pin the runner; the floor is now 3.10, which every runner
 image provides. For item 3 the hooks are installed in this repository
@@ -823,7 +823,12 @@ it.
 5. **Guard:** the here-string and redirect parsing bugs now; the allowlist and
    wrapper redesign with property tests (§5.3) as its own piece of work;
    index parity (§2.8).
-6. **Run the agent-outcome eval** (§5.1) before starting v2's P1.
+6. **Run the agent-outcome eval** (§5.1) before starting v2's P1. Done: see
+   [`docs/benchmarks/agent-outcomes.md`](../benchmarks/agent-outcomes.md). Any
+   memory stopped the repeat where the model did not already know better; a
+   hand-kept notes file did as well as breadcrumbs at a third of the context;
+   and guard's `ASK_HUMAN` on a correct migration plan stalled 5 of 6
+   breadcrumbs runs in one scenario.
 7. The tables in §3, in whatever order is convenient. Most are small.
 
 Items 1 and 2 are a patch release. Items 3 and 4 change behaviour agents see
