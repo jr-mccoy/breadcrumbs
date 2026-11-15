@@ -859,11 +859,33 @@ def _score_item(
     # a matched full path. Keying on basename alone (the old approach) wrongly
     # collapsed genuinely-distinct files that share a name (src/a/x.ts, src/b/x.ts)
     # — undercounting the score and picking a hash-order-dependent survivor.
+    #
+    # A basename alone is evidence only when one side named the file bare
+    # (a record citing `settings.py`). When both sides give directories,
+    # `pkg_a/__init__.py` and `pkg_b/__init__.py` are different files (review
+    # 2026-11-13, R4); a full path matches another when one is the other's
+    # tail at a `/`, which is how `./src/a.py` and `/abs/repo/src/a.py` meet a
+    # record's `src/a.py`.
     def _overlap(candidate: set[str], against: set[str] = q_files) -> tuple[list[str], int]:
-        raw = candidate & against
-        full_paths = {f for f in raw if "/" in f}
+        cand_full = {f for f in candidate if "/" in f}
+        against_full = {f for f in against if "/" in f}
+        full_paths = {
+            f
+            for f in cand_full
+            if any(f == g or f.endswith("/" + g) or g.endswith("/" + f) for g in against_full)
+        }
         covered = {f.rsplit("/", 1)[-1] for f in full_paths}
-        extra_bare = {f for f in raw if "/" not in f and f not in covered}
+
+        def _bare_given(name: str, side: set[str]) -> bool:
+            return name in side and not any(f.endswith("/" + name) for f in side if "/" in f)
+
+        extra_bare = {
+            f
+            for f in candidate & against
+            if "/" not in f
+            and f not in covered
+            and (_bare_given(f, candidate) or _bare_given(f, against))
+        }
         return sorted(full_paths | extra_bare), len(full_paths) + len(extra_bare)
 
     matched_files, file_count = _overlap(item["files"])

@@ -12,6 +12,7 @@ import errno
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -149,6 +150,154 @@ class ReadPathTests(unittest.TestCase):
         proc.stderr.close()
         self.assertIn(proc.wait(), (0, 141))
         self.assertEqual(err, "")
+
+
+class ReadPathOrderTests(unittest.TestCase):
+    def test_r1_traps_and_questions_are_newest_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            # Written zebra, yak, xylophone: newest is alphabetically last.
+            for i, name in enumerate(("zebra crossing", "yak shaving", "xylophone tuning")):
+                run(["note", "trap", f"{name} breaks the build", "--project", str(root)])
+                run(["note", "question", f"Should {name} stay?", "--project", str(root)])
+                for kind in ("traps", "questions"):
+                    for f in (mem / kind).glob("*.md"):
+                        text = f.read_text(encoding="utf-8")
+                        if name.split()[0] in f.name and "2026-01-0" not in text:
+                            stamp = f"2026-01-0{3 - i}T00:00:00+00:00"
+                            text = re.sub(
+                                r"(?m)^(created_at|updated_at): .*$", rf"\1: '{stamp}'", text
+                            )
+                            f.write_text(text, encoding="utf-8")
+            code, out, _err = run(["--json", "resume", "--project", str(root)])
+            packet = json.loads(out)
+            self.assertEqual(packet["ordering"], "recency")
+            traps = [t.split(":", 1)[0] for t in packet["known_traps"]]
+            # zebra was stamped newest, xylophone oldest.
+            self.assertTrue(traps[0].startswith("trap_zebra"), traps)
+            self.assertTrue(traps[-1].startswith("trap_xylophone"), traps)
+            self.assertIn("zebra", packet["open_questions"][0])
+
+    def test_r10_a_retitled_question_keeps_its_id(self):
+        from breadcrumbs import packet as _packet
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            run(["note", "question", "Should the cache be per region?", "--project", str(root)])
+            qfile = next((mem / "questions").glob("*.md"))
+            qid = qfile.stem if qfile.stem.startswith("q_") else "q_" + qfile.stem
+            run(["retitle", qid, "Is a per-region cache worth it?", "--project", str(root)])
+            packet = _packet.build_resume_packet(mem, root)
+            entry = packet["open_questions"][0]
+            self.assertEqual(str(entry), "Is a per-region cache worth it?")
+            self.assertEqual(_packet._question_id(entry), qid)
+            self.assertEqual(_packet._entry_source("open_questions", entry), f"crumb show {qid}")
+
+    def test_r2_a_branch_handoff_is_read_with_no_default_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            git(root, "init", "-q", "-b", "feature-x")
+            git(root, "config", "user.email", "t@t")
+            git(root, "config", "user.name", "t")
+            (root / "f.txt").write_text("a\n")
+            git(root, "add", "f.txt")
+            git(root, "commit", "-qm", "init")
+            mem = init_store(root)
+            handoff = mem / "handoffs" / "feature-x.md"
+            handoff.parent.mkdir(exist_ok=True)
+            text = (mem / "handoff.md").read_text(encoding="utf-8")
+            handoff.write_text(
+                text.replace(
+                    "## Next Action\n", "## Next Action\nFinish the feature-x parser.\n", 1
+                ),
+                encoding="utf-8",
+            )
+            code, out, _err = run(["resume", "--project", str(root)])
+            self.assertIn("Finish the feature-x parser.", out)
+            self.assertIn("handoffs/feature-x.md", out)
+
+    def test_r4_same_file_means_the_same_path(self):
+        from breadcrumbs import textmatch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            run(
+                [
+                    "remember", "attempt", "--project", str(root),
+                    "--title", "Lazy imports in the package init",
+                    "--set", "Tried", "Moved imports into pkg_a/__init__.py",
+                    "--set", "Result", "Circular import at startup",
+                    "--evidence", "file", "pkg_a/__init__.py",
+                ]
+            )  # fmt: skip
+
+            def verdict(action):
+                return json.loads(run(["--json", "guard", action, "--project", str(root)])[1])
+
+            other = verdict("edit pkg_b/__init__.py")
+            self.assertNotIn("same file", json.dumps(other))
+            for action in (
+                "edit pkg_a/__init__.py",
+                "edit ./pkg_a/__init__.py",
+                f"edit {root}/pkg_a/__init__.py",
+            ):
+                with self.subTest(action=action):
+                    self.assertIn("same file", json.dumps(verdict(action)))
+            self.assertIn("src/a.py", textmatch._norm_files({"./src/a.py"}))
+
+    def test_r5_lists_come_back_when_the_protected_fields_shrink(self):
+        import random
+
+        rng = random.Random(1)
+        words = "alpha beta gamma delta zeta theta kappa sigma cache index shard queue".split()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            for i in range(20):
+                remember_args = [
+                    "remember", "decision", "--project", str(root),
+                    "--title", " ".join(rng.sample(words, 6)) + f" {i}",
+                    "--set", "Rationale", " ".join(rng.choice(words) for _ in range(60)),
+                    "--confidence", "low", "--allow-duplicate",
+                ]  # fmt: skip
+                run(remember_args)
+            long = "Сосредоточиться на миграции кэша и индексов. " * 100
+            for name, heading in (
+                ("current.md", "## Current Focus"),
+                ("handoff.md", "## Next Action"),
+            ):
+                path = mem / name
+                text = path.read_text(encoding="utf-8")
+                path.write_text(
+                    text.replace(heading + "\n", f"{heading}\n{long}\n", 1), encoding="utf-8"
+                )
+            code, out, _err = run(["--json", "resume", "--project", str(root)])
+            packet = json.loads(out)
+            self.assertLess(len(packet["current_focus"]), len(long))  # they shrank
+            self.assertGreater(len(packet["active_decisions"]), 0)
+            self.assertGreater(packet["budget"]["used"], packet["budget"]["limit"] * 0.8)
+
+    def test_r8_a_shallow_clone_says_it_cannot_measure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "src").mkdir()
+            src = make_repo(str(Path(tmp) / "src"))
+            init_store(src)
+            run(["capture", "session", "--next", "Finish the parser", "--project", str(src)])
+            git(src, "add", "-A")
+            git(src, "commit", "-qm", "memory")
+            for i in range(3):
+                (src / "f.txt").write_text(f"{i}\n")
+                git(src, "commit", "-qam", f"c{i}")
+            clone = Path(tmp) / "clone"
+            git(Path(tmp), "clone", "-q", "--depth", "1", src.as_uri(), str(clone))
+            code, out, _err = run(["resume", "--project", str(clone)])
+            self.assertIn("shallow clone", out)
+            code, out, _err = run(["resume", "--project", str(src)])
+            self.assertIn("commit(s) behind", out)
+            self.assertNotIn("shallow clone", out)
 
 
 class WritePathTests(unittest.TestCase):

@@ -80,10 +80,26 @@ def branch_handoff_path(memory_dir: Path, branch: str) -> Path:
     return Path(memory_dir) / HANDOFFS_DIR / f"{branch_slug(branch)}.md"
 
 
+def _owns_handoff(memory_dir: Path, root: Path, branch: str | None) -> bool:
+    """Is `branch`'s own handoff the one to use?
+
+    On a known feature branch, yes. With no default branch to compare against
+    (a single-ref fetch has no `origin/HEAD` and no local `main`), a branch
+    whose handoff file exists is taking it: that file can only have been
+    written on that branch, and serving the default branch's Next Action
+    instead was silent and wrong (review 2026-11-13, R2).
+    """
+    if _is_feature_branch(root, branch):
+        return True
+    if not branch or branch in (git.NO_BRANCH, "HEAD") or default_branch(root) is not None:
+        return False
+    return branch_handoff_path(memory_dir, branch).is_file()
+
+
 def write_path(memory_dir: Path, root: Path, branch: str | None) -> Path:
     """Where a capture on `branch` writes its handoff."""
     memory_dir = Path(memory_dir)
-    if uses_branch_handoffs(memory_dir) and _is_feature_branch(root, branch):
+    if uses_branch_handoffs(memory_dir) and _owns_handoff(memory_dir, root, branch):
         return branch_handoff_path(memory_dir, branch)
     return memory_dir / "handoff.md"
 
@@ -100,7 +116,7 @@ def read_path(memory_dir: Path, root: Path) -> tuple[Path, str]:
     if not uses_branch_handoffs(memory_dir):
         return single, "handoff.md"
     branch = cli.git_branch(root)
-    if not _is_feature_branch(root, branch):
+    if not _owns_handoff(memory_dir, root, branch):
         return single, "handoff.md"
     own = branch_handoff_path(memory_dir, branch)
     if own.is_file():

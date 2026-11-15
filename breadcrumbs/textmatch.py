@@ -417,6 +417,8 @@ def _norm_files(paths) -> set[str]:
         # directory miss `rm -rf app/build/test-results` entirely.
         if len(p) > 1:
             p = p.rstrip("/")
+        while p.startswith("./"):  # `./src/a.py` is `src/a.py` (R4)
+            p = p[2:]
         if not p:
             continue
         out.add(p)

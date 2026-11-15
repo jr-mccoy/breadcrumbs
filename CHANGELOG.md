@@ -176,6 +176,23 @@ unchanged.
   - A temporary file an interrupted write leaves in a committed directory is
     now gitignored (`.project-memory/**/.*.tmp`), fails `validate`
     (`temp-files`), and is listed and removed by `crumb recover [--apply]` (W7).
+- **Read path** (review 2026-11-13, R1 to R10):
+  - Traps and open questions are listed newest first, as the packet's
+    `ordering: "recency"` says; in file-name order the per-section cap dropped
+    the newest trap (R1).
+  - In a clone with no `origin/HEAD` and no local `main` (a single-ref fetch),
+    a branch whose handoff file exists reads and writes it, instead of being
+    served the default branch's Next Action (R2).
+  - Guard's `same file(s)` needs the same path: `pkg_a/__init__.py` no longer
+    matches `pkg_b/__init__.py`, and `./src/a.py` or an absolute path now
+    matches a record's `src/a.py` instead of falling back to the basename (R4).
+  - When Current Focus and Next Action are long enough to be shrunk, the list
+    entries trimmed to make room are put back while they fit; `resume --json`
+    used to empty every list and leave ~1,900 tokens unused (R5).
+  - In a shallow clone the packet and `audit` say the handoff's commit distance
+    and evidence history cannot be measured, instead of dropping the warning (R8).
+  - A retitled question keeps its id in the packet, and a question's age uses
+    its full timestamp, not a date cut to ten characters (R10).
 - **Release and CI** (review 2026-11-13, C2 to C7): the pre-flight no longer
   calls a tag a dead tag when PyPI is unreachable, and refuses a fresh version
   lower than the newest on PyPI. The tag and Release moved to their own job, so

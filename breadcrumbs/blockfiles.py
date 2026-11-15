@@ -163,6 +163,8 @@ def load_trap_files(memory_dir: Path) -> list[dict]:
                 "content": cli._block_content(body),
                 "record_path": rec.path,
                 "tags": _tags_of(rec),
+                "created_at": rec.meta.get("created_at"),
+                "updated_at": rec.meta.get("updated_at"),
             }
         )
     return out
@@ -186,6 +188,10 @@ def load_question_files(memory_dir: Path) -> list[dict]:
                 "id": qid,
                 "question": str(rec.meta.get("title") or "").strip(),
                 "opened": str(rec.meta.get("created_at") or "")[:10] or None,
+                # The full stamp: an age from the date alone is off by a day
+                # across midnight and time zones (review 2026-11-13, R10).
+                "created_at": rec.meta.get("created_at"),
+                "updated_at": rec.meta.get("updated_at"),
                 "status": (rec.meta.get("status") or "open").lower(),
                 "content": cli._block_content(body),
                 "body": body,

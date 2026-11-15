@@ -207,6 +207,18 @@ def compute_staleness(
             warnings.append(("⚠ " if cold else "") + "handoff is " + ", ".join(parts) + ".")
     elif handoff_meta.get("updated_at") and not risks_only:
         warnings.append("handoff timestamp is not parseable; treat handoff age as unknown.")
+    if (
+        dist is None
+        and handoff_meta.get("commit") not in (None, "", cli.NO_GIT_COMMIT)
+        and _git.is_repo(root)
+        and _git.is_shallow(root)
+    ):
+        # The same store shows "15 commit(s) behind" in a full clone and
+        # nothing at depth 1 (review 2026-11-13, R8).
+        warnings.append(
+            f"handoff commit {handoff_meta.get('commit')} is not in this shallow clone, so "
+            "how far behind HEAD it is cannot be measured (`git fetch --unshallow`)."
+        )
 
     # (7) Branch mismatch (§15) — handoff first, then records, capped.
     if detached:
@@ -254,7 +266,7 @@ def compute_staleness(
     for q in questions:
         if (q.get("status") or "open") != "open":
             continue
-        a = cli._age_days(q.get("opened"))
+        a = cli._age_days(q.get("created_at") or q.get("opened"))
         if a is not None and a > stale_days:
             warnings.append(
                 f'open question "{q["question"]}" has been open {a} days — '
@@ -544,8 +556,11 @@ def _build_resume_packet_once(
 
     decisions = cli.active_decisions(memory_dir)
     attempts = cli.active_attempts(memory_dir)
-    traps = cli.active_traps(memory_dir)
-    questions = cli.load_open_questions(memory_dir)
+    # Newest first, as the packet's `ordering: "recency"` says: in file-name
+    # order the cap dropped the newest trap (review 2026-11-13, R1). Stable,
+    # so schema-2 blocks with no stamps keep their file order, last.
+    traps = _newest_first(cli.active_traps(memory_dir))
+    questions = _newest_first(cli.load_open_questions(memory_dir))
     verifications = active_verifications(memory_dir)
     # WM-30: a record past its `expires_at` leaves the lists (it is still on
     # disk, still searchable, and `crumb expired` names it). The staleness
@@ -705,7 +720,9 @@ def _build_resume_packet_once(
                 "elided": sum(promoted_counts.values()),
             }
         ),
-        "open_questions": [q["question"] for q in questions if q["status"] == "open"],
+        "open_questions": [
+            _Question(q["question"], q["id"]) for q in questions if q["status"] == "open"
+        ],
         # Committed jots only. A machine-local jot in this list would make the
         # committed packet differ between two checkouts of one store while
         # `_inputs_hash` — which cannot read gitignored input without the same
@@ -834,8 +851,39 @@ _RELEVANCE_SECTIONS: dict[str, "object"] = {
     "failed_attempts": lambda e: e["id"],
     "verifications": lambda e: e["id"],
     "known_traps": lambda e: str(e).split(":", 1)[0].strip(),
-    "open_questions": lambda e: _scoring.question_item_id(str(e)),
+    "open_questions": lambda e: _question_id(e),
 }
+
+
+class _Question(str):
+    """A question's text, as the packet renders it, carrying its record id.
+
+    The id used to be re-derived from the text, so a retitled question pointed
+    at an id that does not exist (review 2026-11-13, R10). A `str`, so JSON and
+    Markdown output are unchanged.
+    """
+
+    qid: str | None
+
+    def __new__(cls, text: str, qid: str | None = None):
+        obj = super().__new__(cls, text)
+        obj.qid = qid
+        return obj
+
+
+def _question_id(entry) -> str:
+    return getattr(entry, "qid", None) or _scoring.question_item_id(str(entry))
+
+
+def _newest_first(items: list[dict]) -> list[dict]:
+    return sorted(
+        items,
+        key=lambda d: (
+            cli._dt_sort_key(d.get("updated_at")),
+            cli._dt_sort_key(d.get("created_at")),
+        ),
+        reverse=True,
+    )
 
 
 def task_relevance_scores(
@@ -959,7 +1007,7 @@ def _entry_source(section: str, entry) -> str | None:
     if section == "known_traps":
         return f"crumb show {str(entry).split(':', 1)[0].strip()}"
     if section == "open_questions":
-        return f"crumb show {_scoring.question_item_id(str(entry))}"
+        return f"crumb show {_question_id(entry)}"
     if section == "merged_handoffs" and isinstance(entry, dict) and entry.get("path"):
         return f"{cli.MEMORY_DIRNAME}/{entry['path']}"
     return None
@@ -1143,9 +1191,20 @@ def _bound_packet(
             packet[key] = items[:cap]
 
     # Budget trim, lowest-priority section first, until within the ceilings.
+    # Each removal is logged so it can be undone if the protected fields
+    # shrink below (R5).
+    removed: list[tuple] = []
     while why := excess():
         for key in TRIM_ORDER:
             if packet.get(key):
+                removed.append(
+                    (
+                        key,
+                        packet[key][-1],
+                        packet["omitted"].get(key),
+                        packet["omitted_reason"].get(key),
+                    )
+                )
                 packet[key].pop()
                 packet["omitted"][key] = packet["omitted"].get(key, 0) + 1
                 # A key already capped is now also trimmed for a ceiling — say
@@ -1163,10 +1222,29 @@ def _bound_packet(
 
     # Every list is empty and it is still over: the protected fields give way,
     # as marked excerpts and finally bare pointers.
+    shrunk = False
     for cap in _PROTECTED_SHRINK:
         if not excess():
             break
         _excerpt_protected(packet, originals, sources, cap)
+        shrunk = True
+
+    # Shrinking them can free far more than the lists needed: long non-ASCII
+    # focus and next-action text emptied every list of `resume --json` and
+    # left ~1,900 tokens unused (review 2026-11-13, R5). Put entries back, the
+    # last removed (the most important) first, while they fit.
+    if shrunk:
+        while removed:
+            key, item, prior_count, prior_reason = removed.pop()
+            packet[key].append(item)
+            if excess():
+                packet[key].pop()
+                break
+            for field, prior in (("omitted", prior_count), ("omitted_reason", prior_reason)):
+                if prior is None:
+                    packet[field].pop(key, None)
+                else:
+                    packet[field][key] = prior
 
     if not packet["excerpted"]:
         packet.pop("excerpted")

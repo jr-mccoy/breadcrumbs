@@ -607,6 +607,18 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = cli.STALE_AGE_D
             memory_dir, root, cli.active_decisions(memory_dir), stale_days, findings
         )
     )
+    if _git.is_repo(root) and _git.is_shallow(root):
+        # Evidence churn and commit distances stop at the fetched depth, so
+        # their warnings vanish silently there (review 2026-11-13, R8).
+        findings.append(
+            _audit_finding(
+                "shallow-clone",
+                AUDIT_INFO,
+                None,
+                "this is a shallow clone: evidence-rewritten and commit-distance checks "
+                "see only the fetched history (`git fetch --unshallow` for all of it)",
+            )
+        )
 
     # A (cont). Re-surface the validate-failing health conditions for the health view
     # (missing evidence, invalid status, private-path violation, id/frontmatter
