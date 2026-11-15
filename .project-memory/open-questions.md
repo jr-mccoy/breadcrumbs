@@ -8,6 +8,7 @@ ones are live blockers._
 _Ask one: `crumb note question "<question>" --why … --needs …`.
 Resolve one: `crumb mark-status q_<slug> answered --reason "…"`._
 
+- `q_should-guard-stop-escalating-a-plain-language-pl-348193` [open] Should guard stop escalating a plain-language plan to ASK_HUMAN on class keywords (migration, deploy) when no command runs, or check a do-not-retry condition against the plan? The agent-outcome eval stalled 5 of 6 breadcrumbs runs on a correct migration plan (docs/benchmarks/agent-outcomes.md). — `questions/should-guard-stop-escalating-a-plain-language-pl-348193.md`
 - `q_should-the-extraction-turn-also-fire-on-precompa-ebd583` [open] Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first. — `questions/should-the-extraction-turn-also-fire-on-precompa-ebd583.md`
 - `q_which-items-in-docs-reviews-2026-10-02-deferred-0751cc` [open] Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost? — `questions/which-items-in-docs-reviews-2026-10-02-deferred-0751cc.md`
 - `q_migrate-this-repo-s-own-project-memory-store-to-4bd707` [answered] Migrate this repo's own .project-memory store to schema 3? — `questions/migrate-this-repo-s-own-project-memory-store-to-4bd707.md`

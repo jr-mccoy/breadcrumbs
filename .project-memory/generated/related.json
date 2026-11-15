@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "d5a02a3f1158",
+ "inputs_hash": "683dae962512",
  "related": {
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
@@ -362,6 +362,11 @@
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
   ],
+  "q_should-guard-stop-escalating-a-plain-language-pl-348193": [
+   "ver_20261115_agent-outcome-eval-e2-on-v1-review-item-6-inconclusive",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval"
+  ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
@@ -541,6 +546,11 @@
    "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new",
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
    "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+  ],
+  "ver_20261115_agent-outcome-eval-e2-on-v1-review-item-6-inconclusive": [
+   "q_should-guard-stop-escalating-a-plain-language-pl-348193",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence"
   ]
  },
  "skipped": null

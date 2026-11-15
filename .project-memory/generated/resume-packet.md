@@ -1,20 +1,20 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 8a6ee60 | inputs_hash: d5a02a3f1158 | generated_at: 2026-11-14T17:17:07+00:00 -->
-<!-- view: markdown | budget: 3267/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: 9cd5b74 | inputs_hash: 683dae962512 | generated_at: 2026-11-15T15:46:47+00:00 -->
+<!-- view: markdown | budget: 3377/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-5a263b6c-3gtzxn` · commit `8a6ee60` · 8 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
+branch `ccr-5a263b6c-3gtzxn` · commit `9cd5b74` · 9 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
 
 ## Current Focus
-Review items 1 to 5 are done on ccr-5a263b6c-3gtzxn. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 6 are done on ccr-5a263b6c-3gtzxn. The agent-outcome eval (docs/benchmarks/agent-outcomes.md) found guard ASK_HUMAN stalls correct plans, and notes in CLAUDE.md match breadcrumbs on repeat failures. Not yet merged or released; next release 0.7.0.
 
 ## Next Action
-Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there; release 0.7.0 per CLAUDE.md (search-index format is now 3: the first reindex after upgrade rebuilds it). Next review work: item 6 (agent-outcome eval, review section 5.1), the section 3 tables, and trap_miner-reads-hook-feedback-as-a-correction.
+Decide on the guard stall (open question; docs/benchmarks/agent-outcomes.md 'What to do with it' 1-2), then rerun evals/agent_outcomes/run.py --scenarios index-migration. Merge ccr-5a263b6c-3gtzxn to main, confirm ci, release 0.7.0. Remaining review work: the section 3 tables and trap_miner-reads-hook-feedback-as-a-correction.
 
-_(5 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
+_(6 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
 
 ## Active Decisions
 - `dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program` — Allowlisting a program by name made its writing options read-only, which capped verdicts at READ_FIRST and dropped permission prompts. A wrong 'not read-only' only costs a guard run; a wrong 'read-only' silences guard.
@@ -51,6 +51,7 @@ _(none recorded)_
 - trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field: The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all
 
 ## Open Questions / Blockers
+- Should guard stop escalating a plain-language plan to ASK_HUMAN on class keywords (migration, deploy) when no command runs, or check a do-not-retry condition against the plan? The agent-outcome eval stalled 5 of 6 breadcrumbs runs on a correct migration plan (docs/benchmarks/agent-outcomes.md).
 - Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first.
 - Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?
 
@@ -78,6 +79,7 @@ _(none recorded)_
 _(… 56 more omitted to stay within the per-section cap)_
 
 ## Verifications
+- `ver_20261115_agent-outcome-eval-e2-on-v1-review-item-6-inconclusive` — Agent-outcome eval E2 on v1 (review item 6): **inconclusive** · runtime
 - `ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call` — F-5 (guard reprints the staleness block on every call) is already fixed on main and in 0.1.11: **not_applicable** · runtime
 - `ver_20261113_prune-sessions-keep-keeps-the-newest-sessions-not-the-last` — prune sessions --keep keeps the newest sessions, not the last by file name: **fixed** · test
 - `ver_20261113_crumb-rename-deletes-the-record-it-renames-fixed` — crumb rename deletes the record it renames: **fixed** · test
@@ -89,8 +91,7 @@ _(… 56 more omitted to stay within the per-section cap)_
 - `ver_20260922_phase-3-of-the-working-memory-roadmap-wm-30-to-wm-35` — Phase 3 of the working-memory roadmap (WM-30 to WM-35) is implemented and green: **fixed** · test
 - `ver_20260922_phase-2-of-the-working-memory-roadmap-wm-20-to-wm-25` — Phase 2 of the working-memory roadmap (WM-20 to WM-25) is implemented and green: **fixed** · test
 - `ver_20260922_phase-1-of-the-working-memory-roadmap-wm-10-to-wm-16` — Phase 1 of the working-memory roadmap (WM-10 to WM-16: capture hooks and the transcript miner): **fixed** · test
-- `ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02` — Phase 0 of the working-memory roadmap (WM-01 migration, WM-02 usage, WM-03 inbox): **fixed** · test
-_(… 11 more omitted to stay within the per-section cap)_
+_(… 12 more omitted to stay within the per-section cap)_
 
 ## Verification Commands
 - tests/test_guard_reading.py
@@ -110,5 +111,5 @@ _(… 15 more omitted to stay within the per-section cap)_
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
 - handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
-- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 91 days — did this ever get resolved?
-- open question "Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?" has been open 43 days — did this ever get resolved?
+- open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 92 days — did this ever get resolved?
+- open question "Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?" has been open 44 days — did this ever get resolved?

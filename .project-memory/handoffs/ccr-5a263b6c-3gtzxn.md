@@ -1,13 +1,16 @@
 # Project Handoff
 
-_Last updated: 2026-11-14T17:17:06+00:00_
+_Last updated: 2026-11-15T15:46:46+00:00_
 _Branch: ccr-5a263b6c-3gtzxn_
-_Commit: 8a6ee60_
+_Commit: 9cd5b74_
 
 ## Current Focus
-Review items 1 to 5 are done on ccr-5a263b6c-3gtzxn. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 6 are done on ccr-5a263b6c-3gtzxn. The agent-outcome eval (docs/benchmarks/agent-outcomes.md) found guard ASK_HUMAN stalls correct plans, and notes in CLAUDE.md match breadcrumbs on repeat failures. Not yet merged or released; next release 0.7.0.
 
 ## Next Action
+### 2026-11-15 · `9cd5b74`
+Decide on the guard stall (open question; docs/benchmarks/agent-outcomes.md 'What to do with it' 1-2), then rerun evals/agent_outcomes/run.py --scenarios index-migration. Merge ccr-5a263b6c-3gtzxn to main, confirm ci, release 0.7.0. Remaining review work: the section 3 tables and trap_miner-reads-hook-feedback-as-a-correction.
+
 ### 2026-11-14 · `8a6ee60`
 Merge ccr-5a263b6c-3gtzxn to main and confirm ci is green there; release 0.7.0 per CLAUDE.md (search-index format is now 3: the first reindex after upgrade rebuilds it). Next review work: item 6 (agent-outcome eval, review section 5.1), the section 3 tables, and trap_miner-reads-hook-feedback-as-a-correction.
 

@@ -3,9 +3,12 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Review items 1 to 5 are done on ccr-5a263b6c-3gtzxn. Not yet merged or released; the next release is 0.7.0.
+Review items 1 to 6 are done on ccr-5a263b6c-3gtzxn. The agent-outcome eval (docs/benchmarks/agent-outcomes.md) found guard ASK_HUMAN stalls correct plans, and notes in CLAUDE.md match breadcrumbs on repeat failures. Not yet merged or released; next release 0.7.0.
 
 ## Recently Changed
+### 2026-11-15 · `9cd5b74`
+2026-11-15: agent-outcome eval added and run (9cd5b74)
+
 ### 2026-11-14 · `8a6ee60`
 2026-11-14: guard parsing, wrappers, read-only checks, floor spellings and index parity (8a6ee60)
 
