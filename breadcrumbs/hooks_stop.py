@@ -516,9 +516,11 @@ def _hook_capture_inner(memory_dir: Path, root: Path, payload: dict) -> int:
             or len(own) >= EXTRACTION_MIN_SESSION_JOTS
         )
         if earned:
-            hooks_common.record_extraction_asked(
-                memory_dir, session_key, [j["id"] for j in jots[:EXTRACTION_MAX_JOTS_SHOWN]]
-            )
+            # Every candidate this ask counted, not only the ones it lists:
+            # recording just the shown six let the rest earn a second block
+            # with no new work, where the stop is held once (review
+            # 2026-11-13, H3). The rest stay in the inbox for `crumb inbox`.
+            hooks_common.record_extraction_asked(memory_dir, session_key, [j["id"] for j in jots])
             # Asked once: these commits are never asked about again, whether
             # or not the agent's capture (or the continuation's snapshot)
             # then lands. Without this a failed snapshot re-asked every turn.

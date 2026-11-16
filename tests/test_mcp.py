@@ -660,6 +660,12 @@ class InputSchemaTests(unittest.TestCase):
                 # WM-32: the near-duplicate gate's two answers.
                 "allow_duplicate",
                 "supersedes",
+                # Declared so a claimed review reaches admission and is
+                # refused, not dropped by the SDK (review 2026-11-13, H6).
+                "review_status",
+                "reviewed_by",
+                "reviewed_at",
+                "reviewed_hash",
             },
         )
 

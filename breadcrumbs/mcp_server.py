@@ -82,6 +82,13 @@ class _RecordPayloadOptional(TypedDict, total=False):
     agent: str
     allow_duplicate: bool  # write even if a live record says nearly the same thing
     supersedes: str  # id of the live record of this type the new one replaces
+    # Declared so they reach admission, which refuses a claimed review. Left
+    # out, the SDK dropped them silently over stdio, where the spec promises
+    # a refusal (review 2026-11-13, H6).
+    review_status: str
+    reviewed_by: str
+    reviewed_at: str
+    reviewed_hash: str
 
 
 class RecordPayload(_RecordPayloadOptional):
@@ -250,7 +257,7 @@ def build_server():  # -> FastMCP
     read_tool = _tool_registrar(mcp)
     write_tool = _tool_registrar(mcp, enabled=not _read_only())
 
-    # ---------------- Resources (8) — read-only views ---------------------- #
+    # ---------------- Resources — read-only views --------------------------- #
     # Bound explicitly (not in a loop) so each URI is a distinct, documented
     # endpoint and FastMCP captures a stable function per resource.
 
@@ -336,7 +343,7 @@ def build_server():  # -> FastMCP
     def audit_project_memory() -> str:
         return mcp_core.prompt_audit_project_memory(_root())
 
-    # ---------------- Tools (10) — wrap existing functions ----------------- #
+    # ---------------- Tools — wrap existing functions ------------------------ #
 
     @read_tool()
     def memory_search(

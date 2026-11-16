@@ -493,5 +493,249 @@ class HookTests(unittest.TestCase):
                     self.assertNotIn("Traceback", err)
 
 
+def _id_of(out: str) -> str:
+    return json.loads(out)["id"]
+
+
+class WriteAndHookTests(unittest.TestCase):
+    def test_w3_two_non_ascii_titles_are_two_traps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            ids = set()
+            for text in ("Кэш сбрасывается при деплое", "Индекс не перестраивается"):
+                code, out, err = run(["--json", "note", "trap", text, "--project", str(root)])
+                self.assertEqual(code, 0, err)
+                ids.add(_id_of(out))
+            self.assertEqual(len(ids), 2)
+            self.assertNotIn("trap_untitled", ids)
+            code, _out, _err = run(
+                ["note", "trap", "Кэш сбрасывается при деплое", "--project", str(root)]
+            )
+            self.assertNotEqual(code, 0)  # an exact repeat is still a repeat
+
+    def test_w6_consolidate_keeps_branch_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            git(root, "checkout", "-qb", "feat")
+            init_store(root)
+
+            def remember_scoped(title, *extra):
+                return _id_of(
+                    run(
+                        [
+                            "--json", "remember", "decision", "--project", str(root),
+                            "--title", title, "--set", "Rationale", title,
+                            "--confidence", "low", "--allow-duplicate", *extra,
+                        ]
+                    )[1]
+                )  # fmt: skip
+
+            a = remember_scoped("Use the staging cache on feat", "--scope", "branch")
+            b = remember_scoped("Feat staging cache keeps currency", "--scope", "branch")
+            c = remember_scoped("Project cache rule")
+            code, _out, err = run(
+                ["consolidate", "--merge", a, c, "--title", "Mixed", "--project", str(root)]
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("branch-scoped", err)
+            code, out, err = run(
+                [
+                    "--json",
+                    "consolidate",
+                    "--merge",
+                    a,
+                    b,
+                    "--title",
+                    "Staging cache",
+                    "--project",
+                    str(root),
+                ]
+            )
+            self.assertEqual(code, 0, err)
+            from breadcrumbs import cli as _c
+
+            rec = _c.find_record_by_id(root / crumb.MEMORY_DIRNAME, _id_of(out))
+            self.assertEqual((rec.meta.get("scope"), rec.meta.get("branch")), ("branch", "feat"))
+
+    def test_w8_reactivating_clears_superseded_by(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            code, out, _err = run(
+                [
+                    "--json", "remember", "decision", "--project", str(root), "--title", "Old rule",
+                    "--set", "Rationale", "r", "--confidence", "low",
+                ]
+            )  # fmt: skip
+            old = _id_of(out)
+            code, out, _err = run(
+                [
+                    "--json", "remember", "decision", "--project", str(root), "--title", "New rule",
+                    "--set", "Rationale", "r2", "--confidence", "low", "--supersedes", old,
+                ]
+            )  # fmt: skip
+            from breadcrumbs import cli as _c
+
+            self.assertTrue(_c.find_record_by_id(mem, old).meta.get("superseded_by"))
+            code, _out, err = run(
+                ["mark-status", old, "active", "--reason", "back", "--project", str(root)]
+            )
+            self.assertEqual(code, 0, err)
+            rec = _c.find_record_by_id(mem, old)
+            self.assertIsNone(rec.meta.get("superseded_by"))
+            self.assertIn("was superseded by", rec.path.read_text(encoding="utf-8"))
+
+    def test_w8_capture_session_is_one_change(self):
+        from breadcrumbs import cli as _c
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            before = sorted(p.name for p in (mem / "sessions").glob("*.md"))
+            with mock.patch.object(_c, "update_current", side_effect=OSError("disk full")):
+                code, _out, _err = run(
+                    ["capture", "session", "--next", "Ship it", "--project", str(root)]
+                )
+            self.assertNotEqual(code, 0)
+            self.assertEqual(sorted(p.name for p in (mem / "sessions").glob("*.md")), before)
+            self.assertNotIn("Ship it", (mem / "handoff.md").read_text(encoding="utf-8"))
+
+    def test_w8_repair_reports_a_set_it_cannot_use(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            code, _out, err = run(
+                ["repair", "--set", "ver_nope.outcome=fixed", "--project", str(root)]
+            )
+            self.assertEqual(code, 2)
+            self.assertIn("ver_nope.outcome", err)
+
+    def test_w8_a_repeated_heading_block_is_kept(self):
+        from breadcrumbs import blockfiles
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            (mem / "known-traps.md").write_text(
+                "# Known Traps\n\n## trap_cache: Cache keys\n- First body.\n\n"
+                "## trap_cache: Cache keys\n- Second, different body.\n",
+                encoding="utf-8",
+            )
+            result = blockfiles.adopt_blocks(mem, root)
+            kept = "\n".join(result["unadopted_traps"])
+            self.assertIn("Second, different body.", kept)
+
+    def test_h2_one_long_correction_is_one_jot(self):
+        from breadcrumbs import inbox as ibx
+
+        sys.path.insert(0, str(REPO_ROOT / "tests"))
+        from _jsonl import user_text, write_transcript
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            text = (
+                "No, don't cache the rates in memory: " + "they change at 02:00 UTC every day " * 6
+            )
+            payload = {"cwd": str(root), "session_id": "s1", "prompt": text}
+            run_hook_bytes("prompt", json.dumps(payload).encode())
+            path = write_transcript(root, [user_text(text)])
+            run_hook_bytes(
+                "capture",
+                json.dumps(
+                    {"cwd": str(root), "session_id": "s1", "transcript_path": str(path)}
+                ).encode(),
+            )
+            corrections = [
+                j for j in ibx.load_jots(mem) if "correction" in (j.meta.get("tags") or [])
+            ]
+            self.assertEqual(len(corrections), 1, [j.meta.get("title") for j in corrections])
+
+    def test_h3_the_stop_is_held_once(self):
+        """Nine candidates, six listed: the other three must not earn a second
+        block with no new work."""
+        from breadcrumbs import inbox as ibx
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            for i in range(9):
+                ibx.write_jot(
+                    mem,
+                    root,
+                    f"check number {i} of the parser passed on widget {i * 7}",
+                    tags=["verification", "mined"],
+                    local=True,
+                    source="stop",
+                    host_session="s1",
+                )
+            payload = json.dumps({"cwd": str(root), "session_id": "s1"}).encode()
+            self.assertEqual(run_hook_bytes("capture", payload)[1].get("decision"), "block")
+            self.assertEqual(run_hook_bytes("capture", payload)[1], {})
+
+    def test_h4_doctor_reports_only_what_is_there(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            run(["init", "--with-hooks=session,capture", "--project", str(root)])
+            checks = {
+                c["check"]: c
+                for c in json.loads(run(["--json", "doctor", "--project", str(root)])[1])["checks"]
+            }
+            self.assertNotIn("hook_matcher", checks)  # no guard hook to describe
+            self.assertTrue(checks["hooks"]["ok"])
+            (root / ".claude" / "settings.local.json").write_text('{"disableAllHooks": true}')
+            checks = {
+                c["check"]: c
+                for c in json.loads(run(["--json", "doctor", "--project", str(root)])[1])["checks"]
+            }
+            self.assertFalse(checks["hooks"]["ok"])
+            self.assertIn("disableAllHooks", checks["hooks"]["detail"])
+            (root / ".mcp.json").write_text(
+                json.dumps({"mcpServers": {"breadcrumbs": {"command": "no-such-crumb-binary"}}})
+            )
+            checks = {
+                c["check"]: c
+                for c in json.loads(run(["--json", "doctor", "--project", str(root)])[1])["checks"]
+            }
+            self.assertFalse(checks["mcp_command"]["ok"])
+            code, _out, _err = run(["mcp", "doctor", "--project", str(root)])
+            self.assertEqual(code, 1)
+
+    def test_h6_mcp_contract_gaps(self):
+        from breadcrumbs import mcp_core
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            for fields in ({"area": 5}, {"area": ["a"]}, "oops"):
+                with self.subTest(fields=fields):
+                    out = mcp_core.tool_note(
+                        "trap", "Cache keys miss region", fields=fields, root=str(root)
+                    )
+                    self.assertFalse(out["ok"])
+            out = mcp_core.tool_record(
+                "decision",
+                {"title": "Cache per region", "confidence": "low", "review_status": "reviewed"},
+                root=str(root),
+            )
+            self.assertFalse(out["ok"])
+            self.assertIn("ASK_HUMAN", mcp_core.prompt_guard_before_action(root=str(root)))
+        server = (REPO_ROOT / "breadcrumbs" / "mcp_server.py").read_text(encoding="utf-8")
+        self.assertIn("review_status: str", server)  # declared, so stdio passes it on
+
+    def test_every_installed_hook_has_a_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            init_store(root)
+            run(["init", "--with-hooks", "--project", str(root)])
+            data = json.loads((root / ".claude" / "settings.json").read_text())
+            entries = [h for arr in data["hooks"].values() for g in arr for h in g["hooks"]]
+            self.assertTrue(entries)
+            for h in entries:
+                self.assertIsInstance(h.get("timeout"), int, h)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

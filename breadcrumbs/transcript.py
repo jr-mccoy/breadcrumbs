@@ -441,6 +441,16 @@ def _clip(text: str, limit: int) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
 
 
+def correction_title(text: str) -> str:
+    """A correction's title, the same from the prompt hook and the miner.
+
+    They clipped differently (`text[:120]` against this), so one long
+    correction got two fingerprints and became two jots, and two such
+    corrections crossed the extraction threshold (review 2026-11-13, H2).
+    """
+    return _clip(text, TITLE_MAX_CHARS)
+
+
 def redact_secrets(text: str) -> str | None:
     """`text` back, or None when it carries a structured credential.
 
@@ -656,7 +666,7 @@ def _mine_corrections(entries: list[dict], limit: int | None = MAX_CORRECTIONS) 
         out.append(
             Candidate(
                 kind="correction",
-                title=_clip(text, TITLE_MAX_CHARS),
+                title=correction_title(text),
                 note=_clip(text, NOTE_MAX_CHARS),
                 key=event,
                 events=[event],

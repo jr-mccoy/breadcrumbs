@@ -598,6 +598,28 @@ def _raw_blocks(path: Path, matches) -> dict[str, str]:
     return out
 
 
+def _repeated_heading_blocks(path: Path, matches) -> list[tuple[int, str]]:
+    """`[(line, raw)]` for each block whose heading repeats an earlier one.
+
+    Readers merge same-heading blocks and adoption writes the first, so the
+    migration dropped every later one; only the backup kept it (review
+    2026-11-13, W8). These are kept below the index instead.
+    """
+    if not path.is_file():
+        return []
+    text = cli.read_text_lenient(path)[0]
+    seen: set[str] = set()
+    out = []
+    for start, end, heading in cli._md_heading_spans(text):
+        if not matches(heading):
+            continue
+        key = heading.strip()
+        if key in seen:
+            out.append((text.count("\n", 0, start) + 1, text[start:end]))
+        seen.add(key)
+    return out
+
+
 def _body_of(raw_block: str) -> str:
     return raw_block.split("\n", 1)[1] if "\n" in raw_block else ""
 
@@ -771,6 +793,23 @@ def adopt_blocks(memory_dir: Path, project_root: Path, *, agent: str = "migratio
             changed.append(f"trap {new_id} -> traps/{stem}.md{note}")
         elif "already exists" not in result.get("error", ""):
             raise RuntimeError(f"trap {tid} ({where}): {result.get('error')}")
+
+    for line, raw in _repeated_heading_blocks(
+        memory_dir / "known-traps.md", lambda h: h.lower().startswith("trap")
+    ):
+        unadopted_traps.append(raw)
+        changed.append(
+            f"trap block at known-traps.md:{line} repeats an earlier heading; "
+            "kept below the index to merge"
+        )
+    for line, raw in _repeated_heading_blocks(
+        memory_dir / "open-questions.md", lambda h: h.lower().startswith("q:")
+    ):
+        unadopted_questions.append(raw)
+        changed.append(
+            f"question block at open-questions.md:{line} repeats an earlier heading; "
+            "kept below the index to merge"
+        )
 
     question_raw = _raw_blocks(
         memory_dir / "open-questions.md",

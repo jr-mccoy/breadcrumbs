@@ -2180,7 +2180,18 @@ def render_body(rtype: str, sections: dict[str, str]) -> str:
 def slugify(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     s = re.sub(r"-{2,}", "-", s)
-    return s or "untitled"
+    if s:
+        return s
+    # A title with no ASCII letters or digits (Cyrillic, CJK) slugged to
+    # `untitled`, so a store could hold one such trap and one such question
+    # (review 2026-11-13, W3). A digest of the title keeps ids distinct and
+    # stable: the same title still gives the same id.
+    text = " ".join((title or "").split())
+    if not text:
+        return "untitled"
+    import hashlib
+
+    return "untitled-" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
 
 
 # How much of a title a *filename* may carry. `slugify` itself stays
@@ -2661,6 +2672,11 @@ def _set_record_status(
     meta["updated_at"] = now_iso()
     if superseded_by:
         meta["superseded_by"] = superseded_by
+    elif status != "superseded" and meta.get("superseded_by"):
+        # Reactivated (or retired another way): a stale `superseded_by` kept
+        # pointing readers at the replacement of a record that is live again
+        # (review 2026-11-13, W8). The note below keeps what it said.
+        reason = f"{reason}; was superseded by {meta.pop('superseded_by')}"
     # The reason is recorded as a trailing, non-instruction comment (data, §15).
     # A literal `-->` inside the reason would terminate the comment early and
     # leak the remainder as content — neutralize it.
@@ -5338,65 +5354,81 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         sections[UNSORTED_SECTION] = f"{prior}\n\n{kept}" if prior else kept
 
     title = args.title or _derive_session_title(sections, args.focus) or SESSION_TITLE_FALLBACK
-    if coalesce is not None:
-        before = path_policy.read_text(coalesce.path)
-        path = _coalesce_into(coalesce, sections, root, args.agent, include_memory=include_memory)
-        meta = dict(coalesce.meta)
-        fails = _validate_new_file(memory_dir, path, before)
-        if fails:
-            write_text_atomic(path, before)  # revert — never leave a broken snapshot
-            _emit_error(
-                args, "session update failed validation: " + "; ".join(f["message"] for f in fails)
-            )
-            return 1
-    else:
-        extra = {"host_session": host_session} if host_session else None
-        try:
-            path, meta = write_record(
+    from breadcrumbs import mutations as _mutations
+
+    # The session record, the handoff and current.md are one change (review
+    # 2026-11-13, W8): a capture killed between them left a session whose
+    # handoff still said the previous Next Action. `crumb recover` rolls an
+    # interrupted one back like any other operation.
+    try:
+        with _mutations.transaction(memory_dir, "capture-session"):
+            if coalesce is not None:
+                before = path_policy.read_text(coalesce.path)
+                path = _coalesce_into(
+                    coalesce, sections, root, args.agent, include_memory=include_memory
+                )
+                meta = dict(coalesce.meta)
+                fails = _validate_new_file(memory_dir, path, before)
+                if fails:
+                    write_text_atomic(path, before)  # revert — never leave a broken snapshot
+                    _emit_error(
+                        args,
+                        "session update failed validation: "
+                        + "; ".join(f["message"] for f in fails),
+                    )
+                    return 1
+            else:
+                extra = {"host_session": host_session} if host_session else None
+                try:
+                    path, meta = write_record(
+                        memory_dir,
+                        root,
+                        "session",
+                        title,
+                        sections,
+                        agent=args.agent,
+                        extra=extra,
+                        include_memory=include_memory,
+                    )
+                except ValueError as exc:
+                    _emit_error(args, str(exc))
+                    return 2
+
+                fails = _validate_new_file(memory_dir, path)
+                if fails:
+                    path.unlink()
+                    _emit_error(
+                        args,
+                        "new session failed validation: " + "; ".join(f["message"] for f in fails),
+                    )
+                    return 1
+
+            # Refresh handoff + current.
+            #
+            # Current Focus is NOT defaulted to the Next Action text: doing so rendered
+            # the packet's two headline fields as byte-identical ~1.4k-char duplicates
+            # (0.1.10 field test, P1-6). An unset --focus keeps the previous Current
+            # Focus (update_handoff/update_current retain the old value on empty),
+            # which is also the honest reading of "the caller said nothing about focus".
+            #
+            # Recently Changed is written only from an explicit `--recent`: the git log
+            # it used to receive is what resume's *Landed Since* already shows, and
+            # writing it replaced hand-written notes on every snapshot (issue 1).
+            focus = args.focus or ""
+            handoff_path = _handoffs.write_path(memory_dir, root, meta["branch"])
+            update_handoff(
                 memory_dir,
-                root,
-                "session",
-                title,
-                sections,
-                agent=args.agent,
-                extra=extra,
-                include_memory=include_memory,
+                meta["branch"],
+                meta["commit"],
+                focus,
+                sections["Next Action"],
+                path=handoff_path,
+                replace=replace,
             )
-        except ValueError as exc:
-            _emit_error(args, str(exc))
-            return 2
-
-        fails = _validate_new_file(memory_dir, path)
-        if fails:
-            path.unlink()
-            _emit_error(
-                args, "new session failed validation: " + "; ".join(f["message"] for f in fails)
-            )
-            return 1
-
-    # Refresh handoff + current.
-    #
-    # Current Focus is NOT defaulted to the Next Action text: doing so rendered
-    # the packet's two headline fields as byte-identical ~1.4k-char duplicates
-    # (0.1.10 field test, P1-6). An unset --focus keeps the previous Current
-    # Focus (update_handoff/update_current retain the old value on empty),
-    # which is also the honest reading of "the caller said nothing about focus".
-    #
-    # Recently Changed is written only from an explicit `--recent`: the git log
-    # it used to receive is what resume's *Landed Since* already shows, and
-    # writing it replaced hand-written notes on every snapshot (issue 1).
-    focus = args.focus or ""
-    handoff_path = _handoffs.write_path(memory_dir, root, meta["branch"])
-    update_handoff(
-        memory_dir,
-        meta["branch"],
-        meta["commit"],
-        focus,
-        sections["Next Action"],
-        path=handoff_path,
-        replace=replace,
-    )
-    update_current(memory_dir, focus, recent, commit=meta["commit"], replace=replace)
+            update_current(memory_dir, focus, recent, commit=meta["commit"], replace=replace)
+    except _mutations.MutationFailed as exc:
+        _emit_error(args, _mutations.describe(exc))
+        return 1
     for what in replaced:
         _emit_warning(
             args,
@@ -7583,15 +7615,13 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         root = resolve_root(args.project)
         sdk = _mcp_sdk_available()
         mcp_path = root / ".mcp.json"
-        registered = False
-        if mcp_path.is_file():
-            try:
-                registered = MCP_SERVER_NAME in (
-                    json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
-                )
-            except (json.JSONDecodeError, OSError):
-                registered = False
-        report = {"sdk_available": sdk, "registered": registered, "config": str(mcp_path)}
+        registered, problem = _mcp_registration(root)
+        report = {
+            "sdk_available": sdk,
+            "registered": registered,
+            "config": str(mcp_path),
+            "problem": problem,
+        }
         if args.json:
             _print_json(args, report)
         else:
@@ -7605,13 +7635,47 @@ def cmd_mcp(args: argparse.Namespace) -> int:
                 + (
                     f"'{MCP_SERVER_NAME}' in {mcp_path}"
                     if registered
-                    else "not registered — run `crumb mcp register`"
+                    else problem or "not registered — run `crumb mcp register`"
                 )
             )
         return 0 if (sdk and registered) else 1
 
     _emit_error(args, "specify: `crumb mcp serve`, `crumb mcp register`, or `crumb mcp doctor`")
     return 2
+
+
+def _mcp_registration(root: Path) -> tuple[bool, str | None]:
+    """`(ok, problem)` for the `.mcp.json` entry: present, and its command found.
+
+    A registration whose command is not on PATH passed `mcp doctor`, and the
+    host then failed to start the server (review 2026-11-13, H4).
+    """
+    mcp_path = Path(root) / ".mcp.json"
+    if not mcp_path.is_file():
+        return False, None
+    try:
+        servers = json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return False, f"{mcp_path} is not readable JSON"
+    entry = servers.get(MCP_SERVER_NAME) if isinstance(servers, dict) else None
+    if entry is None:
+        return False, None
+    command = entry.get("command") if isinstance(entry, dict) else None
+    if not isinstance(command, str) or not command.strip():
+        return False, f"'{MCP_SERVER_NAME}' in {mcp_path} has no command"
+    if "/" in command or "\\" in command:
+        found = (Path(root) / command).exists() or Path(command).exists()
+    else:
+        import shutil
+
+        found = shutil.which(command) is not None
+    if not found:
+        return False, (
+            f"'{MCP_SERVER_NAME}' is registered, but its command {command!r} is not on PATH "
+            "here, so the host cannot start it: install `crumb-kit[mcp]` where the host "
+            "runs, or point the entry at the interpreter's `breadcrumbs-mcp`"
+        )
+    return True, None
 
 
 # ---- adapter signpost block ------------------------------------------------ #
@@ -7910,7 +7974,23 @@ def cmd_repair(args: argparse.Namespace) -> int:
     from breadcrumbs import lock as _lock
     from breadcrumbs import repair as _repair
 
-    planned = _repair.plan(memory_dir, root, _repair.parse_sets(getattr(args, "set", None)))
+    raw_sets = getattr(args, "set", None) or []
+    sets = _repair.parse_sets(raw_sets)
+    planned = _repair.plan(memory_dir, root, sets)
+    # A `--set` repair could not use was dropped without a word, so a typo in
+    # the id looked like a value given (review 2026-11-13, W8).
+    planned_ids = {p["id"] for p in planned}
+    unused = [r for r in raw_sets if "=" not in r or "." not in r.partition("=")[0]]
+    unused += [f"{rid}.{field}" for rid, field in sets if rid not in planned_ids]
+    unused += [f"{rid}.{field}" for rid, field in sets if field != "outcome"]
+    if unused:
+        _emit_error(
+            args,
+            "--set not used: "
+            + ", ".join(dict.fromkeys(unused))
+            + " (give ID.outcome=VALUE for a record repair lists; `crumb repair` shows them)",
+        )
+        return 2
     needs = [n for p in planned for n in p["needs"]]
     proposals = [x for p in planned for x in p["proposals"]]
     result: dict = {"applied": False, "written": [], "skipped": []}
@@ -7934,8 +8014,10 @@ def cmd_repair(args: argparse.Namespace) -> int:
     if not planned:
         print("repair: nothing to repair — every record meets the contract.")
         return 0
-    verb = "repaired" if result["applied"] else "would repair"
-    print(f"repair: {verb} {sum(1 for p in planned if p['changes'])} record(s)")
+    # Applied, the count is what was written: a rewrite validate refused is
+    # listed below as not written, and used to be counted as repaired too.
+    count = len(result["written"]) if result["applied"] else sum(1 for p in planned if p["changes"])
+    print(f"repair: {'repaired' if result['applied'] else 'would repair'} {count} record(s)")
     for p in planned:
         if not p["changes"]:
             continue
@@ -8289,6 +8371,19 @@ _HOOK_SPECS: dict[str, tuple[str, str | None]] = {
     "subagent": ("SubagentStop", None),
 }
 
+# Seconds the host waits for each hook before giving up on it. With none set
+# the host default is 600 s (30 s for UserPromptSubmit), so a hung crumb stalled
+# every tool call for up to ten minutes (review 2026-11-13, §3.3). Generous
+# against measured runs: a Windows Stop snapshot on a large store takes seconds.
+HOOK_TIMEOUTS: dict[str, int] = {
+    "session": 60,
+    "guard": 30,
+    "capture": 120,
+    "prompt": 30,
+    "compact": 120,
+    "subagent": 120,
+}
+
 # The key `init` stamps into each hook entry it owns, valued with the breadcrumbs
 # event name. Identity must not live in the command text: a hook installed
 # through any launcher — a wrapper script, a venv path, `python -m breadcrumbs` —
@@ -8517,13 +8612,22 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
                     # carrying our marker *and* our command — somebody else's
                     # launcher may be scoped deliberately.
                     owned = h.get(HOOK_MARKER) == ev or h.get("command") == hook_command(ev)
+                    if owned and "timeout" not in h:
+                        h["timeout"] = HOOK_TIMEOUTS[ev]
                     if owned and matcher and isinstance(group, dict):
                         if group.get("matcher") != matcher and len(_group_entries(group)) == 1:
                             group["matcher"] = matcher
                     h[HOOK_MARKER] = ev
                 continue
             entry: dict = {
-                "hooks": [{"type": "command", "command": hook_command(ev), HOOK_MARKER: ev}]
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": hook_command(ev),
+                        "timeout": HOOK_TIMEOUTS[ev],
+                        HOOK_MARKER: ev,
+                    }
+                ]
             }
             if matcher:
                 entry = {"matcher": matcher, **entry}
@@ -8906,29 +9010,44 @@ def doctor_report(root: Path) -> dict:
     )
 
     # MCP registration + extra
-    mcp_path = root / ".mcp.json"
-    registered = False
-    if mcp_path.is_file():
-        try:
-            registered = MCP_SERVER_NAME in (
-                json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
-            )
-        except (json.JSONDecodeError, OSError):
-            registered = False
+    registered, mcp_problem = _mcp_registration(root)
     sdk = _mcp_sdk_available()
     add(
         "mcp",
-        registered,
-        ".mcp.json registered" if registered else "not registered (`crumb mcp register`)",
+        registered or mcp_problem is not None,
+        ".mcp.json registered"
+        if registered or mcp_problem is not None
+        else "not registered (`crumb mcp register`)",
     )
+    if mcp_problem is not None:
+        # Its own row, so the integration verdict (the exit code) is the
+        # registration's, as before; this one says it cannot start (H4).
+        add("mcp_command", False, mcp_problem)
     add("mcp_extra", sdk, "[mcp] extra importable" if sdk else "optional [mcp] extra not installed")
 
     # Hooks
     hook_cmds = _installed_hook_commands(root)
+    hook_state = _hook_install_state(root)
+    hook_problems = []
+    if hook_state["disabled"]:
+        hook_problems.append(
+            f"{hook_state['disabled']} sets `disableAllHooks: true`, so none of them runs"
+        )
+    if hook_state["outdated"]:
+        hook_problems.append(
+            "an older launcher is installed for "
+            + ", ".join(hook_state["outdated"])
+            + " (`crumb init --with-hooks` updates it)"
+        )
     add(
         "hooks",
-        bool(hook_cmds),
-        f"{len(hook_cmds)} crumb hook(s) installed" if hook_cmds else "no hooks installed",
+        bool(hook_cmds) and not hook_problems,
+        (
+            f"{len(hook_cmds)} crumb hook(s) installed: {', '.join(sorted(hook_state['events']))}"
+            if hook_cmds
+            else "no hooks installed"
+        )
+        + "".join(f"; {p}" for p in hook_problems),
     )
 
     # Resume-packet staleness vs HEAD
@@ -9121,7 +9240,9 @@ def doctor_report(root: Path) -> dict:
                 f"generated/related.json is incomplete ({degraded.get('reason', 'pair budget')}); "
                 "`crumb audit` names it",
             )
-    if hook_cmds:
+    # Only with a guard hook to describe: after `--with-hooks=session,capture`
+    # it said "the guard hook covers Bash…" with none installed (H4).
+    if "guard" in hook_state["events"]:
         outdated = _outdated_guard_matchers(root)
         add(
             "hook_matcher",
@@ -9134,6 +9255,40 @@ def doctor_report(root: Path) -> dict:
 
     integrated = any(c["ok"] for c in checks if c["check"] in ("adapter", "mcp", "hooks"))
     return {"checks": checks, "integrated": integrated, "store": store}
+
+
+def _hook_install_state(root: Path) -> dict:
+    """`{events, disabled, outdated}` from `.claude/settings*.json`.
+
+    `events`: the breadcrumbs events installed. `disabled`: the settings file
+    that sets `disableAllHooks: true`, if any. `outdated`: events whose entry
+    is a launcher an older `init` wrote (review 2026-11-13, H4).
+    """
+    out: dict = {"events": set(), "disabled": None, "outdated": []}
+    for name in ("settings.json", "settings.local.json"):
+        path = Path(root) / ".claude" / name
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path_policy.read_text(path))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("disableAllHooks") is True:
+            out["disabled"] = f".claude/{name}"
+        for arr in _settings_hooks(data).values():
+            if not isinstance(arr, list):
+                continue
+            for group in arr:
+                for h in _group_entries(group):
+                    ev = _hook_entry_event(h)
+                    if not ev:
+                        continue
+                    out["events"].add(ev)
+                    command = h.get("command")
+                    if command in _generated_hook_commands(ev) and command != hook_command(ev):
+                        out["outdated"].append(ev)
+    out["outdated"] = sorted(set(out["outdated"]))
+    return out
 
 
 def _settings_hooks(data) -> dict:

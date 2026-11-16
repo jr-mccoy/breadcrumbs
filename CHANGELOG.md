@@ -205,6 +205,34 @@ unchanged.
     later `guard` take 2 s, under the store lock (W2).
   - The guard pre-filter (format 5) and search index (format 4) are rebuilt on
     the next write or `crumb reindex`; until then guard runs in full.
+- **Write path** (review 2026-11-13, W3, W6, W8):
+  - A trap or question whose title has no ASCII letters gets an id from a
+    digest of its title (`trap_untitled-1a2b3c4d`), so a store can hold more
+    than one; an exact repeat is still refused (W3).
+  - `consolidate --merge` keeps its sources' scope: branch records stay on
+    their branch, and mixing scopes or branches is refused. It used to write
+    every merge as `scope: project` (W6).
+  - `mark-status … active` clears `superseded_by` (the note keeps what it
+    said); `capture session`'s session record, handoff and current.md are one
+    journaled change; `repair` names a `--set` it could not use and counts only
+    what it wrote; the schema-3 migration keeps a block whose heading repeats an
+    earlier one below the index instead of dropping it (W8).
+- **Hooks and MCP** (review 2026-11-13, H2, H3, H4, H6):
+  - One long correction is one jot: the prompt hook and the miner now clip its
+    title the same way (H2).
+  - The Stop hook holds the stop once: every candidate an ask counted is
+    recorded as asked, not only the six it lists (H3).
+  - `doctor` checks what it reports: the guard-matcher row appears only with a
+    guard hook, `disableAllHooks: true` and an older launcher fail the hooks
+    row, and a registered MCP command that is not on PATH gets an
+    `mcp_command` row (`mcp doctor` exits 1) (H4).
+  - `memory_note` answers wrong-typed `fields` with an error instead of a bare
+    "Error executing tool"; `memory_record` declares the review fields so a
+    claimed review is refused over stdio rather than dropped; the
+    `guard_before_action` prompt names `ASK_HUMAN` (H6).
+  - Every installed hook carries a `timeout` (30 s for guard and prompt, 60 s
+    for session, 120 s for the rest; the host default is 600 s). Re-running
+    `crumb init --with-hooks` adds it to an existing install.
 - **Release and CI** (review 2026-11-13, C2 to C7): the pre-flight no longer
   calls a tag a dead tag when PyPI is unreachable, and refuses a fresh version
   lower than the newest on PyPI. The tag and Release moved to their own job, so
