@@ -96,11 +96,23 @@ class LockUnsupported(StoreLocked):
     """The store's filesystem refused an OS lock; writes are not coordinated there."""
 
     def __init__(self, path: Path, exc: OSError):
-        super().__init__(
-            None,
-            message=f"cannot take a write lock on {path} ({exc.strerror or exc}); the store "
-            "must be on a local filesystem for concurrent writers to be safe",
-        )
+        if exc.errno in _READ_ONLY:
+            # A read-only mount or a store this user cannot write: nothing can
+            # be written, so readers go on and writers say why (review
+            # 2026-11-13, W5).
+            message = (
+                f"the store is read-only here: cannot open {path} for writing "
+                f"({exc.strerror or exc}); commands that write cannot run"
+            )
+        else:
+            message = (
+                f"cannot take a write lock on {path} ({exc.strerror or exc}); the store "
+                "must be on a local filesystem for concurrent writers to be safe"
+            )
+        super().__init__(None, message=message)
+
+
+_READ_ONLY = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
 
 
 _registry_guard = threading.Lock()
@@ -215,6 +227,10 @@ def _acquire_file(memory_dir: Path, deadline: float):
         fh = _open_lock_file(path)
     except path_policy.Refused as exc:
         raise StoreLocked(None, message=str(exc)) from None
+    except OSError as exc:
+        # EROFS here escaped as a raw OSError, so `resume` and two hooks failed
+        # on a store every reader could use (review 2026-11-13, W5).
+        raise LockUnsupported(path, exc) from exc
     try:
         while True:
             try:

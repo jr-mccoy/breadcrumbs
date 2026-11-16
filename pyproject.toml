@@ -1,17 +1,23 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+# 77 is the first release that reads an SPDX `license` string and
+# `license-files`; the upper bound keeps a future major from changing what a
+# release builds without a commit here (review 2026-11-13, C3).
+requires = ["setuptools>=77,<85"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "crumb-kit"
 # Single source of truth: breadcrumbs/__init__.py `__version__`. Read statically
-# at build time (see [tool.setuptools.dynamic] below) so there is only ONE line
-# to bump per release and no version literals to keep in sync.
+# at build time (see [tool.setuptools.dynamic] below), so the version is ONE
+# line and there are no version literals to keep in sync.
 dynamic = ["version"]
 description = "Breadcrumbs — leave a trail your future self and your agents can follow back: a portable, repo-local, human-readable ledger of durable project state for human–agent software work."
 readme = "README.md"
-license = { file = "LICENSE" }
-requires-python = ">=3.9"
+# SPDX form: the `{ file = … }` table is deprecated, with removal announced
+# for 2027-02-18.
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
 keywords = ["agent", "memory", "continuity", "cli", "project-memory", "handoff"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -22,7 +28,6 @@ classifiers = [
     # the README's pyversions badge read, and with only the bare "3" the badge
     # rendered "python: 3" while CI was proving 3.9 through 3.14. Keep this list
     # in step with the `test` matrix in .github/workflows/ci.yml.
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -38,13 +43,14 @@ dependencies = []
 # The MCP server is the one optional interop layer. It is NOT a core
 # dependency: the CLI and plain files work without it (graceful degradation —
 # MCP comes later, or never). Install it explicitly with `pip install
-# "crumb-kit[mcp]"`. The SDK needs Python >=3.10, hence the marker.
+# "crumb-kit[mcp]"`. The SDK needs Python >=3.10, which is also the package's
+# floor, so the extra needs no environment marker.
 [project.optional-dependencies]
 # Upper-bounded on purpose. SDK 2.0 renamed the server class, and an
 # unbounded `mcp>=1.2` silently resolved to it — the server then reported itself
 # as "not installed". `mcp_server` supports both 1.x and 2.x; a future 3.x is
 # assumed to break again until someone checks.
-mcp = ["mcp>=1.2,<3; python_version >= '3.10'"]
+mcp = ["mcp>=1.2,<3"]
 
 # Contributor tooling. None of it is needed to *run* crumb-kit — the package has
 # no runtime dependencies and the canonical test runner is stdlib `unittest`
@@ -60,15 +66,15 @@ dev = [
     # commit SHA for exactly this reason; the tool that decides pass/fail was the
     # one thing left floating.
     "ruff==0.16.1", # lint + format, enforced by the `lint` CI job
-    "build",        # `python -m build` (release dry-run)
-    "twine",        # `twine check` / Path B upload
+    "build==1.6.1", # `python -m build`; the release workflow pins the same
+    "twine==7.0.0", # `twine check` / Path B upload; likewise
 ]
 
 # Versioning note: this is the package version (semantic). It is independent of
-# the *record* schema_version, which the manifest carries as `schema_version: 1`
-# and `crumb --version` prints alongside the package version. A bump to the
-# record schema is a separate, breaking change tracked by SCHEMA_VERSION in
-# breadcrumbs/cli.py; the package MAJOR version moves with it.
+# the *record* schema_version (SCHEMA_VERSION in breadcrumbs/cli.py), which the
+# manifest carries and `crumb --version` prints alongside the package version.
+# A schema_version change is always a minor release, with a migration
+# (docs/compatibility.md §1).
 
 [project.scripts]
 crumb = "breadcrumbs.cli:main"
@@ -126,7 +132,7 @@ testpaths = ["tests"]
 # The code was written to ~100 columns; the formatter is set to match so adopting
 # it did not rewrap the whole codebase.
 line-length = 100
-target-version = "py39"   # the documented floor (requires-python >=3.9)
+target-version = "py310"  # the documented floor (requires-python >=3.10)
 # The 2026-09-26 audit's diagnostic scripts are kept byte-identical to the
 # checksummed bundle they arrived in (docs/reviews/), so they are evidence, not
 # code this repo formats. Their cases become ordinary tests as work packages land.

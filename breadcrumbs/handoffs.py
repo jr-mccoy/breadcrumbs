@@ -80,10 +80,26 @@ def branch_handoff_path(memory_dir: Path, branch: str) -> Path:
     return Path(memory_dir) / HANDOFFS_DIR / f"{branch_slug(branch)}.md"
 
 
+def _owns_handoff(memory_dir: Path, root: Path, branch: str | None) -> bool:
+    """Is `branch`'s own handoff the one to use?
+
+    On a known feature branch, yes. With no default branch to compare against
+    (a single-ref fetch has no `origin/HEAD` and no local `main`), a branch
+    whose handoff file exists is taking it: that file can only have been
+    written on that branch, and serving the default branch's Next Action
+    instead was silent and wrong (review 2026-11-13, R2).
+    """
+    if _is_feature_branch(root, branch):
+        return True
+    if not branch or branch in (git.NO_BRANCH, "HEAD") or default_branch(root) is not None:
+        return False
+    return branch_handoff_path(memory_dir, branch).is_file()
+
+
 def write_path(memory_dir: Path, root: Path, branch: str | None) -> Path:
     """Where a capture on `branch` writes its handoff."""
     memory_dir = Path(memory_dir)
-    if uses_branch_handoffs(memory_dir) and _is_feature_branch(root, branch):
+    if uses_branch_handoffs(memory_dir) and _owns_handoff(memory_dir, root, branch):
         return branch_handoff_path(memory_dir, branch)
     return memory_dir / "handoff.md"
 
@@ -100,12 +116,83 @@ def read_path(memory_dir: Path, root: Path) -> tuple[Path, str]:
     if not uses_branch_handoffs(memory_dir):
         return single, "handoff.md"
     branch = cli.git_branch(root)
-    if not _is_feature_branch(root, branch):
+    if not _owns_handoff(memory_dir, root, branch):
         return single, "handoff.md"
     own = branch_handoff_path(memory_dir, branch)
     if own.is_file():
         return own, f"{HANDOFFS_DIR}/{own.name}"
     return single, "handoff.md (no branch handoff)"
+
+
+def _updated(meta: dict):
+    """A handoff's `_Last updated_` as an aware datetime, or None."""
+    from datetime import timezone
+
+    from breadcrumbs import validation
+
+    when = validation.parse_timestamp(meta.get("updated_at"))
+    if when is not None and when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+def newer_merged(memory_dir: Path, root: Path, read: Path) -> list[dict]:
+    """Branch handoffs in this checkout written after `read`, newest first.
+
+    A capture on a feature branch writes that branch's handoff and nothing
+    carries it forward on merge, so in a pull-request workflow, where no
+    session runs on the default branch, `handoff.md` only ever changes by hand
+    and every merged branch's Next Action is stranded (review 2026-11-13,
+    §5.2). A branch handoff is committed on its branch, so one in this checkout
+    came in with a merge, unless it is this branch's own. One written after the
+    handoff a resume reads is a later instruction than the one it shows.
+
+    Each entry: `branch`, `path` (store-relative), `updated_at`, and
+    `next_action` (the newest entry of its log). No git: presence in the
+    checkout is the merge.
+    """
+    memory_dir = Path(memory_dir)
+    directory = memory_dir / HANDOFFS_DIR
+    if not uses_branch_handoffs(memory_dir) or not directory.is_dir():
+        return []
+    read = Path(read)
+    floor = None
+    if read.is_file():
+        floor = _updated(cli.parse_handoff_meta(cli.read_text_lenient(read)[0]))
+    branch = cli.git_branch(root)
+    own = branch_handoff_path(memory_dir, branch) if _is_feature_branch(root, branch) else None
+    found = []
+    for path in sorted(directory.glob("*.md")):
+        # `crumb handoff trim` keeps `<slug>.history.md` beside a branch handoff.
+        if path == read or path == own or path.name.endswith(".history.md"):
+            continue
+        try:
+            text, _problem = cli.read_text_lenient(path)
+        except (OSError, path_policy.Refused):
+            continue
+        meta = cli.parse_handoff_meta(text)
+        when = _updated(meta)
+        if when is None or (floor is not None and when <= floor):
+            continue
+        section = cli.split_md_sections(text).get("Next Action", "")
+        if cli._is_placeholder(section):
+            continue
+        entries = cli.split_next_entries(section.strip())
+        if not entries or not entries[0].strip():
+            continue
+        found.append(
+            (
+                when,
+                {
+                    "branch": meta.get("branch") or path.stem,
+                    "path": f"{HANDOFFS_DIR}/{path.name}",
+                    "updated_at": meta.get("updated_at"),
+                    "next_action": entries[0].strip(),
+                },
+            )
+        )
+    found.sort(key=lambda pair: pair[0], reverse=True)
+    return [entry for _when, entry in found]
 
 
 def read_text(memory_dir: Path, root: Path) -> tuple[str, str | None, Path]:

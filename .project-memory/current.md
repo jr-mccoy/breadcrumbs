@@ -3,9 +3,28 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-0.6.0 is bumped on the branch: the DoWhat retest fixes plus the Stop-hook snapshot settle fix. Next is merge and publish.
+Review 2026-11-13 items 1 to 7 are done on ccr-5a263b6c-3gtzxn and pushed; not yet merged or released (next: 0.7.0).
 
 ## Recently Changed
+### 2026-11-15 · `9cd5b74`
+2026-11-15: agent-outcome eval added and run (9cd5b74)
+
+### 2026-11-14 · `8a6ee60`
+2026-11-14: guard parsing, wrappers, read-only checks, floor spellings and index parity (8a6ee60)
+
+### 2026-11-14 · `10f8a9d`
+2026-11-14: write gate closed (10f8a9d): frontmatter line breaks, memory_note supersede, scan-secrets coverage, mined jot evidence, hidden characters
+
+### 2026-11-14 · `973bbcb`
+2026-11-14: SessionStart packet capped at 9,500 characters; root resolver walks up to the nearest store; merged branch handoffs shown; hooks installed in this repo
+
+### 2026-11-13 · `52d3bfe`
+2026-11-13: dropped Python 3.9; ci_gate.py fails closed; fixed crumb rename, the recover journal window and prune sessions ordering
+
+### 2026-11-13 · `b8c6066`
+2026-11-13: system review written (docs/reviews/2026-11-13-system-review.md); no product code changed
+
+### Earlier, as written
 - 2083046 Plan fixes for the DoWhat field report on 0.4.0
 - 295c6db Merge pull request #55 from jr-mccoy/claude/new-session-9f1k6i
 - cb327eb Release checklist: reference hashes for the 0.4.0 artifacts

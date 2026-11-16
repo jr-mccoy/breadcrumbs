@@ -6,6 +6,252 @@ uses semantic versioning. The package version is independent of the on-disk reco
 `schema_version` (now `4` — see `docs/record-schema.md` §1); `crumb --version`
 prints both.
 
+## [Unreleased]
+
+Fixes for the first five items of the 2026-11-13 system review
+(`docs/reviews/2026-11-13-system-review.md` §6): CI and releases were blocked,
+three commands could lose records, memory did not reach the agent in three
+common situations, the write gate let five things through, and guard misread
+ordinary shell commands; and the first agent-outcome eval (item 6). Dropping Python 3.9 is a breaking change, so the next
+release is a minor one (0.7.0). `schema_version` (4) and `requires` are
+unchanged.
+
+### Removed
+
+- **Python 3.9 is no longer supported**; the floor is 3.10
+  (`requires-python`, the classifiers, the CI matrices). 3.9 reached end of
+  life in October 2025, and the `ubuntu-latest` runner (Ubuntu 26.04) no longer
+  provides it, which had turned every CI run red since 2026-11-02 and so
+  blocked `mode: publish`. pip on 3.9 keeps resolving to 0.6.2. The `[mcp]`
+  extra drops its `python_version >= '3.10'` marker, which the floor now
+  implies, and the install hint stops explaining it. The CI matrix test now
+  reads the supported list from the classifiers, so the two cannot drift.
+
+### Added
+
+- **An agent-outcome eval** (`evals/agent_outcomes/`, review §5.1): a real
+  agent, headless, on repeat-failure tasks under no memory, a hand-kept notes
+  file, breadcrumbs with the `CLAUDE.md` signpost, and breadcrumbs with hooks.
+  The first run is in `docs/benchmarks/agent-outcomes.md`. Any memory stopped
+  the repeat where the model did not already know better; a notes file did
+  as well as breadcrumbs for a third of the context; and guard's `ASK_HUMAN`
+  on a correct migration plan stalled 5 of 6 breadcrumbs runs in one
+  scenario. Run by hand; not part of CI.
+
+### Security
+
+- **A line separator in a field forged frontmatter keys.** The reader split
+  frontmatter on every character `str.splitlines()` ends a line at; the writer
+  refused only `\n` and `\r`. A U+2028 inside an evidence ref became extra keys
+  on read: `review_status: reviewed` and a `reviewed_hash`, which let a team
+  store's `crumb promote` write an unreviewed rule into `CLAUDE.md`, through the
+  CLI and MCP alike. The reader now ends a line only at a newline (CRLF still
+  reads), and the writer refuses U+2028, U+2029, NEL, form feed and the
+  information separators too. A rewrite no longer turns those characters in a
+  body into newlines.
+- **`memory_note` with `supersedes` retired a record under `mcp_mode:
+  propose`.** Every other MCP writer refuses that; this one now does too.
+- **`scan-secrets` missed common shapes and files.** `DB_PASSWORD=…`,
+  `GITHUB_TOKEN=…`, `token: …`, `AWS_SECRET_ACCESS_KEY=…`, GitLab, npm,
+  Hugging Face and webhook tokens and `ASIA` key ids passed as OK; a credential
+  label is now found inside a variable name, and a value must hold a letter and
+  a digit or both cases, so prose such as `token: approx_tokens_per_section`
+  does not block. Every file the store commits is scanned, not five suffixes,
+  and a binary file is unscannable. In `.crumbignore` a `#` only starts a
+  comment at the start of a line, a pattern matching every line is reported
+  and not used, and each run says how many lines were exempted.
+- **A token late in a long command reached a mined jot, and promotion
+  published it.** The miner checked only a candidate's title and note; it now
+  checks its command, evidence refs and file paths too, and promotion checks
+  the evidence it carries over.
+- **Invisible characters reached hook output.** Unicode tag characters (which
+  spell out hidden text), the soft hyphen, blank fillers and runs of variation
+  selectors are now escaped wherever record text is shown; one presentation
+  selector after a visible character, as in ordinary emoji, is kept. `crumb
+  audit` warns about a record that holds any (`hidden-characters`).
+
+### Fixed
+
+- **Guard misread ordinary shell commands** (review §2.4, §5.3).
+  - `<<<` and a quoted `<<` were taken for here-documents, so every later
+    line, `rm -rf src` included, was read as data.
+  - `cat /dev/null>file` (no space before `>`) was read-only.
+  - Commands that write were read-only: `sort -o`, `uniq in out`, `yq -i`,
+    `fd -x`/`-X`, `rg --pre`, `tree -o`, `xxd in out`, `date -s`,
+    `git reflog expire`, `git -c …`, `git diff --output=`, `find -fprint0`, a
+    sed label followed by `w`, an abbreviated `sed --in-pl`, and
+    `echo \'$(cmd)\'`, whose substitution runs.
+  - The always-ask list missed common spellings of what it names:
+    `sudo`/`env`/`timeout`/`nice`/`command` before the command,
+    `bash -c '…'`, `eval`, `$(…)`, a here-document a shell runs,
+    `xargs --max-args 1 rm -rf`, `--force-with-lease`, `refs/heads/main`,
+    `--delete main` and `:main`, `rm -rf build/../src`, `rm -rf /tmp`,
+    `rm -rf ~/reports`, a lowercase `$tmp`, and `crumb --project . migrate`.
+  - A Bash command starting `edit X: ` was read as a file edit and skipped
+    the always-ask list; the hook now says a shell command is one.
+  - A trap about a crumb subcommand (`crumb rename …`) now fires on that
+    command, however it is spelled.
+  - Property tests check that a wrapper, a second line, a leading
+    here-string or a missing space never makes a command look safer.
+- **With the search index built, guard missed an attempt naming the exact
+  command** (`make build --jobs 4`), because the index held no command
+  heads. It does now (search-index format 3; an older index is ignored
+  until `crumb reindex` rebuilds it).
+- **The SessionStart packet was longer than Claude Code shows.** Claude Code
+  caps a hook's `additionalContext` at 10,000 characters and hands the model a
+  2,000-character preview of anything longer; this repository's own packet was
+  12,317, so the model saw the project line and two decisions. The packet the
+  hook injects is now trimmed by meaning to 9,500 characters (counted as the
+  host counts, in UTF-16 code units), after the compaction preamble's share, in
+  the usual trim order. A section cut for it says "to stay within the host's
+  context limit", the view header reports `chars: <used>/<limit>`, and the text
+  ends with a pointer to `crumb resume`. The prompt and guard hooks' text is
+  capped the same way as a backstop. `crumb resume` itself is unchanged.
+- **Hooks went silent once the agent changed directory, and the CLI wanted a
+  second store.** The hooks took the payload's `cwd`, which follows every `cd`,
+  as the project root, so from a subdirectory every hook printed `{}`, the
+  guard included. The CLI took its working directory, so `crumb guard` from
+  `src/` said there was no store and advised `crumb init`, which made one
+  there. Both now walk up to the nearest `.project-memory/`, stopping at the
+  first `.git` so an enclosing repository's store is never used; hooks then
+  fall back to `$CLAUDE_PROJECT_DIR` and `$BREADCRUMBS_PROJECT`. `--project` is
+  still taken exactly as given. A hook payload whose `cwd` is not a string no
+  longer exits 1.
+- **A merged branch's Next Action was stranded.** A capture on a feature
+  branch writes that branch's handoff, and nothing carried it forward on
+  merge, so in a pull-request workflow `handoff.md` only changed by hand and
+  the next session read a Next Action from weeks earlier. The packet now shows,
+  above Next Action, the newest entry of each branch handoff in the checkout
+  that was written after the handoff it reads (at most 3, newest first,
+  labelled with branch, file and date). JSON: `merged_handoffs`, present only
+  when non-empty.
+- **`crumb rename` deleted the record it renamed.** The rewritten record kept
+  its old `slug:`, so the validate gate refused every record crumb had written
+  (the test used a hand-written one without the key), and the old file had
+  been unlinked outside the journal, so the rollback could not restore it. The
+  command printed "nothing was changed" and `crumb recover` found nothing. The
+  slug now follows the file name, and the old file is deleted through the
+  journal.
+- **`crumb recover --apply` could undo half of a finished operation.** A
+  finished operation's journal was removed with one `rmtree`, which could
+  delete the before-images while `manifest.json` survived. A writer killed in
+  that window left a journal that `recover` rolled back: it removed the new
+  record and could not restore the old one, leaving a `superseded_by` that
+  named nothing (`remember --supersedes`, `consolidate --merge`,
+  `inbox promote`, `promote`, `handoff trim`), or deleted sessions a `rollup` had
+  folded (three of five in the review's run). The manifest is now removed first, as the commit
+  point; `recover` reports a journal with missing before-images as `finished`
+  and removes it without touching a file; and `--apply` sweeps journal
+  directories with no manifest (`debris`).
+- **`crumb prune sessions --keep N` kept the wrong sessions.** It sorted by file
+  name, which within a day is by title, so it could delete the newest snapshots
+  and keep the oldest. It now orders by when each record last described the
+  work, the order the Stop hook reads.
+- **The release workflow's CI gate failed open and read the wrong run.** When
+  the API call failed or found no run it published with a warning, and it
+  read only the newest `ci` run of any kind, so a weekly scheduled run on a
+  newer runner image could make an already-green commit unpublishable. The
+  rule moved to `.github/scripts/ci_gate.py` (unit-tested like
+  `release_preflight.py`): it fails closed, and the newest push, pull-request
+  or manual run decides, with a later red scheduled run shown as a warning.
+- **Contained failures from the review's §3 tables** (review 2026-11-13):
+  - A directory named like a record (`decisions/x.md/`) took down every
+    command with `Is a directory: 3`; `validate` now reports it by path (R3).
+  - `crumb … | head` printed `CRUMB-ERROR … Broken pipe`, or a double traceback
+    under `--json`. A closed pipe now exits 141 quietly (R9).
+  - Hook payloads are decoded as UTF-8 whatever the locale (a cp1252 Windows
+    pipe broke non-ASCII paths and prompts), and a lone surrogate, a
+    5,000-digit integer or a garbage `index/commit-order.txt` no longer makes
+    a hook exit 1 (H1, H5).
+  - A `~/…` `transcript_path` is expanded, and a missing transcript is logged
+    as `miner_missing` instead of mining nothing silently (H7).
+  - The hook log's `snapshot_error` no longer carries file paths, and
+    `init --with-hooks` and `doctor` report a `settings.json` whose `hooks` is
+    not an object instead of a traceback (H8).
+  - `remember --privacy local-private` (or `secret-prohibited`) is refused
+    before writing, pointing at `crumb jot --local`; it used to write a record
+    the validate gate then rejected (W4).
+  - On a read-only store `resume` and the hooks work and writers say "the store
+    is read-only"; the lock file's `EROFS` used to escape as a raw `OSError` (W5).
+  - A temporary file an interrupted write leaves in a committed directory is
+    now gitignored (`.project-memory/**/.*.tmp`), fails `validate`
+    (`temp-files`), and is listed and removed by `crumb recover [--apply]` (W7).
+- **Read path** (review 2026-11-13, R1 to R10):
+  - Traps and open questions are listed newest first, as the packet's
+    `ordering: "recency"` says; in file-name order the per-section cap dropped
+    the newest trap (R1).
+  - In a clone with no `origin/HEAD` and no local `main` (a single-ref fetch),
+    a branch whose handoff file exists reads and writes it, instead of being
+    served the default branch's Next Action (R2).
+  - Guard's `same file(s)` needs the same path: `pkg_a/__init__.py` no longer
+    matches `pkg_b/__init__.py`, and `./src/a.py` or an absolute path now
+    matches a record's `src/a.py` instead of falling back to the basename (R4).
+  - When Current Focus and Next Action are long enough to be shrunk, the list
+    entries trimmed to make room are put back while they fit; `resume --json`
+    used to empty every list and leave ~1,900 tokens unused (R5).
+  - In a shallow clone the packet and `audit` say the handoff's commit distance
+    and evidence history cannot be measured, instead of dropping the warning (R8).
+  - A retitled question keeps its id in the packet, and a question's age uses
+    its full timestamp, not a date cut to ten characters (R10).
+- **Retrieval** (review 2026-11-13, R6, R7, W2):
+  - Stop words are matched as written and in their regular inflections, not by
+    stem: `projection`, `note`, `handler`, `worker` and `indexing` were dropped
+    from every query and record because they share a stem with a stop word (R6).
+  - Words in any script are tokens, a CJK run is also indexed as its character
+    bigrams, and a version such as `0.6.0` is one token; a Cyrillic or CJK
+    title was reachable only by file path (R7). Identifiers stay whole: split
+    on `_`, holdout packet precision@5 fell from 0.514 to 0.389.
+  - Finding file paths in text is linear: a 20 KB unbroken token made every
+    later `guard` take 2 s, under the store lock (W2).
+  - The guard pre-filter (format 5) and search index (format 4) are rebuilt on
+    the next write or `crumb reindex`; until then guard runs in full.
+- **Write path** (review 2026-11-13, W3, W6, W8):
+  - A trap or question whose title has no ASCII letters gets an id from a
+    digest of its title (`trap_untitled-1a2b3c4d`), so a store can hold more
+    than one; an exact repeat is still refused (W3).
+  - `consolidate --merge` keeps its sources' scope: branch records stay on
+    their branch, and mixing scopes or branches is refused. It used to write
+    every merge as `scope: project` (W6).
+  - `mark-status … active` clears `superseded_by` (the note keeps what it
+    said); `capture session`'s session record, handoff and current.md are one
+    journaled change; `repair` names a `--set` it could not use and counts only
+    what it wrote; the schema-3 migration keeps a block whose heading repeats an
+    earlier one below the index instead of dropping it (W8).
+- **Hooks and MCP** (review 2026-11-13, H2, H3, H4, H6):
+  - One long correction is one jot: the prompt hook and the miner now clip its
+    title the same way (H2).
+  - The Stop hook holds the stop once: every candidate an ask counted is
+    recorded as asked, not only the six it lists (H3).
+  - `doctor` checks what it reports: the guard-matcher row appears only with a
+    guard hook, `disableAllHooks: true` and an older launcher fail the hooks
+    row, and a registered MCP command that is not on PATH gets an
+    `mcp_command` row (`mcp doctor` exits 1) (H4).
+  - `memory_note` answers wrong-typed `fields` with an error instead of a bare
+    "Error executing tool"; `memory_record` declares the review fields so a
+    claimed review is refused over stdio rather than dropped; the
+    `guard_before_action` prompt names `ASK_HUMAN` (H6).
+  - Every installed hook carries a `timeout` (30 s for guard and prompt, 60 s
+    for session, 120 s for the rest; the host default is 600 s). Re-running
+    `crumb init --with-hooks` adds it to an existing install.
+- **Release and CI** (review 2026-11-13, C2 to C7): the pre-flight no longer
+  calls a tag a dead tag when PyPI is unreachable, and refuses a fresh version
+  lower than the newest on PyPI. The tag and Release moved to their own job, so
+  the OIDC publishing job cannot write the repository; the upload retry clears
+  attempt one's attestations, which the action otherwise refuses; `build` and
+  `twine` are pinned; no `${{ }}` value is spliced into a release shell
+  script; `ci` groups a PR's push and pull-request runs so the matrix runs
+  once; and the lint job runs `crumb scan-secrets` on this repo's own store.
+  Packaging uses the SPDX `license = "MIT"` (the table form is deprecated, with
+  removal announced for 2027-02-18), bounds setuptools, and the sdist no longer
+  ships a test suite it cannot run (`MANIFEST.in`).
+- **Docs that were false** (review §3.5): a schema change is a minor release,
+  not a MAJOR one; bare `--with-adapter` can create `AGENTS.md`; `cli-spec.md`
+  now has rows for `repair`, `rename`, `retitle`, `traps`, `handoff trim` and
+  `inbox import` (a test keeps the table complete); `0.1.13` has a dead
+  Release; `get_version()` has no fallback; a release is more than one line;
+  and `PreCompact` stdout steers the compaction summary rather than going
+  nowhere.
+
 ## [0.6.2] — 2026-10-03
 
 Windows fixes found by the full Windows CI job after 0.6.1. A patch release:

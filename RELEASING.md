@@ -46,7 +46,7 @@ No secrets to add. That's the whole setup.
 The workflow does the fiddly, order-sensitive parts (tagging the right commit,
 checking PyPI, cutting the GitHub Release). You do exactly two things:
 
-**Step 1 — bump the version (one line) and merge to `main`.**
+**Step 1 — bump the version, record the release, and merge to `main`.**
 
 The version lives in **exactly one place**: `__version__` in
 [`breadcrumbs/__init__.py`](breadcrumbs/__init__.py). `pyproject.toml` reads it
@@ -153,6 +153,12 @@ crumb --version
   below. Bump to a new version — a tag is never re-used.
 - **"CI is still running" / "CI concluded failure"**: `publish` requires the `ci`
   workflow to have succeeded on the exact commit. Wait for it, or fix and merge.
+  The newest push, pull-request or manual run decides; the weekly scheduled run
+  re-tests an unchanged commit on a newer runner image, so a red one is shown as
+  a warning and does not block. **"No 'ci' run tested …"** or **"Could not
+  read the 'ci' runs"**: the gate fails closed. Run `ci` on `main` (*Actions →
+  ci → Run workflow*), wait for it to pass, and re-run the release. The rule is
+  `.github/scripts/ci_gate.py`.
 - **"Publish must run from main"**: you ran it from a feature branch. Merge to
   `main` and select `main` in the branch dropdown.
 
@@ -168,7 +174,7 @@ tags and will happily install a version PyPI never shipped:
 | 0.1.2 | **none** | none | **published** | Published, then never tagged — the exact shape the old pre-flight made permanent (any re-run of that version hit "already on PyPI" and stopped). Deliberately left untagged: hand-tagging it now would put a `v0.1.2` tag on a commit that has nothing to do with the published 0.1.2 artifact. Fixed for the future — see the recovery bullet above. |
 | 0.1.5 | `v0.1.5` | none | **never** | Tagged, never published, no Release. **Dead tag.** |
 | 0.1.6 | `v0.1.6` | `v0.1.6` | **never** | Tagged and released, never published. **Dead tag and a dead Release.** 0.1.7 is the next real PyPI release after 0.1.4. |
-| 0.1.13 | `0.1.13` (no `v`) | none | **never** | A stray tag on `abd2bfd` (2026-09-04), whose `__version__` is 0.1.12. Never published. Found and checked against the PyPI JSON API on 2026-09-27 (audit WP21). The workflow only reads `v`-prefixed tags, so it neither blocks nor is blocked by it. |
+| 0.1.13 | `0.1.13` (no `v`) | `0.1.13` | **never** | A stray tag on `abd2bfd` (2026-09-04), whose `__version__` is 0.1.12, with a GitHub Release on it. Never published. Found and checked against the PyPI JSON API on 2026-09-27 (audit WP21); the Release was found by the 2026-11-13 review. The workflow only reads `v`-prefixed tags, so it neither blocks nor is blocked by it. **Dead tag and a dead Release.** |
 
 The first three predate `release.yml` owning the tag: 0.1.7 was the first
 release the workflow tagged itself. They were verified against the GitHub tag
@@ -178,11 +184,11 @@ workflow took over. The workflow cannot stop a hand-made tag; the rule against
 them is what does.
 
 Everything else (`v0.1.0`, `v0.1.1`, `v0.1.3`, `v0.1.4`, `v0.1.7`, and every
-release cut after them, through `v0.3.1`) is tagged, released, and on PyPI. The
+release the workflow has cut since) is tagged, released, and on PyPI. The
 workflow owns all three of those steps, so a release it completes cannot add a
 row to the table above.
 
-Deleting `v0.1.5`/`v0.1.6`, the `v0.1.6` Release and the stray `0.1.13` would
+Deleting `v0.1.5`/`v0.1.6`, the `v0.1.6` Release and the stray `0.1.13` and its Release would
 restore the invariant, and is safe (nothing depends on a version that was never
 published). It is left as the maintainer's call, since a deleted tag breaks any
 link that referenced it. The release workflow refuses to re-use `v0.1.5` or
@@ -233,12 +239,14 @@ python -m twine upload --repository testpypi dist/*
 `__version__` in `breadcrumbs/__init__.py` is the **single source of truth** for
 the **package** version (semver). `pyproject.toml` reads it dynamically
 (`[tool.setuptools.dynamic] version = {attr = "breadcrumbs.__version__"}`) and
-`breadcrumbs/cli.py` reads it as its source-checkout fallback — bump the one line,
-nothing else to touch.
+`breadcrumbs/cli.py` returns it from `get_version()`. The version itself is
+that one line; a release also needs its `CHANGELOG.md` entry and its
+`docs/compatibility.md` §3 row, which the suite checks agree with it.
 
 The package version is independent of the on-disk **record `schema_version`**
-(manifest `schema_version: 1`). `crumb --version` prints both. Bump the package
-MAJOR only alongside a breaking record-schema change.
+(`SCHEMA_VERSION` in `breadcrumbs/cli.py`, carried by the manifest).
+`crumb --version` prints both. A `schema_version` change is always a minor
+release, with a migration (`docs/compatibility.md` §1).
 
 A PyPI version is **permanent** — once `0.1.0` is uploaded it cannot be replaced,
 only yanked.

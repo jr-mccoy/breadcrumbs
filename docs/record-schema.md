@@ -157,7 +157,7 @@ legacy values are in [`compatibility.md`](compatibility.md).
 .project-memory/index/**
 !.project-memory/index/README.md
 .project-memory/generated/*.local.md
-.project-memory/generated/*.tmp
+.project-memory/**/.*.tmp
 ```
 
 ### Two policies chosen at `init`

@@ -227,7 +227,18 @@ GUARD_READ_ONLY_GIT_SUBCOMMANDS = _shellcmd.READ_ONLY_GIT_SUBCOMMANDS
 GUARD_READ_ONLY_DISQUALIFYING_ARGS = _shellcmd.READ_ONLY_DISQUALIFYING_ARGS
 
 
-def _is_read_only_action(action: str) -> bool:
+def _edit_match(action: str, shell: bool = False):
+    """The `edit <path>` form, unless the action is known to be a shell command.
+
+    The CLI takes free text, where `edit notes.md: …` is how an edit is said.
+    A Bash tool's command is never that, however it starts: read as an edit,
+    `edit notes: ; rm -rf src` skipped the always-ask floor (review 2026-11-13,
+    §2.4). The hook says which it has (`shell`).
+    """
+    return None if shell else _EDIT_ACTION_RE.match((action or "").strip())
+
+
+def _is_read_only_action(action: str, *, shell: bool = False) -> bool:
     """True only when the action provably cannot change anything (G2).
 
     Every segment of a compound command must be read-only on its own
@@ -238,7 +249,7 @@ def _is_read_only_action(action: str) -> bool:
     PAUSE, never a swallowed one.
     """
     text = (action or "").strip()
-    if not text or _EDIT_ACTION_RE.match(text):
+    if not text or _edit_match(text, shell):
         return False
     return _shellcmd.is_read_only(text)
 
@@ -393,7 +404,7 @@ _CLASS_SEVERITY = [
 ]
 
 
-def classify_action(action: str) -> tuple[str, list[str]]:
+def classify_action(action: str, *, shell: bool = False) -> tuple[str, list[str]]:
     """Return (primary_class, sorted matched classes). 'routine_edit' if none hit.
 
     Reads what the action *does*, not what it *says* (field report 2026-10-01,
@@ -404,7 +415,7 @@ def classify_action(action: str) -> tuple[str, list[str]]:
     in their arguments: reading memory and writing memory are routine, and only
     a real `crumb migrate` is a migration.
     """
-    edit = _EDIT_ACTION_RE.match((action or "").strip())
+    edit = _edit_match(action, shell)
     effects: set[str] = set()
     if edit:
         text = f"{edit.group(1)} {edit.group(2)}"
@@ -848,11 +859,33 @@ def _score_item(
     # a matched full path. Keying on basename alone (the old approach) wrongly
     # collapsed genuinely-distinct files that share a name (src/a/x.ts, src/b/x.ts)
     # — undercounting the score and picking a hash-order-dependent survivor.
+    #
+    # A basename alone is evidence only when one side named the file bare
+    # (a record citing `settings.py`). When both sides give directories,
+    # `pkg_a/__init__.py` and `pkg_b/__init__.py` are different files (review
+    # 2026-11-13, R4); a full path matches another when one is the other's
+    # tail at a `/`, which is how `./src/a.py` and `/abs/repo/src/a.py` meet a
+    # record's `src/a.py`.
     def _overlap(candidate: set[str], against: set[str] = q_files) -> tuple[list[str], int]:
-        raw = candidate & against
-        full_paths = {f for f in raw if "/" in f}
+        cand_full = {f for f in candidate if "/" in f}
+        against_full = {f for f in against if "/" in f}
+        full_paths = {
+            f
+            for f in cand_full
+            if any(f == g or f.endswith("/" + g) or g.endswith("/" + f) for g in against_full)
+        }
         covered = {f.rsplit("/", 1)[-1] for f in full_paths}
-        extra_bare = {f for f in raw if "/" not in f and f not in covered}
+
+        def _bare_given(name: str, side: set[str]) -> bool:
+            return name in side and not any(f.endswith("/" + name) for f in side if "/" in f)
+
+        extra_bare = {
+            f
+            for f in candidate & against
+            if "/" not in f
+            and f not in covered
+            and (_bare_given(f, candidate) or _bare_given(f, against))
+        }
         return sorted(full_paths | extra_bare), len(full_paths) + len(extra_bare)
 
     matched_files, file_count = _overlap(item["files"])
@@ -1180,6 +1213,7 @@ def search(
         include_ideas=include_ideas,
         explain=explain,
         df_out=df,
+        q_command=q_command,
     )
     info = info if info is not None else {}
     if narrowed is not None:
@@ -1381,7 +1415,9 @@ def _only_common_evidence(m: dict) -> bool:
     )
 
 
-def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "") -> str:
+def _decide_verdict(
+    top: list[dict], matched_classes: list[str], action: str = "", *, shell: bool = False
+) -> str:
     """Pick one verdict from the ranked matches + action class. Deterministic.
 
     Per match: a kind/specificity floor and the score band both argue for a
@@ -1459,7 +1495,7 @@ def _decide_verdict(top: list[dict], matched_classes: list[str], action: str = "
         verdict = "ASK_HUMAN"
 
     # Applied last, so nothing above can raise a reporting command past advisory.
-    if _is_read_only_action(action):
+    if _is_read_only_action(action, shell=shell):
         verdict = _min_verdict(verdict, GUARD_READ_ONLY_CEILING)
     return verdict
 
@@ -1556,8 +1592,12 @@ def guard(
     files: list[str] | None = None,
     stale_days: int = cli.STALE_AGE_DAYS,
     staleness: bool = True,
+    shell: bool = False,
 ) -> dict:
     """Guard-before-action (§11): classify -> search -> score -> single verdict.
+
+    `shell` says the action is a shell command (a Bash or PowerShell tool
+    call), so text shaped like `edit <path>: …` is not read as a file edit.
 
     Active records drive the verdict; superseded/rejected/stale records and
     resolved questions are demoted to history (mention-only, never 'active').
@@ -1568,11 +1608,11 @@ def guard(
     so including them would let a speculative note that names the right files raise
     a real verdict. `crumb search` sees them; the verdict never does.
     """
-    primary, classes = classify_action(action)
+    primary, classes = classify_action(action, shell=shell)
     # Match on the command, not on a here-document's body (issue 7c), and take
     # paths only from the command and the edited file — never from the content
     # being written (issue 10: `mentions: CLAUDE.md` came from prose).
-    edit = _EDIT_ACTION_RE.match((action or "").strip())
+    edit = _edit_match(action, shell)
     memory_edit = bool(edit) and _is_memory_path(edit.group(2), root)
     if edit:
         # An edit is about its file, not the prose it writes (DoWhat retest of
@@ -1598,7 +1638,15 @@ def guard(
         path_text=path_text,
         keyword_cap=GUARD_KEYWORD_CAP,
         writes=_shellcmd.crumb_writes(action, cli.MEMORY_DIRNAME) if not edit else None,
-        command_text=_shellcmd.matching_text(action) if not edit else path_text,
+        # A crumb command is named by its subcommand: `crumb rename dec_x …`,
+        # `python crumb.py rename …` and `crumb --project . rename …` all meet
+        # a trap titled "crumb rename …", which they never did, because crumb's
+        # own words are kept out of keyword matching (review 2026-11-13, §2.4).
+        command_text=(
+            (_shellcmd.crumb_identity(action) or _shellcmd.matching_text(action))
+            if not edit
+            else path_text
+        ),
         strict_objections=True,
     )
 
@@ -1639,7 +1687,7 @@ def guard(
         )
         (active if live else history).append(m)
 
-    read_only = _is_read_only_action(action)
+    read_only = _is_read_only_action(action, shell=shell)
     # Operator decision D3 (2026-10-01): a short, literal list of high-impact
     # actions asks a human even when no record is about them. Without it, the
     # only thing that ever made `git push --force origin main` ASK_HUMAN was
@@ -1661,7 +1709,7 @@ def guard(
         for m in active:
             m["stance"] = "advisory"
     top = active[:GUARD_MAX_WARNINGS]
-    verdict = _decide_verdict(top, classes, action)
+    verdict = _decide_verdict(top, classes, action, shell=shell)
     if memory_edit:
         verdict = _min_verdict(verdict, GUARD_READ_ONLY_CEILING)
     if high_impact:

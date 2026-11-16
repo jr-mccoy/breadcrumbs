@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -386,6 +387,42 @@ class PruneSessionsTests(unittest.TestCase):
             # Default keep (20) exceeds the 5 sessions: nothing to delete.
             self.assertEqual(res["deleted"], [])
             self.assertEqual(len(list((mem / "sessions").glob("*.md"))), 5)
+
+    def test_newest_means_written_last_not_named_last(self):
+        """Review 2026-11-13, §3.2 W1: `--keep` sorted by file name. Session
+        files are `<date>-<title slug>-<hex>`, so within a day the order was by
+        title: `--keep 2` deleted the three newest snapshots of the day and kept
+        the two oldest."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = make_repo(tmp)
+            mem = init_store(root)
+            # Written in this order (oldest first); the titles sort the other way.
+            for hour, title in (
+                (1, "zebra"),
+                (5, "yak"),
+                (9, "mango"),
+                (13, "banana"),
+                (17, "apple"),
+            ):
+                path, _meta = crumb.write_record(
+                    mem,
+                    root,
+                    "session",
+                    f"{title} snapshot",
+                    {"Next Action": cli.HOOK_SESSION_NEXT_ACTION, "Work Completed": "w"},
+                )
+                day = path.name[:10]
+                text = path.read_text(encoding="utf-8")
+                text = re.sub(
+                    r"(?m)^created_at: .*$", f"created_at: {day}T{hour:02d}:00:00+00:00", text
+                )
+                path.write_text(text, encoding="utf-8")
+            code, out = run(["prune", "sessions", "--keep", "2", "--project", str(root), "--json"])
+            self.assertEqual(code, 0, out)
+            remaining = sorted(p.name for p in (mem / "sessions").glob("*.md"))
+            self.assertEqual(len(remaining), 2, remaining)
+            self.assertTrue(any("-apple-" in n for n in remaining), remaining)
+            self.assertTrue(any("-banana-" in n for n in remaining), remaining)
 
 
 if __name__ == "__main__":

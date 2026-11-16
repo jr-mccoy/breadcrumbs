@@ -660,20 +660,24 @@ class InputSchemaTests(unittest.TestCase):
                 # WM-32: the near-duplicate gate's two answers.
                 "allow_duplicate",
                 "supersedes",
+                # Declared so a claimed review reaches admission and is
+                # refused, not dropped by the SDK (review 2026-11-13, H6).
+                "review_status",
+                "reviewed_by",
+                "reviewed_at",
+                "reviewed_hash",
             },
         )
 
     def test_evidence_item_keys(self):
         self.assertEqual(set(mcp_server.EvidenceItem.__required_keys__), {"type", "ref"})
 
-    def test_install_hint_names_the_python_floor(self):
-        """`pip install "crumb-kit[mcp]"` succeeds and installs nothing on 3.9.
-
-        The extra's marker is `python_version >= '3.10'`, so the hint was a
-        no-op instruction for exactly the users who needed it.
-        """
-        self.assertIn("3.10", mcp_server._INSTALL_HINT)
+    def test_install_hint_names_the_install_command(self):
+        """While 3.9 was supported the extra carried a `python_version >= '3.10'`
+        marker and the hint had to say why the install did nothing there. The
+        package's floor is now the SDK's, so the command is all it needs."""
         self.assertIn('pip install "crumb-kit[mcp]"', mcp_server._INSTALL_HINT)
+        self.assertNotIn("3.9", mcp_server._INSTALL_HINT)
 
     def test_tools_advertise_properties_when_sdk_present(self):
         if not mcp_server.sdk_available():
@@ -726,7 +730,7 @@ class SdkMajorCompatibilityTests(unittest.TestCase):
     def test_extra_is_upper_bounded(self):
         """An unbounded `mcp>=1.2` is what let 2.0 in unannounced."""
         text = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-        self.assertIn("mcp = [\"mcp>=1.2,<3; python_version >= '3.10'\"]", text)
+        self.assertIn('mcp = ["mcp>=1.2,<3"]', text)
 
     def test_version_is_passed_only_when_the_constructor_takes_it(self):
         """SDK 1.x has no `version` parameter and raises TypeError on

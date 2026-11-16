@@ -17,26 +17,35 @@ from __future__ import annotations
 import contextlib
 import importlib.util
 import io
+import json
+import re
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 RELEASE_YML = REPO_ROOT / ".github" / "workflows" / "release.yml"
 PREFLIGHT_PY = REPO_ROOT / ".github" / "scripts" / "release_preflight.py"
+CI_GATE_PY = REPO_ROOT / ".github" / "scripts" / "ci_gate.py"
 
 
-def _load_preflight():
-    """Import the script by path — `.github/scripts` is not an importable package."""
-    spec = importlib.util.spec_from_file_location("release_preflight", PREFLIGHT_PY)
+def _load_script(name: str, path: Path):
+    """Import a script by path — `.github/scripts` is not an importable package."""
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
+def _load_preflight():
+    return _load_script("release_preflight", PREFLIGHT_PY)
+
+
 preflight = _load_preflight()
+ci_gate = _load_script("ci_gate", CI_GATE_PY)
 
 
 def decide(**kw):
@@ -102,6 +111,25 @@ class PreflightRecoveryTests(unittest.TestCase):
         d = decide(on_pypi=preflight.ON_PYPI_NO, tag_exists=True)
         self.assertFalse(d.ok)
         self.assertIn("dead tag", d.reason())
+
+    def test_a_tag_with_pypi_unreachable_is_not_called_dead(self):
+        """It may be a full release; "delete the dead tag" would be wrong (review C2)."""
+        d = decide(on_pypi=preflight.ON_PYPI_UNKNOWN, tag_exists=True)
+        self.assertFalse(d.ok)
+        self.assertNotIn("dead tag", d.reason())
+        self.assertIn("could not be reached", d.reason())
+
+    def test_a_fresh_version_below_the_newest_release_stops(self):
+        """Not on PyPI, tag free, but lower than what is published (review C2)."""
+        d = decide(version="0.6.1", on_pypi=preflight.ON_PYPI_NO, latest_on_pypi="0.6.2")
+        self.assertFalse(d.ok)
+        self.assertIn("version regression", d.reason())
+        for newer in ("0.7.0", "0.6.10", "1.0"):
+            with self.subTest(version=newer):
+                d = decide(version=newer, on_pypi=preflight.ON_PYPI_NO, latest_on_pypi="0.6.2")
+                self.assertTrue(d.ok, d.reason())
+        d = decide(version="0.7.0rc1", on_pypi=preflight.ON_PYPI_NO, latest_on_pypi="0.6.2")
+        self.assertTrue(d.ok, d.reason())  # not a plain release: not compared
 
     def test_clean_version_proceeds(self):
         d = decide()
@@ -219,10 +247,113 @@ class ReleaseWorkflowChecksTests(unittest.TestCase):
         self.assertTrue(
             "actions/workflows/ci.yml/runs?head_sha=" in self.yml, "no CI-conclusion gate"
         )
-        self.assertTrue("CI concluded" in self.yml, "the CI gate never fails on a red run")
+        self.assertIn("python .github/scripts/ci_gate.py", self.yml)
+        step = self.yml.split("- name: CI succeeded on this commit", 1)[1].split("- name:", 1)[0]
+        # Fails closed: no `|| true` or `exit 0` way past an unreadable answer.
+        self.assertNotIn("|| true", step)
+        self.assertNotIn("exit 0", step)
+        self.assertIn("exit 1", step)
+        self.assertLess(
+            self.yml.index("- name: CI succeeded on this commit"),
+            self.yml.index("gh-action-pypi-publish"),
+        )
 
     def test_ci_gate_can_read_workflow_runs(self):
         self.assertTrue("actions: read" in self.yml, "the CI gate has no permission to read runs")
+
+
+SHA = "4606001ad02f6a22cf7bfc1e775cc6d0edad2333"
+
+
+def _run(event: str, created: str, conclusion: str | None = "success", status="completed"):
+    return {
+        "id": hash((event, created)) & 0xFFFF,
+        "event": event,
+        "status": status,
+        "conclusion": conclusion,
+        "head_sha": SHA,
+        "created_at": created,
+        "html_url": f"https://example.invalid/{event}/{created}",
+    }
+
+
+def gate(*runs, payload: str | None = None):
+    if payload is None:
+        payload = json.dumps({"total_count": len(runs), "workflow_runs": list(runs)})
+    return ci_gate.decide(payload, SHA)
+
+
+class CiGateTests(unittest.TestCase):
+    """The publish gate on `ci` (review 2026-11-13, §1.1 and §3.4 C1).
+
+    It read only the newest run of any kind and, when the API call failed or
+    found no run, published anyway with a warning.
+    """
+
+    def test_a_green_push_run_passes(self):
+        self.assertTrue(gate(_run("push", "2026-10-14T00:07:59Z")).ok)
+
+    def test_a_red_push_run_blocks(self):
+        d = gate(_run("push", "2026-10-14T00:07:59Z", "failure"))
+        self.assertFalse(d.ok)
+        self.assertIn("CI concluded 'failure'", d.text())
+
+    def test_a_running_push_run_blocks(self):
+        d = gate(_run("push", "2026-10-14T00:07:59Z", None, status="in_progress"))
+        self.assertFalse(d.ok)
+        self.assertIn("still in_progress", d.text())
+
+    def test_later_red_scheduled_runs_warn_but_do_not_block(self):
+        """`main` at 4606001 in November 2026: the push run was green, then the
+        runner image lost Python 3.9 and the weekly runs went red."""
+        d = gate(
+            _run("schedule", "2026-11-09T16:17:18Z", "failure"),
+            _run("schedule", "2026-11-02T15:50:07Z", "failure"),
+            _run("schedule", "2026-10-26T13:01:16Z"),
+            _run("push", "2026-10-14T00:07:59Z"),
+        )
+        self.assertTrue(d.ok, d.text())
+        self.assertIn("warning", [level for level, _t in d.messages])
+
+    def test_a_green_scheduled_run_does_not_rescue_a_red_push(self):
+        d = gate(
+            _run("schedule", "2026-11-09T16:17:18Z"),
+            _run("push", "2026-10-14T00:07:59Z", "failure"),
+        )
+        self.assertFalse(d.ok)
+
+    def test_a_manual_rerun_decides_over_an_older_push(self):
+        d = gate(
+            _run("workflow_dispatch", "2026-11-10T09:00:00Z"),
+            _run("push", "2026-10-14T00:07:59Z", "failure"),
+        )
+        self.assertTrue(d.ok, d.text())
+
+    def test_no_run_that_tested_the_commit_blocks(self):
+        self.assertFalse(gate().ok)
+        d = gate(_run("schedule", "2026-11-09T16:17:18Z"))
+        self.assertFalse(d.ok)
+        self.assertIn("Run workflow", d.text())
+
+    def test_an_unreadable_answer_blocks(self):
+        for payload in ("", "not json", "{}", '{"workflow_runs": null}', "[]"):
+            with self.subTest(payload=payload):
+                self.assertFalse(gate(payload=payload).ok)
+
+    def test_a_run_for_another_commit_is_ignored(self):
+        other = dict(_run("push", "2026-11-12T00:00:00Z"), head_sha="0" * 40)
+        self.assertFalse(gate(other).ok)
+
+    def test_cli_exit_codes_and_annotations(self):
+        ok_payload = json.dumps({"workflow_runs": [_run("push", "2026-10-14T00:07:59Z")]})
+        for stdin, code, level in ((ok_payload, 0, "::notice::"), ("", 1, "::error::")):
+            out = io.StringIO()
+            with (
+                mock.patch.object(sys, "stdin", io.StringIO(stdin)),
+                contextlib.redirect_stdout(out),
+            ):
+                self.assertEqual(ci_gate.main(["--sha", SHA]), code)
+            self.assertIn(level, out.getvalue())
 
 
 class PreflightWiringTests(unittest.TestCase):
@@ -270,7 +401,10 @@ class PublishRetryTests(unittest.TestCase):
         cls.yml = RELEASE_YML.read_text(encoding="utf-8")
 
     def _publish_job(self) -> str:
-        return self.yml.split("\n  publish-pypi:", 1)[1]
+        return self.yml.split("\n  publish-pypi:", 1)[1].split("\n  release-tag:", 1)[0]
+
+    def _tag_job(self) -> str:
+        return self.yml.split("\n  release-tag:", 1)[1]
 
     def _upload_steps(self) -> list[str]:
         """The publish job's steps that invoke the PyPI action, as text blocks."""
@@ -322,13 +456,44 @@ class PublishRetryTests(unittest.TestCase):
                 self.assertIn("skip-existing: true", step)
 
     def test_the_tag_step_still_runs_only_after_a_successful_upload(self):
-        """`continue-on-error` on attempt 1 must not let the tag outlive a failure."""
+        """`continue-on-error` on attempt 1 must not let the tag outlive a failure:
+        the tag is a job that needs the publish job, which fails when both
+        attempts do."""
+        self.assertNotIn("gh release create", self._publish_job())
+        tag = self._tag_job()
+        self.assertIn("gh release create", tag)
+        self.assertRegex(tag, r"needs: \[[^\]]*publish-pypi")
+
+    def test_only_the_tag_job_can_write_the_repo(self):
+        """The OIDC job held `contents: write` too (review 2026-11-13, C7)."""
+        self.assertNotIn("contents: write", self._publish_job())
+        self.assertIn("contents: read", self._publish_job())
+        self.assertIn("contents: write", self._tag_job())
+        self.assertNotIn("id-token", self._tag_job())
+
+    def test_the_retry_clears_attempt_ones_attestations(self):
+        """The action refuses a dist/ that already holds them (review C5)."""
         job = self._publish_job()
-        self.assertLess(
-            job.rindex("uses: pypa/gh-action-pypi-publish@"),
-            job.index("gh release create"),
-            "the tag is cut before the last upload attempt",
-        )
+        clear = job.index("rm -f dist/*.publish.attestation")
+        self.assertLess(clear, job.rindex("uses: pypa/gh-action-pypi-publish@"))
+        self.assertGreater(clear, job.index("uses: pypa/gh-action-pypi-publish@"))
+
+    def test_no_expression_is_spliced_into_a_shell_script(self):
+        """`${{ }}` inside `run:` is code injection waiting for a value (C7)."""
+        in_run, indent = False, 0
+        for ln in self.yml.splitlines():
+            stripped, depth = ln.strip(), len(ln) - len(ln.lstrip())
+            if in_run and stripped and depth <= indent:
+                in_run = False
+            if stripped.startswith("run:"):
+                in_run, indent = True, depth
+            if in_run:
+                self.assertNotIn("${{", ln, stripped)
+
+    def test_the_release_build_tools_are_pinned(self):
+        job = self.yml.split("\n  publish-pypi:", 1)[0]
+        self.assertIn('"build==', job)
+        self.assertIn('"twine==', job)
 
 
 # --------------------------------------------------------------------------- #
@@ -411,6 +576,13 @@ class WorkflowHygieneTests(unittest.TestCase):
                 self.assertIsNotNone(block, f"{name} has no top-level permissions block")
                 self.assertIn("contents: read", block)
 
+    def test_ci_groups_a_prs_push_and_pull_request_runs_together(self):
+        """`github.ref` differs between the two events (review 2026-11-13, C4)."""
+        block = self._top_level_block(self.files["ci.yml"], "concurrency")
+        group = next(ln for ln in block.splitlines() if "group:" in ln)
+        self.assertNotIn("github.ref }}", group)
+        self.assertIn("github.head_ref || github.ref_name", group)
+
     def test_both_workflows_declare_a_concurrency_group(self):
         """ci ran twice per PR (push + pull_request); two publishes could race."""
         for name, text in self.files.items():
@@ -449,13 +621,29 @@ class WorkflowHygieneTests(unittest.TestCase):
                     with self.subTest(workflow=name, line=ln.strip()):
                         self.assertIn("#", ln.split("@", 1)[1])
 
-    def test_test_matrix_covers_the_supported_range(self):
-        """3.10 was exercised only by the `mcp` job; 3.13/3.14 not at all."""
+    def test_test_matrix_is_exactly_the_supported_range(self):
+        """3.10 was exercised only by the `mcp` job; 3.13/3.14 not at all.
+
+        The supported list is the pyproject classifiers, and its floor is
+        `requires-python`; the `test` matrix runs exactly that list, so
+        dropping or adding a Python is one decision made in one place.
+        """
+        pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        supported = re.findall(r'"Programming Language :: Python :: (3\.\d+)"', pyproject)
+        floor = re.search(r'requires-python = ">=(3\.\d+)"', pyproject).group(1)
+        self.assertTrue(supported, "no per-version classifiers in pyproject.toml")
+        self.assertEqual(
+            min(supported, key=lambda v: int(v.split(".")[1])), floor, "floor != classifiers"
+        )
         text = self.files["ci.yml"]
         matrix = text.split("python-version:", 1)[1].splitlines()[0]
-        for version in ("3.9", "3.10", "3.11", "3.12", "3.13", "3.14"):
-            with self.subTest(version=version):
-                self.assertIn(f'"{version}"', matrix)
+        self.assertEqual(re.findall(r'"(3\.\d+)"', matrix), supported)
+        # The native jobs run the floor on Windows and macOS.
+        for job in ("\n  native:", "\n  native-full:"):
+            body = text.split(job, 1)[1]
+            native = body.split("python-version:", 1)[1].splitlines()[0]
+            with self.subTest(job=job.strip()):
+                self.assertIn(f'"{floor}"', native)
 
     def test_mcp_job_covers_every_python_the_extra_installs_on(self):
         """The `mcp` job stopped at 3.12 while `test` already ran to 3.14.

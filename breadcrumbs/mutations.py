@@ -13,7 +13,11 @@ failed left two live decisions while `remember --supersedes` exited 0.
   `private/operations/<id>/`, together with a digest of what is about to be
   written. `generated/`, `index/` and `private/` are derived or local state and
   are not tracked; they are rebuilt instead.
-- **Commit** removes the journal. **Failure** — an exception, or a step whose
+- **Commit** removes the journal, `manifest.json` first: that unlink is the
+  commit point, and the before-images are only cleanup after it (`_discard`).
+  A journal whose manifest names a before-image that is no longer there was
+  being removed when its process died, so its operation had already finished;
+  `recover()` removes it and touches no file. **Failure** — an exception, or a step whose
   result the caller checked and found wanting (`fail()`) — restores every
   tracked file to its before-image, rebuilds the projections, and re-raises.
   The caller reports a failure in which nothing changed.
@@ -47,6 +51,7 @@ from pathlib import Path
 from breadcrumbs import path_policy
 
 OPERATIONS_RELPATH = ("private", "operations")
+MANIFEST = "manifest.json"
 RECOVERED_RELPATH = ("private", "recovered")
 # Store subdirectories whose files are derived or machine-local, never tracked.
 _UNTRACKED_DIRS = ("generated", "index", "private")
@@ -121,7 +126,7 @@ class Transaction:
         }
 
     def _save(self) -> None:
-        _raw_write(self.dir / "manifest.json", json.dumps(self._manifest(), indent=2).encode())
+        _raw_write(self.dir / MANIFEST, json.dumps(self._manifest(), indent=2).encode())
 
     def tracks(self, path: Path) -> bool:
         try:
@@ -167,7 +172,33 @@ class Transaction:
         return conflicts
 
     def discard_journal(self) -> None:
-        shutil.rmtree(self.dir, ignore_errors=True)
+        _discard(self.dir)
+
+
+def _discard(op_dir: Path) -> None:
+    """Remove an operation's journal once its outcome is final.
+
+    The manifest goes first, in one unlink: from then on no reader sees an
+    unfinished operation, and a death during the rest leaves only a directory
+    with no manifest, which `recover()` sweeps. A single `rmtree` could delete
+    the before-images first and die with the manifest still in place; `recover`
+    then rolled back half of a finished operation (review 2026-11-13, §2.5).
+    """
+    with contextlib.suppress(FileNotFoundError):
+        (Path(op_dir) / MANIFEST).unlink()
+    shutil.rmtree(op_dir, ignore_errors=True)
+
+
+def _missing_before_images(op_dir: Path, entries: list[dict]) -> list[str]:
+    """Paths whose before-image the journal names but no longer holds.
+
+    A before-image is written before the manifest that names it, so one can
+    only go missing while the journal is being discarded, which happens only
+    after the operation finished (committed, or rolled back completely).
+    """
+    return [
+        e["path"] for e in entries if e.get("before") and not (Path(op_dir) / e["before"]).is_file()
+    ]
 
 
 def _roll_back(root: Path, op_dir: Path, entries: list[dict], *, keep: bool):
@@ -293,7 +324,7 @@ def pending_operations(memory_dir: Path) -> list[dict]:
     """Journals left by operations that never finished, oldest first."""
     base = Path(memory_dir).joinpath(*OPERATIONS_RELPATH)
     out = []
-    for manifest in sorted(base.glob("*/manifest.json")):
+    for manifest in sorted(base.glob(f"*/{MANIFEST}")):
         try:
             data = json.loads(path_policy.read_text(manifest))
         except (OSError, ValueError):
@@ -303,11 +334,22 @@ def pending_operations(memory_dir: Path) -> list[dict]:
     return out
 
 
+def _journal_debris(memory_dir: Path) -> list[Path]:
+    """Journal directories with no manifest: what a death before an operation's
+    first manifest, or after `_discard` removed it, leaves behind."""
+    base = Path(memory_dir).joinpath(*OPERATIONS_RELPATH)
+    if not base.is_dir():
+        return []
+    return sorted(p for p in base.iterdir() if p.is_dir() and not (p / MANIFEST).exists())
+
+
 def recover(memory_dir: Path, *, apply: bool = False) -> dict:
     """Roll back every unfinished operation (`apply`), or describe what would happen.
 
     Takes the store lock: an operation's journal is only abandoned when no
-    writer holds the lock, because every transaction runs under it.
+    writer holds the lock, because every transaction runs under it. For the
+    same reason a journal directory without a manifest belongs to no running
+    operation, and `apply` removes it (`debris` counts them).
     """
     from breadcrumbs import cli
     from breadcrumbs import lock as _lock
@@ -316,8 +358,35 @@ def recover(memory_dir: Path, *, apply: bool = False) -> dict:
     root = memory_dir.resolve().parent
     report = []
     with _lock.store_lock(memory_dir):
+        debris = _journal_debris(memory_dir)
+        # Under the store lock no writer is mid-write, so an old temporary
+        # file belongs to a dead one (review 2026-11-13, W7).
+        temp_files = path_policy.orphan_temp_files(memory_dir)
+        if apply:
+            for path in debris:
+                shutil.rmtree(path, ignore_errors=True)
+            for path in temp_files:
+                with contextlib.suppress(OSError):
+                    path.unlink()
         for op in pending_operations(memory_dir):
             files = op.get("files", [])
+            missing = [] if op.get("corrupt") else _missing_before_images(op["dir"], files)
+            if missing:
+                # Its outcome was final before its journal started to go: leave
+                # every file as it is and finish removing the journal.
+                row = {
+                    "id": op.get("id"),
+                    "kind": op.get("kind"),
+                    "files": [{"path": e["path"], "action": "finished"} for e in files],
+                    "finished": True,
+                    "conflicts": [],
+                    "kept": [],
+                }
+                if apply:
+                    row["rolled_back"] = False
+                    _discard(Path(op["dir"]))
+                report.append(row)
+                continue
             plan = []
             for entry in files:
                 current = _digest(_read(root / entry["path"]))
@@ -337,8 +406,13 @@ def recover(memory_dir: Path, *, apply: bool = False) -> dict:
                 row["conflicts"] = conflicts
                 row["kept"] = kept
                 if not conflicts:
-                    shutil.rmtree(op["dir"], ignore_errors=True)
+                    _discard(Path(op["dir"]))
             report.append(row)
-        if apply and report:
+        if apply and any(not op.get("finished") for op in report):
             cli.reindex_projections(memory_dir)
-    return {"operations": report, "applied": apply}
+    return {
+        "operations": report,
+        "applied": apply,
+        "debris": len(debris),
+        "temp_files": [path_policy.posix_rel(p, memory_dir) for p in temp_files],
+    }

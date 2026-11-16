@@ -914,6 +914,28 @@ def merge_records(
     if retired:
         return {"ok": False, "code": 2, "error": f"already retired: {', '.join(retired)}"}
 
+    # The merged record keeps its sources' scope. It was always written
+    # `project`, so merging branch-only guidance made it live on every branch
+    # (review 2026-11-13, W6); `inbox promote` already preserves scope.
+    scopes = {str(r.meta.get("scope") or "project") for r in recs}
+    branches = {r.meta.get("branch") for r in recs if str(r.meta.get("scope")) == "branch"}
+    if len(scopes) > 1:
+        return {
+            "ok": False,
+            "code": 2,
+            "error": "cannot merge project-scoped and branch-scoped records: the merged "
+            "record would widen or narrow one of them. Merge each scope separately.",
+        }
+    if len(branches) > 1:
+        return {
+            "ok": False,
+            "code": 2,
+            "error": "cannot merge records scoped to different branches "
+            f"({', '.join(sorted(str(b) for b in branches))})",
+        }
+    scope = scopes.pop()
+    branch = branches.pop() if branches else None
+
     recs.sort(key=lambda r: (cli._dt_sort_key(r.meta.get("created_at")), r.stem))
     merged: dict[str, str] = {}
     for heading in cli.BODY_SECTIONS[rtype]:
@@ -939,6 +961,8 @@ def merge_records(
         key=lambda c: _CONFIDENCE_ORDER.get(c, 1),
     )
     extra: dict = {"supersedes": [r.meta.get("id") for r in recs]}
+    if scope == "branch":
+        extra["branch"] = branch
     if rtype == "verification":
         newest = recs[-1]
         extra.update(
@@ -965,6 +989,7 @@ def merge_records(
                     tags=tags,
                     evidence=evidence,
                     confidence=confidence,
+                    scope=scope,
                     agent=agent,
                     extra=extra,
                 )

@@ -607,6 +607,18 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = cli.STALE_AGE_D
             memory_dir, root, cli.active_decisions(memory_dir), stale_days, findings
         )
     )
+    if _git.is_repo(root) and _git.is_shallow(root):
+        # Evidence churn and commit distances stop at the fetched depth, so
+        # their warnings vanish silently there (review 2026-11-13, R8).
+        findings.append(
+            _audit_finding(
+                "shallow-clone",
+                AUDIT_INFO,
+                None,
+                "this is a shallow clone: evidence-rewritten and commit-distance checks "
+                "see only the fetched history (`git fetch --unshallow` for all of it)",
+            )
+        )
 
     # A (cont). Re-surface the validate-failing health conditions for the health view
     # (missing evidence, invalid status, private-path violation, id/frontmatter
@@ -699,6 +711,23 @@ def run_audit(memory_dir: Path, root: Path, *, stale_days: int = cli.STALE_AGE_D
                 "review (treated as data, never executed)",
                 line=il["line"],
                 phrase=il["phrase"],
+            )
+        )
+
+    # C2. Characters a reader does not see (flag only): every view escapes
+    # them, but the file and its diff still hide them.
+    for hc in _secretscan.scan_hidden_characters(memory_dir):
+        shown = ", ".join(str(n) for n in hc["lines"][:5]) + ("…" if len(hc["lines"]) > 5 else "")
+        findings.append(
+            _audit_finding(
+                "hidden-characters",
+                AUDIT_WARN,
+                hc["path"],
+                f"{hc['count']} invisible or formatting character(s) on line(s) {shown} — "
+                "Unicode tags, zero-width or bidi characters, fillers or line breaks a "
+                "diff does not show; review (they are escaped wherever memory is shown)",
+                lines=hc["lines"],
+                count=hc["count"],
             )
         )
 

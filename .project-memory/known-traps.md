@@ -13,8 +13,10 @@ Retire one: `crumb mark-status trap_<slug> stale --reason "…"`._
 - `trap_a-hook-test-payload-without-cwd-fires-the-hook` [active] A hook test payload without cwd fires the hook at the repository the suite runs in — `traps/a-hook-test-payload-without-cwd-fires-the-hook.md`
 - `trap_a-record-s-remedy-fields-are-mined-for-file-paths` [active] A record's remedy fields are mined for file paths and become its blast radius — `traps/a-record-s-remedy-fields-are-mined-for-file-paths.md`
 - `trap_a-test-that-runs-resume-or-reindex-on-a-checked-in-fixture` [active] A test that runs resume or reindex on a checked-in fixture rewrites it — `traps/a-test-that-runs-resume-or-reindex-on-a-checked-in-fixture.md`
+- `trap_crumb-rename-deletes-the-record` [stale] crumb rename deletes the record it renames — `traps/crumb-rename-deletes-the-record.md`
 - `trap_eval-baseline-after-retrieval-change` [active] A retrieval change fails the evals CI job and test_evals until the baseline is rewritten — `traps/eval-baseline-after-retrieval-change.md`
 - `trap_guard-exit-code-in-ci` [active] A CI step that calls crumb guard dies on guard's own verdict exit code — `traps/guard-exit-code-in-ci.md`
 - `trap_hand-tagged-releases` [active] Never create a git tag or GitHub Release by hand — `traps/hand-tagged-releases.md`
 - `trap_linux-cannot-show-a-windows-path-separator-bug` [active] Linux cannot show a Windows path-separator bug — `traps/linux-cannot-show-a-windows-path-separator-bug.md`
+- `trap_miner-reads-hook-feedback-as-a-correction` [active] The transcript miner files harness-injected Stop hook feedback as a user correction — `traps/miner-reads-hook-feedback-as-a-correction.md`
 - `trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field` [active] The MCP surface of 0.1.11 was never exercised: the field audit had to kill the server to allow the upgrade, so no mcp__breadcrumbs__* tool ran on that release at all — `traps/the-mcp-surface-of-0-1-11-was-never-exercised-the-field.md`

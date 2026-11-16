@@ -163,7 +163,7 @@ def _capture_correction(memory_dir: Path, root: Path, prompt: str, session_id: s
         if safe is None:
             return  # the prompt carried a credential: drop it, say nothing
         fingerprint = _transcript.Candidate(
-            kind="correction", title=safe[:120], note=safe
+            kind="correction", title=_transcript.correction_title(safe), note=safe
         ).fingerprint
         if fingerprint in _transcript._session_fingerprints(memory_dir, session_id):
             return
@@ -275,6 +275,7 @@ def hook_prompt(memory_dir: Path, root: Path, payload: dict) -> dict:
     return {
         "hookSpecificOutput": {
             "hookEventName": "UserPromptSubmit",
-            "additionalContext": text,
+            # Bounded by construction (five excerpted records); the cap is the backstop.
+            "additionalContext": hooks_common.fit_context(text),
         }
     }

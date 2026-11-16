@@ -63,7 +63,10 @@ INDEX_MIN_CORPUS = 200
 # by an older version is rebuilt rather than misread.
 # 2: stamped with the verified snapshot digest, fresh only by content hash
 # (audit F07, F12).
-INDEX_FORMAT = "2"
+# 3: command heads are posted (field `c`), so an attempt naming the exact
+# command is found through the index as it is by the full scan (review
+# 2026-11-13, §2.8). An index of an older format is ignored until rebuilt.
+INDEX_FORMAT = "4"
 
 # The directories whose records the index may cover, by record type. Sessions
 # are never in the search corpus. Traps and questions are few (tens, not
@@ -163,6 +166,10 @@ def _tokens_of(item: dict) -> list[tuple[str, str]]:
     out = [("s", s) for s in item.get("specific") or ()]
     out += [("t", s) for s in (item.get("tag_stems") or {})]
     out += [("f", f) for f in set(item.get("files") or ()) | set(item.get("mentioned_files") or ())]
+    # The first word of each command the record names: scoring matches a
+    # command from the action's first word on (`scoring._names_command`), and
+    # `make build --jobs 4` has no other stem the attempt about it carries.
+    out += sorted({("c", head[1]) for head in item.get("command_heads") or () if len(head) > 1})
     return out
 
 
@@ -322,6 +329,7 @@ def candidate_items(
     include_ideas: bool,
     explain: dict | None = None,
     df_out: dict | None = None,
+    q_command: list[str] | None = None,
 ) -> tuple[list[dict], frozenset[str]] | None:
     """The search corpus narrowed to possible matches, plus the ubiquitous stems.
 
@@ -340,7 +348,8 @@ def candidate_items(
     if not available():
         explain["reason"] = "sqlite3 is unavailable"
         return None
-    if not (q_specific or q_files):
+    head = (q_command or [None])[0]
+    if not (q_specific or q_files or head):
         explain["reason"] = "the query has nothing the index holds"
         return None
     path = index_path(memory_dir)
@@ -378,6 +387,9 @@ def candidate_items(
             marks = ",".join("?" * len(files))
             clauses.append(f"(p.field = 'f' AND p.token IN ({marks}))")
             params += files
+        if head:
+            clauses.append("(p.field = 'c' AND p.token = ?)")
+            params.append(head)
         hit_paths = [
             row[0]
             for row in conn.execute(

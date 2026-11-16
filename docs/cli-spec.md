@@ -15,9 +15,19 @@ Every command accepts:
 --json            machine-readable JSON output
 --plain           plain-text output (no decoration)
 --verbose         verbose output
---project <path>  project root (default: cwd)
+--project <path>  project root, taken as given (default: see below)
 --fast            capture/resume only: git-only, no prompts or LLM narrative
 ```
+
+**Which project.** `--project` is used exactly as given. Without it, the root
+is the nearest directory at or above the working directory that holds
+`.project-memory/`. The walk stops at the first directory with a `.git` entry
+(a work tree's top, a submodule, a linked worktree), so it never reaches an
+enclosing repository's store, and it never takes the home directory or the
+filesystem root. With no store found the root is the working directory, as
+before. Before this, a command run from `src/` reported no store and advised
+`crumb init`, which made a second one there (review 2026-11-13, §1.4). The MCP
+server resolves its root the same way. Hooks: see [Hook events](#hook-events).
 
 `crumb --version` (top level, not a subcommand) prints the package version and the
 record `schema_version` — two independent numbers, see `README.md`.
@@ -66,12 +76,19 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `search [<query>]` | decisions, attempts, verifications, ideas, jots, traps, open questions | search output (read-only — `search` writes nothing) | Deterministic keyword/tag/file lookup over the records; the permissive layer `guard` builds on. Keyword and tag matching folds morphological variants — query and record tokens are stemmed by a small deterministic suffix-stripper (plus a tiny curated alias table: auth/config/db/repo, and the store's own `aliases.txt`), so "reconciliation" meets a record that says "reconciler"; `keyword_overlap` in `--json` output therefore contains stems. `--explain` prints the stems the query became. | **5 (built)** |
 | `guard "<action>"` | decisions, attempts, traps, questions, unsettled verifications, handoff (**not** ideas) | a verdict + the matches behind it (read-only — `guard` writes nothing) | Warn before a repeated mistake (deterministic ranking). Exits with the verdict-mapped code — see `guard` section. | **5 (built)** |
 | `audit` | all memory + adapters | health report | Find stale / unsafe / bloated memory (incl. secret + instruction-like heuristics). Heuristic — does NOT gate `validate`. | **6 (built)** |
-| `scan-secrets` | committed memory | secret report | Scan committed memory for secret-like strings; non-zero on a hit. Run before committing memory. | **6 (built)** |
+| `scan-secrets` | every file the store commits (all but `private/` and `index/`, plus `index/README.md`) | secret report | Scan committed memory for secret-like strings; non-zero on a structured hit or an unscannable file (a link, invalid UTF-8, NUL bytes); the high-entropy heuristic and a `.crumbignore` pattern that matches every line only warn. Says how many lines `.crumbignore` exempted (`--json`: `suppressed`). The shapes are listed in [`security.md`](security.md) §2. Run before committing memory. | **6 (built)** |
 | `mark-status <id> <status>` | one record, **one trap, or one open question** | status + `updated_at` (+ optional `superseded_by`) | Record lifecycle mutation (stale/disputed/superseded/…), validate-gated and reverted on failure; `--superseded-by ID` is the supersede flow. Reindexes on write. A `trap_<slug>` or `q_<slug>` id (legacy `q:<slug>` accepted) resolves too. At schema 3 each is its own file, so its frontmatter `status` is edited like any record's; on a schema-2 store — or for a block somebody typed into a singleton since the last reindex — the block's `- Status:` bullet is edited in place (every other byte preserved). Retiring a trap drops it from the resume packet and the hook pre-filter and stops it driving a `guard` verdict; answering a question drops it from the packet, from `guard`'s open-blocker floor and from the aged-unresolved staleness warning. Both stay findable in `search` under their real status. Questions carry their own vocabulary (`open`/`answered`/`closed`) because the record words do not fit — the id decides which vocabulary applies, and a mismatch is rejected by name. A block with no `- Status:` bullet counts as `active` (trap) / `open` (question). Marking a promoted decision, attempt or trap `superseded`, `stale`, `rejected`, `disputed` or `quarantined` also demotes it (see `promote` and `demote`); the output adds `also demoted: …` and `--json` a `demoted` object. | **built** |
-| `prune sessions` | `sessions/` | deletions + reindex | Delete old **machine** session snapshots (placeholder Next Action) beyond the newest `--keep N` (default 20). Human handoffs are never candidates; `--dry-run` lists. The Stop hook creates snapshots eagerly (an interrupted session is a handoff worth keeping) — retention is this separate, explicit act. | **built** |
+| `prune sessions` | `sessions/` | deletions + reindex | Delete old **machine** session snapshots (placeholder Next Action) beyond the newest `--keep N` (default 20), newest by when each record last described the work (a Stop-hook snapshot's `updated_at`, else `created_at`), not by file name. Human handoffs are never candidates; `--dry-run` lists. The Stop hook creates snapshots eagerly (an interrupted session is a handoff worth keeping) — retention is this separate, explicit act. | **built** |
 | `rollup sessions --before YYYY-MM-DD` | `sessions/` | one session record, deletions + reindex | Fold the machine snapshots created before the date (at least two) into one session record that supersedes them, then delete them. Human/agent sessions are never touched; `--dry-run` lists. See `rollup sessions` below. | **built (WM-35)** |
 | `prune jots` | `inbox/`, `private/inbox/` | deletions + reindex | Delete jots that are expired or retired **and** older than 30 days. An active, unexpired jot is never deleted however old the store is: it is still waiting for somebody to promote or drop it. `--dry-run` lists. | **built (WM-03)** |
 | `prune handoffs` | `handoffs/`, local and `origin` branches | deletions + reindex | Delete branch handoffs whose branch exists neither locally nor on `origin` **and** whose `_Last updated_` is at least 30 days old. `--dry-run` lists. See [Branch handoffs](#branch-handoffs-built-wm-50). | **built (WM-50)** |
+| `traps [--stale [DAYS]] [--status S]` | traps | listing (read-only) | Traps with when each was last confirmed; `--stale` keeps those not confirmed within `DAYS` (default `ttl_trap_days`, 180), never-confirmed traps included. | **built** |
+| `traps --confirm <id>` | one trap | its `- Last confirmed:` date + reindex | Say a trap still holds, so `--stale` and the packet's staleness warning stop asking. | **built** |
+| `retitle <id> "<title>"` | one record | the record's `title` + reindex | Rewrite a title; the id, slug and file name stay, so nothing that cites the record breaks. `rename` changes those. | **built** |
+| `rename <id> --slug <slug>` | one record and every committed store file that names it | the record's file name and id, those mentions, `formerly:` + reindex | Shorten a long file name (Windows path limits). The id is derived from the file name, so it changes; the old id stays in the record's `formerly:` list and `show` still finds it. One journaled change. | **built** |
+| `repair [--apply] [--set ID.FIELD=VALUE]` | records that fail the record contract | the rewritten records (with `--apply`) | Fill in what can be known honestly (id, type, title, dates, author and commit from the file and its first commit), map out-of-vocabulary statuses and scopes keeping the original in `repaired_from`, and list what only a person can give (a verification's `outcome`, via `--set`). Previews by default; `--apply` writes through the mutation journal and the validate gate. | **built** |
+| `handoff trim [--keep N \| --before DATE] [--split-on REGEX]` | the handoff's Next Action | the handoff + a committed history file beside it | Move all but the newest N entries (default 10), or every entry from the first one dated before `DATE`, unchanged to the top of the history file. Nothing is deleted. | **built** |
+| `inbox import` | `inbox/drafts/*.md` | jots | Turn each draft note into a jot. A draft that fits is removed once its jot is written; a longer one is kept and cited as the jot's file evidence. | **built** |
 | `expired` | all records, both inboxes | listing (read-only) | Active records past their `expires_at`, oldest expiry first, machine-local jots included. See `expired` below. | **built (WM-30)** |
 | `questions [--aging]` | open questions | listing (read-only) | Open questions with their age, oldest first; `--aging` keeps those open longer than `ttl_question_days` (default 45). | **built (WM-30)** |
 | `consolidate [--type T]` | live records | listing (read-only) | Clusters of near-duplicate live records (connected components of the near-duplicate pairs). | **built (WM-33)** |
@@ -82,6 +99,27 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `mcp serve\|register\|doctor` | `.mcp.json` | running server / registration / health | Run the MCP server, merge its `.mcp.json` entry, or report MCP wiring (`[mcp]` extra + registration). | **built** |
 | `hook session\|guard\|capture\|prompt\|compact\|subagent` | hook stdin payload | hook JSON on stdout (+ mined jots, one `private/hook-log.jsonl` line) | Claude Code hook translators (`init --with-hooks` installs them, as a `sh` resolver that falls back through `./.venv` and `python -m breadcrumbs` and reports memory inactive if none resolve; a candidate that is found but fails — say an older crumb-kit on PATH that predates the event — is skipped like a missing one, and the launcher itself always exits 0, because Claude Code reads exit 2 from `UserPromptSubmit`/`PreToolUse` as "block"). An event this version does not know (installed by a newer `init`) prints `{}` and exits 0 rather than a usage error. Installed entries are identified by a `breadcrumbsHook` key, not by command text, so a custom launcher stays visible to `doctor` and `--remove-integrations`. Removal keys on that marker alone: an unmarked entry that merely looks like a crumb hook is reported and left in place, never deleted (adopt it with `init --with-hooks` to make it removable). Re-running `init --with-hooks` also brings an entry **we own** up to the current matcher, which is how an existing install picked up `Task\|Agent`, and then `PowerShell\|NotebookEdit` (audit WP17), on the guard. The event is validated before stdin is read, so a bare `crumb hook` reports usage (exit 2) instead of blocking on a terminal. **Every event exits 0 and prints JSON**, whatever the payload. See the per-event table below. | **built** |
 
+**Which project a hook serves.** The payload's `cwd` follows the agent's `cd`,
+so it is not the project root. A hook uses the nearest store at or above
+`cwd` (the walk under [Global flags](#global-flags)), then the one at
+`$CLAUDE_PROJECT_DIR` (the root of the session the hooks belong to), then
+`$BREADCRUMBS_PROJECT`. `cwd` comes first because inside a linked worktree it
+is the worktree, whose store is the branch being worked on. A `cwd` that is
+not a string is ignored. Before this, every hook printed `{}` once the agent
+was in a subdirectory (review 2026-11-13, §1.4).
+
+**Length.** Claude Code caps `additionalContext` at 10,000 characters and
+shows the model only a 2,000-character preview of a longer value. Every hook's
+text stays within 9,500 characters (`hooks_common.CONTEXT_CHAR_BUDGET`, counted
+in UTF-16 code units as the host counts). The SessionStart packet is trimmed by
+meaning to fit, in the packet's `TRIM_ORDER`, after the compaction preamble's
+share; a section cut for it says "to stay within the host's context limit",
+the view header adds `chars: <used>/<limit>`, and the text ends with a pointer
+to `crumb resume`. The other hooks' text is short by construction and is cut
+at a line boundary as a backstop. Before this, this repository's own packet was
+12,317 characters (review 2026-11-13, §1.3).
+
+
 ### Hook events
 
 | breadcrumbs event | Claude Code event | Matcher | Does |
@@ -90,7 +128,7 @@ live record — see [Near-duplicate gate](#near-duplicate-gate-built-wm-32).
 | `guard` | `PreToolUse` | `Bash\|PowerShell\|Edit\|Write\|MultiEdit\|NotebookEdit\|Task\|Agent` (from `adapters.claude.GUARDED_TOOLS`, audit WP17) | Cost-aware guard verdict. A shell command (`Bash`, `PowerShell`) is scored as typed; an edit (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`) on its path and a snippet of the new content (a notebook cell deletion as `delete a cell in <path>`). A tool the adapter does not know yields no action. A subagent launch (`Task`/`Agent`) is scored on its launch prompt and **capped at `READ_FIRST`**: the launch is not itself irreversible, and the subagent's own calls hit this same hook. |
 | `capture` | `Stop` | — | Mines the transcript (always, as a side effect), then snapshots a session record or holds the stop once for the extraction turn. The extraction instruction includes one line saying a write refused with exit 3 is a near-duplicate, answered with `--supersedes <id>` or `--allow-duplicate`. |
 | `prompt` | `UserPromptSubmit` | — | Injects up to 5 records relevant to this prompt (≤800 approx tokens), deduped per session, looked up for **any prompt that is not an acknowledgement** (audit WP10: a vocabulary such as "ok", "yes please", "go on", "thanks" or emoji alone, not a length — `npm test` and `quasar` are looked up) with **no record-count cutoff** (it used to return nothing above 500 records), with a footer pointing at `crumb show <id>` (or `memory://records/{id}`) for the full text. Injects **current records only**: superseded, rejected, stale, disputed and quarantined records, answered and closed questions, records past their `expires_at`, and branch-scoped records written on another branch stay out. A verification stays in while its own lifecycle status is `active`, whatever its outcome. Captures a correction to `private/inbox/`. Records the prompt as the session's latest task **before** the lookup (audit WP12), and the lookup's selected and emitted ids apart from it; acknowledgements and slash commands leave the task alone. The dedupe key and the usage count are the ids left after budget trimming. **Never blocks** — that would erase the prompt. |
-| `compact` | `PreCompact` | — | Mines the transcript and writes a marker for the next `SessionStart`. Emits nothing: this event's stdout never reaches the model. |
+| `compact` | `PreCompact` | — | Mines the transcript and writes a marker for the next `SessionStart`, which is how what was mined reaches the model. Emits nothing (what a `PreCompact` hook prints would steer the compaction summary, not add context). |
 | `subagent` | `SubagentStop` | — | Mines the finished subagent's transcript (`agent_transcript_path`; `transcript_path` is the parent's and is never read here), tagged `subagent` and `agent:<type>`. Its findings never earn the parent's extraction turn alone. Does not hold the subagent. |
 
 **How the prompt hook looks up** (audit WP10, `breadcrumbs/retrieval.py`).
@@ -1369,6 +1407,19 @@ manifest's `schema_version`.
   `handoff.md` otherwise; the packet's Project line and `project.handoff` say
   which (see `resume`), and so does `memory://handoff`. Branch handoffs are
   inputs to `inputs_hash`, like `handoff.md`.
+- **Merged branches' newer Next Actions.** Nothing carries a branch's handoff
+  forward when it merges, so in a pull-request workflow, where no session runs
+  on the default branch, `handoff.md` only changes by hand and each merged
+  branch's Next Action was stranded (review 2026-11-13, §5.2). A branch handoff
+  is committed on its branch, so one in the checkout came in with a merge,
+  unless it is the current branch's own. The packet lists those whose
+  `_Last updated_` is later than the handoff it reads, newest first, under
+  **Newer Next Action From Merged Branches**, above Next Action: each is its
+  newest entry (up to 1,000 characters, then an excerpt naming the file),
+  labelled with its branch, file and date. At most 3; the rest are counted.
+  JSON: `merged_handoffs: [{branch, path, updated_at, next_action}]`, present
+  only when there are any. `<slug>.history.md` files from `crumb handoff trim`
+  are not handoffs. No git is involved.
 
 **`prune handoffs`** deletes a branch handoff only when both hold:
 
@@ -1463,12 +1514,21 @@ completely, or it has not happened at all.
   - `crumb recover --apply` rolls them back. A file is restored only if it
     still holds its before-image or a state the operation wrote. One changed by
     anybody since is a `conflict`: it is left alone, and the journal stays.
+  - A finished operation's journal is removed `manifest.json` first, so a
+    writer killed while removing it leaves either nothing `recover` lists or
+    a journal whose before-images are gone. `recover` reports the latter as
+    `finished` and `--apply` removes it without touching any file: the
+    operation had completed. Before this, `--apply` rolled back half of such
+    an operation (review 2026-11-13, §2.5).
+  - A journal directory with no manifest, left by a death before an
+    operation's first manifest or after its removal, is counted as `debris`
+    and removed by `--apply`.
   - A file the operation created and the rollback removes is copied to
     `private/recovered/<id>/` first, so rolling back never erases what was
     written.
   - `--json` returns `{operations: [{id, kind, files: [{path, action}],
-    rolled_back?, conflicts?, kept?}], applied}`. Exit 1 while any operation
-    remains unfinished.
+    rolled_back?, finished?, conflicts?, kept?}], applied, debris}`. Exit 1
+    while any operation remains unfinished.
 - **A rewrite checks its revision.** A rewrite of a record (a status change, a
   retitle, a trap confirmation, a promotion's fields) refuses when the file no
   longer holds the text the writer read. The error says the file "changed since

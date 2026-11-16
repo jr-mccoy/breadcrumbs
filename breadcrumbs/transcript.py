@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -440,6 +441,16 @@ def _clip(text: str, limit: int) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1].rstrip() + "…"
 
 
+def correction_title(text: str) -> str:
+    """A correction's title, the same from the prompt hook and the miner.
+
+    They clipped differently (`text[:120]` against this), so one long
+    correction got two fingerprints and became two jots, and two such
+    corrections crossed the extraction threshold (review 2026-11-13, H2).
+    """
+    return _clip(text, TITLE_MAX_CHARS)
+
+
 def redact_secrets(text: str) -> str | None:
     """`text` back, or None when it carries a structured credential.
 
@@ -451,6 +462,20 @@ def redact_secrets(text: str) -> str | None:
     candidates that merely cite a build hash.
     """
     return None if _secretscan.secret_pattern_hits(str(text or "")) else text
+
+
+def candidate_carries_secret(c: "Candidate") -> bool:
+    """True when any part of a candidate a jot would keep holds a credential.
+
+    Title and note were the only parts checked. A title is clipped to
+    TITLE_MAX_CHARS while the command and its evidence ref are kept whole, so
+    a token late in a long command reached the jot, and a promotion carried it
+    into committed memory (review 2026-11-13, §2.6). So: the command, every
+    evidence ref and every file path too, and any hit drops the candidate.
+    """
+    parts = [c.title, c.note, c.command or "", *(c.files or [])]
+    parts += [str(e.get("ref") or "") for e in c.evidence or [] if isinstance(e, dict)]
+    return any(redact_secrets(part) is None for part in parts)
 
 
 # --------------------------------------------------------------------------- #
@@ -641,7 +666,7 @@ def _mine_corrections(entries: list[dict], limit: int | None = MAX_CORRECTIONS) 
         out.append(
             Candidate(
                 kind="correction",
-                title=_clip(text, TITLE_MAX_CHARS),
+                title=correction_title(text),
                 note=_clip(text, NOTE_MAX_CHARS),
                 key=event,
                 events=[event],
@@ -750,11 +775,10 @@ def write_candidates(
         if len(report["written"]) >= MINER_MAX_JOTS_PER_FIRING:
             report["skipped"] += 1
             continue
-        title = redact_secrets(candidate.title)
-        note = redact_secrets(candidate.note)
-        if title is None or note is None:
+        if candidate_carries_secret(candidate):
             report["dropped_for_secrets"] += 1
             continue
+        title, note = candidate.title, candidate.note
         fingerprint = candidate.fingerprint
         if fingerprint in known:
             report["skipped"] += 1
@@ -997,6 +1021,7 @@ def _empty_report() -> dict:
         "malformed_lines": 0,
         "reset": None,
         "locked": False,
+        "missing": False,
         "error": None,
     }
 
@@ -1030,7 +1055,9 @@ def ingest(
             _ingest_locked(
                 memory_dir,
                 Path(project_root),
-                Path(transcript_path),
+                # The host's own examples spell it `~/.claude/…` (review
+                # 2026-11-13, H7); a `~` path read literally mines nothing.
+                Path(os.path.expanduser(str(transcript_path))),
                 session_id=session_id,
                 extra_tags=extra_tags,
                 one_shot=one_shot,
@@ -1082,7 +1109,9 @@ def _ingest_locked(
     progress: dict = {}
     entries: list[dict] = []
     carried: list[ToolCall] = []
-    if path.is_file():
+    if not path.is_file():
+        report["missing"] = True
+    else:
         if one_shot:
             size = path.stat().st_size
             report["skipped_bytes"] = max(0, size - ONE_SHOT_MAX_BYTES)
@@ -1096,11 +1125,11 @@ def _ingest_locked(
     # 2. Queue the candidates. Secrets are refused here, before anything
     #    is stored, and the refusal is an acknowledgment.
     for c in window.candidates:
-        title, note = redact_secrets(c.title), redact_secrets(c.note)
-        if title is None or note is None:
+        if candidate_carries_secret(c):
             report["dropped_for_secrets"] += 1
             ack(c.events)
             continue
+        title, note = c.title, c.note
         if len(backlog) >= MAX_BACKLOG:
             report["dropped_backlog"] += 1
             ack(c.events)
@@ -1217,6 +1246,8 @@ def note_report(report: dict) -> None:
         miner_dropped=report.get("dropped_backlog") or None,
         miner_reset=report.get("reset"),
         miner_locked=True if report.get("locked") else None,
+        # Said, not left silent: a path that is not there mines nothing.
+        miner_missing=True if report.get("missing") else None,
     )
 
 

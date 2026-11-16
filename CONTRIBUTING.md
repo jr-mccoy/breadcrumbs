@@ -38,7 +38,7 @@ pip install -e ".[mcp]"                 # only if you touch the MCP server
   the MCP SDK tests are — a clean checkout must still run the full suite.
 - **The version lives in exactly one place:** `__version__` in
   `breadcrumbs/__init__.py`. `pyproject.toml` reads it via dynamic metadata and
-  `breadcrumbs/cli.py` uses it as the source-checkout fallback. Never add a
+  `breadcrumbs/cli.py` returns it from `get_version()`. Never add a
   version literal anywhere else; that reintroduces hand-sync drift.
 - **Never create a git tag or a GitHub Release by hand.** The release workflow
   owns both, and hand-tagging the wrong commit caused nearly every past failed
@@ -106,7 +106,7 @@ and limits.
    open for seven weeks, advertising bugs that no longer existed, purely because
    the fix commits wrote `(#5)` instead of `Fixes #5`.
 5. Open a PR describing what broke or what is now possible. CI runs the suite on
-   Python 3.9–3.14, the MCP server against both SDK majors, and a full
+   Python 3.10–3.14, the MCP server against both SDK majors, and a full
    packaging/install smoke test; all of it must be green.
 
 ## Project memory

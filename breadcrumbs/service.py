@@ -172,6 +172,22 @@ def record(ctx: Context, rtype: str, payload: dict, *, operation: str = "remembe
         confidence = payload.get("confidence")
         if not evidence and confidence != "low":
             raise ServiceError("needs-evidence", f"a {rtype} needs evidence or low confidence")
+        privacy = payload.get("privacy")
+        if privacy not in (None, "repo-safe"):
+            # Decisions and attempts live in committed directories, where the
+            # validate gate fails both other values: the write could never
+            # succeed (review 2026-11-13, W4). Say so before writing.
+            raise ServiceError(
+                "invalid",
+                f"privacy {privacy!r} cannot be stored as a {rtype}: "
+                + (
+                    "decisions and attempts are committed. For a machine-local "
+                    "note use `crumb jot --local` (it lands in private/inbox/)."
+                    if privacy == "local-private"
+                    else "secrets never go in memory."
+                ),
+                field="privacy",
+            )
 
         memory_dir, root = ctx.memory_dir, ctx.root
         problem = lifecycle.check_supersedes(memory_dir, rtype, supersedes)

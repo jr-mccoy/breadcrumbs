@@ -32,7 +32,9 @@ minutes, one project, executed in CI. Then read:
 - [`docs/compatibility-matrix.md`](docs/compatibility-matrix.md) for which
   agents and platforms get what;
 - [`docs/benchmarks/continuity-results.md`](docs/benchmarks/continuity-results.md)
-  for measured delivery against no memory and a hand-kept notes file.
+  for measured delivery against no memory and a hand-kept notes file;
+- [`docs/benchmarks/agent-outcomes.md`](docs/benchmarks/agent-outcomes.md)
+  for what a real agent did with each, on repeat-failure tasks.
 
 The rest of this README is the reference.
 
@@ -110,10 +112,11 @@ crumb init                      # locates bundled templates post-install
 **Versioning.** The package uses semantic versioning. `crumb --version`
 prints the package version *and* the **record `schema_version`** (the manifest's
 `schema_version:`, currently `4`). These are independent: the package version moves with the
-code; the record schema version moves only on a breaking change to the on-disk
-record format, and a package MAJOR bump accompanies it.
+code; the record schema version moves only when the on-disk record format
+changes, which is always a minor release with a migration
+([`docs/compatibility.md`](docs/compatibility.md) §1).
 
-**Requires** Python ≥ 3.9.
+**Requires** Python ≥ 3.10.
 
 ### No `npx` (deliberate)
 
@@ -664,12 +667,18 @@ A read-only command never shows a record as `[objects]`. The guard hook shows
 an advisory record once per session, unless the action names that record's
 file or command; an objection and a high-impact action always speak.
 
-**A few actions always ask.** A force-push to `main`/`master`, `rm -rf`
-outside build and cache directories (or on piped input), and a real
-`crumb migrate` get `ASK_HUMAN` even when no record is about them, and say so
-("no project memory about it") instead of citing unrelated records. When
-records are cited, they are only the ones about the action itself: its file,
-the file it writes, its exact command, or a topical match.
+**A few actions always ask.** A force-push to, or a delete of, `main`,
+`master`, `trunk` or `develop` (`--force`, `-f`, `--force-with-lease`, `+ref`,
+`--delete`, `:ref`, with or without `refs/heads/`), `rm -rf` outside build and
+cache directories (a project-relative path with no `..`; absolute paths only
+under the system temp directory; or on piped input), and a real `crumb
+migrate` get `ASK_HUMAN` even when no record is about them, and say so ("no
+project memory about it") instead of citing unrelated records. They are read
+through wrappers and scripts: `sudo`, `env`, `timeout`, `nice`, `command`,
+`bash -c '…'`, `eval`, `$(…)` and a here-document a shell runs. This is a
+reminder, not a sandbox: a command built at run time from variables can still
+get past it. When records are cited, they are only the ones about the action
+itself: its file, the file it writes, its exact command, or a topical match.
 
 **A do-not-retry line has to be about this action.** It raises a match (and
 makes it `[objects]`) only when the record is topical: it names the file, the
@@ -1000,14 +1009,15 @@ piece is independent:
 - **Adapter signpost** (`--with-adapter[=CLAUDE.md,AGENTS.md]`) — injects a small
   managed block into the agent-guidance files that already exist, telling the
   agent to read the resume packet, `guard` before risky actions, and `note`/
-  `capture` as it goes. It never creates a file you don't already have, and stays
+  `capture` as it goes. It edits the guidance files you have; in a project with
+  none, a bare `--with-adapter` creates `AGENTS.md` (the cross-agent standard),
+  and naming files explicitly writes those. The block stays
   well under the bloat threshold so `audit` stays green. `--remove-integrations`
   removes this block only: rules added with `crumb promote` sit in a block of
   their own and stay, since they are the project's instructions now.
 - **MCP registration** (`--with-mcp`) — merges a `breadcrumbs` server into
   `.mcp.json` (preserving any other servers). Needs the optional `[mcp]` extra to
-  actually run: `pip install "crumb-kit[mcp]"` (the SDK needs Python ≥ 3.10; on
-  3.9 that command succeeds and installs nothing). Both MCP SDK **1.x and 2.x**
+  actually run: `pip install "crumb-kit[mcp]"`. Both MCP SDK **1.x and 2.x**
   work — 2.0 renamed the server class, so an older `crumb-kit` paired with a new
   SDK reports "SDK not installed"; upgrade `crumb-kit` if you see that.
 - **Claude Code hooks** (`--with-hooks[=session,guard,capture,prompt,compact,subagent]`)
@@ -1063,8 +1073,8 @@ piece is independent:
     `retain_prompt_text: false` keeps only a digest.
   - `PreCompact → crumb hook compact` mines the transcript just before the
     context is destroyed. Compaction is the biggest memory-loss event in a long
-    session and this hook cannot speak to the model at all (its stdout goes to
-    the debug log), so it writes candidates to `private/inbox/` and leaves a
+    session, and this hook cannot add context (what it prints would become
+    instructions for the compaction summary, so it prints nothing). It writes candidates to `private/inbox/` and leaves a
     marker that the next `SessionStart` reads. That `SessionStart` names the
     latest task and builds the packet around it.
   - `SubagentStop → crumb hook subagent` mines a finished subagent's transcript.

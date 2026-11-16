@@ -456,7 +456,15 @@ def promote_jot(
     text = jot_text(rec)
     new_title = (title or jot_title(rec)).strip()
     private = is_private(memory_dir, rec)
-    if private and _secretscan.secret_pattern_hits(f"{text}\n{new_title}"):
+    # The evidence a promotion carries over is checked with the text: a jot
+    # mined before 0.7.0 may hold a token in a command ref its title did not
+    # show (review 2026-11-13, §2.6).
+    carried = "\n".join(
+        str(e.get("ref") or "")
+        for e in [*(rec.meta.get("evidence") or []), *(evidence or [])]
+        if isinstance(e, dict)
+    )
+    if private and _secretscan.secret_pattern_hits(f"{text}\n{new_title}\n{carried}"):
         return {
             "ok": False,
             "error": f"{source_id} carries a credential-shaped string; promoting it would "

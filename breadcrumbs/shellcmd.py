@@ -42,24 +42,78 @@ from breadcrumbs.path_policy import to_posix
 READ_ONLY_COMMANDS = frozenset(
     """
     cat less more head tail nl wc tac rev
-    ls dir tree stat file du df pwd realpath readlink basename dirname
-    grep egrep fgrep rg ack ag find fd locate
+    ls dir stat file du df pwd realpath readlink basename dirname
+    grep egrep fgrep ack ag locate
     diff cmp comm md5sum sha1sum sha256sum
-    which whereis type man whoami hostname uname date
-    echo printf uniq cut column jq yq sort tr paste fold fmt expand unexpand
-    od xxd hexdump strings
+    which whereis type man whoami uname printenv env
+    echo printf cut column jq tr paste fold fmt expand unexpand
+    od hexdump strings
     ps top uptime id groups
     """.split()
 )
+
+
+def _has_opt(args: list[str], shorts: str = "", longs: tuple[str, ...] = ()) -> bool:
+    """Is one of these options among `args` (before a `--`)? A short option
+    counts anywhere in a cluster (`-rno`) or with its value attached (`-oFILE`);
+    a long one with or without `=value`."""
+    for a in args:
+        if a == "--":
+            return False
+        if a.startswith("--"):
+            if a.split("=", 1)[0] in longs:
+                return True
+        elif a.startswith("-") and len(a) > 1 and shorts:
+            if any(ch in shorts for ch in a[1:]):
+                return True
+    return False
+
+
+def _positionals(args: list[str], takes_value: frozenset[str] = frozenset()) -> list[str]:
+    out, rest = [], list(args)
+    while rest:
+        a = rest.pop(0)
+        if a == "--":
+            out += rest
+            break
+        if a in takes_value and rest:
+            rest.pop(0)
+        elif not a.startswith("-") or a == "-":
+            out.append(a)
+    return out
+
+
+# Programs that report unless an option or an extra operand makes them write
+# or run something: each is read-only only when its check says so. They were
+# on the plain allowlist, so `sort -o f`, `uniq in out`, `yq -i`, `fd -X rm`,
+# `rg --pre cmd`, `tree -o f` and `xxd -r dump bin` were read-only (review
+# 2026-11-13, §2.4).
+_CHECKED_READERS = {
+    "sort": lambda a: not _has_opt(a, "o", ("--output",)),
+    "uniq": lambda a: len(_positionals(a, frozenset({"-f", "-s", "-w"}))) <= 1,
+    "xxd": lambda a: len(_positionals(a, frozenset({"-c", "-g", "-l", "-s", "-o", "-n"}))) <= 1,
+    "yq": lambda a: not _has_opt(a, "i", ("--inplace",)),
+    "fd": lambda a: not _has_opt(a, "xX", ("--exec", "--exec-batch")),
+    "fdfind": lambda a: not _has_opt(a, "xX", ("--exec", "--exec-batch")),
+    "rg": lambda a: not _has_opt(a, "", ("--pre",)),
+    "tree": lambda a: not _has_opt(a, "o", ()),
+    "date": lambda a: not _has_opt(a, "s", ("--set",)),
+    "hostname": lambda a: not _positionals(a),
+    "find": lambda a: True,  # READ_ONLY_DISQUALIFYING_ARGS covers -delete, -exec, …
+    "command": lambda a: _has_opt(a, "vV", ()),
+    "sudo": lambda a: bool(a) and set(a) <= {"-l", "--list"},
+}
 
 # `git` spans the whole range, so it gets its own allowlist of subcommands.
 READ_ONLY_GIT_SUBCOMMANDS = frozenset(
     """
     status log diff show blame describe shortlog rev-parse rev-list ls-files
-    ls-tree ls-remote cat-file whatchanged grep reflog annotate count-objects var
+    ls-tree ls-remote cat-file whatchanged grep annotate count-objects var
     merge-base
     """.split()
 )
+# `git reflog` lists; `git reflog expire` and `git reflog delete` rewrite it.
+_GIT_REFLOG_READS = frozenset({"show", "exists"})
 
 # `git <sub>` forms that only list when given no positional argument (or only
 # a listing flag): `git branch` lists, `git branch x` creates.
@@ -173,7 +227,9 @@ def _sed_script_writes(script: str) -> bool | None:
         if cmd in "aicrRbtTvq:#lLQ":
             # Rest of the line is an argument (text, label, file to read).
             while i < n and script[i] != "\n":
-                if cmd in "btTvqQlL" and script[i] in ";}":
+                # A label ends at `;` too (GNU): read as running to the end of
+                # the line, `:a;N;$!ba;w out` hid the `w` (review 2026-11-13).
+                if cmd in "btTvqQlL:" and script[i] in ";}":
                     break
                 i += 1
             continue
@@ -198,6 +254,14 @@ def _sed_script_writes(script: str) -> bool | None:
     return False
 
 
+_SED_READ_LONG_OPTIONS = frozenset(
+    """
+    --quiet --silent --regexp-extended --posix --debug --null-data --zero-terminated
+    --separate --unbuffered --line-length --sandbox --follow-symlinks --help --version
+    """.split()
+)
+
+
 def _sed_read_only(args: list[str]) -> bool:
     scripts: list[str] = []
     rest = list(args)
@@ -219,7 +283,11 @@ def _sed_read_only(args: list[str]) -> bool:
             explicit = True
             continue
         if a.startswith("--"):
-            continue  # --quiet, --regexp-extended, --posix, --debug, ...
+            # GNU accepts any unambiguous prefix, so `--in-pl` is `--in-place`.
+            # Only options known to report pass; anything else is not read-only.
+            if a.split("=", 1)[0] in _SED_READ_LONG_OPTIONS:
+                continue
+            return False
         if a.startswith("-") and len(a) > 1:
             letters = a[1:]
             if "i" in letters:
@@ -270,7 +338,7 @@ def _awk_read_only(args: list[str]) -> bool:
 # Flags that make an otherwise-reporting command act (`find . -delete`,
 # `find . -exec rm {} +`, `sort -o out`). Matched as whole tokens.
 READ_ONLY_DISQUALIFYING_ARGS = frozenset(
-    "-delete -exec -execdir -ok -okdir -fprint -fls -fprintf -o --output".split()
+    "-delete -exec -execdir -ok -okdir -fprint -fprint0 -fls -fprintf -o --output".split()
 )
 
 # Segments that change nothing a reader cares about: moving around, no-ops.
@@ -282,37 +350,121 @@ NEUTRAL_REDIRECT_TARGETS = frozenset(
 )
 
 # xargs options that take a value, so the command it runs can be found.
-_XARGS_VALUE_OPTS = frozenset({"-I", "-i", "-n", "-P", "-d", "-L", "-s", "-E", "-a"})
+_XARGS_VALUE_OPTS = frozenset(
+    {"-I", "-i", "-n", "-P", "-d", "-L", "-s", "-E", "-a"}
+    | {"--max-args", "--max-lines", "--max-procs", "--max-chars", "--delimiter"}
+    | {"--arg-file", "--eof", "--process-slot-var"}
+)
+
+
+def _xargs_command(tokens: list[str]) -> list[str]:
+    """The command an `xargs …` runs, its options skipped."""
+    rest = tokens[1:]
+    while rest and rest[0].startswith("-"):
+        opt = rest.pop(0)
+        if opt == "--":
+            break
+        if opt in _XARGS_VALUE_OPTS and rest:
+            rest.pop(0)
+    return rest
 
 
 # ---- quoting, here-documents, segments -------------------------------------- #
 
-_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+# The delimiter after `<<` / `<<-`: a word, bare or quoted (`'EOF'`, `"EOF"`,
+# `\EOF`).
+_HEREDOC_WORD_RE = re.compile(r"\s*(?:\\)?(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def _heredoc_ops(line: str, quote: str | None) -> tuple[list[tuple[str, bool]], str | None]:
+    """`([(delimiter, dash)], quote)`: the here-documents `line` opens, and the
+    quote still open at its end (a quoted string may span lines).
+
+    Only an unquoted `<<` that is not part of `<<<` opens one. Read anywhere,
+    `cat <<< hello` and `grep "a << b"` opened a here-document whose terminator
+    never came, and every later line, `rm -rf src` included, became data
+    (review 2026-11-13, §2.4).
+    """
+    ops: list[tuple[str, bool]] = []
+    i, n = 0, len(line)
+    while i < n:
+        ch = line[i]
+        if quote == "'":
+            if ch == "'":
+                quote = None
+            i += 1
+            continue
+        if ch == "\\":
+            i += 2
+            continue
+        if quote == '"':
+            if ch == '"':
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            i += 1
+            continue
+        if line.startswith("<<", i):
+            if line.startswith("<<<", i):
+                i += 3  # a here-string: its word is input, not a delimiter
+                continue
+            j = i + 2
+            dash = line.startswith("-", j)
+            if dash:
+                j += 1
+            m = _HEREDOC_WORD_RE.match(line, j)
+            if m:
+                ops.append((m.group(2), dash))
+                i = m.end()
+                continue
+            i = j
+            continue
+        i += 1
+    return ops, quote
+
+
+def _heredoc_lines(command: str, *, classify: bool = True):
+    """Yield `(line, kind)` for each line: `command`, `end` (a terminator), or
+    a here-document body line that is `code` (a shell or database client runs
+    it) or `data`; `body` for every body line when not `classify`. Quote state
+    carries across command lines and never into a body, whose apostrophes are
+    text."""
+    lines = (command or "").split("\n")
+    quote: str | None = None
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        ops, quote = _heredoc_ops(line, quote)
+        yield line, "command"
+        i += 1
+        if not ops:
+            kind = "data"
+        elif classify:
+            kind = "code" if _runs_code(line) else "data"
+        else:
+            kind = "body"
+        for word, dash in ops:
+            while i < len(lines):
+                candidate = lines[i].lstrip("\t") if dash else lines[i]
+                done = candidate.strip() == word
+                yield lines[i], "end" if done else kind
+                i += 1
+                if done:
+                    break
 
 
 def strip_heredocs(command: str) -> str:
-    """`command` with every here-document body removed (the `<<EOF` line stays).
+    """`command` with every here-document body and terminator removed (the
+    `<<EOF` line stays).
 
     A heredoc body is data — a commit message, a file being written — and its
     `;`, `|` and words are not part of the command.
     """
-    lines = (command or "").split("\n")
-    out: list[str] = []
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        out.append(line)
-        terminators = [
-            (m.group(2), m.group(0).startswith("<<-")) for m in _HEREDOC_RE.finditer(line)
-        ]
-        i += 1
-        for word, dash in terminators:
-            while i < len(lines):
-                candidate = lines[i].lstrip("\t") if dash else lines[i]
-                i += 1
-                if candidate.strip() == word:
-                    break
-    return "\n".join(out)
+    return "\n".join(
+        line for line, kind in _heredoc_lines(command, classify=False) if kind == "command"
+    )
 
 
 def _scan(command: str):
@@ -357,11 +509,21 @@ def is_dynamic(command: str) -> bool:
     text = command or ""
     quote = None
     prev = ""
+    escaped = False
     for ch in text:
+        if escaped:
+            # `\'` is a literal quote, not the start of a quoted string:
+            # `echo \'$(cmd)\'` runs `cmd` (review 2026-11-13, §2.4).
+            escaped = False
+            prev = ""
+            continue
         if quote == "'":
             if ch == "'":
                 quote = None
             prev = ch
+            continue
+        if ch == "\\":
+            escaped = True
             continue
         if ch == "'" and quote is None:
             quote = "'"
@@ -375,12 +537,14 @@ def is_dynamic(command: str) -> bool:
     return False
 
 
-def segments(command: str) -> list[str] | None:
+def segments(command: str, *, strict: bool = True) -> list[str] | None:
     """The simple commands in `command`, split on unquoted `;`, `&&`, `||`,
-    `|`, `&` and newlines. None when the command is dynamic (see `is_dynamic`).
+    `|`, `&` and newlines. None when the command is dynamic (see `is_dynamic`),
+    unless `strict` is false: then the split is made anyway, which is what a
+    check that must not give up on a command (the always-ask floor) wants.
     Here-document bodies are dropped first."""
     text = strip_heredocs(command or "")
-    if is_dynamic(text):
+    if strict and is_dynamic(text):
         return None
     out: list[str] = []
     buf: list[str] = []
@@ -409,7 +573,11 @@ def segments(command: str) -> list[str] | None:
     return [s.strip() for s in out if s.strip()]
 
 
-_REDIRECT_RE = re.compile(r"(?<![<>&\w])(\d*|&)(>>?|>\|)\s*(&?[^\s;|&<>]*)")
+# An output redirection. A file descriptor is a digit run that starts a word;
+# a `>` right after other text still redirects (`cat a>b` writes b), which the
+# old `\w` lookbehind missed, so `cat /dev/null>file` was read-only (review
+# 2026-11-13, §2.4).
+_REDIRECT_RE = re.compile(r"(?<![<>&])((?<![\w$])\d+|&)?(>>?|>\|)\s*(&?[^\s;|&<>]*)")
 
 
 def split_redirections(segment: str) -> tuple[str, list[str]]:
@@ -439,24 +607,117 @@ SHELL_KEYWORD_PREFIXES = frozenset(
 SHELL_CLOSERS = frozenset({"done", "fi", "esac", "}", ")"})
 
 
-def words(segment: str) -> list[str]:
-    """Shell words of one segment (output redirections removed), with leading
-    `VAR=value` assignments, shell keywords (`do`, `then`, `if`, …) and the
-    `time`/`nohup` prefixes dropped. Falls back to whitespace splitting."""
-    body, _targets = split_redirections(segment)
-    body = re.sub(r"(?<![\w-])\d*<\s*\S+", " ", body)  # input redirection
-    try:
-        toks = shlex.split(body, posix=True)
-    except ValueError:
-        toks = body.split()
+# Commands that run the rest of their arguments as a command: the options each
+# takes a value for, and how many positional arguments come before the command
+# (`timeout 10 cmd`). Read as the verb, `sudo rm -rf src` was `sudo`, and the
+# always-ask floor never saw the `rm` (review 2026-11-13, §2.4 and §5.3).
+_WRAPPERS: dict[str, tuple[frozenset[str], int]] = {
+    "sudo": (
+        frozenset(
+            "-u -g -h -p -C -D -r -t -U -T --user --group --host --prompt --chdir "
+            "--role --type --other-user --command-timeout --close-from".split()
+        ),
+        0,
+    ),
+    "doas": (frozenset({"-u", "-C"}), 0),
+    "nice": (frozenset({"-n", "--adjustment"}), 0),
+    "ionice": (frozenset({"-c", "-n", "--class", "--classdata"}), 0),
+    "stdbuf": (frozenset({"-i", "-o", "-e", "--input", "--output", "--error"}), 0),
+    "timeout": (frozenset({"-s", "-k", "--signal", "--kill-after"}), 1),
+    "exec": (frozenset({"-a"}), 0),
+    "builtin": (frozenset(), 0),
+}
+# Their forms that run nothing: `sudo -l` lists, `command -v` looks up.
+_WRAPPER_QUERIES = {
+    "sudo": frozenset({"-l", "--list", "-v", "--validate", "-k", "-K", "-e", "--edit", "-V"}),
+    "command": frozenset({"-v", "-V"}),
+}
+_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _strip_prefixes(toks: list[str]) -> list[str]:
+    """Leading `VAR=value` assignments and shell keywords, dropped."""
     while toks:
-        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", toks[0]) or toks[0] in SHELL_KEYWORD_PREFIXES:
+        if _ASSIGNMENT_RE.match(toks[0]) or toks[0] in SHELL_KEYWORD_PREFIXES:
             if toks.pop(0) == "time" and toks[:1] == ["-p"]:
                 toks.pop(0)
         elif toks[0].startswith(("(", "{")) and len(toks[0]) > 1:
             toks[0] = toks[0][1:]
         else:
             break
+    return toks
+
+
+def _unwrap_once(toks: list[str]) -> list[str] | None:
+    """The command a wrapper runs, or None when `toks` is no wrapper (or one
+    that runs nothing, such as `sudo -l` or a bare `env`)."""
+    verb = verb_of(toks)
+    if verb == "command":
+        rest = toks[1:]
+        if _WRAPPER_QUERIES["command"] & set(rest):
+            return None
+        while rest and rest[0] in ("-p", "--"):
+            rest = rest[1:]
+        return rest or None
+    if verb == "env":
+        rest = toks[1:]
+        while rest:
+            a = rest[0]
+            if a in ("-i", "-0", "--ignore-environment", "--null", "-", "--"):
+                rest = rest[1:]
+            elif a in ("-u", "--unset", "-C", "--chdir") and len(rest) > 1:
+                rest = rest[2:]
+            elif a.startswith(("--unset=", "--chdir=")) or (
+                a.startswith(("-u", "-C")) and len(a) > 2
+            ):
+                rest = rest[1:]
+            elif a in ("-S", "--split-string") and len(rest) > 1:
+                rest = _split(rest[1]) + rest[2:]
+            elif a.startswith("--split-string="):
+                rest = _split(a.split("=", 1)[1]) + rest[1:]
+            elif _ASSIGNMENT_RE.match(a):
+                rest = rest[1:]
+            else:
+                break
+        return rest or None
+    spec = _WRAPPERS.get(verb)
+    if spec is None:
+        return None
+    takes_value, positionals = spec
+    rest = toks[1:]
+    if _WRAPPER_QUERIES.get(verb, frozenset()) & set(rest):
+        return None
+    while rest and rest[0].startswith("-") and rest[0] != "-":
+        a = rest.pop(0)
+        if a == "--":
+            break
+        if a in takes_value and rest:
+            rest.pop(0)
+    rest = rest[positionals:]
+    return _strip_prefixes(rest) or None
+
+
+def _split(text: str) -> list[str]:
+    try:
+        return shlex.split(text, posix=True)
+    except ValueError:
+        return text.split()
+
+
+def words(segment: str) -> list[str]:
+    """Shell words of one segment (output redirections removed), with leading
+    `VAR=value` assignments, shell keywords (`do`, `then`, `if`, …), the
+    `time`/`nohup` prefixes and command wrappers (`sudo`, `env`, `timeout`,
+    `nice`, `command`, …) dropped, so the first word is what runs. Falls back
+    to whitespace splitting."""
+    body, _targets = split_redirections(segment)
+    body = re.sub(r"(?<![\w-])\d*<\s*\S+", " ", body)  # input redirection
+    toks = _strip_prefixes(_split(body))
+    for _ in range(8):  # `sudo env X=1 nice …`: a few layers, never a loop
+        inner = _unwrap_once(toks)
+        if inner is None:
+            break
+        toks = inner
     if toks and all(t in SHELL_CLOSERS for t in toks):
         return []
     return toks
@@ -522,9 +783,33 @@ def crumb_invocation(tokens: list[str]) -> list[str] | None:
     return None
 
 
+# crumb's global options that take a value. Read as a positional, the value of
+# `crumb --project . migrate` was the subcommand, `.`, and a real migration
+# was "other" (review 2026-11-13, §2.4).
+CRUMB_VALUE_OPTIONS = frozenset({"--project"})
+
+
+def _crumb_positional(args: list[str]) -> list[str]:
+    out, skip = [], False
+    for a in args:
+        if skip:
+            skip = False
+        elif a in CRUMB_VALUE_OPTIONS:
+            skip = True
+        elif not a.startswith("-"):
+            out.append(a)
+    return out
+
+
+def crumb_subcommand(args: list[str]) -> str:
+    """The subcommand in crumb's arguments, or "" when there is none."""
+    positional = _crumb_positional(args)
+    return positional[0] if positional else ""
+
+
 def crumb_effect(args: list[str]) -> str:
     """`read_only`, `memory_write`, `migration` or `other` for crumb's arguments."""
-    positional = [a for a in args if not a.startswith("-")]
+    positional = _crumb_positional(args)
     sub = positional[0] if positional else (args[0] if args else "help")
     flags = set(args)
     if sub in CRUMB_READ_ONLY or not args:
@@ -548,6 +833,20 @@ def crumb_effect(args: list[str]) -> str:
     return "other"
 
 
+def crumb_identity(command: str) -> str | None:
+    """`crumb <subcommand>` when `command` starts with a crumb invocation, else
+    None: the form a record names it by, whatever the spelling (`python
+    crumb.py`, `python -m breadcrumbs`, `--project X`) and arguments."""
+    segs = segments(command or "")
+    if not segs:
+        return None
+    args = crumb_invocation(words(segs[0]))
+    if args is None:
+        return None
+    sub = crumb_subcommand(args)
+    return f"crumb {sub}" if sub else "crumb"
+
+
 def crumb_commands(command: str) -> list[tuple[str, list[str]]]:
     """`[(effect, args)]` for every crumb invocation among the segments."""
     out = []
@@ -562,8 +861,7 @@ def crumb_writes(command: str, store_dirname: str = ".project-memory") -> list[s
     """Store paths the crumb commands in `command` write (issue 11)."""
     out: list[str] = []
     for effect, args in crumb_commands(command):
-        positional = [a for a in args if not a.startswith("-")]
-        sub = positional[0] if positional else ""
+        sub = crumb_subcommand(args)
         if effect == "read_only":
             continue
         for rel in CRUMB_WRITES.get(sub, ()):
@@ -589,25 +887,33 @@ def _verb_read_only(tokens: list[str]) -> bool:
         return crumb_effect(crumb) == "read_only"
     if verb == "git":
         rest = tokens[1:]
-        # `git -C dir log`: skip global options and their values.
+        # `git -C dir log`: skip global options and their values. A `-c key=v`
+        # can set a pager, a diff driver or an alias that runs a program, so a
+        # command carrying one is not read-only.
         while rest and rest[0].startswith("-"):
             opt = rest.pop(0)
-            if opt in ("-C", "-c", "--git-dir", "--work-tree") and rest:
+            if opt == "-c" or opt.startswith("--config-env"):
+                return False
+            if opt in ("-C", "--git-dir", "--work-tree") and rest:
                 rest.pop(0)
         if not rest:
             return False
-        return rest[0] in READ_ONLY_GIT_SUBCOMMANDS or _git_listing(rest[0], rest[1:])
+        sub, args = rest[0], rest[1:]
+        if _has_opt(args, "", ("--output",)):
+            return False  # `git diff --output=x.patch` writes a file
+        if sub == "reflog":
+            return not args or args[0] in _GIT_REFLOG_READS or args[0].startswith("-")
+        return sub in READ_ONLY_GIT_SUBCOMMANDS or _git_listing(sub, args)
     if verb in ("sed", "gsed"):
         return _sed_read_only(tokens[1:])
     if verb in ("awk", "gawk", "mawk", "nawk"):
         return _awk_read_only(tokens[1:])
     if verb == "xargs":
-        rest = tokens[1:]
-        while rest and rest[0].startswith("-"):
-            opt = rest.pop(0)
-            if opt in _XARGS_VALUE_OPTS and rest:
-                rest.pop(0)
+        rest = _xargs_command(tokens)
         return bool(rest) and _verb_read_only(rest)
+    check = _CHECKED_READERS.get(verb)
+    if check is not None:
+        return check(tokens[1:])
     return verb in READ_ONLY_COMMANDS
 
 
@@ -635,10 +941,20 @@ def is_read_only(command: str) -> bool:
 # ---- classification text --------------------------------------------------- #
 
 
-def classification_text(command: str) -> str:
+def classification_text(command: str, _depth: int = 0) -> str:
     """What the action classifier should read: the command's own words, with
-    here-document bodies and quoted text removed (N11)."""
-    return strip_quoted(strip_heredocs(command or ""))
+    here-document bodies and quoted text removed (N11), plus the same for each
+    script the command runs (`bash -c '…'`, `eval`, `$(…)`): the quotes around
+    one hold what runs, not what is said (review 2026-11-13, §5.3)."""
+    text = command or ""
+    base = strip_quoted(strip_heredocs(text))
+    if _depth >= _EXPAND_DEPTH:
+        return base
+    inner = [
+        _shell_script(words(seg)) for seg in segments(text, strict=False) or []
+    ] + _substitutions(strip_heredocs(text))
+    parts = [classification_text(s, _depth + 1) for s in inner if s]
+    return "\n".join([base, *parts]) if parts else base
 
 
 def matching_text(command: str) -> str:
@@ -695,34 +1011,72 @@ _BUILD_DIR_NAMES = frozenset(
 )
 
 
+# `git push` options that take a value, so the value is not read as a refspec.
+_PUSH_VALUE_OPTIONS = frozenset({"-o", "--push-option", "--repo", "--receive-pack", "--exec"})
+# Every spelling of "overwrite the remote branch whatever it holds". The lease
+# forms only check that it holds what this clone last saw: on `main` that is
+# still a rewrite of shared history (review 2026-11-13, §2.4).
+_PUSH_FORCE_OPTIONS = frozenset({"--force", "--force-with-lease", "--force-if-includes"})
+
+
 def _force_push_to_default(tokens: list[str]) -> str | None:
+    """A force-push to, or a delete of, a default branch: `--force`, `-f`, the
+    lease forms, `+ref`, `--delete`, `:ref`, with or without `refs/heads/`."""
     if verb_of(tokens) != "git" or "push" not in tokens:
         return None
-    rest = tokens[tokens.index("push") + 1 :]
-    force = any(
-        t in ("--force", "-f") or (t.startswith("-") and not t.startswith("--") and "f" in t)
-        for t in rest
-    )
-    refs = [t for t in rest if not t.startswith("-")]
-    plus = [r for r in refs if r.startswith("+")]
-    if not force and not plus:
-        return None
-    targets = {r.lstrip("+").split(":")[-1] for r in refs[1:]} if len(refs) > 1 else set()
-    if targets & _DEFAULT_BRANCHES:
-        return "force-push to " + "/".join(sorted(targets & _DEFAULT_BRANCHES))
+    force = delete = skip = False
+    refs: list[str] = []
+    for t in tokens[tokens.index("push") + 1 :]:
+        if skip:
+            skip = False
+        elif t in _PUSH_VALUE_OPTIONS:
+            skip = True
+        elif t.startswith("--"):
+            name = t.split("=", 1)[0]
+            force = force or name in _PUSH_FORCE_OPTIONS
+            delete = delete or name == "--delete"
+        elif t.startswith("-") and len(t) > 1:
+            force = force or "f" in t[1:]
+            delete = delete or "d" in t[1:]
+        else:
+            refs.append(t)
+    forced, deleted = set(), set()
+    for ref in refs[1:]:  # the first is the remote
+        src, colon, dst = ref.lstrip("+").rpartition(":")
+        name = dst.removeprefix("refs/heads/")
+        if (colon and not src) or delete:
+            deleted.add(name)
+        elif force or ref.startswith("+"):
+            forced.add(name)
+    if deleted & _DEFAULT_BRANCHES:
+        return "push deleting " + "/".join(sorted(deleted & _DEFAULT_BRANCHES))
+    if forced & _DEFAULT_BRANCHES:
+        return "force-push to " + "/".join(sorted(forced & _DEFAULT_BRANCHES))
     return None
+
+
+def _is_build_path(target: str) -> bool:
+    """A project-relative path through a build or cache directory.
+
+    Only relative paths with no `..`: by name anywhere, `rm -rf
+    build/../src`, `rm -rf ~/reports` and `rm -rf /tmp` itself were exempt
+    (review 2026-11-13, §2.4). An absolute path is exempt only under the
+    system temp directory (`is_temp_path`).
+    """
+    p = to_posix(str(target or "").strip("\"'"))
+    if not p or p.startswith(("/", "~", "$", "%")) or re.match(r"^[A-Za-z]:", p):
+        return False
+    parts = [x for x in p.split("/") if x not in ("", ".")]
+    if not parts or ".." in parts:
+        return False
+    return any(x in _BUILD_DIR_NAMES or x.endswith(".egg-info") for x in parts)
 
 
 def _rm_rf_outside_build(tokens: list[str]) -> str | None:
     if verb_of(tokens) == "xargs":
         # `… | xargs rm -rf`: the targets arrive on stdin, so nothing says they
         # are build output (N4: this used to be capped as read-only).
-        rest = tokens[1:]
-        while rest and rest[0].startswith("-"):
-            opt = rest.pop(0)
-            if opt in _XARGS_VALUE_OPTS and rest:
-                rest.pop(0)
-        inner = _rm_rf_outside_build(rest + ["<stdin>"])
+        inner = _rm_rf_outside_build(_xargs_command(tokens) + ["<stdin>"])
         return "rm -rf on piped input" if inner else None
     if verb_of(tokens) != "rm":
         return None
@@ -736,8 +1090,7 @@ def _rm_rf_outside_build(tokens: list[str]) -> str | None:
         return None
     targets = [t for t in tokens[1:] if not t.startswith("-")]
     for t in targets:
-        parts = [p for p in to_posix(t).split("/") if p not in ("", ".")]
-        if is_temp_path(t) or any(p in _BUILD_DIR_NAMES or p.endswith(".egg-info") for p in parts):
+        if is_temp_path(t) or _is_build_path(t):
             continue
         return f"rm -rf {t}"
     return None
@@ -752,7 +1105,9 @@ def _rm_rf_outside_build(tokens: list[str]) -> str | None:
 
 _TEMP_ROOT_RE = re.compile(
     r"(?i)^(?:"
-    r"\$\{?(?:TEMP|TMP|TMPDIR)(?::?[-=+?][^}]*)?\}?"  # $TEMP, ${TMPDIR:-/tmp}
+    # Case matters for a shell variable: `$tmp` is anybody's variable, not
+    # the temp directory (review 2026-11-13, §2.4).
+    r"\$\{?(?-i:TEMP|TMP|TMPDIR)(?::?[-=+?][^}]*)?\}?"  # $TEMP, ${TMPDIR:-/tmp}
     r"|%(?:TEMP|TMP)%"  # cmd.exe
     r"|\$env:(?:TEMP|TMP)"  # PowerShell
     r"|/tmp|/var/tmp|/private/tmp|/private/var/tmp"
@@ -858,28 +1213,6 @@ def _runs_code(line: str) -> bool:
     return False
 
 
-def _heredoc_lines(command: str):
-    """Yield `(line, kind)`: `command`, or a heredoc body line that is `code` or `data`."""
-    lines = (command or "").split("\n")
-    i = 0
-    while i < len(lines):
-        line = lines[i]
-        yield line, "command"
-        terminators = [
-            (m.group(2), m.group(0).startswith("<<-")) for m in _HEREDOC_RE.finditer(line)
-        ]
-        i += 1
-        kind = "code" if terminators and _runs_code(line) else "data"
-        for word, dash in terminators:
-            while i < len(lines):
-                candidate = lines[i].lstrip("\t") if dash else lines[i]
-                done = candidate.strip() == word
-                yield lines[i], "command" if done else kind
-                i += 1
-                if done:
-                    break
-
-
 def without_data_heredocs(command: str) -> str:
     """`command` with the bodies of data heredocs removed; code bodies stay."""
     return "\n".join(line for line, kind in _heredoc_lines(command) if kind != "data")
@@ -925,16 +1258,100 @@ def destructive_text(command: str) -> str:
     return "\n".join([" ; ".join(kept), *code])
 
 
+_SHELLS = frozenset("bash sh zsh ksh dash ash fish busybox".split())
+_EXPAND_DEPTH = 3
+
+
+def _shell_script(tokens: list[str]) -> str | None:
+    """The script a `bash -c '…'` (or `sh -lc`, `eval …`) runs, else None."""
+    verb = verb_of(tokens).removesuffix(".exe")
+    if verb == "eval":
+        return " ".join(tokens[1:]) or None
+    if verb not in _SHELLS:
+        return None
+    rest = tokens[1:]
+    while rest:
+        a = rest.pop(0)
+        if a == "--" or not a.startswith(("-", "+")):
+            return None  # a script file, or arguments
+        if not a.startswith("--") and "c" in a[1:]:
+            return rest[0] if rest else None
+        if a in ("-o", "+o", "-O", "+O") and rest:
+            rest.pop(0)
+    return None
+
+
+def _substitutions(text: str) -> list[str]:
+    """The bodies of `$(…)` and backticks outside single quotes."""
+    out: list[str] = []
+    i, n, quote = 0, len(text), None
+    while i < n:
+        ch = text[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if quote == "'":
+            quote = None if ch == "'" else quote
+            i += 1
+            continue
+        if ch == "'" and quote is None:
+            quote = "'"
+        elif ch == '"':
+            quote = None if quote == '"' else '"'
+        elif ch == "`":
+            end = text.find("`", i + 1)
+            if end > i:
+                out.append(text[i + 1 : end])
+                i = end
+        elif ch == "$" and text.startswith("$(", i) and not text.startswith("$((", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                depth += {"(": 1, ")": -1}.get(text[j], 0)
+                j += 1
+            out.append(text[i + 2 : j - 1])
+            i = j - 1
+        i += 1
+    return out
+
+
+def expanded_words(command: str, _depth: int = 0) -> list[list[str]]:
+    """Every simple command `command` can run, as words: its own segments (read
+    even when dynamic), and those of each `bash -c` / `eval` script, `$(…)`
+    body and here-document a shell runs, a few levels deep.
+
+    For checks that must not give up on a command they can only partly read:
+    the always-ask floor. Wrapped this way, `bash -c 'rm -rf src'`, a code
+    heredoc and `rm -rf src $(…)` all hid the `rm` (review 2026-11-13, §2.4).
+    """
+    text = command or ""
+    out: list[list[str]] = []
+    for seg in segments(text, strict=False) or []:
+        toks = words(seg)
+        out.append(toks)
+        script = _shell_script(toks) if _depth < _EXPAND_DEPTH else None
+        if script:
+            out += expanded_words(script, _depth + 1)
+    if _depth < _EXPAND_DEPTH:
+        for body in _substitutions(strip_heredocs(text)):
+            out += expanded_words(body, _depth + 1)
+        code = "\n".join(line for line, kind in _heredoc_lines(text) if kind == "code")
+        if code:
+            out += expanded_words(code, _depth + 1)
+    return out
+
+
 def high_impact(command: str) -> str | None:
     """Why `command` is high-impact whatever memory says, or None.
 
-    A short, literal list (operator decision D3, 2026-10-01): a force-push to a
-    default branch, a recursive forced delete outside build/cache directories,
-    and a real (not `--dry-run`) `crumb migrate`. Guard gives these ASK_HUMAN
-    even with no matching record, and says so instead of citing unrelated ones.
+    A short, literal list (operator decision D3, 2026-10-01): a force-push to,
+    or a delete of, a default branch, a recursive forced delete outside
+    build/cache directories, and a real (not `--dry-run`) `crumb migrate`.
+    Guard gives these ASK_HUMAN even with no matching record, and says so
+    instead of citing unrelated ones. Read through wrappers and scripts
+    (`expanded_words`), so `sudo`, `env`, `bash -c` and a code heredoc do not
+    hide one.
     """
-    for seg in segments(command) or []:
-        toks = words(seg)
+    for toks in expanded_words(command):
         for check in (_force_push_to_default, _rm_rf_outside_build):
             reason = check(toks)
             if reason:

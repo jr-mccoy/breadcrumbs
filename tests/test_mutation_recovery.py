@@ -347,6 +347,98 @@ class CrashRecoveryTests(MutationCase):
         self.assertEqual(self.live(), [old])
 
 
+class JournalCommitTests(MutationCase):
+    """A finished operation's journal is removed; dying during that removal
+    must not turn `crumb recover` against the finished change (review
+    2026-11-13, §2.5).
+
+    `discard_journal` used to be one `rmtree`, which could delete the
+    before-images while `manifest.json` was still there. `recover` then saw an
+    unfinished operation, removed the files it had created, and could not
+    restore the files it had changed: a valid store became an invalid one.
+    """
+
+    def _supersede(self, old: str) -> int:
+        code, _out, _err = run(
+            [
+                "remember", "decision", "--project", str(self.root),
+                "--title", "Replace the amber queue policy",
+                "--set", "Decision", "Route amber traffic through the new queue.",
+                "--evidence", "file", "src/queue.py", "--supersedes", old,
+            ]
+        )  # fmt: skip
+        return code
+
+    def test_the_manifest_goes_first(self):
+        """Removing `manifest.json` is the commit point; the rest is cleanup."""
+        old = self.decision()
+        seen = []
+        real = mutations.shutil.rmtree
+
+        def spy(path, *args, **kwargs):
+            seen.append((Path(path) / "manifest.json").exists())
+            return real(path, *args, **kwargs)
+
+        with mock.patch.object(mutations.shutil, "rmtree", spy):
+            self.assertEqual(self._supersede(old), 0)
+        self.assertTrue(seen, "the journal was never removed")
+        self.assertFalse(any(seen), "the journal's manifest outlived its before-images")
+        self.assert_clean()
+
+    def test_a_half_removed_journal_is_left_alone(self):
+        """A journal whose before-images are gone was being discarded: its
+        operation had finished. `recover` removes it and touches no record."""
+        old = self.decision()
+
+        def half_discard(tx):  # what a death inside the old rmtree left behind
+            real_rmtree = mutations.shutil.rmtree
+            real_rmtree(tx.dir / "before", ignore_errors=True)
+
+        with mock.patch.object(mutations.Transaction, "discard_journal", half_discard):
+            self.assertEqual(self._supersede(old), 0)
+        self.assertEqual(len(mutations.pending_operations(self.mem)), 1)
+        finished = self.canonical()
+        new = [rid for rid in self.live() if rid != old]
+        self.assertEqual(len(new), 1)
+
+        res = mutations.recover(self.mem, apply=True)
+        self.assertEqual(self.canonical(), finished, "recover changed a finished operation")
+        self.assertTrue(res["operations"][0]["finished"], res)
+        self.assertEqual(res["operations"][0]["conflicts"], [])
+        self.assertEqual(self.live(), new)
+        self.assert_clean()
+        code, out, _err = run(["recover", "--project", str(self.root)])
+        self.assertEqual((code, out.strip()), (0, "recover: no unfinished operations."))
+
+    def test_recover_reports_a_finished_journal_without_apply(self):
+        old = self.decision()
+        with mock.patch.object(
+            mutations.Transaction,
+            "discard_journal",
+            lambda tx: mutations.shutil.rmtree(tx.dir / "before", ignore_errors=True),
+        ):
+            self.assertEqual(self._supersede(old), 0)
+        code, out, _err = run(["recover", "--project", str(self.root)])
+        self.assertEqual(code, 1)
+        self.assertIn("finished", out)
+        self.assertNotIn("restore", out)
+
+    def test_recover_sweeps_a_journal_with_no_manifest(self):
+        """A death between the journal directory's creation and its first
+        manifest, or after the manifest's removal, leaves an orphan directory
+        that `pending_operations` cannot see and nothing else removed."""
+        debris = self.mem.joinpath(*mutations.OPERATIONS_RELPATH) / "20260101T000000-x-abc123"
+        (debris / "before").mkdir(parents=True)
+        (debris / "before" / "0").write_bytes(b"old bytes")
+        self.assertEqual(mutations.pending_operations(self.mem), [])
+        listed = mutations.recover(self.mem, apply=False)
+        self.assertEqual(listed["debris"], 1)
+        self.assertTrue(debris.exists(), "listing removed something")
+        applied = mutations.recover(self.mem, apply=True)
+        self.assertEqual(applied["debris"], 1)
+        self.assertFalse(debris.exists())
+
+
 class RetryTests(MutationCase):
     def test_retry_does_not_duplicate_or_orphan_records(self):
         old = self.decision()

@@ -55,7 +55,7 @@ def rename_record(memory_dir: Path, root: Path, rid: str, slug: str) -> dict:
     ident = cli.derive_identity(new_stem, rec.rtype)
     if ident is None:
         return {"ok": False, "error": f"{new_stem!r} is not a valid {rec.rtype} file name"}
-    new_id = ident[0]
+    new_id, derived_slug = ident
     old_id = str(rec.meta.get("id") or (cli.derive_identity(old_stem, rec.rtype) or [rid])[0])
     if new_id == old_id:
         return {"ok": False, "error": "that is already its name"}
@@ -68,13 +68,18 @@ def rename_record(memory_dir: Path, root: Path, rid: str, slug: str) -> dict:
         original = path_policy.read_text(rec.path)
         meta, body = cli.parse_frontmatter(original)
         meta["id"] = new_id
+        # `slug` is derived from the file name like `id`; a record crumb wrote
+        # carries it, and validate refuses one that names the old file.
+        if "slug" in meta:
+            meta["slug"] = derived_slug
         formerly = [str(x) for x in (meta.get("formerly") or [])]
         if old_id not in formerly:
             formerly.append(old_id)
         meta["formerly"] = formerly
         meta["updated_at"] = cli.now_iso()
         cli.write_text_atomic(new_path, cli.render_frontmatter(meta) + "\n" + body.lstrip("\n"))
-        rec.path.unlink()
+        # Through the journal, so a failure below puts the old file back.
+        _mutations.delete(rec.path)
         for path in _store_text_files(memory_dir):
             if path == new_path:
                 continue

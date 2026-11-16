@@ -130,6 +130,16 @@ def is_repo(root: Path) -> bool:
     return answer
 
 
+def is_shallow(root: Path) -> bool:
+    """True in a shallow clone, where history stops at the fetched depth.
+
+    Asked only on the rare path where a commit was not found, so one process
+    is fine; a commit-distance that cannot be measured must be said, not
+    dropped (review 2026-11-13, R8).
+    """
+    return run(root, "rev-parse", "--is-shallow-repository") == "true"
+
+
 def work_tree(root: Path) -> Path | None:
     """The top of the work tree holding `root`, read from `.git` without a
     process; None when only git can say (see `gitrefs.work_tree`)."""

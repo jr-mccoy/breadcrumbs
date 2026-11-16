@@ -55,5 +55,8 @@ fixtures/**/.project-memory/index/**
 .project-memory/index/**
 !.project-memory/index/README.md
 .project-memory/generated/*.local.md
-.project-memory/generated/*.tmp
+.project-memory/**/.*.tmp
 # <<< breadcrumbs managed block <<<
+
+# Repos and transcripts from evals/agent_outcomes/run.py (default --workdir).
+agent-outcomes-work/

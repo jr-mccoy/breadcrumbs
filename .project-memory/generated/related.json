@@ -1,16 +1,21 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "9e2a71e04014",
+ "inputs_hash": "7068bd9550f5",
  "related": {
+  "att_20261116_splitting-identifiers-into-word-tokens-for-search-and-guard": [
+   "dec_20261116_stop-words-match-as-written-or-as-regular-inflections",
+   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
+   "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint"
+  ],
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
    "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
-   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap"
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts"
   ],
   "dec_20260815_cut-0-1-10-as-the-agent-authorship-release": [
    "dec_20260924_phases-0-6-ship-together-as-0-3-0-not-the-roadmap-s-per",
    "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo"
   ],
   "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
@@ -25,7 +30,7 @@
   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo": [
    "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer"
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped"
   ],
   "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author": [
    "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction",
@@ -104,8 +109,8 @@
   ],
   "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store": [
    "ver_20260922_phase-5-of-the-working-memory-roadmap-wm-50-to-wm-52",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+   "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
   ],
   "dec_20260922_near-duplicate-similarity-needs-three-shared-stems-and-caps": [
    "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim",
@@ -120,7 +125,7 @@
   "dec_20260922_related-records-use-a-pure-overlap-score-so-the-committed": [
    "dec_20260927_pair-generation-uses-postings-and-exact-prefix-filtering",
    "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
-   "dec_20260922_lifecycle-decay-hides-and-asks-it-never-deletes-a-claim"
+   "dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input"
   ],
   "dec_20260922_the-search-index-is-a-plain-sqlite-inverted-index-of-our": [
    "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
@@ -128,14 +133,14 @@
    "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint"
   ],
   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only": [
+   "trap_miner-reads-hook-feedback-as-a-correction",
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
-   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
-   "dec_20260905_a-read-only-action-caps-at-read-first-and-entropy-warns"
+   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls"
   ],
   "dec_20260922_the-user-pre-approves-store-migrations-of-this-repo-s-own": [
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
-   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts"
   ],
   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases": [
    "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
@@ -183,9 +188,9 @@
    "dec_20260815_cut-0-1-10-as-the-agent-authorship-release"
   ],
   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches": [
+   "dec_20261114_safetext-escapes-format-characters-blank-fillers",
    "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
-   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written"
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
   ],
   "dec_20260927_packets-are-bounded-on-the-delivered-view-and-promoted": [
    "dec_20260927_a-trap-naming-the-exact-command-floors-read-first-prompts",
@@ -235,22 +240,22 @@
   "dec_20260928_store-relative-paths-are-posix-and-line-endings": [
    "trap_linux-cannot-show-a-windows-path-separator-bug",
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
-   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
+   "dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input"
   ],
   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand": [
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped",
    "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
-   "trap_guard-exit-code-in-ci",
-   "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed"
+   "trap_guard-exit-code-in-ci"
   ],
   "dec_20261001_capture-session-next-adds-a-dated-entry-only-replace": [
    "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
    "dec_20261002_a-store-names-its-oldest-allowed-writer-with-min-crumb",
-   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new"
+   "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action"
   ],
   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect": [
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts",
    "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
-   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program"
   ],
   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new": [
    "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction",
@@ -284,8 +289,8 @@
   ],
   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about": [
    "dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached",
-   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap",
-   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
+   "dec_20261116_guard-same-file-evidence-needs-the-same-path-matched",
+   "dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program"
   ],
   "dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
@@ -303,14 +308,79 @@
    "dec_20261003_code-moves-out-of-cli-py-by-mechanical-ast-move-into"
   ],
   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps": [
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts",
    "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
-   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect",
-   "dec_20260905_path-extraction-is-structural-and-a-mined-path"
+   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect"
   ],
   "dec_20261003_the-guard-hook-computes-no-staleness-and-answers-reached": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
    "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+  ],
+  "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped": [
+   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci",
+   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand",
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
+  ],
+  "dec_20261113_the-release-ci-gate-fails-closed-and-ignores-scheduled-runs": [
+   "trap_hand-tagged-releases",
+   "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped"
+  ],
+  "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action": [
+   "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
+   "dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+  ],
+  "dec_20261114_frontmatter-lines-end-only-at-a-newline-writers-refuse": [
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+   "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path"
+  ],
+  "dec_20261114_hook-text-stays-under-the-host-s-10-000-character-cap": [
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20261114_a-merged-branch-s-newer-handoff-is-shown-above-next-action",
+   "dec_20261002_the-stop-hook-treats-the-agent-s-answer-to-the-extraction"
+  ],
+  "dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program": [
+   "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts",
+   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
+   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect"
+  ],
+  "dec_20261114_safetext-escapes-format-characters-blank-fillers": [
+   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+   "dec_20260927_review-profiles-solo-by-default-team-makes-agent-written",
+   "dec_20261114_frontmatter-lines-end-only-at-a-newline-writers-refuse"
+  ],
+  "dec_20261114_scan-secrets-reads-every-committed-file-and-needs": [
+   "dec_20260927_nothing-inside-the-store-may-be-a-link-record-text-reaches",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
+  ],
+  "dec_20261114_the-always-ask-floor-reads-through-wrappers-scripts": [
+   "dec_20261001_guard-reads-shell-commands-by-segment-and-effect",
+   "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps",
+   "dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program"
+  ],
+  "dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd": [
+   "dec_20260815_stop-hook-extraction-turn-makes-the-agent-the-memory-author",
+   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
+   "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head"
+  ],
+  "dec_20261116_guard-same-file-evidence-needs-the-same-path-matched": [
+   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
+   "dec_20261114_read-only-is-an-allowlist-of-pure-readers-plus-per-program",
+   "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap"
+  ],
+  "dec_20261116_stop-words-match-as-written-or-as-regular-inflections": [
+   "att_20261116_splitting-identifiers-into-word-tokens-for-search-and-guard",
+   "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint",
+   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about"
+  ],
+  "q_should-guard-stop-escalating-a-plain-language-pl-348193": [
+   "ver_20261115_agent-outcome-eval-e2-on-v1-review-item-6-inconclusive",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval"
   ],
   "q_should-the-extraction-turn-also-fire-on-precompa-ebd583": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
@@ -334,8 +404,8 @@
   ],
   "trap_a-hook-test-payload-without-cwd-fires-the-hook": [
    "trap_a-test-that-runs-resume-or-reindex-on-a-checked-in-fixture",
-   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
-   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases"
+   "dec_20261114_the-project-root-is-the-nearest-store-at-or-above-cwd",
+   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode"
   ],
   "trap_a-record-s-remedy-fields-are-mined-for-file-paths": [
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
@@ -345,7 +415,7 @@
   "trap_a-test-that-runs-resume-or-reindex-on-a-checked-in-fixture": [
    "trap_a-hook-test-payload-without-cwd-fires-the-hook",
    "dec_20261002_reads-never-rewrite-a-fresh-committed-projection-only-input",
-   "trap_a-hand-written-version-literal-in-prose-drifts-silently"
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons"
   ],
   "trap_eval-baseline-after-retrieval-change": [
    "dec_20260923_retrieval-changes-are-measured-by-evals-run-py-against",
@@ -354,23 +424,28 @@
   ],
   "trap_guard-exit-code-in-ci": [
    "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed",
-   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand",
-   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci"
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped",
+   "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand"
   ],
   "trap_hand-tagged-releases": [
+   "dec_20261113_the-release-ci-gate-fails-closed-and-ignores-scheduled-runs",
    "dec_20260815_pypi-trusted-publisher-must-be-re-pointed-after-a-repo",
-   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
-   "trap_a-hand-written-version-literal-in-prose-drifts-silently"
+   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer"
   ],
   "trap_linux-cannot-show-a-windows-path-separator-bug": [
    "dec_20260928_store-relative-paths-are-posix-and-line-endings",
    "trap_a-record-s-remedy-fields-are-mined-for-file-paths",
    "dec_20261003_one-owner-per-helper-concern-parse-timestamp-for-stamps"
   ],
+  "trap_miner-reads-hook-feedback-as-a-correction": [
+   "dec_20260922_the-transcript-miner-is-deterministic-and-writes-only",
+   "dec_20260927_transcript-mining-uses-a-byte-cursor-carried-calls",
+   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest"
+  ],
   "trap_the-mcp-surface-of-0-1-11-was-never-exercised-the-field": [
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
    "dec_20260922_multi-agent-safety-branch-handoffs-one-command-level-store",
-   "trap_a-hand-written-version-literal-in-prose-drifts-silently"
+   "ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically"
   ],
   "ver_20260815_hook-guard-escalates-on-edits-to-files-named-by-evidence": [
    "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode",
@@ -400,7 +475,7 @@
   "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call": [
    "dec_20260903_branch-mismatch-is-judged-on-whether-the-file-reached-head",
    "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
-   "dec_20260816_questions-get-their-own-status-vocabulary-not-the-record-one"
+   "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval"
   ],
   "ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically": [
    "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re",
@@ -428,9 +503,9 @@
    "ver_20260817_f-5-guard-reprints-the-staleness-block-on-every-call"
   ],
   "ver_20260905_the-16-findings-of-the-0-1-11-crumb-kit-field-review-re": [
-   "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
    "dec_20260905_path-extraction-is-structural-and-a-mined-path",
-   "dec_20260818_hook-guard-never-overrides-the-session-s-permission-mode"
+   "dec_20260905_a-wrong-set-heading-parks-content-it-never-discards-the-call",
+   "ver_20260817_python-m-breadcrumbs-mcp-serve-speaks-mcp-stdio-identically"
   ],
   "ver_20260922_phase-0-of-the-working-memory-roadmap-wm-01-migration-wm-02": [
    "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
@@ -468,9 +543,34 @@
    "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record"
   ],
   "ver_20260925_ci-mcp-job-fails-stale-pinned-tool-resource-counts-in-ci": [
+   "dec_20261113_python-3-10-is-the-supported-floor-3-9-is-dropped",
    "dec_20260928_the-native-full-suite-runs-on-main-weekly-and-on-demand",
-   "trap_guard-exit-code-in-ci",
-   "ver_20260816_ci-yml-guard-steps-survive-guard-s-verdict-exit-codes-fixed"
+   "trap_guard-exit-code-in-ci"
+  ],
+  "ver_20261113_crumb-recover-apply-no-longer-undoes-half-of-a-finished": [
+   "ver_20261113_crumb-rename-deletes-the-record-it-renames-fixed",
+   "dec_20260922_traps-and-questions-are-one-file-each-the-singletons",
+   "dec_20260927_usage-counts-emitted-ids-from-append-only-events-the-latest"
+  ],
+  "ver_20261113_crumb-rename-deletes-the-record-it-renames-fixed": [
+   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them",
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
+   "ver_20261113_crumb-recover-apply-no-longer-undoes-half-of-a-finished"
+  ],
+  "ver_20261113_prune-sessions-keep-keeps-the-newest-sessions-not-the-last": [
+   "dec_20261002_a-head-that-moved-only-by-memory-store-commits-is-not-new",
+   "dec_20260905_path-extraction-is-structural-and-a-mined-path",
+   "dec_20260922_a-subagent-launch-is-guarded-but-capped-at-read-first"
+  ],
+  "ver_20261115_agent-outcome-eval-e2-on-v1-review-item-6-inconclusive": [
+   "q_should-guard-stop-escalating-a-plain-language-pl-348193",
+   "dec_20260922_the-working-memory-roadmap-is-the-plan-of-record-for-phases",
+   "dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence"
+  ],
+  "ver_20261116_review-2026-11-13-item-7-section-3-tables-fixed": [
+   "att_20261116_splitting-identifiers-into-word-tokens-for-search-and-guard",
+   "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
   ]
  },
  "skipped": null

@@ -129,6 +129,11 @@ def _hook_action_from_tool(tool: str, tool_input: dict) -> tuple[str, list[str] 
     return action.text, action.files or None
 
 
+def _hook_is_shell(tool: str, tool_input: dict) -> bool:
+    """Is this tool call a shell command (Bash, PowerShell), as the adapter says?"""
+    return _claude.normalize_tool(tool, tool_input).kind == "shell"
+
+
 # Advisory-dedupe state for the PreToolUse guard, keyed by host session. Lives
 # in private/ (machine-local, gitignored) because it is per-checkout runtime
 # state, not memory. Best-effort: a read or write failure must never block the
@@ -326,12 +331,13 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     # path, plus one read of the reindex-time trap-token index so
     # trap-shaped routine commands escalate too. Only a plausibly-risky action
     # escalates to full guard scoring.
-    _primary, classes = _scoring.classify_action(action)
+    shell = _hook_is_shell(payload.get("tool_name") or "", tool_input)
+    _primary, classes = _scoring.classify_action(action, shell=shell)
     # A read-only command (every segment) is guarded only for memory about
     # *it*: a trap naming the exact command, or a record about a path it
     # touches. Shared vocabulary alone cannot raise it past READ_FIRST, and
     # was the bulk of the field's "a warning on every command" (issue 7).
-    if _scoring._is_read_only_action(action) and not _prefilter_exact_hit(
+    if _scoring._is_read_only_action(action, shell=shell) and not _prefilter_exact_hit(
         memory_dir, action, files
     ):
         _hooklog.note(skipped="read-only")
@@ -354,7 +360,11 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     from breadcrumbs import service as _service
 
     result = _service.guard(
-        _service.Context(root, memory_dir, "hook"), action, files=files, staleness=False
+        _service.Context(root, memory_dir, "hook"),
+        action,
+        files=files,
+        staleness=False,
+        shell=shell,
     )
     verdict = result["verdict"]
     # Launching a subagent is not itself irreversible — the subagent's own tool
@@ -390,7 +400,10 @@ def _hook_guard(memory_dir: Path, root: Path, payload: dict) -> int:
     # shown — a strong keyword-only match escalating through the score band is a
     # deliberate behaviour of this tool, not something to silence from here.
     shown = _hook_surfacing_matches(result) or result.get("matches", [])
-    reason = _hook_guard_reason(result, shown)
+    from breadcrumbs import hooks_common as _hooks_common
+
+    # Bounded by construction (a few excerpted matches); the cap is the backstop.
+    reason = _hooks_common.fit_context(_hook_guard_reason(result, shown))
     # Only what the reason names is emitted (audit F16): it lists the first
     # `_HOOK_GUARD_REASON_MATCHES`. Counted just before each non-empty output,
     # keyed by host session so WM-42 can ask "how many *sessions* did this

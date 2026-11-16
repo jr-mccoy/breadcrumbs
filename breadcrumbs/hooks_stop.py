@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 import time
 from pathlib import Path
 
@@ -515,9 +516,11 @@ def _hook_capture_inner(memory_dir: Path, root: Path, payload: dict) -> int:
             or len(own) >= EXTRACTION_MIN_SESSION_JOTS
         )
         if earned:
-            hooks_common.record_extraction_asked(
-                memory_dir, session_key, [j["id"] for j in jots[:EXTRACTION_MAX_JOTS_SHOWN]]
-            )
+            # Every candidate this ask counted, not only the ones it lists:
+            # recording just the shown six let the rest earn a second block
+            # with no new work, where the stop is held once (review
+            # 2026-11-13, H3). The rest stay in the inbox for `crumb inbox`.
+            hooks_common.record_extraction_asked(memory_dir, session_key, [j["id"] for j in jots])
             # Asked once: these commits are never asked about again, whether
             # or not the agent's capture (or the continuation's snapshot)
             # then lands. Without this a failed snapshot re-asked every turn.
@@ -543,4 +546,18 @@ def _note_snapshot(status: str) -> None:
     if status == "ok":
         _hooklog.note(snapshot="ok")
     else:
-        _hooklog.note(snapshot="failed", snapshot_error=status.removeprefix("failed: "))
+        _hooklog.note(snapshot="failed", snapshot_error=_error_kind(status))
+
+
+def _error_kind(status: str) -> str:
+    """Why the snapshot failed, with every file path replaced by `<path>`.
+
+    The hook log records no file path (review 2026-11-13, H8), and an
+    `OSError`'s message names one; the full text still reaches stderr.
+    """
+    body = status.removeprefix("failed: ")
+    return _PATH_IN_MESSAGE.sub("<path>", body)
+
+
+# A quoted string holding a separator, or any other token holding one.
+_PATH_IN_MESSAGE = re.compile(r"""'[^']*[/\\][^']*'|"[^"]*[/\\][^"]*"|[^\s'"]*[/\\][^\s'"]*""")

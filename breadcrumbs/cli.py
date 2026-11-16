@@ -458,9 +458,46 @@ def derive_project_name(root: Path) -> str:
     return name if name else "project"
 
 
+def find_store_root(start: Path) -> Path | None:
+    """The nearest directory at or above `start` that holds a store, or None.
+
+    The walk ends at the first directory with a `.git` entry: the top of a
+    work tree, a submodule or a linked worktree, so it never reaches a store
+    that belongs to an enclosing repository, or another checkout's. It never
+    takes the home directory or the filesystem root as a project.
+    """
+    try:
+        here = Path(start).resolve()
+    except (OSError, ValueError, TypeError):
+        return None
+    try:
+        home = Path.home().resolve()
+    except (OSError, RuntimeError):
+        home = None
+    for d in (here, *here.parents):
+        if d == home or d.parent == d:
+            return None
+        if (d / MEMORY_DIRNAME).is_dir():
+            return d
+        if (d / ".git").exists():
+            return None
+    return None
+
+
 def resolve_root(project_arg: str | None) -> Path:
-    """Resolve the project root: --project overrides cwd."""
-    return (Path(project_arg) if project_arg else Path.cwd()).resolve()
+    """The project root: `--project` exactly as given, else the nearest store
+    at or above the working directory (`find_store_root`), else the working
+    directory.
+
+    Without the walk, an agent that had `cd`-ed into `src/` was told there was
+    no store and to run `crumb init`, which made a second one there (review
+    2026-11-13, §1.4). `--project` is never walked: `crumb init --project sub`
+    means a store in `sub`.
+    """
+    if project_arg:
+        return Path(project_arg).resolve()
+    cwd = Path.cwd().resolve()
+    return find_store_root(cwd) or cwd
 
 
 def _service_context(args, root: Path | None = None):
@@ -515,7 +552,9 @@ def gitignore_block(session_tracking: str, commit_generated: bool) -> str:
     lines.append(f"!{MEMORY_DIRNAME}/index/README.md")
     # local/tmp generated projections are never committed
     lines.append(f"{MEMORY_DIRNAME}/generated/*.local.md")
-    lines.append(f"{MEMORY_DIRNAME}/generated/*.tmp")
+    # An interrupted atomic write leaves `.<name>.<hex>.tmp` beside its
+    # target, in any directory (review 2026-11-13, W7).
+    lines.append(f"{MEMORY_DIRNAME}/**/.*.tmp")
     if not commit_generated:
         # flip generated projections to local-only, but keep the explainer README.
         # *.json covers related.json and conflicts.json (and the guard
@@ -1260,7 +1299,14 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
         # A UTF-8 BOM survives str.strip(), so it would mask the opening fence
         # and silently drop the whole frontmatter. Strip a single leading BOM.
         text = text[1:]
-    lines = text.splitlines()
+    # Only a newline ends a line (CRLF read as one). `str.splitlines()` also
+    # breaks on U+2028, U+2029, NEL, form feed and the information separators,
+    # which the writer let through: a U+2028 inside a value became extra keys
+    # here, enough to forge `review_status: reviewed`, and a rewrite turned
+    # those characters in the body into newlines (review 2026-11-13, §2.1).
+    lines = text.replace("\r\n", "\n").split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
     if not lines or lines[0].strip() != "---":
         return {}, text
     close = None
@@ -2017,6 +2063,11 @@ def _needs_quote(s: str, in_list: bool = False) -> bool:
     return False
 
 
+# Every character `str.splitlines()` ends a line at. Readers here split on
+# `\n` only, but other tools reading these files may not.
+FRONTMATTER_LINE_BREAKS = "\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029"
+
+
 def _render_scalar(v, in_list: bool = False) -> str:
     """Render a scalar so it round-trips through `parse_frontmatter`."""
     if v is None:
@@ -2026,11 +2077,15 @@ def _render_scalar(v, in_list: bool = False) -> str:
     if v is False:
         return "false"
     s = str(v)
-    if "\n" in s or "\r" in s:
+    if any(ch in s for ch in FRONTMATTER_LINE_BREAKS):
         # The frontmatter is a line-based YAML subset with no multi-line scalar
-        # support: a newline would silently truncate the value and inject the
-        # remainder as bogus keys. Reject it at the source instead of corrupting.
-        raise ValueError("frontmatter values must be single-line (no newlines)")
+        # support: a line break would silently truncate the value and inject the
+        # remainder as keys. Every character any reader treats as a line end is
+        # refused, not only `\n` (review 2026-11-13, §2.1).
+        raise ValueError(
+            "frontmatter values must be single-line (no newline, carriage return, "
+            "U+2028/U+2029, NEL, form feed or other line-break character)"
+        )
     if _needs_quote(s, in_list=in_list):
         if '"' in s:
             # A double quote in the value forces the single-quoted form; interior
@@ -2125,7 +2180,18 @@ def render_body(rtype: str, sections: dict[str, str]) -> str:
 def slugify(title: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
     s = re.sub(r"-{2,}", "-", s)
-    return s or "untitled"
+    if s:
+        return s
+    # A title with no ASCII letters or digits (Cyrillic, CJK) slugged to
+    # `untitled`, so a store could hold one such trap and one such question
+    # (review 2026-11-13, W3). A digest of the title keeps ids distinct and
+    # stable: the same title still gives the same id.
+    text = " ".join((title or "").split())
+    if not text:
+        return "untitled"
+    import hashlib
+
+    return "untitled-" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
 
 
 # How much of a title a *filename* may carry. `slugify` itself stays
@@ -2606,6 +2672,11 @@ def _set_record_status(
     meta["updated_at"] = now_iso()
     if superseded_by:
         meta["superseded_by"] = superseded_by
+    elif status != "superseded" and meta.get("superseded_by"):
+        # Reactivated (or retired another way): a stale `superseded_by` kept
+        # pointing readers at the replacement of a record that is live again
+        # (review 2026-11-13, W8). The note below keeps what it said.
+        reason = f"{reason}; was superseded by {meta.pop('superseded_by')}"
     # The reason is recorded as a trailing, non-instruction comment (data, §15).
     # A literal `-->` inside the reason would terminate the comment early and
     # leak the remainder as content — neutralize it.
@@ -3653,7 +3724,7 @@ def _may_drive_verdict(item: dict) -> bool:
 # 2: `commands` added (audit F10). 3: every record that could drive a verdict,
 # with `titles` and `tags` (audit WP11). A pre-filter of another format is not
 # trusted: the hook runs the full guard instead.
-GUARD_PREFILTER_FORMAT = 4
+GUARD_PREFILTER_FORMAT = 5
 
 
 # Written when a projection rebuild raised, removed by the next one that works.
@@ -5283,65 +5354,81 @@ def cmd_capture_session(args: argparse.Namespace) -> int:
         sections[UNSORTED_SECTION] = f"{prior}\n\n{kept}" if prior else kept
 
     title = args.title or _derive_session_title(sections, args.focus) or SESSION_TITLE_FALLBACK
-    if coalesce is not None:
-        before = path_policy.read_text(coalesce.path)
-        path = _coalesce_into(coalesce, sections, root, args.agent, include_memory=include_memory)
-        meta = dict(coalesce.meta)
-        fails = _validate_new_file(memory_dir, path, before)
-        if fails:
-            write_text_atomic(path, before)  # revert — never leave a broken snapshot
-            _emit_error(
-                args, "session update failed validation: " + "; ".join(f["message"] for f in fails)
-            )
-            return 1
-    else:
-        extra = {"host_session": host_session} if host_session else None
-        try:
-            path, meta = write_record(
+    from breadcrumbs import mutations as _mutations
+
+    # The session record, the handoff and current.md are one change (review
+    # 2026-11-13, W8): a capture killed between them left a session whose
+    # handoff still said the previous Next Action. `crumb recover` rolls an
+    # interrupted one back like any other operation.
+    try:
+        with _mutations.transaction(memory_dir, "capture-session"):
+            if coalesce is not None:
+                before = path_policy.read_text(coalesce.path)
+                path = _coalesce_into(
+                    coalesce, sections, root, args.agent, include_memory=include_memory
+                )
+                meta = dict(coalesce.meta)
+                fails = _validate_new_file(memory_dir, path, before)
+                if fails:
+                    write_text_atomic(path, before)  # revert — never leave a broken snapshot
+                    _emit_error(
+                        args,
+                        "session update failed validation: "
+                        + "; ".join(f["message"] for f in fails),
+                    )
+                    return 1
+            else:
+                extra = {"host_session": host_session} if host_session else None
+                try:
+                    path, meta = write_record(
+                        memory_dir,
+                        root,
+                        "session",
+                        title,
+                        sections,
+                        agent=args.agent,
+                        extra=extra,
+                        include_memory=include_memory,
+                    )
+                except ValueError as exc:
+                    _emit_error(args, str(exc))
+                    return 2
+
+                fails = _validate_new_file(memory_dir, path)
+                if fails:
+                    path.unlink()
+                    _emit_error(
+                        args,
+                        "new session failed validation: " + "; ".join(f["message"] for f in fails),
+                    )
+                    return 1
+
+            # Refresh handoff + current.
+            #
+            # Current Focus is NOT defaulted to the Next Action text: doing so rendered
+            # the packet's two headline fields as byte-identical ~1.4k-char duplicates
+            # (0.1.10 field test, P1-6). An unset --focus keeps the previous Current
+            # Focus (update_handoff/update_current retain the old value on empty),
+            # which is also the honest reading of "the caller said nothing about focus".
+            #
+            # Recently Changed is written only from an explicit `--recent`: the git log
+            # it used to receive is what resume's *Landed Since* already shows, and
+            # writing it replaced hand-written notes on every snapshot (issue 1).
+            focus = args.focus or ""
+            handoff_path = _handoffs.write_path(memory_dir, root, meta["branch"])
+            update_handoff(
                 memory_dir,
-                root,
-                "session",
-                title,
-                sections,
-                agent=args.agent,
-                extra=extra,
-                include_memory=include_memory,
+                meta["branch"],
+                meta["commit"],
+                focus,
+                sections["Next Action"],
+                path=handoff_path,
+                replace=replace,
             )
-        except ValueError as exc:
-            _emit_error(args, str(exc))
-            return 2
-
-        fails = _validate_new_file(memory_dir, path)
-        if fails:
-            path.unlink()
-            _emit_error(
-                args, "new session failed validation: " + "; ".join(f["message"] for f in fails)
-            )
-            return 1
-
-    # Refresh handoff + current.
-    #
-    # Current Focus is NOT defaulted to the Next Action text: doing so rendered
-    # the packet's two headline fields as byte-identical ~1.4k-char duplicates
-    # (0.1.10 field test, P1-6). An unset --focus keeps the previous Current
-    # Focus (update_handoff/update_current retain the old value on empty),
-    # which is also the honest reading of "the caller said nothing about focus".
-    #
-    # Recently Changed is written only from an explicit `--recent`: the git log
-    # it used to receive is what resume's *Landed Since* already shows, and
-    # writing it replaced hand-written notes on every snapshot (issue 1).
-    focus = args.focus or ""
-    handoff_path = _handoffs.write_path(memory_dir, root, meta["branch"])
-    update_handoff(
-        memory_dir,
-        meta["branch"],
-        meta["commit"],
-        focus,
-        sections["Next Action"],
-        path=handoff_path,
-        replace=replace,
-    )
-    update_current(memory_dir, focus, recent, commit=meta["commit"], replace=replace)
+            update_current(memory_dir, focus, recent, commit=meta["commit"], replace=replace)
+    except _mutations.MutationFailed as exc:
+        _emit_error(args, _mutations.describe(exc))
+        return 1
     for what in replaced:
         _emit_warning(
             args,
@@ -5407,7 +5494,9 @@ def prune_sessions(
     """
     keep = max(1, keep)
     recs = [r for r in load_records(memory_dir, types=("session",)) if not r.error]
-    recs.sort(key=lambda r: r.path.name, reverse=True)
+    # Newest by when each record last described the work, the order the
+    # Stop hook reads. Not by file name: within a day that sorts by title.
+    recs.sort(key=_session_written_key, reverse=True)
     candidates = [r for r in recs[keep:] if _is_placeholder(r.sections.get("Next Action") or "")]
     deleted = []
     for r in candidates:
@@ -5891,6 +5980,7 @@ _EXACT_LOOKUPS = 3
 # (DoWhat retest of 0.5.0, item 7). The `rev-list` it replaces ran on every
 # guard firing that scored a record; HEAD moves far less often than that.
 COMMIT_ORDER_RELPATH = ("index", "commit-order.txt")
+_SHA_RE = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?")
 
 
 def _cached_commit_order(root: Path) -> list[str]:
@@ -5906,11 +5996,13 @@ def _cached_commit_order(root: Path) -> list[str]:
     if head:
         try:
             text = path_policy.read_text(cache)
-        except OSError:
+        except (OSError, ValueError):  # not UTF-8 is a cache miss (review 2026-11-13, H5)
             text = ""
         first, _, rest = text.partition("\n")
         if first == f"{head} {_REVLIST_INDEX_CAP}":
-            return rest.split()
+            shas = rest.split()
+            if shas and shas[0] == head and all(_SHA_RE.fullmatch(x) for x in shas):
+                return shas
     out = _git.run(root, "rev-list", "--topo-order", f"--max-count={_REVLIST_INDEX_CAP}", "HEAD")
     order = (out or "").split()
     if head and order and order[0] == head and cache.parent.parent.is_dir():
@@ -7192,7 +7284,14 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
         _emit_error(args, f"no {MEMORY_DIRNAME}/ found at {root}. Run `crumb init` first.")
         return 2
 
-    hits = _secretscan.scan_secrets(memory_dir)
+    stats: dict = {}
+    hits = _secretscan.scan_secrets(memory_dir, stats=stats)
+    suppressed = stats.get("suppressed", 0)
+    # A suppression is said every time: one broad .crumbignore line used to
+    # exempt most of the store while the scan still printed OK.
+    skipped = (
+        f"{suppressed} line(s) skipped by {_secretscan.CRUMBIGNORE_FILENAME}" if suppressed else ""
+    )
     # Only a shape with real structure gates a commit (R5). An entropy heuristic
     # with no allowlist punishes exactly the records that are most useful — the
     # ones citing a concrete production path — and a gate that is hand-overridden
@@ -7207,6 +7306,7 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
                 "count": len(hits),
                 "blocking": len(blocking),
                 "warnings": len(warnings),
+                "suppressed": suppressed,
                 "hits": hits,
             },
             ok=not blocking,
@@ -7237,9 +7337,13 @@ def cmd_scan_secrets(args: argparse.Namespace) -> int:
                 f"secret in this project, add a pattern to {MEMORY_DIRNAME}/"
                 f"{_secretscan.CRUMBIGNORE_FILENAME} instead of overriding this every time."
             )
+        if skipped:
+            print(f"note: {skipped}.")
         return 1 if blocking else 0
 
     print("scan-secrets: OK — no secret-like strings in committed memory.")
+    if skipped:
+        print(f"note: {skipped}.")
     return 0
 
 
@@ -7511,15 +7615,13 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         root = resolve_root(args.project)
         sdk = _mcp_sdk_available()
         mcp_path = root / ".mcp.json"
-        registered = False
-        if mcp_path.is_file():
-            try:
-                registered = MCP_SERVER_NAME in (
-                    json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
-                )
-            except (json.JSONDecodeError, OSError):
-                registered = False
-        report = {"sdk_available": sdk, "registered": registered, "config": str(mcp_path)}
+        registered, problem = _mcp_registration(root)
+        report = {
+            "sdk_available": sdk,
+            "registered": registered,
+            "config": str(mcp_path),
+            "problem": problem,
+        }
         if args.json:
             _print_json(args, report)
         else:
@@ -7533,13 +7635,47 @@ def cmd_mcp(args: argparse.Namespace) -> int:
                 + (
                     f"'{MCP_SERVER_NAME}' in {mcp_path}"
                     if registered
-                    else "not registered — run `crumb mcp register`"
+                    else problem or "not registered — run `crumb mcp register`"
                 )
             )
         return 0 if (sdk and registered) else 1
 
     _emit_error(args, "specify: `crumb mcp serve`, `crumb mcp register`, or `crumb mcp doctor`")
     return 2
+
+
+def _mcp_registration(root: Path) -> tuple[bool, str | None]:
+    """`(ok, problem)` for the `.mcp.json` entry: present, and its command found.
+
+    A registration whose command is not on PATH passed `mcp doctor`, and the
+    host then failed to start the server (review 2026-11-13, H4).
+    """
+    mcp_path = Path(root) / ".mcp.json"
+    if not mcp_path.is_file():
+        return False, None
+    try:
+        servers = json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
+    except (json.JSONDecodeError, OSError, AttributeError):
+        return False, f"{mcp_path} is not readable JSON"
+    entry = servers.get(MCP_SERVER_NAME) if isinstance(servers, dict) else None
+    if entry is None:
+        return False, None
+    command = entry.get("command") if isinstance(entry, dict) else None
+    if not isinstance(command, str) or not command.strip():
+        return False, f"'{MCP_SERVER_NAME}' in {mcp_path} has no command"
+    if "/" in command or "\\" in command:
+        found = (Path(root) / command).exists() or Path(command).exists()
+    else:
+        import shutil
+
+        found = shutil.which(command) is not None
+    if not found:
+        return False, (
+            f"'{MCP_SERVER_NAME}' is registered, but its command {command!r} is not on PATH "
+            "here, so the host cannot start it: install `crumb-kit[mcp]` where the host "
+            "runs, or point the entry at the interpreter's `breadcrumbs-mcp`"
+        )
+    return True, None
 
 
 # ---- adapter signpost block ------------------------------------------------ #
@@ -7838,7 +7974,23 @@ def cmd_repair(args: argparse.Namespace) -> int:
     from breadcrumbs import lock as _lock
     from breadcrumbs import repair as _repair
 
-    planned = _repair.plan(memory_dir, root, _repair.parse_sets(getattr(args, "set", None)))
+    raw_sets = getattr(args, "set", None) or []
+    sets = _repair.parse_sets(raw_sets)
+    planned = _repair.plan(memory_dir, root, sets)
+    # A `--set` repair could not use was dropped without a word, so a typo in
+    # the id looked like a value given (review 2026-11-13, W8).
+    planned_ids = {p["id"] for p in planned}
+    unused = [r for r in raw_sets if "=" not in r or "." not in r.partition("=")[0]]
+    unused += [f"{rid}.{field}" for rid, field in sets if rid not in planned_ids]
+    unused += [f"{rid}.{field}" for rid, field in sets if field != "outcome"]
+    if unused:
+        _emit_error(
+            args,
+            "--set not used: "
+            + ", ".join(dict.fromkeys(unused))
+            + " (give ID.outcome=VALUE for a record repair lists; `crumb repair` shows them)",
+        )
+        return 2
     needs = [n for p in planned for n in p["needs"]]
     proposals = [x for p in planned for x in p["proposals"]]
     result: dict = {"applied": False, "written": [], "skipped": []}
@@ -7862,8 +8014,10 @@ def cmd_repair(args: argparse.Namespace) -> int:
     if not planned:
         print("repair: nothing to repair — every record meets the contract.")
         return 0
-    verb = "repaired" if result["applied"] else "would repair"
-    print(f"repair: {verb} {sum(1 for p in planned if p['changes'])} record(s)")
+    # Applied, the count is what was written: a rewrite validate refused is
+    # listed below as not written, and used to be counted as repaired too.
+    count = len(result["written"]) if result["applied"] else sum(1 for p in planned if p["changes"])
+    print(f"repair: {'repaired' if result['applied'] else 'would repair'} {count} record(s)")
     for p in planned:
         if not p["changes"]:
             continue
@@ -8217,6 +8371,19 @@ _HOOK_SPECS: dict[str, tuple[str, str | None]] = {
     "subagent": ("SubagentStop", None),
 }
 
+# Seconds the host waits for each hook before giving up on it. With none set
+# the host default is 600 s (30 s for UserPromptSubmit), so a hung crumb stalled
+# every tool call for up to ten minutes (review 2026-11-13, §3.3). Generous
+# against measured runs: a Windows Stop snapshot on a large store takes seconds.
+HOOK_TIMEOUTS: dict[str, int] = {
+    "session": 60,
+    "guard": 30,
+    "capture": 120,
+    "prompt": 30,
+    "compact": 120,
+    "subagent": 120,
+}
+
 # The key `init` stamps into each hook entry it owns, valued with the breadcrumbs
 # event name. Identity must not live in the command text: a hook installed
 # through any launcher — a wrapper script, a venv path, `python -m breadcrumbs` —
@@ -8414,10 +8581,22 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
     path = root / ".claude" / "settings.json"
 
     def _mut(data: dict) -> None:
+        # A shape we cannot merge into is reported, not a traceback (review
+        # 2026-11-13, H8); nothing is written.
         hooks = data.setdefault("hooks", {})
+        if not isinstance(hooks, dict):
+            raise ValueError(
+                f"{path}: `hooks` is a {type(hooks).__name__}, not an object; "
+                "fix it by hand, then re-run"
+            )
         for ev in events:
             cc_event, matcher = _HOOK_SPECS[ev]
             arr = hooks.setdefault(cc_event, [])
+            if not isinstance(arr, list):
+                raise ValueError(
+                    f"{path}: `hooks.{cc_event}` is a {type(arr).__name__}, not a list; "
+                    "fix it by hand, then re-run"
+                )
             existing = [
                 (g, h) for g in arr for h in _group_entries(g) if _hook_entry_event(h) == ev
             ]
@@ -8433,13 +8612,22 @@ def install_claude_hooks(root: Path, events: list[str]) -> Path:
                     # carrying our marker *and* our command — somebody else's
                     # launcher may be scoped deliberately.
                     owned = h.get(HOOK_MARKER) == ev or h.get("command") == hook_command(ev)
+                    if owned and "timeout" not in h:
+                        h["timeout"] = HOOK_TIMEOUTS[ev]
                     if owned and matcher and isinstance(group, dict):
                         if group.get("matcher") != matcher and len(_group_entries(group)) == 1:
                             group["matcher"] = matcher
                     h[HOOK_MARKER] = ev
                 continue
             entry: dict = {
-                "hooks": [{"type": "command", "command": hook_command(ev), HOOK_MARKER: ev}]
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": hook_command(ev),
+                        "timeout": HOOK_TIMEOUTS[ev],
+                        HOOK_MARKER: ev,
+                    }
+                ]
             }
             if matcher:
                 entry = {"matcher": matcher, **entry}
@@ -8822,29 +9010,44 @@ def doctor_report(root: Path) -> dict:
     )
 
     # MCP registration + extra
-    mcp_path = root / ".mcp.json"
-    registered = False
-    if mcp_path.is_file():
-        try:
-            registered = MCP_SERVER_NAME in (
-                json.loads(path_policy.read_text(mcp_path)).get("mcpServers") or {}
-            )
-        except (json.JSONDecodeError, OSError):
-            registered = False
+    registered, mcp_problem = _mcp_registration(root)
     sdk = _mcp_sdk_available()
     add(
         "mcp",
-        registered,
-        ".mcp.json registered" if registered else "not registered (`crumb mcp register`)",
+        registered or mcp_problem is not None,
+        ".mcp.json registered"
+        if registered or mcp_problem is not None
+        else "not registered (`crumb mcp register`)",
     )
+    if mcp_problem is not None:
+        # Its own row, so the integration verdict (the exit code) is the
+        # registration's, as before; this one says it cannot start (H4).
+        add("mcp_command", False, mcp_problem)
     add("mcp_extra", sdk, "[mcp] extra importable" if sdk else "optional [mcp] extra not installed")
 
     # Hooks
     hook_cmds = _installed_hook_commands(root)
+    hook_state = _hook_install_state(root)
+    hook_problems = []
+    if hook_state["disabled"]:
+        hook_problems.append(
+            f"{hook_state['disabled']} sets `disableAllHooks: true`, so none of them runs"
+        )
+    if hook_state["outdated"]:
+        hook_problems.append(
+            "an older launcher is installed for "
+            + ", ".join(hook_state["outdated"])
+            + " (`crumb init --with-hooks` updates it)"
+        )
     add(
         "hooks",
-        bool(hook_cmds),
-        f"{len(hook_cmds)} crumb hook(s) installed" if hook_cmds else "no hooks installed",
+        bool(hook_cmds) and not hook_problems,
+        (
+            f"{len(hook_cmds)} crumb hook(s) installed: {', '.join(sorted(hook_state['events']))}"
+            if hook_cmds
+            else "no hooks installed"
+        )
+        + "".join(f"; {p}" for p in hook_problems),
     )
 
     # Resume-packet staleness vs HEAD
@@ -9037,7 +9240,9 @@ def doctor_report(root: Path) -> dict:
                 f"generated/related.json is incomplete ({degraded.get('reason', 'pair budget')}); "
                 "`crumb audit` names it",
             )
-    if hook_cmds:
+    # Only with a guard hook to describe: after `--with-hooks=session,capture`
+    # it said "the guard hook covers Bash…" with none installed (H4).
+    if "guard" in hook_state["events"]:
         outdated = _outdated_guard_matchers(root)
         add(
             "hook_matcher",
@@ -9052,6 +9257,46 @@ def doctor_report(root: Path) -> dict:
     return {"checks": checks, "integrated": integrated, "store": store}
 
 
+def _hook_install_state(root: Path) -> dict:
+    """`{events, disabled, outdated}` from `.claude/settings*.json`.
+
+    `events`: the breadcrumbs events installed. `disabled`: the settings file
+    that sets `disableAllHooks: true`, if any. `outdated`: events whose entry
+    is a launcher an older `init` wrote (review 2026-11-13, H4).
+    """
+    out: dict = {"events": set(), "disabled": None, "outdated": []}
+    for name in ("settings.json", "settings.local.json"):
+        path = Path(root) / ".claude" / name
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path_policy.read_text(path))
+        except (json.JSONDecodeError, OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("disableAllHooks") is True:
+            out["disabled"] = f".claude/{name}"
+        for arr in _settings_hooks(data).values():
+            if not isinstance(arr, list):
+                continue
+            for group in arr:
+                for h in _group_entries(group):
+                    ev = _hook_entry_event(h)
+                    if not ev:
+                        continue
+                    out["events"].add(ev)
+                    command = h.get("command")
+                    if command in _generated_hook_commands(ev) and command != hook_command(ev):
+                        out["outdated"].append(ev)
+    out["outdated"] = sorted(set(out["outdated"]))
+    return out
+
+
+def _settings_hooks(data) -> dict:
+    """`data["hooks"]` when settings.json and its `hooks` are both objects."""
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    return hooks if isinstance(hooks, dict) else {}
+
+
 def _outdated_guard_matchers(root: Path) -> list[str]:
     """Matchers of installed breadcrumbs guard entries that differ from the
     adapter's current `GUARD_MATCHER` (audit WP17/WP20)."""
@@ -9061,7 +9306,7 @@ def _outdated_guard_matchers(root: Path) -> list[str]:
     except (json.JSONDecodeError, OSError, path_policy.Refused):
         return []
     out = []
-    for group in (data.get("hooks") or {}).get("PreToolUse") or []:
+    for group in _settings_hooks(data).get("PreToolUse") or []:
         if not isinstance(group, dict):
             continue
         if any(_hook_entry_event(h) == "guard" for h in _group_entries(group)):
@@ -9086,7 +9331,7 @@ def _installed_hook_commands(root: Path) -> list[str]:
     except (json.JSONDecodeError, OSError):
         return []
     cmds: list[str] = []
-    for arr in (data.get("hooks") or {}).values():
+    for arr in _settings_hooks(data).values():
         if not isinstance(arr, list):
             continue
         for group in arr:
@@ -9290,21 +9535,73 @@ def _doctor_hook_log(args: argparse.Namespace, memory_dir: Path) -> int:
 
 
 def _read_hook_stdin() -> dict:
+    # The host writes UTF-8 JSON. Read in the locale encoding (cp1252 for a
+    # Windows pipe) a non-ASCII path became mojibake and an `Á` in a prompt
+    # raised (review 2026-11-13, H1). Bytes, decoded here, whatever the locale;
+    # a lone surrogate or a bad byte is replaced, never raised.
     try:
-        raw = sys.stdin.read()
-    except OSError:
+        buffer = getattr(sys.stdin, "buffer", None)
+        raw = (
+            buffer.read().decode("utf-8", errors="replace")
+            if buffer is not None
+            else sys.stdin.read()
+        )
+    except (OSError, ValueError):
         return {}
+    if raw.startswith("\ufeff"):
+        raw = raw[1:]
     try:
         payload = json.loads(raw) if raw.strip() else {}
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):  # also a 5,000-digit integer (H5)
         return {}
     # Valid JSON that isn't an object (a list, a string) is as useless to the
     # hook as malformed JSON — treat it the same.
-    return payload if isinstance(payload, dict) else {}
+    return _scrub_surrogates(payload) if isinstance(payload, dict) else {}
+
+
+def _scrub_surrogates(value):
+    """`value` with every lone surrogate replaced by `?`.
+
+    JSON's `\\ud800` escape decodes to a string no UTF-8 writer accepts, so a
+    prompt carrying one failed at the first write (review 2026-11-13, H5).
+    """
+    if isinstance(value, str):
+        return value.encode("utf-8", "replace").decode("utf-8")
+    if isinstance(value, dict):
+        return {_scrub_surrogates(k): _scrub_surrogates(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_scrub_surrogates(v) for v in value]
+    return value
 
 
 def _hook_root(payload: dict) -> Path:
-    return Path(payload.get("cwd") or os.environ.get("BREADCRUMBS_PROJECT") or Path.cwd()).resolve()
+    """The project a hook firing serves.
+
+    The payload's `cwd` is where the agent is now, not where the session
+    started: it follows every `cd`. Taken as the root, it made every hook
+    return `{}` once the agent was in a subdirectory (review 2026-11-13, §1.4).
+    So: the nearest store at or above `cwd`; else the one at
+    `$CLAUDE_PROJECT_DIR`, the root of the session the hooks belong to; else
+    `$BREADCRUMBS_PROJECT`; else the hook process's own directory. `cwd` comes
+    first because inside a linked worktree it is that worktree, whose store is
+    the branch being worked on.
+    """
+    raw = payload.get("cwd")
+    cwd = Path(raw) if isinstance(raw, str) and raw.strip() and "\0" not in raw else None
+    for start in (
+        cwd,
+        os.environ.get("CLAUDE_PROJECT_DIR"),
+        os.environ.get("BREADCRUMBS_PROJECT"),
+        None if cwd is not None else Path.cwd(),
+    ):
+        if start:
+            found = find_store_root(Path(start))
+            if found is not None:
+                return found
+    try:
+        return (cwd or Path.cwd()).resolve()
+    except (OSError, ValueError):
+        return Path.cwd()
 
 
 # Cheap risk patterns the keyword classifier misses (destructive shell/git ops).
@@ -9462,15 +9759,34 @@ def cmd_recover(args: argparse.Namespace) -> int:
             summary={"operations": len(ops), "unresolved": len(unresolved)},
         )
         return 1 if unresolved else 0
+    debris = report.get("debris", 0)
+    if debris:
+        what = "removed" if args.apply else "found (`--apply` removes them)"
+        print(f"recover: {debris} empty journal director(ies) left by an interrupted write {what}.")
+    temps = report.get("temp_files") or []
+    if temps:
+        what = "removed" if args.apply else "found (`--apply` removes them)"
+        print(f"recover: {len(temps)} temporary file(s) left by an interrupted write {what}:")
+        for rel in temps:
+            print(f"  {rel}")
     if not ops:
         print("recover: no unfinished operations.")
         return 0
-    verb = "rolled back" if args.apply else "unfinished"
-    print(f"recover: {len(ops)} {verb} operation(s)\n")
+    finished = sum(1 for o in ops if o.get("finished"))
+    parts = []
+    if len(ops) - finished:
+        verb = "rolled back" if args.apply else "unfinished"
+        parts.append(f"{len(ops) - finished} {verb} operation(s)")
+    if finished:
+        removed = ", journal removed" if args.apply else ""
+        parts.append(f"{finished} finished operation(s) whose journal was left behind{removed}")
+    print(f"recover: {'; '.join(parts)}\n")
     for op in ops:
         print(f"  {op['id']} ({op['kind']})")
         for f in op["files"]:
             print(f"    {f['action']:9} {f['path']}")
+        if op.get("finished"):
+            print("    the operation had completed; its files are left as they are")
         for kept in op.get("kept", []):
             print(f"    kept a copy of a removed file: {kept}")
         if op.get("conflicts"):
@@ -9768,7 +10084,18 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
     try:
-        return _run_command(args)
+        code = _run_command(args)
+        # Flush here, inside the handler: a reader that closed the pipe
+        # otherwise surfaces at interpreter exit, past every `except`.
+        sys.stdout.flush()
+        return code
+    except BrokenPipeError:
+        # `crumb … | head`: the reader has what it wanted. Not a failure of
+        # crumb's, so no CRUMB-ERROR line, which agents grep for (review
+        # 2026-11-13, R9). Point stdout at devnull so the exit flush is quiet;
+        # 141 is what a shell reports for a process killed by SIGPIPE.
+        _silence_stdout()
+        return 141
     except KeyboardInterrupt:
         # Ctrl+C at a prompt aborts the command. 130 is the shell
         # convention for SIGINT; the message goes to stderr so `--json` output is
@@ -9784,6 +10111,15 @@ def main(argv: list[str] | None = None) -> int:
             args, path_policy.describe_copy_error(exc) if isinstance(exc, OSError) else str(exc)
         )
         return 1
+
+
+def _silence_stdout() -> None:
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+        os.close(devnull)
+    except (OSError, ValueError, AttributeError):
+        pass
 
 
 # How long importing the package and this module took, for the hook log's

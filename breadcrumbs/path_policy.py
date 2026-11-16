@@ -48,7 +48,9 @@ from __future__ import annotations
 import contextlib
 import errno
 import os
+import re
 import stat
+import time
 from pathlib import Path
 
 STORE_DIRNAME = ".project-memory"
@@ -409,12 +411,20 @@ def _read_at(dfd: int, name: str, p: Path) -> bytes | OSError:
         fd = os.open(name, os.O_RDONLY | _NOFOLLOW | _NONBLOCK | _CLOEXEC, dir_fd=dfd)
     except OSError as exc:
         return _translate(exc, p)
+    # Stat before `fdopen`: `fdopen` itself raises on a directory, naming
+    # the descriptor rather than the path (review 2026-11-13, R3).
+    try:
+        mode = os.fstat(fd).st_mode
+    except OSError as exc:
+        os.close(fd)
+        return _translate(exc, p)
+    if stat.S_ISDIR(mode):
+        os.close(fd)
+        return IsADirectoryError(errno.EISDIR, "Is a directory", str(p))
+    if not stat.S_ISREG(mode):
+        os.close(fd)
+        return Refused(shown(p), NOT_REGULAR)
     with os.fdopen(fd, "rb") as fh:
-        mode = os.fstat(fh.fileno()).st_mode
-        if stat.S_ISDIR(mode):
-            return IsADirectoryError(errno.EISDIR, "Is a directory", str(p))
-        if not stat.S_ISREG(mode):
-            return Refused(shown(p), NOT_REGULAR)
         return fh.read()
 
 
@@ -483,6 +493,41 @@ def write_atomic(path, data: bytes) -> None:
             raise
     finally:
         os.close(dfd)
+
+
+# `write_atomic`'s temporary name: `.<leaf>.<12 hex>.tmp`.
+TEMP_NAME_RE = re.compile(r"\..+\.[0-9a-f]{12}\.tmp")
+# A temporary file younger than this may belong to a write in progress.
+TEMP_GRACE_SECONDS = 60.0
+
+
+def orphan_temp_files(memory_dir, *, now: float | None = None) -> list[Path]:
+    """Temporary files an interrupted `write_atomic` left in the store.
+
+    Each is a full copy of a record or projection beside its target, and
+    `git add .project-memory` would commit it (review 2026-11-13, W7). Under
+    `private/` nothing is committed and side-locked writers run without the
+    store lock, so it is left alone; one younger than `TEMP_GRACE_SECONDS`
+    may be a write still in progress.
+    """
+    memory_dir = Path(memory_dir)
+    now = time.time() if now is None else now
+    out = []
+    for dirpath, dirnames, filenames in os.walk(memory_dir):
+        here = Path(dirpath)
+        if here == memory_dir:
+            dirnames[:] = [d for d in dirnames if d != "private"]
+        for name in filenames:
+            if not TEMP_NAME_RE.fullmatch(name):
+                continue
+            p = here / name
+            try:
+                st = os.lstat(p)
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode) and now - st.st_mtime >= TEMP_GRACE_SECONDS:
+                out.append(p)
+    return sorted(out)
 
 
 def _plain_atomic(path: Path, data: bytes) -> None:

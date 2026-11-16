@@ -34,9 +34,11 @@ env:
 
 # `push` and `pull_request` both fire on a PR branch, so every PR ran the whole
 # matrix twice. Supersede the older run instead of racing it; never cancel a run
-# on a protected branch, where the result is the branch's status.
+# on a protected branch, where the result is the branch's status. The group is
+# the branch, not `github.ref`: a PR's ref is `refs/pull/N/merge`, so keyed on
+# the ref the push run and the PR run never met (review 2026-11-13, C4).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -45,12 +47,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 is the documented floor (requires-python >=3.9); nothing proved it
-        # actually ran until CI exercised it. `requires-python`
+        # The documented floor (requires-python) must run here: nothing proved it
+        # actually ran until CI exercised it. The list matches the pyproject
+        # classifiers (tests/test_release_process.py). `requires-python`
         # has no upper bound, so the newest releases are exercised too — 3.10 used
         # to be covered only by the `mcp` job below, which does not run the fixture
         # or packaging checks.
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -215,7 +218,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.10 is the SDK's floor (hence the extra's marker). The ceiling used to
+        # 3.10 is the SDK's floor and the package's. The ceiling used to
         # be 3.12 while the `test` matrix already ran to 3.14 and both SDK majors
         # declare 3.13/3.14 support — so the extra was untested on two Pythons it
         # installs on — the mirror image of the gap already closed for `test`.
@@ -295,7 +298,7 @@ jobs:
 
       - name: Build wheel + sdist
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install --upgrade pip "build==1.6.1"
           python -m build
 
       # Identity check against the tracked source tree — no duplicated magic
@@ -396,7 +399,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-        python-version: ["3.9", "3.13"]
+        python-version: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -406,7 +409,7 @@ jobs:
 
       - name: Build the wheel
         run: |
-          python -m pip install --upgrade pip build
+          python -m pip install --upgrade pip "build==1.6.1"
           python -m build --wheel
 
       - name: Installed-wheel smoke test
@@ -438,7 +441,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, macos-latest]
-        python-version: ["3.9", "3.13"]
+        python-version: ["3.10", "3.13"]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
@@ -477,6 +480,12 @@ jobs:
 
       - name: ruff format --check
         run: ruff format --check --diff .
+
+      # This repo's own memory store is committed like any user's. CLAUDE.md
+      # says scan-secrets gates commits; nothing ran it here (review
+      # 2026-11-13, C7). Stdlib only, from the checkout.
+      - name: crumb scan-secrets (this repo's store)
+        run: python crumb.py scan-secrets
 
   # WM-61 / audit WP18: relevance and delivery evals. Builds the synthetic
   # stores under evals/suites/ and runs every task three ways:
