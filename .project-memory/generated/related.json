@@ -1,7 +1,12 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "590090484176",
+ "inputs_hash": "8a52cc83ef1a",
  "related": {
+  "att_20261116_splitting-identifiers-into-word-tokens-for-search-and-guard": [
+   "dec_20261116_stop-words-match-as-written-or-as-regular-inflections",
+   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
+   "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint"
+  ],
   "dec_20260815_crumb-guard-exits-verdict-mapped-codes-0-10-15-20": [
    "trap_guard-exit-code-in-ci",
    "dec_20260817_guard-verdicts-are-capped-by-record-stance-not-by-retrieval",
@@ -368,9 +373,9 @@
    "dec_20260818_blast-radius-is-scored-separately-from-retrieval-overlap"
   ],
   "dec_20261116_stop-words-match-as-written-or-as-regular-inflections": [
+   "att_20261116_splitting-identifiers-into-word-tokens-for-search-and-guard",
    "dec_20260815_guard-folds-morphology-with-a-deterministic-fixpoint",
-   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about",
-   "dec_20260816_traps-carry-a-lifecycle-status-and-mark-status-resolves-them"
+   "dec_20261003_a-do-not-retry-line-objects-only-with-evidence-about"
   ],
   "q_should-guard-stop-escalating-a-plain-language-pl-348193": [
    "ver_20261115_agent-outcome-eval-e2-on-v1-review-item-6-inconclusive",
@@ -563,9 +568,9 @@
    "dec_20261003_audit-keys-decision-staleness-on-how-much-the-evidence"
   ],
   "ver_20261116_review-2026-11-13-item-7-section-3-tables-fixed": [
+   "att_20261116_splitting-identifiers-into-word-tokens-for-search-and-guard",
    "dec_20260927_pre-1-0-releases-bump-the-minor-for-breaking-changes-newer",
-   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned",
-   "dec_20260926_the-2026-09-26-audit-roadmap-is-the-plan-of-record"
+   "dec_20260818_repo-presentation-is-a-release-artifact-no-hand-pinned"
   ]
  },
  "skipped": null

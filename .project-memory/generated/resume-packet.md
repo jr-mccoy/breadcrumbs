@@ -1,12 +1,12 @@
 <!-- GENERATED PROJECTION — do not edit by hand. Rebuilt by `crumb resume`. -->
-<!-- source_commit: 251655b | inputs_hash: 590090484176 | generated_at: 2026-11-16T03:28:47+00:00 -->
-<!-- view: markdown | budget: 3363/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
+<!-- source_commit: aeadbcb | inputs_hash: 8a52cc83ef1a | generated_at: 2026-11-16T13:05:10+00:00 -->
+<!-- view: markdown | budget: 3461/5000 approx_tokens (approx-tokens/2: ceil(ASCII chars / 4) + 1 per non-ASCII char — a heuristic, not a model tokenizer) | rules: portable -->
 
 # Resume Packet
 
 ## Project
 **breadcrumbs** — `.`  
-branch `ccr-5a263b6c-3gtzxn` · commit `251655b` · 12 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
+branch `ccr-5a263b6c-3gtzxn` · commit `aeadbcb` · 1 uncommitted file(s) · handoff: handoffs/ccr-5a263b6c-3gtzxn.md
 
 ## Current Focus
 Review 2026-11-13 items 1 to 7 are done on ccr-5a263b6c-3gtzxn and pushed; not yet merged or released (next: 0.7.0).
@@ -15,6 +15,10 @@ Review 2026-11-13 items 1 to 7 are done on ccr-5a263b6c-3gtzxn and pushed; not y
 Review items 1 to 7 are done on ccr-5a263b6c-3gtzxn. Decide on the guard stall (open question q_should-guard-stop-escalating-a-plain-language-pl-348193), then merge to main, confirm ci, and release 0.7.0. Open from item 7 by design: R7 identifier parts (needs a lookup-only match), four hook design points (SessionEnd, launcher re-runs, extraction via additionalContext, Windows without Git Bash), branch protection on main.
 
 _(7 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
+
+## Landed Since The Handoff Was Written
+_(check Current Focus / Next Action against these before redoing work)_
+- aeadbcb Record item 7 in the review and project memory
 
 ## Active Decisions
 - `dec_20261116_guard-same-file-evidence-needs-the-same-path-matched` — pkg_a/__init__.py gave PAUSE for an edit of pkg_b/__init__.py, and absolute Edit paths degraded to basename matching. The parity golden changed only in the reason string (the full path is now shown); the verdict did not.
@@ -35,7 +39,7 @@ _(7 earlier entries in handoffs/ccr-5a263b6c-3gtzxn.md)_
 _(… 59 more omitted to stay within the per-section cap)_
 
 ## Failed Attempts To Avoid
-_(none recorded)_
+- `att_20261116_splitting-identifiers-into-word-tokens-for-search-and-guard` — do not retry: the split is applied only to crumb search lookups (a lookup-only match), not to the shared scorer behind guard, the prompt hook and the packet
 
 ## Known Traps
 - trap_miner-reads-hook-feedback-as-a-correction: The transcript miner files harness-injected Stop hook feedback as a user correction
@@ -110,6 +114,6 @@ _(… 15 more omitted to stay within the per-section cap)_
 
 ## Stale / Risk Warnings
 _(ages below are measured; the cutoff is 21 days — set with `--stale-days`)_
-- handoff is 0 day(s) old, written 0 commit(s) behind current HEAD.
+- handoff is 0 day(s) old, written 1 commit(s) behind current HEAD.
 - open question "Which items in docs/reviews/2026-10-02-deferred-health-review.md should be taken next: audit age noise, the cli.py split, duplicated git/timestamp helpers, Windows gating, coverage, or the Stop snapshot's publication cost?" has been open 44 days — did this ever get resolved?
 - open question "Should the extraction turn also fire on PreCompact (memory extraction at the moment context is about to be destroyed)? Needs a field test of prompt fatigue first." has been open 93 days — did this ever get resolved?
