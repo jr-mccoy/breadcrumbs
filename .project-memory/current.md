@@ -3,7 +3,7 @@
 _What matters right now. Lifespan: days to ~2 weeks. Keep it short and true._
 
 ## Current Focus
-Review items 1 to 6 are done on ccr-5a263b6c-3gtzxn. The agent-outcome eval (docs/benchmarks/agent-outcomes.md) found guard ASK_HUMAN stalls correct plans, and notes in CLAUDE.md match breadcrumbs on repeat failures. Not yet merged or released; next release 0.7.0.
+Review 2026-11-13 items 1 to 7 are done on ccr-5a263b6c-3gtzxn and pushed; not yet merged or released (next: 0.7.0).
 
 ## Recently Changed
 ### 2026-11-15 · `9cd5b74`

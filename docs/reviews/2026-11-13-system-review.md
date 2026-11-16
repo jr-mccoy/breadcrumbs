@@ -799,8 +799,27 @@ memory current when asked to. Specific points:
 
 ## 6. Suggested order
 
-**Status.** Items 1 to 6 are done on branch `ccr-5a263b6c-3gtzxn` (see
-`CHANGELOG.md`, `[Unreleased]`). For item 1 the operator chose to drop Python
+**Status.** Items 1 to 7 are done on branch `ccr-5a263b6c-3gtzxn` (see
+`CHANGELOG.md`, `[Unreleased]`; item 7's regressions are in
+`tests/test_review_tables.py` and `tests/test_docs_contract.py`). Item 7 left
+these open, each for a reason:
+
+- **R7, identifier parts.** Versions, non-ASCII words and CJK bigrams are
+  tokens now. Splitting `parse_frontmatter` into its parts was measured and
+  left out: on both sides of the match it cut holdout packet precision@5 from
+  0.514 to 0.389, and a camelCase split failed the critical eval
+  `android-room-builder-edit-shows-nothing-blocking`. It needs a lookup-only
+  match, which `search` (shared by guard, the prompt hook and the packet) does
+  not have.
+- **§3.3 design points.** Hook timeouts are installed. The other four are
+  changes of design, not defects with one right fix: a `SessionEnd` hook, the
+  launcher re-running the whole hook per fallback, the extraction ask moving
+  from `decision: "block"` to `additionalContext`, and the Windows-without-Git
+  Bash reading (still unverified).
+- **C7, branch protection on `main`.** A repository setting for the owner;
+  nothing in the tree can set it.
+
+ For item 1 the operator chose to drop Python
 3.9 rather than pin the runner; the floor is now 3.10, which every runner
 image provides. For item 3 the hooks are installed in this repository
 (`.claude/settings.json`). One limit remains: the installed launcher's last

@@ -1,13 +1,16 @@
 # Project Handoff
 
-_Last updated: 2026-11-15T15:46:46+00:00_
+_Last updated: 2026-11-16T03:28:47+00:00_
 _Branch: ccr-5a263b6c-3gtzxn_
-_Commit: 9cd5b74_
+_Commit: 251655b_
 
 ## Current Focus
-Review items 1 to 6 are done on ccr-5a263b6c-3gtzxn. The agent-outcome eval (docs/benchmarks/agent-outcomes.md) found guard ASK_HUMAN stalls correct plans, and notes in CLAUDE.md match breadcrumbs on repeat failures. Not yet merged or released; next release 0.7.0.
+Review 2026-11-13 items 1 to 7 are done on ccr-5a263b6c-3gtzxn and pushed; not yet merged or released (next: 0.7.0).
 
 ## Next Action
+### 2026-11-16 · `251655b`
+Review items 1 to 7 are done on ccr-5a263b6c-3gtzxn. Decide on the guard stall (open question q_should-guard-stop-escalating-a-plain-language-pl-348193), then merge to main, confirm ci, and release 0.7.0. Open from item 7 by design: R7 identifier parts (needs a lookup-only match), four hook design points (SessionEnd, launcher re-runs, extraction via additionalContext, Windows without Git Bash), branch protection on main.
+
 ### 2026-11-15 · `9cd5b74`
 Decide on the guard stall (open question; docs/benchmarks/agent-outcomes.md 'What to do with it' 1-2), then rerun evals/agent_outcomes/run.py --scenarios index-migration. Merge ccr-5a263b6c-3gtzxn to main, confirm ci, release 0.7.0. Remaining review work: the section 3 tables and trap_miner-reads-hook-feedback-as-a-correction.
 
