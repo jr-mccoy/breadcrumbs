@@ -1,6 +1,6 @@
 {
  "_generated": "GENERATED PROJECTION \u2014 do not edit. Rebuilt by `crumb reindex`.",
- "inputs_hash": "8a52cc83ef1a",
+ "inputs_hash": "7068bd9550f5",
  "related": {
   "att_20261116_splitting-identifiers-into-word-tokens-for-search-and-guard": [
    "dec_20261116_stop-words-match-as-written-or-as-regular-inflections",
